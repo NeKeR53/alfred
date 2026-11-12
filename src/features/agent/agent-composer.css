@@ -1,0 +1,171 @@
+/* Zone de saisie, reprise de OneApp : components/agents/agent-composer.css. */
+/* Zone de saisie */
+.agent-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-composer__box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-floating);
+  transition: border-color 150ms ease-out;
+}
+.agent-composer__box:focus-within {
+  border-color: color-mix(in oklch, var(--color-primary) 55%, var(--line));
+}
+.agent-composer__box.is-dragging {
+  border-style: dashed;
+  border-color: var(--color-primary);
+}
+/* Une ligne : « + » à gauche, le texte qui grandit jusqu’à sa hauteur maximale puis défile, l’envoi à droite. */
+.agent-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.agent-composer__row .icon-button {
+  flex: 0 0 auto;
+  color: var(--color-muted);
+}
+/* Une ligne de 20 px dans 28 px : le texte est centré sur les boutons « + » et envoi, qui font aussi 28 px. */
+.agent-composer__box .reference-composer__input {
+  min-height: 28px;
+  max-height: 240px;
+  padding: 4px;
+  font-size: var(--font-size-panel);
+  line-height: 20px;
+}
+/* Pièces jointes en vignettes en haut de la saisie ; le texte collé et les fichiers en étiquettes. */
+.agent-composer__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 4px;
+  list-style: none;
+}
+.agent-composer__thumb {
+  position: relative;
+}
+.agent-composer__thumb .image-preview--attachment {
+  width: 56px;
+}
+.agent-composer__thumb .image-preview .image-preview__thumbnail {
+  aspect-ratio: 1;
+  border-radius: 8px;
+}
+.agent-composer__thumb .image-preview__thumbnail img {
+  object-fit: cover;
+}
+.agent-composer__thumb .agent-composer__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--color-bg);
+  opacity: 0;
+}
+.agent-composer__thumb:hover .agent-composer__remove,
+.agent-composer__thumb:focus-within .agent-composer__remove {
+  opacity: 1;
+}
+.agent-composer__file {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  font-size: var(--font-size-secondary);
+}
+.agent-composer__file > span {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-composer__box .agent-composer__send {
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  color: var(--color-bg);
+}
+.agent-composer__box .agent-composer__send:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-ink) 85%, var(--color-bg));
+  color: var(--color-bg);
+}
+.agent-composer__box .agent-composer__send:disabled {
+  background: var(--color-surface-strong);
+  color: var(--color-muted);
+}
+/* Sous la saisie, à droite et hors du cadre : modèle et raisonnement, puis le cadenas des demandes secrètes. */
+.agent-composer__options {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: -4px;
+}
+
+.agent-composer__options-spacer {
+  flex: 1;
+}
+/* Rappel des raccourcis pendant que l’agent travaille : envoyer tout de suite ou mettre en file. */
+.agent-composer__hint {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Sélecteur de modèle */
+/* Choix compact : harnais, modèle en liste déroulante, puis raisonnement en curseur. */
+.agent-model-picker__popover {
+  width: 320px;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* Champ de saisie : une ligne de 20 px dans 28 px, centrée sur les boutons « + » et envoi (reference-composer de OneApp). */
+.agent-composer__input {
+  min-width: 0;
+  flex: 1;
+  min-height: 28px;
+  max-height: 240px;
+  padding: 4px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--font-size-panel);
+  line-height: 20px;
+}
+.agent-composer__input::placeholder {
+  color: var(--color-muted);
+}
+.agent-composer__file .agent-composer__remove {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+}
+.agent-composer__folder > svg {
+  flex: none;
+}

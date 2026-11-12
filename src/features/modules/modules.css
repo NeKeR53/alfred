@@ -1,0 +1,131 @@
+/* Écran Modules des Réglages : listes denses et modales. Uniquement les variables de `src/ui/styles.css`. */
+.modules-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.modules-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+}
+.modules-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.modules-list__main {
+  min-width: 0;
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.modules-list__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.modules-list__version {
+  color: var(--color-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.modules-list__meta {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.modules-list__meta--danger {
+  color: var(--color-danger-ink);
+}
+.modules-list__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modules-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 20px;
+  font-size: var(--font-size-body);
+}
+.modules-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.modules-dialog__title {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.modules-dialog__body {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modules-dialog__body h3 {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+.modules-dialog__body p {
+  margin: 0;
+  line-height: 1.45;
+}
+.modules-notes {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  font: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.modules-facts {
+  margin: 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.modules-facts--plain {
+  padding: 0;
+  list-style: none;
+}
+.modules-facts code {
+  font-size: var(--font-size-secondary);
+}
+.modules-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.modules-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modules-add-error {
+  margin-top: 4px;
+}

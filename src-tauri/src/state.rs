@@ -1,0 +1,159 @@
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+
+use rusqlite::Connection;
+use serde_json::Value;
+use tokio::sync::{broadcast, oneshot};
+
+use crate::error::{AppError, AppResult};
+use crate::events::AppEvent;
+use crate::space::Space;
+
+/// Port fixe du serveur local en développement, pour que le navigateur de test retrouve le pont HTTP.
+pub const DEV_PORT: u16 = 14731;
+
+pub struct ServerInfo {
+    pub port: u16,
+}
+
+/// Réponse attendue de l’interface (exécution d’une fonction, carte de placement, accord de permission).
+pub type Pending = oneshot::Sender<Result<Value, String>>;
+
+pub struct AppState {
+    /// Données d’Alfred hors de l’espace : réglages, accords, journal, index des conversations, marketplaces.
+    pub data_dir: PathBuf,
+    pub events: broadcast::Sender<AppEvent>,
+    space: RwLock<Option<Space>>,
+    pub app_db: Mutex<Connection>,
+    pub server: OnceLock<ServerInfo>,
+    pub pending: Mutex<HashMap<String, Pending>>,
+    /// Demandes déjà prises en charge par une interface (`ui.claim`) : chacune ne s’exécute qu’une fois, même si
+    /// plusieurs interfaces écoutent (fenêtre et navigateur de test en développement).
+    claimed: Mutex<HashSet<String>>,
+    pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    /// Jeton des outils d’Alfred remis à chaque processus d’agent → conversation qui l’a lancé.
+    pub agent_tokens: Mutex<HashMap<String, String>>,
+}
+
+impl AppState {
+    pub fn new(data_dir: &Path) -> AppResult<Arc<Self>> {
+        std::fs::create_dir_all(data_dir)?;
+        let app_db = Connection::open(data_dir.join("alfred.sqlite"))?;
+        crate::app_db::migrate(&app_db)?;
+        let (events, _) = broadcast::channel(1024);
+        Ok(Arc::new(Self {
+            data_dir: data_dir.to_path_buf(),
+            events,
+            space: RwLock::new(None),
+            app_db: Mutex::new(app_db),
+            server: OnceLock::new(),
+            pending: Mutex::new(HashMap::new()),
+            claimed: Mutex::new(HashSet::new()),
+            watcher: Mutex::new(None),
+            agent_tokens: Mutex::new(HashMap::new()),
+        }))
+    }
+
+    pub fn emit(&self, name: &str, payload: Value) {
+        // Aucun abonné : l’événement est simplement perdu.
+        let _ = self.events.send(AppEvent { name: name.to_string(), payload });
+    }
+
+    pub fn space(&self) -> AppResult<Space> {
+        self.space
+            .read()
+            .ok()
+            .and_then(|space| space.clone())
+            .ok_or_else(|| AppError::new("Aucun espace n’est ouvert."))
+    }
+
+    pub fn try_space(&self) -> Option<Space> {
+        self.space.read().ok().and_then(|space| space.clone())
+    }
+
+    pub fn set_space(&self, space: Option<Space>) {
+        if let Ok(mut current) = self.space.write() {
+            *current = space;
+        }
+    }
+
+    pub fn server(&self) -> AppResult<&ServerInfo> {
+        self.server.get().ok_or_else(|| AppError::new("Le serveur local d’Alfred n’a pas démarré."))
+    }
+
+    /// Demande quelque chose à l’interface et attend sa réponse (`ui.resolve`).
+    pub async fn ask_ui(&self, name: &str, mut payload: Value, timeout: std::time::Duration) -> AppResult<Value> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.insert(id.clone(), sender);
+        }
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("requestId".to_string(), Value::String(id.clone()));
+        }
+        self.emit(name, payload);
+        let answer = tokio::time::timeout(timeout, receiver).await;
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&id);
+        }
+        if let Ok(mut claimed) = self.claimed.lock() {
+            claimed.remove(&id);
+        }
+        // Tranchée (ou abandonnée) : les interfaces qui l’affichent encore la retirent (accord, question d’agent).
+        self.emit("ui:resolved", serde_json::json!({ "requestId": id }));
+        match answer {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(message))) => Err(AppError::new(message)),
+            Ok(Err(_)) => Err(AppError::new("L’interface d’Alfred n’a pas répondu.")),
+            Err(_) => Err(AppError::new("Délai dépassé : l’interface d’Alfred n’a pas répondu à temps.")),
+        }
+    }
+
+    /// Réserve une demande en attente à l’interface qui la prend la première ; `false` pour les suivantes et pour
+    /// une demande qui n’attend plus. Le backend diffuse ses demandes à toutes les interfaces connectées : sans
+    /// cette réservation, une fonction s’exécutait une fois par interface, écritures comprises.
+    pub fn claim_ui(&self, id: &str) -> bool {
+        let waiting = self.pending.lock().is_ok_and(|pending| pending.contains_key(id));
+        waiting && self.claimed.lock().is_ok_and(|mut claimed| claimed.insert(id.to_string()))
+    }
+
+    pub fn resolve_ui(&self, id: &str, result: Result<Value, String>) -> AppResult<()> {
+        let sender = self.pending.lock().ok().and_then(|mut pending| pending.remove(id));
+        match sender {
+            Some(sender) => {
+                let _ = sender.send(result);
+                Ok(())
+            }
+            None => Err(AppError::new("Cette demande n’attend plus de réponse.")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_request_is_claimed_by_a_single_interface() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let mut events = state.events.subscribe();
+        let asking = state.clone();
+        let answer = tokio::spawn(async move {
+            asking.ask_ui("function:call", serde_json::json!({}), std::time::Duration::from_secs(5)).await
+        });
+        let event = events.recv().await.unwrap();
+        let id = event.payload["requestId"].as_str().unwrap().to_string();
+
+        assert!(state.claim_ui(&id), "la première interface obtient la demande");
+        assert!(!state.claim_ui(&id), "les suivantes ne l’exécutent pas");
+        assert!(!state.claim_ui("inconnue"), "une demande qui n’attend rien ne se réserve pas");
+
+        state.resolve_ui(&id, Ok(Value::Bool(true))).unwrap();
+        assert_eq!(answer.await.unwrap().unwrap(), Value::Bool(true));
+        assert!(!state.claim_ui(&id), "une demande terminée ne se réserve plus");
+        let resolved = events.recv().await.unwrap();
+        assert_eq!((resolved.name.as_str(), resolved.payload["requestId"].as_str()), ("ui:resolved", Some(id.as_str())));
+    }
+}

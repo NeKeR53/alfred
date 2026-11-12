@@ -1,0 +1,104 @@
+/*
+ * Couleur d’accent choisie par l’utilisateur : la coquille et chaque cadre posent `data-accent` sur <html> ; sans
+ * attribut, l’accent par défaut d’Alfred (styles.css) s’applique. Teintes et saturations reprennent celles des
+ * entrées de menu (`.product-color--*`) ; la clarté est réglée pour un contraste d’au moins 4,5:1 sur --color-bg et
+ * --color-surface, en clair comme en sombre (--color-primary) et d’au moins 6,4:1 pour --color-primary-strong.
+ */
+:root[data-accent="steel"] {
+  --color-primary: oklch(0.53 0.06 220);
+  --color-primary-strong: oklch(0.45 0.055 220);
+}
+:root[data-accent="blue"] {
+  --color-primary: oklch(0.535 0.15 250);
+  --color-primary-strong: oklch(0.455 0.127 250);
+}
+:root[data-accent="violet"] {
+  --color-primary: oklch(0.555 0.18 300);
+  --color-primary-strong: oklch(0.475 0.166 300);
+}
+:root[data-accent="pink"] {
+  --color-primary: oklch(0.56 0.18 350);
+  --color-primary-strong: oklch(0.48 0.166 350);
+}
+:root[data-accent="red"] {
+  --color-primary: oklch(0.56 0.19 27);
+  --color-primary-strong: oklch(0.48 0.175 27);
+}
+:root[data-accent="orange"] {
+  --color-primary: oklch(0.545 0.135 55);
+  --color-primary-strong: oklch(0.465 0.112 55);
+}
+:root[data-accent="green"] {
+  --color-primary: oklch(0.52 0.14 150);
+  --color-primary-strong: oklch(0.44 0.119 150);
+}
+:root[data-accent="teal"] {
+  --color-primary: oklch(0.525 0.09 190);
+  --color-primary-strong: oklch(0.445 0.076 190);
+}
+:root[data-theme="dark"][data-accent="steel"] {
+  --color-primary: oklch(0.72 0.051 220);
+  --color-primary-strong: oklch(0.8 0.042 220);
+}
+:root[data-theme="dark"][data-accent="blue"] {
+  --color-primary: oklch(0.72 0.136 250);
+  --color-primary-strong: oklch(0.8 0.102 250);
+}
+:root[data-theme="dark"][data-accent="violet"] {
+  --color-primary: oklch(0.72 0.153 300);
+  --color-primary-strong: oklch(0.8 0.116 300);
+}
+:root[data-theme="dark"][data-accent="pink"] {
+  --color-primary: oklch(0.72 0.153 350);
+  --color-primary-strong: oklch(0.8 0.126 350);
+}
+:root[data-theme="dark"][data-accent="red"] {
+  --color-primary: oklch(0.72 0.162 27);
+  --color-primary-strong: oklch(0.8 0.113 27);
+}
+:root[data-theme="dark"][data-accent="orange"] {
+  --color-primary: oklch(0.72 0.136 55);
+  --color-primary-strong: oklch(0.8 0.112 55);
+}
+:root[data-theme="dark"][data-accent="green"] {
+  --color-primary: oklch(0.72 0.119 150);
+  --color-primary-strong: oklch(0.8 0.098 150);
+}
+:root[data-theme="dark"][data-accent="teal"] {
+  --color-primary: oklch(0.72 0.093 190);
+  --color-primary-strong: oklch(0.8 0.077 190);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme])[data-accent="steel"] {
+    --color-primary: oklch(0.72 0.051 220);
+    --color-primary-strong: oklch(0.8 0.042 220);
+  }
+  :root:not([data-theme])[data-accent="blue"] {
+    --color-primary: oklch(0.72 0.136 250);
+    --color-primary-strong: oklch(0.8 0.102 250);
+  }
+  :root:not([data-theme])[data-accent="violet"] {
+    --color-primary: oklch(0.72 0.153 300);
+    --color-primary-strong: oklch(0.8 0.116 300);
+  }
+  :root:not([data-theme])[data-accent="pink"] {
+    --color-primary: oklch(0.72 0.153 350);
+    --color-primary-strong: oklch(0.8 0.126 350);
+  }
+  :root:not([data-theme])[data-accent="red"] {
+    --color-primary: oklch(0.72 0.162 27);
+    --color-primary-strong: oklch(0.8 0.113 27);
+  }
+  :root:not([data-theme])[data-accent="orange"] {
+    --color-primary: oklch(0.72 0.136 55);
+    --color-primary-strong: oklch(0.8 0.112 55);
+  }
+  :root:not([data-theme])[data-accent="green"] {
+    --color-primary: oklch(0.72 0.119 150);
+    --color-primary-strong: oklch(0.8 0.098 150);
+  }
+  :root:not([data-theme])[data-accent="teal"] {
+    --color-primary: oklch(0.72 0.093 190);
+    --color-primary-strong: oklch(0.8 0.077 190);
+  }
+}

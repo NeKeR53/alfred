@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Alfred</title>
+    <script>
+      document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    </script>
+    <style>
+      /* Couleurs de démarrage : --color-bg et --color-ink de src/ui/styles.css, avant le chargement de la feuille. */
+      :root { color-scheme: light; background: #fbfaf7; color: #1f1e1c; }
+      :root[data-theme="dark"] { color-scheme: dark; background: #232321; color: #eae8e3; }
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

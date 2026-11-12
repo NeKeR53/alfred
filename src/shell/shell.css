@@ -1,0 +1,429 @@
+/* Coquille d’Alfred : ce qui s’ajoute aux styles repris de la bibliothèque. */
+.shell-body {
+  display: flex;
+  min-width: 0;
+}
+.shell-body__main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shell-body__main > .empty-state {
+  margin: auto;
+}
+.page-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: var(--color-bg);
+}
+/*
+ * Onglets de la barre du haut, repris de la barre des Réglages de OneApp : un groupe segmenté calé à droite, qui
+ * défile plutôt que de passer à la ligne quand la place manque.
+ */
+.shell-tabs {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.shell-tabs::-webkit-scrollbar {
+  display: none;
+}
+.shell-tabs > .shell-tabs__list {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.shell-tabs__tab {
+  height: 26px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  white-space: nowrap;
+  transition:
+    background-color 100ms ease-out,
+    color 100ms ease-out;
+}
+.shell-tabs__tab:hover {
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.shell-tabs__tab[aria-selected="true"] {
+  background: var(--color-bg);
+  box-shadow: 0 0 0 1px var(--line);
+  color: var(--color-ink);
+  font-weight: 500;
+}
+.shell-tabs__tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.shell-panel {
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 70%;
+  display: flex;
+  border-left: 1px solid var(--line);
+  background: var(--color-bg);
+}
+.shell-panel__content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shell-panel__resizer {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.shell-panel__resizer:hover,
+.shell-panel__resizer:focus-visible {
+  outline: 0;
+  background: color-mix(in oklch, var(--color-primary) 35%, transparent);
+}
+/* Un cadre capterait le pointeur pendant le glissement du séparateur. */
+.shell-panel__resizer:active ~ .shell-panel__content,
+.shell-body:has(.shell-panel__resizer:active) .page-frame {
+  pointer-events: none;
+}
+
+/* Accueil : aucun espace ouvert. */
+.welcome {
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+.welcome__panel {
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.welcome__panel h1 {
+  margin: 0;
+  font-size: var(--font-size-display);
+  font-weight: 600;
+}
+.welcome__panel p {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+.welcome__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.welcome__path {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.welcome__path > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Notifications */
+.notification-bell {
+  position: relative;
+}
+.notification-bell__count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--color-primary);
+  color: var(--color-on-brand);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.notification-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.notification-panel__header h2 {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+}
+.notification-list {
+  max-height: min(60vh, 480px);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.notification {
+  display: grid;
+  gap: 2px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  border-left: 3px solid var(--color-muted);
+}
+.notification:last-child {
+  border-bottom: 0;
+}
+.notification--success {
+  border-left-color: var(--color-success);
+}
+.notification--warning {
+  border-left-color: var(--color-warning);
+}
+.notification--error {
+  border-left-color: var(--color-danger);
+}
+.notification p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  overflow-wrap: anywhere;
+}
+.notification__tone,
+.notification__meta {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+.notification-toasts {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  right: 16px;
+  bottom: 16px;
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.notification--toast {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-floating);
+  pointer-events: auto;
+}
+
+/* Réorganisation de la navigation : rien n’apparaît au repos, les repères n’existent que pendant le geste. */
+.shell-tab.is-dragging,
+.sidebar-product.is-dragging {
+  opacity: 0.38;
+}
+.sidebar-product.is-drop-before::after,
+.sidebar-product.is-drop-after::after {
+  position: absolute;
+  z-index: 2;
+  right: 3px;
+  left: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-primary);
+  content: "";
+  pointer-events: none;
+}
+.sidebar-product.is-drop-before::after {
+  top: -1px;
+}
+.sidebar-product.is-drop-after::after {
+  bottom: -1px;
+}
+/* Menu replié : le bouton « … » n’a pas la place ; clic droit et Maj+F10 restent disponibles. */
+.app-shell--sidebar-collapsed .sidebar-product .sidebar-product__actions {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .drag-preview {
+    transform: none;
+  }
+}
+.nav-context-menu .ui-menu__group {
+  margin-top: 4px;
+}
+.nav-menu__label {
+  flex: 1;
+  min-width: 0;
+}
+.nav-swatch {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--product-color);
+}
+.ui-menu button.nav-menu__danger {
+  color: var(--color-danger-ink);
+}
+.nav-dialog {
+  width: min(440px, calc(100vw - 32px));
+  overflow: hidden;
+}
+.nav-dialog__header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.nav-dialog__header h2 {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.nav-dialog__body {
+  padding: 16px;
+}
+.nav-dialog__footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+.nav-dialog__preview {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+}
+
+/* Pastille de l’entrée Agent, reprise de `product-agents.css` de OneApp. */
+.product-agents__badge {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-size: var(--font-size-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.product-agents__badge--working > svg {
+  color: var(--color-primary);
+}
+.product-agents__badge--attention {
+  border-color: color-mix(in oklch, var(--color-primary) 45%, var(--line));
+  background: color-mix(in oklch, var(--color-primary) 8%, var(--color-bg));
+  color: var(--color-primary-strong);
+}
+.product-agents__badge--done > svg {
+  color: var(--color-success-ink);
+}
+.product-agents__mark {
+  font-weight: 700;
+}
+.product-agents__badge.is-collapsed {
+  position: absolute;
+  top: -7px;
+  right: -11px;
+  height: 14px;
+  gap: 1px;
+  padding: 0 3px;
+  border-radius: 7px;
+}
+.product-agents__badge.is-collapsed > svg {
+  display: none;
+}
+@media (forced-colors: active) {
+  .product-agents__badge--attention {
+    border-color: Highlight;
+  }
+}
+
+/*
+ * Rubriques intégrées des Réglages, comme celles de OneApp (`settings-section-header`) : chaque section ouvre sur un
+ * en-tête à filet de toute la largeur, titre et actions sur la colonne centrée de 880 px, puis son contenu dans cette
+ * même colonne. Les pages de l’espace placées dans les Réglages gardent leur propre mise en page.
+ */
+.shell-body--settings {
+  --settings-column: 880px;
+  --settings-inline: max(16px, calc((100% - var(--settings-column)) / 2));
+}
+.shell-body--settings .al-page__body {
+  padding: 0 0 24px;
+  gap: 0;
+}
+.shell-body--settings .al-page__body--text > * {
+  max-width: none;
+}
+.shell-body--settings .al-page__body > .al-section {
+  gap: 0;
+}
+.shell-body--settings .al-page__body > .al-section > .al-section__header {
+  min-height: 40px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px var(--settings-inline);
+  border-bottom: 1px solid var(--line);
+  background: var(--color-bg);
+}
+.shell-body--settings .al-page__body > .al-section > .al-section__header .al-section__title {
+  flex: 1 1 320px;
+}
+.shell-body--settings .al-page__body > .al-section > .al-section__header h2 {
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+  line-height: normal;
+}
+.shell-body--settings .al-page__body > .al-section > .al-section__header p {
+  max-width: 72ch;
+  margin-top: 3px;
+}
+.shell-body--settings .al-page__body > .al-section > .al-section__actions {
+  justify-content: flex-end;
+}
+.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog),
+.shell-body--settings .al-page__body > :not(.al-section, dialog) {
+  width: auto;
+  margin: 16px var(--settings-inline) 8px;
+}
+.shell-body--settings .al-page__body > .al-section + .al-section {
+  margin-top: 16px;
+}
+.shell-body--settings .al-page > .page-toolbar {
+  padding-inline: var(--settings-inline);
+}

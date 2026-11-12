@@ -1,0 +1,31 @@
+/* Modale de formulaire des Réglages : en-tête, corps défilant, actions. Uniquement les variables de `src/ui/styles.css`. */
+.settings-dialog {
+  width: min(520px, calc(100vw - 32px));
+  overflow: hidden;
+}
+.settings-dialog > form {
+  max-height: min(720px, calc(100vh - 32px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.settings-dialog__header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-dialog__header h2 {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.settings-dialog__body {
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.settings-dialog__footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}

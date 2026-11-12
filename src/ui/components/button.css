@@ -1,0 +1,63 @@
+.icon-button:disabled,
+.table-icon-action:disabled,
+.nav-icon:disabled {
+  color: var(--color-muted);
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+@media (forced-colors: active) {
+  .icon-button:disabled,
+  .table-icon-action:disabled,
+  .nav-icon:disabled {
+    color: GrayText;
+    opacity: 1;
+  }
+}
+
+.ui-tooltip {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  z-index: var(--z-tooltip);
+  width: max-content;
+  max-width: min(240px, calc(100vw - 24px));
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  background: var(--color-ink);
+  color: var(--color-bg);
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.ui-tooltip--preview {
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  box-shadow: 0 4px 8px color-mix(in oklch, var(--color-ink) 16%, transparent);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
+.ui-tooltip {
+  animation: tooltip-appear 100ms ease-out;
+}
+@keyframes tooltip-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-tooltip {
+    animation: none;
+  }
+}

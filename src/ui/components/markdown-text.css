@@ -1,0 +1,161 @@
+.markdown-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.markdown-text > :first-child {
+  margin-top: 0;
+}
+.markdown-text > :last-child {
+  margin-bottom: 0;
+}
+.markdown-text p {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+.markdown-text :is(h3, h4, h5, h6) {
+  margin: 20px 0 8px;
+  line-height: 1.4;
+  font-size: 1em;
+  font-weight: 600;
+}
+.markdown-text h3 {
+  font-size: 1.125em;
+}
+.markdown-text :is(ul, ol) {
+  margin: 8px 0 12px;
+  padding-left: 24px;
+}
+.markdown-text li {
+  margin: 4px 0;
+}
+.markdown-text li > :is(ul, ol) {
+  margin: 4px 0;
+}
+.markdown-text li > p {
+  margin: 4px 0;
+}
+.markdown-text blockquote {
+  margin: 12px 0;
+  padding: 8px 12px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  border-radius: var(--radius-control);
+}
+.markdown-text blockquote > :last-child {
+  margin-bottom: 0;
+}
+.markdown-text a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.markdown-text__file-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.markdown-text__file-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.markdown-text code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+.markdown-text :not(pre) > code {
+  padding: 2px 4px;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-strong);
+  box-decoration-break: clone;
+}
+.markdown-text__code {
+  position: relative;
+  max-width: 100%;
+  margin: 12px 0;
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+.markdown-text__code-actions {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-inline-start: 4px;
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  opacity: 0;
+  pointer-events: none;
+}
+.markdown-text__code:hover .markdown-text__code-actions,
+.markdown-text__code:focus-within .markdown-text__code-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.markdown-text pre {
+  box-sizing: border-box;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  color: var(--color-ink);
+  line-height: 1.6;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.markdown-text pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-text__table {
+  max-width: 100%;
+  overflow: auto;
+  margin: 12px 0;
+}
+.markdown-text table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 0.9375em;
+}
+.markdown-text :is(th, td) {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.markdown-text th {
+  font-weight: 600;
+  background: var(--color-surface);
+}
+.markdown-text hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.markdown-text .contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+.markdown-text .task-list-item > input {
+  margin: 0 8px 0 0;
+  accent-color: var(--color-primary);
+}
+.markdown-text :is(a, pre, .markdown-text__table):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Texte brut affiché le temps de charger le rendu Markdown : mêmes retours à la ligne, sans mise en forme. */
+.markdown-text--pending {
+  white-space: pre-wrap;
+}

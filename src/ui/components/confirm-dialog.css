@@ -1,0 +1,19 @@
+.confirm-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+}
+.confirm-dialog__title {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.confirm-dialog__message {
+  margin-top: 8px;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+.confirm-dialog > .form-actions {
+  margin-top: 20px;
+}

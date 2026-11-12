@@ -1,0 +1,13 @@
+node_modules
+dist
+target
+src-tauri/target
+src-tauri/runtime
+src-tauri/gen
+src/runtime/generated
+.idea
+.vscode
+*.log
+*.tsbuildinfo
+.scratch/
+*.config.d.ts

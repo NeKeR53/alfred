@@ -1,0 +1,4 @@
+/* Modale « Essayer une fonction » : la structure vient de `settings-dialog.css`, seule la largeur change. */
+.function-try-dialog {
+  width: min(640px, calc(100vw - 32px));
+}

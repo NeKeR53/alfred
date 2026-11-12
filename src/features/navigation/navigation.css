@@ -1,0 +1,46 @@
+/* Onglet « Navigation » des Réglages. Uniquement les variables de `src/ui/styles.css`. */
+.nav-settings__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nav-settings__section {
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.nav-settings__section:last-child {
+  border-bottom: 0;
+}
+.nav-settings__list--pages {
+  margin-left: 26px;
+}
+.nav-settings__section > .al-text,
+.nav-settings__section > p {
+  margin-left: 26px;
+}
+.nav-settings__row {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.nav-settings__name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nav-settings__icon {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  flex: 0 0 18px;
+  place-items: center;
+  color: var(--product-color);
+}
+.nav-settings__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}

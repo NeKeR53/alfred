@@ -1,0 +1,82 @@
+.al-table-scroll {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.al-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: var(--font-size-body);
+}
+.al-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+.al-table th > button {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+}
+.al-table th > button:hover {
+  color: var(--color-ink);
+}
+.al-table th > button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.al-table th > .al-table__header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+}
+.al-table th.al-table__end > :is(button, .al-table__header) {
+  justify-content: flex-end;
+}
+.al-table__sort {
+  width: 10px;
+}
+.al-table td {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.al-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.al-table__end {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.al-table__row--clickable:hover {
+  background: var(--color-surface);
+}
+.al-table__row--clickable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.al-table tr[aria-selected="true"] {
+  background: color-mix(in oklch, var(--color-primary) 8%, transparent);
+}
