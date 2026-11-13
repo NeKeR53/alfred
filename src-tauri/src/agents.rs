@@ -490,6 +490,11 @@ pub fn shutdown() {
     }
 }
 
+/// Lit `loggedIn` dans la sortie JSON de `claude auth status` ; une sortie illisible laisse l’état inconnu.
+fn claude_logged_in(stdout: &[u8]) -> Option<bool> {
+    serde_json::from_slice::<Value>(stdout).ok()?.get("loggedIn")?.as_bool()
+}
+
 /// Vérifie l’installation d’un harnais : version et, quand le CLI sait le dire, état de la connexion.
 async fn probe(args: &Value) -> AppResult<Value> {
     let provider: Provider = arg(args, "provider")?;
@@ -507,7 +512,10 @@ async fn probe(args: &Value) -> AppResult<Value> {
         .map(|output| String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or_default().trim().to_string());
     let logged_in = match provider {
         Provider::Codex => run(&["login", "status"]).await.ok().and_then(Result::ok).map(|output| output.status.success()),
-        _ => None,
+        // `claude auth status` répond en JSON, avec un code de sortie non nul quand personne n’est connecté.
+        Provider::Claude => run(&["auth", "status"]).await.ok().and_then(Result::ok).and_then(|output| claude_logged_in(&output.stdout)),
+        // OpenCode n’a pas d’état de connexion unique : ses modèles gratuits répondent sans compte.
+        Provider::Opencode => None,
     };
     Ok(json!({ "installed": version.is_some(), "version": version, "loggedIn": logged_in }))
 }
@@ -524,6 +532,13 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_auth_status_gives_login_state() {
+        assert_eq!(claude_logged_in(br#"{"loggedIn": false, "authMethod": "none"}"#), Some(false));
+        assert_eq!(claude_logged_in(br#"{"loggedIn": true, "authMethod": "claude.ai"}"#), Some(true));
+        assert_eq!(claude_logged_in(b"Not logged in"), None);
+    }
+
     use super::*;
 
     #[test]

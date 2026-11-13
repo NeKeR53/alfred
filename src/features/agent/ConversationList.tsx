@@ -1,4 +1,5 @@
-import { CircleAlert, CircleCheck, FileDiff, LoaderCircle } from "lucide-react";
+import { IconButton } from "@alfred/ui";
+import { Archive, CircleAlert, CircleCheck, FileDiff, LoaderCircle } from "lucide-react";
 import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader, ConversationRuntime } from "./model";
 import {
@@ -88,11 +89,14 @@ export function ConversationList({
   activeId,
   active,
   panel,
+  onArchive,
 }: {
   conversations: readonly ConversationHeader[];
   activeId: string | null;
   active?: Conversation;
   panel: InfoPanelState;
+  /** Les conversations terminées s’archivent depuis leur ligne, comme les agents de OneApp. */
+  onArchive?: (header: ConversationHeader) => void;
 }) {
   const open = useAgents((state) => state.open);
   const runtime = useAgents((state) => state.runtime);
@@ -107,7 +111,7 @@ export function ConversationList({
   const attention = conversations.filter(({ id }) => ["attention", "error"].includes(states.get(id) ?? ""));
   const working = conversations.filter(({ id }) => states.get(id) === "working");
   const done = conversations.filter((header) => !attention.includes(header) && !working.includes(header));
-  const rows = (list: readonly ConversationHeader[], empty: string) => (
+  const rows = (list: readonly ConversationHeader[], empty: string, archivable = false) => (
     <InfoPanelRows
       empty={empty}
       rows={list.map((header) => {
@@ -127,6 +131,17 @@ export function ConversationList({
           title: `${header.title}\n${details}`,
           selected: header.id === activeId,
           onSelect: () => void open(header.id),
+          action:
+            archivable && onArchive ? (
+              <IconButton
+                size="small"
+                label={`Archiver ${header.title}`}
+                tooltip="Archiver"
+                onClick={() => onArchive(header)}
+              >
+                <Archive size={14} aria-hidden="true" />
+              </IconButton>
+            ) : undefined,
         };
       })}
     />
@@ -149,7 +164,7 @@ export function ConversationList({
       id: "done",
       title: "Terminées",
       summary: done.length ? String(done.length) : undefined,
-      content: rows(done, "Aucune conversation terminée."),
+      content: rows(done, "Aucune conversation terminée.", true),
     },
     { id: "changes", title: "Modifications", content: <ChangedFiles conversation={active} /> },
   ];

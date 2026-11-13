@@ -1,46 +1,41 @@
 /**
- * Erreurs rapportées par les cadres affichés. L’agent les lit (outil `check`) pour corriger ses pages ; elles
- * viennent pourtant de la page elle-même, donc d’un code non fiable : seuls des champs typés et bornés passent.
+ * Erreurs rapportées par les cadres affichés. L’agent les lit (outil `check`) pour corriger ses pages. Le texte
+ * d’une erreur d’exécution est écrit par le code de la page, qui tourne dans le même cadre que l’hôte qui la
+ * rapporte : impossible de distinguer une vraie erreur d’une consigne déguisée. L’agent ne reçoit donc aucun texte
+ * venu du cadre, seulement l’emplacement de l’erreur dans les fichiers du module ; il lit lui-même le code à cet
+ * endroit. Les erreurs de compilation, elles, sont calculées par Alfred et rendues par `check` (`pages[].errors`).
  */
 
 export interface FrameError {
   phase: "load" | "render" | "runtime";
-  message: string;
-  diagnostics?: Array<{ message: string; line?: number; column?: number }>;
-  stack?: string;
+  /** Fichier du module où l’erreur est survenue, tel que le cadre l’a chargé (`modules/<module>/pages/<page>`). */
+  file?: string;
+  line?: number;
+  column?: number;
+  /** Toujours vrai : le message, écrit par la page, n’est pas transmis. */
+  messageWithheld: true;
 }
 
 /** Dernière erreur rapportée par chaque page affichée ; l’agent la lit pour se corriger. */
 export const frameErrors = new Map<string, FrameError>();
 
-const MAX_MESSAGE = 1_000;
-const MAX_STACK = 4_000;
-const MAX_DIAGNOSTICS = 20;
+/** Adresse d’un fichier de module dans une pile d’appels : `/m/<module>/<clé>/<chemin>[?…]:<ligne>:<colonne>`. */
+const FRAME =
+  /\/m\/([a-z0-9-]+)\/[0-9a-f]{32}\/((?:pages|functions|lib)(?:\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9]+)?)+)(?:\?[^\s:)]*)?:(\d{1,7}):(\d{1,7})/g;
 
-function text(value: unknown, limit: number): string {
-  const raw = typeof value === "string" ? value : value === undefined || value === null ? "" : String(value);
-  return raw.length > limit ? `${raw.slice(0, limit)}…` : raw;
-}
-
-function position(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
-}
-
-/** Relit l’erreur envoyée par un cadre : phase connue, textes tronqués, diagnostics limités. */
-export function sanitizeFrameError(payload: unknown): FrameError {
+/** Relit l’erreur envoyée par le cadre du module `module` : la phase, et l’emplacement trouvé dans sa pile. */
+export function sanitizeFrameError(payload: unknown, module: string): FrameError {
   const value = (typeof payload === "object" && payload !== null ? payload : {}) as Record<string, unknown>;
   const phase = value.phase === "load" || value.phase === "render" ? value.phase : "runtime";
-  const error: FrameError = { phase, message: text(value.message, MAX_MESSAGE) };
-  if (Array.isArray(value.diagnostics)) {
-    error.diagnostics = value.diagnostics.slice(0, MAX_DIAGNOSTICS).map((item) => {
-      const diagnostic = (typeof item === "object" && item !== null ? item : {}) as Record<string, unknown>;
-      return {
-        message: text(diagnostic.message, MAX_MESSAGE),
-        line: position(diagnostic.line),
-        column: position(diagnostic.column),
-      };
-    });
+  const error: FrameError = { phase, messageWithheld: true };
+  const stack = typeof value.stack === "string" ? value.stack.slice(0, 20_000) : "";
+  for (const match of stack.matchAll(FRAME)) {
+    const [, owner, path, line, column] = match;
+    if (owner !== module) continue;
+    error.file = `modules/${owner}/${path}`;
+    error.line = Number(line);
+    error.column = Number(column);
+    break;
   }
-  if (value.stack !== undefined) error.stack = text(value.stack, MAX_STACK);
   return error;
 }

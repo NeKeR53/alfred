@@ -11,5 +11,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     restoreMocks: true,
     clearMocks: true,
+    // jsdom fournit `localStorage` aux tests ; celui, expérimental, de Node ne sert pas et avertit à chaque worker.
+    execArgv: ["--no-experimental-webstorage"],
   },
 });

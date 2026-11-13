@@ -28,6 +28,7 @@ import {
   marketplaceApi,
 } from "./api";
 import { InstallDialog, PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
+import { MergeDialog, modulePages, SplitDialog } from "./reorganize";
 import { countPendingUpdates, useModuleUpdatesStore } from "./useModuleUpdates";
 import "./modules.css";
 
@@ -39,7 +40,9 @@ type Opened =
   | { kind: "update"; module: string }
   | { kind: "uninstall"; module: ModuleSummary }
   | { kind: "publish"; module: ModuleSummary }
-  | { kind: "install"; module: CatalogModule };
+  | { kind: "install"; module: CatalogModule }
+  | { kind: "merge"; module: ModuleSummary }
+  | { kind: "split"; module: ModuleSummary };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
@@ -372,7 +375,11 @@ export function ModulesSettings() {
                           <MenuAction onSelect={() => void detach(module)}>Détacher…</MenuAction>
                         </>
                       ) : (
-                        <MenuAction onSelect={() => setOpened({ kind: "publish", module })}>Publier…</MenuAction>
+                        <>
+                          <MenuAction onSelect={() => setOpened({ kind: "publish", module })}>Publier…</MenuAction>
+                          <MenuAction onSelect={() => setOpened({ kind: "merge", module })}>Fusionner avec…</MenuAction>
+                          <MenuAction onSelect={() => setOpened({ kind: "split", module })}>Scinder…</MenuAction>
+                        </>
                       )}
                       <MenuAction onSelect={() => setOpened({ kind: "uninstall", module })}>
                         {installed ? "Désinstaller…" : "Supprimer…"}
@@ -616,6 +623,38 @@ export function ModulesSettings() {
             notify({
               title: `${opened.module.name} installé`,
               description: "Il apparaît dans la navigation, en lecture seule.",
+              tone: "success",
+            });
+          }}
+        />
+      ) : null}
+      {opened?.kind === "merge" ? (
+        <MergeDialog
+          module={opened.module}
+          modules={modules}
+          onClose={() => setOpened(null)}
+          onMerged={(target) => {
+            setOpened(null);
+            void afterSpaceChange();
+            notify({
+              title: `${opened.module.name} fusionné dans ${target.name}`,
+              description: "Annulable depuis l’historique de l’espace.",
+              tone: "success",
+            });
+          }}
+        />
+      ) : null}
+      {opened?.kind === "split" ? (
+        <SplitDialog
+          module={opened.module}
+          pages={modulePages(useShell.getState().snapshot, opened.module.id)}
+          onClose={() => setOpened(null)}
+          onSplit={(_created, name) => {
+            setOpened(null);
+            void afterSpaceChange();
+            notify({
+              title: `Module ${name} créé`,
+              description: `Pages reprises de ${opened.module.name}. Annulable depuis l’historique de l’espace.`,
               tone: "success",
             });
           }}

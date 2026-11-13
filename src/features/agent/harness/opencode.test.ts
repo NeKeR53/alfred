@@ -15,7 +15,14 @@ const modelOption = {
     { value: "openai/gpt-5", name: "GPT-5" },
   ],
 };
-const effortOption = { id: "variant", category: "thought_level", options: [{ value: "low" }, { value: "high" }] };
+/** Forme réelle d’OpenCode 2.1 : la valeur « default » s’ajoute aux efforts du modèle. */
+const effortOption = {
+  id: "effort",
+  category: "thought_level",
+  type: "select",
+  currentValue: "default",
+  options: [{ value: "low" }, { value: "high" }, { value: "default" }],
+};
 
 /** Faux `opencode acp` : poignée de main, nouvelle session, réglage du modèle ; les tours sont répondus par le test. */
 function acpServer(process: FakeProcess) {
@@ -96,6 +103,20 @@ describe("OpenCode · ouverture", () => {
     ]);
   });
 
+  it("règle les autorisations selon l’autonomie, sans jamais tout refuser", async () => {
+    const config = async (options: Partial<OpenCodeOptions>) =>
+      JSON.parse((await open(options)).launch.options.opencodeConfig!).permissions;
+    expect(await config({ autonomy: "auto" })).toBeUndefined();
+    expect(await config({ autonomy: "strict" })).toEqual(
+      ["edit", "write", "shell", "external_directory"].map((action) => ({ action, resource: "*", effect: "ask" })),
+    );
+    const denied = await config({ withoutTools: true });
+    expect(denied).toContainEqual({ action: "write", resource: "*", effect: "deny" });
+    expect(denied).toContainEqual({ action: "shell", resource: "*", effect: "deny" });
+    // Un refus global coupe aussi l’accès au modèle : OpenCode répond alors « Free usage limit reached ».
+    expect(denied).not.toContainEqual(expect.objectContaining({ action: "*" }));
+  });
+
   it("n’ajoute pas les outils d’Alfred hors d’une conversation", async () => {
     const { launch } = await open({ toolsUrl: "http://127.0.0.1:4100/mcp" });
     expect(JSON.parse(launch.options.opencodeConfig!)).toEqual({
@@ -119,7 +140,7 @@ describe("OpenCode · ouverture", () => {
     expect(process.call("session/new").params).toEqual({ cwd: "/espace/projet", mcpServers: [] });
     expect(process.calls("session/set_config_option").map((call) => call.params)).toEqual([
       { sessionId: SESSION, configId: "model", value: "openai/gpt-5" },
-      { sessionId: SESSION, configId: "variant", value: "high" },
+      { sessionId: SESSION, configId: "effort", value: "high" },
     ]);
     expect(session.sessionId).toBe(SESSION);
     expect(events.view.sessionId).toBe(SESSION);
@@ -243,6 +264,77 @@ describe("OpenCode · un tour", () => {
         detail: "/espace/modules/factures/page.tsx",
         actions: [{ type: "edit", path: "/espace/modules/factures/page.tsx", added: 2, removed: 1 }],
         status: "completed",
+      }),
+    ]);
+  });
+
+  it("présente le script du mode code et un outil d’Alfred (formes réelles d’OpenCode 2.1)", async () => {
+    const opened = await open();
+    const turn = await prompt(opened);
+    opened.process.send(
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "call_c",
+        name: "execute",
+        title: "execute",
+        kind: "other",
+        status: "pending",
+        locations: [],
+        rawInput: {},
+      }),
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_c",
+        status: "completed",
+        kind: "other",
+        title: "execute",
+        locations: [],
+        rawInput: { code: "return await tools.opencode.list_mcp_resources({});" },
+        content: [{ type: "content", content: text("{}") }],
+      }),
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "call_m",
+        name: "alfred_check",
+        title: "alfred_check",
+        kind: "other",
+        status: "completed",
+        locations: [],
+        rawInput: {},
+        content: [{ type: "content", content: text("ok") }],
+      }),
+    );
+    await turn.finish();
+    expect(opened.events.view.activities).toEqual([
+      expect.objectContaining({
+        kind: "command",
+        title: "Script d’outils",
+        detail: "return await tools.opencode.list_mcp_resources({});",
+      }),
+      expect.objectContaining({ kind: "tool", title: "Outil · alfred_check", content: "ok" }),
+    ]);
+  });
+
+  it("compte les lignes d’un fichier créé par l’outil write, qui ne renvoie pas de diff", async () => {
+    const opened = await open();
+    const turn = await prompt(opened);
+    opened.process.send(
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_w",
+        status: "completed",
+        kind: "edit",
+        title: "write",
+        locations: [{ path: "/espace/note.txt" }],
+        rawInput: { path: "/espace/note.txt", content: "un\ndeux\n" },
+        content: [{ type: "content", content: text("Created file successfully: note.txt") }],
+      }),
+    );
+    await turn.finish();
+    expect(opened.events.view.activities).toEqual([
+      expect.objectContaining({
+        kind: "file",
+        actions: [{ type: "edit", path: "/espace/note.txt", added: 2, removed: 0 }],
       }),
     ]);
   });

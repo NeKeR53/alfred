@@ -21,7 +21,8 @@
         "resizable": true,
         "center": true,
         "backgroundColor": "#faf9f5",
-        "dragDropEnabled": true
+        "dragDropEnabled": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-webrtc-ip-handling-policy=disable_non_proxied_udp --webrtc-ip-handling-policy=disable_non_proxied_udp"
       }
     ],
     "security": {

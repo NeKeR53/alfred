@@ -427,3 +427,15 @@
 .shell-body--settings .al-page > .page-toolbar {
   padding-inline: var(--settings-inline);
 }
+
+/* Cadres chargés hors de la vue pour une capture de l’agent (outil `page_snapshot`) : taille d’une fenêtre ordinaire,
+   jamais visibles ni atteignables. */
+.page-snapshot-host {
+  position: fixed;
+  top: 0;
+  left: -20000px;
+  width: 1280px;
+  height: 800px;
+  pointer-events: none;
+  opacity: 0;
+}

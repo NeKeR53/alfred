@@ -61,13 +61,17 @@ function optionValues(value: unknown): Array<{ id: string; name: string }> {
 type PermissionRule = { action: string; resource: string; effect: "allow" | "ask" | "deny" };
 const rule = (action: string, effect: PermissionRule["effect"]): PermissionRule => ({ action, resource: "*", effect });
 
+/** Outils qui écrivent, lancent une commande ou sortent du dossier : refusés à un appel unique. */
+const WRITING_TOOLS = ["edit", "write", "shell", "external_directory", "webfetch", "websearch", "subagent"];
+
 /**
  * Règles d’autorisation d’OpenCode pour une autonomie. OpenCode applique la dernière règle qui correspond, après
  * celles de son agent, qui autorisent tout par défaut : sans règle, il écrit et lance des commandes sans demander.
- * Sans outils (appel unique), tout est refusé : personne ne répondrait à une demande d’accord.
+ * Sans outils (appel unique), les outils d’écriture sont refusés : personne ne répondrait à une demande d’accord.
+ * Jamais de refus global « * » : il couperait aussi l’accès au fournisseur du modèle (`provider.free-limit`).
  */
 export function openCodePermissions(autonomy: Autonomy, tools: boolean, alfred: boolean): PermissionRule[] {
-  if (!tools) return [rule("*", "deny")];
+  if (!tools) return WRITING_TOOLS.map((action) => rule(action, "deny"));
   const rules =
     autonomy === "auto"
       ? []
@@ -328,6 +332,15 @@ function acpActivity(
       content: serializedContent,
     };
   if (tool.kind === "think") return { kind: "analysis", title: "Analyse", content: serializedContent };
+  // Mode code d’OpenCode : l’outil `execute` lance un script qui appelle d’autres outils.
+  if (tool.title === "execute" && typeof tool.input.code === "string")
+    return {
+      kind: "command",
+      title: "Script d’outils",
+      detail: String(tool.input.code),
+      actions: [],
+      content: serializedContent,
+    };
   return {
     kind: "tool",
     title: tool.title ? `Outil · ${tool.title}` : "Outil",
@@ -537,7 +550,9 @@ export async function listOpenCodeModels(cwd: string): Promise<HarnessModel[]> {
           value: model.id,
         });
         const effort = configOptions(updated).find((option) => option.category === "thought_level");
-        models.push({ ...model, efforts: optionValues(effort?.options).map(({ id }) => id) });
+        // « default » d’OpenCode est l’effort par défaut du modèle, qu’Alfred propose déjà.
+        const efforts = optionValues(effort?.options).map(({ id }) => id);
+        models.push({ ...model, efforts: efforts.filter((id) => id !== "default") });
       }
     }
     // La session ouverte pour lire le catalogue n’a pas sa place dans l’historique d’OpenCode.

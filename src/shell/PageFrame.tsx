@@ -5,13 +5,25 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut }
 import { type FrameIdentity, frameContext, handleFrameRequest, onSelectionChange, registerPeer } from "./frameBridge";
 import { frameErrors, sanitizeFrameError } from "./frameErrors";
 import { frameKey } from "./frameKeys";
+import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
 
 /**
  * Affiche une page ou un panneau de l’espace dans un cadre isolé : origine opaque, aucun réseau, et pour seul
  * interlocuteur la coquille, par messages.
  */
-export function PageFrame({ page, kind, host }: { page: ResolvedPage; kind: "page" | "panel"; host?: string }) {
+export function PageFrame({
+  page,
+  kind,
+  host,
+  capture = false,
+}: {
+  page: ResolvedPage;
+  kind: "page" | "panel";
+  host?: string;
+  /** Cadre invisible chargé pour une capture de l’agent : il ne rejoint pas les pairs de la page affichée. */
+  capture?: boolean;
+}) {
   const info = useShell((state) => state.info);
   const revision = useShell((state) => state.revision);
   const theme = useShell((state) => state.theme);
@@ -52,11 +64,16 @@ export function PageFrame({ page, kind, host }: { page: ResolvedPage; kind: "pag
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
+    const snapshot = registerSnapshotTarget(identity.reference, post, capture);
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
       const message = event.data;
       if (message.kind === "event") {
-        if (message.name === "error") frameErrors.set(identity.reference, sanitizeFrameError(message.payload));
+        if (message.name === "error")
+          frameErrors.set(identity.reference, sanitizeFrameError(message.payload, identity.module));
+        // Une page en échec se décrit aussi (son message d’erreur) : elle est prête pour une capture.
+        if (message.name === "ready" || message.name === "error") snapshot.ready();
+        if (message.name === "description") snapshot.receive(message.payload);
         if (message.name === "ready") frameErrors.delete(identity.reference);
         if (message.name === "shortcut") {
           // Rejoué sur la fenêtre de la coquille, comme si la touche y avait été pressée (palette, Cmd+K).
@@ -89,16 +106,19 @@ export function PageFrame({ page, kind, host }: { page: ResolvedPage; kind: "pag
     const stopTheme = useShell.subscribe((state, previous) => {
       if (state.theme !== previous.theme || state.snapshot?.accent !== previous.snapshot?.accent) pushContext();
     });
-    const stopPeer = registerPeer(identity, (message) =>
-      post({ alfred: ALFRED_MESSAGE, kind: "event", name: "peer", payload: message }),
-    );
+    const stopPeer = capture
+      ? () => undefined
+      : registerPeer(identity, (message) =>
+          post({ alfred: ALFRED_MESSAGE, kind: "event", name: "peer", payload: message }),
+        );
     return () => {
+      snapshot.dispose();
       window.removeEventListener("message", onMessage);
       stopPeer();
       stopSelection();
       stopTheme();
     };
-  }, [identity]);
+  }, [identity, capture]);
 
   if (!source) return null;
   return (

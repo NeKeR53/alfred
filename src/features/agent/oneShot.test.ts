@@ -169,8 +169,8 @@ describe("appel unique", () => {
   });
 });
 
-/** Défaut connu de `oneShot.ts`, laissé à corriger dans ce fichier (`it.fails` : échoue aujourd’hui). */
-describe("appel unique · défaut connu", () => {
+/** Régression corrigée dans `oneShot.ts` : une réponse sans JSON lisible est relancée. */
+describe("appel unique · réponse sans JSON", () => {
   it("relance aussi une réponse sans JSON lisible", async () => {
     const spawned = fakeSpawn(
       claudeAnswering([

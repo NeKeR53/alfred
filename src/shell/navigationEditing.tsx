@@ -15,12 +15,14 @@ import {
   TextInput,
   useConfirm,
 } from "@alfred/ui";
-import { ArrowRightLeft, Check, EyeOff, icons, Pencil, Shapes, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Check, EyeOff, History, icons, Pencil, Shapes, Trash2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
+import { PageHistoryDialog } from "../features/navigation/PageHistory";
 import { invoke } from "../lib/native";
 import { SECTION_COLORS, type Snapshot } from "../lib/types";
+import { focusStayed } from "../ui/components/AnchoredMenu";
 import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
 import { DialogHeader } from "./DialogHeader";
 import { NamedIcon } from "./icons";
@@ -205,8 +207,9 @@ export function ContextMenu({
   const id = useId();
   const close = useCallback(() => onClose(), [onClose]);
   const closeAndFocus = () => {
+    const restore = focusStayed(document.querySelector(`[data-context-menu="${id}"]`));
     onClose();
-    if (returnFocus?.isConnected) returnFocus.focus();
+    if (restore && returnFocus?.isConnected) returnFocus.focus();
   };
   useContextMenuDismiss(true, `[data-context-menu="${id}"]`, close);
   const left = Math.max(8, Math.min(anchor.x, window.innerWidth - MENU_WIDTH - 8));
@@ -379,7 +382,8 @@ type OpenMenu =
 type OpenDialog =
   | { kind: "rename-section"; id: string }
   | { kind: "icon"; id: string }
-  | { kind: "rename-page"; reference: string };
+  | { kind: "rename-page"; reference: string }
+  | { kind: "history"; reference: string };
 
 /**
  * Menus et dialogues de la réorganisation, partagés par le menu de gauche et les onglets. `elements` se rend une
@@ -509,6 +513,10 @@ export function useNavigationEditor() {
               </MenuItem>
             ) : null}
           </MenuGroup>
+          <MenuItem onClick={() => setDialog({ kind: "history", reference: page.reference })}>
+            <History size={16} aria-hidden="true" />
+            Historique…
+          </MenuItem>
           <MenuItem onClick={() => void applyLayoutChange((state) => setPageHidden(state, page.reference, true))}>
             <EyeOff size={16} aria-hidden="true" />
             Masquer l’onglet
@@ -546,6 +554,9 @@ export function useNavigationEditor() {
           onClose={closeDialog}
         />
       );
+  } else if (snapshot && dialog?.kind === "history") {
+    const found = findPage(snapshot, dialog.reference);
+    if (found) dialogElement = <PageHistoryDialog page={found.page} onClose={closeDialog} />;
   } else if (snapshot && dialog?.kind === "rename-page") {
     const found = findPage(snapshot, dialog.reference);
     if (found)

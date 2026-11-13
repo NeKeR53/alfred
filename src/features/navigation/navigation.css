@@ -44,3 +44,33 @@
   flex: 0 0 auto;
   gap: 2px;
 }
+
+/* Historique d’une page (dialogue ouvert depuis l’onglet ou depuis cet écran). */
+.nav-dialog--wide {
+  width: min(560px, calc(100vw - 32px));
+}
+.nav-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+.nav-history__row {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.nav-history__row:last-child {
+  border-bottom: 0;
+}
+.nav-history__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}

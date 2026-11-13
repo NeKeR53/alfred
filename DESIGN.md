@@ -106,7 +106,7 @@ Tout s’importe de `@alfred/ui`. Les composants qui prolongent un élément nat
 | Composant | Rôle | Props (défaut) |
 |---|---|---|
 | `Page` | Racine obligatoire | `children`, `toolbar?: ReactNode` (un `PageToolbar`, fixe au-dessus du contenu), `width`: `"full" \| "text"` (`"full"`) |
-| `PageToolbar` | Barre d’actions d’une page. Pas dans un panneau, pas sur une page sans données | `start?: ReactNode` (à gauche : recherche, filtres), `children?: ReactNode` (à droite : actions, la principale en dernier) |
+| `PageToolbar` | Barre d’actions d’une page. Pas dans un panneau, pas sur une page sans données | `start?: ReactNode` (à gauche : recherche, filtres), `children?: ReactNode` (à droite : actions, la principale en dernier) ; accepte les attributs d’un `div` (`aria-*`) |
 | `Section` | Bloc titré ; pas un titre de page | `title: string`, `description?: string`, `actions?: ReactNode` (à droite du titre), `children` |
 | `Stack` | Empile verticalement | `gap` (`"md"`) |
 | `Row` | Aligne horizontalement | `gap` (`"sm"`), `align`: `"start" \| "center" \| "end" \| "stretch" \| "baseline"` (`"center"`), `justify`: `"start" \| "center" \| "end" \| "between"` (`"start"`), `wrap` (`false`) |
@@ -124,7 +124,7 @@ Tout s’importe de `@alfred/ui`. Les composants qui prolongent un élément nat
 | `Text` | Tout texte | `tone` (`"default"`), `size`: `"meta" \| "body" \| "panel"` (`"body"`), `weight`: `"normal" \| "medium" \| "strong"` (`"normal"`), `as`: `"p" \| "span" \| "div"` (`"p"`) |
 | `KeyValueList` | Fiche « libellé : valeur » d’un objet (exemple en 12.2) ; pas pour des données tabulaires | `items: { id?: string \| number; label: string; value: ReactNode }[]` |
 | `Code` | Texte à chasse fixe et chiffres tabulaires : identifiant, chemin, valeur technique ; `block` pour un extrait de plusieurs lignes, qui défile et se joint au clavier | `children`, `block` (`false`), `label` (`"Extrait de code"`, nom du bloc) |
-| `Link` | Lien texte souligné dans une phrase ou une cellule | Avec `href: string` et `onNavigate: (href) => void` : un lien, dont l’adresse web porte l’icône « hors d’Alfred ». Sans `href` : `onClick`, bouton d’apparence lien |
+| `Link` | Lien texte souligné dans une phrase ou une cellule | Avec `href: string` et `onNavigate: (href) => void` : un lien, dont l’adresse web ou `mailto:` porte l’icône « hors d’Alfred ». Sans `href` : `onClick`, bouton d’apparence lien |
 | `Image` | Image venue des données (`data:` ou `blob:` ; une adresse distante affiche son texte de remplacement) | `src`, `alt: string` (obligatoire ; `""` si décorative), `size`: `"sm" \| "md" \| "lg" \| "full"` (`"md"` : 120, 240, 480 px, toute la largeur), `fit`: `"contain" \| "cover"` (`"contain"` ; `cover` : vignette carrée) |
 | `Markdown` | Affiche un texte Markdown venu des données (note, réponse d’un agent) : titres, listes, tableaux, code. Pas pour composer la page elle-même | `children: string`, `onLink?: (href: string) => void` |
 
@@ -160,7 +160,7 @@ Props : `variant`: `"primary" \| "secondary" \| "danger"` (`"secondary"` ; `prim
 
 **`IconButton`** — action secondaire courante en icône seule (modifier, copier, supprimer, ouvrir). Garder un `Button` pour l’action principale et pour une action rare ou ambiguë.
 
-Props : `label: string` (obligatoire, nom accessible contextualisé), `tooltip`: `string \| false` (`label` ; infobulle courte au survol et au focus), `tone`: `"default" \| "primary" \| "danger"`, `size`: `"default" \| "small"` (28 px ; `small` : 24 px dans une ligne dense), `appearance`: `"default" \| "table"` (`table` dans une cellule), `loading`, `loadingLabel`.
+Props : `label: string` (obligatoire, nom accessible contextualisé), `tooltip`: `string \| false` (`label` ; infobulle courte au survol et au focus), `tone`: `"default" \| "primary" \| "danger"`, `size`: `"default" \| "small"` (28 px ; `small` : 24 px dans une ligne dense ; `compact`, ancien alias, vaut `default`), `appearance`: `"default" \| "table"` (`table` dans une cellule), `loading`, `loadingLabel`, `buttonRef?` (référence au bouton, pour y ancrer un volet), `tooltipPlacement`: `"auto" \| "right"` (`"auto"` ; `right` dans une colonne verticale), `tooltipAppearance`: `"default" \| "preview"` (`preview` : infobulle plus large, pour un aperçu de quelques lignes).
 
 ```tsx
 <IconButton label="Supprimer la tâche « Relancer le client »" tooltip="Supprimer" tone="danger" onClick={supprimer}>
@@ -176,7 +176,7 @@ Props : `label: string` (obligatoire, nom accessible contextualisé), `tooltip`:
 
 **`OverflowMenu`**, **`MenuButton`**, **`MenuItem`**, **`MenuGroup`** — menus d’actions ancrés à leur bouton. Le composant place le menu (dessous, ou dessus si la place manque), l’ouvre au clic, le ferme sur Échap, Tab, un clic à côté ou après l’action de l’entrée choisie, et rend le focus au bouton. Ne jamais positionner un menu soi-même ; ne pas y cacher l’action principale.
 
-- `OverflowMenu` : bouton « ⋯ » des actions secondaires d’une barre ou d’une ligne. Props : `label: string` (obligatoire, nom du bouton et du menu), `children`, `placement`: `"below" \| "above"` (`"below"`), `align`: `"start" \| "end"` (`"end"`), `icon` (« ⋯ »), `tooltip` (`"Plus"`), `size`: `"default" \| "small"`, `disabled`.
+- `OverflowMenu` : bouton « ⋯ » des actions secondaires d’une barre ou d’une ligne. Props : `label: string` (obligatoire, nom du bouton et du menu), `children`, `placement`: `"below" \| "above"` (`"below"`), `align`: `"start" \| "end"` (`"end"`), `icon` (« ⋯ »), `tooltip` (`"Plus"`), `size`: `"default" \| "small"` (`compact`, ancien alias, vaut `default`), `disabled`.
 - `MenuButton` : bouton texte suivi d’un chevron, pour un choix d’actions de même nature (« Exporter », « Nouveau »). Les flèches l’ouvrent aussi. Props : `label: string` (obligatoire, texte du bouton), `menuLabel?` (nom du menu s’il diffère), `variant` (`"secondary"`), `placement` (`"below"`), `align` (`"start"`), `disabled`, `children`.
 - `MenuItem` : bouton natif (`onClick`, `disabled`) ; `tone`: `"default" \| "danger"` pour une entrée destructrice, toujours confirmée. Une icône en tête est affichée à 16 px. `MenuGroup label` regroupe les entrées au-delà de trois.
 
@@ -220,7 +220,7 @@ Props de `ChoiceGroup` : `label: string` (obligatoire), `appearance`: `"default"
 </ChoiceGroup>
 ```
 
-**`Tabs`** — rubriques d’une même page, quand chacune remplace tout le contenu qui suit (Résumé, Historique). L’onglet actif est souligné (les onglets de la barre du haut, dessinés par Alfred, sont un groupe segmenté) ; flèches, Origine et Fin. Pour une nouvelle vue autonome, créer plutôt une page dans la section. Props : `label: string` (obligatoire), `items: TabItem[]` (`{ id; label; title? }`), `activeId`, `onChange(id)`. Le contenu de la rubrique active suit directement les onglets.
+**`Tabs`** — rubriques d’une même page, quand chacune remplace tout le contenu qui suit (Résumé, Historique). L’onglet actif est souligné (les onglets de la barre du haut, dessinés par Alfred, sont un groupe segmenté) ; flèches gauche et droite, Origine et Fin. Pour une nouvelle vue autonome, créer plutôt une page dans la section. Props : `label: string` (obligatoire), `items: TabItem[]` (`{ id; label; title?; content? }` : `content` remplace le libellé affiché, par exemple une icône, et `title` devient alors obligatoire), `activeId`, `onChange(id)`, `idPrefix?` et `panelId?` (identifiants qui relient l’onglet actif au contenu qu’il affiche, `aria-controls`). Le contenu de la rubrique active suit directement les onglets.
 
 ```tsx
 <Tabs
@@ -238,7 +238,7 @@ Props de `ChoiceGroup` : `label: string` (obligatoire), `appearance`: `"default"
 
 **`FormField`** — porte le libellé, l’aide et l’erreur d’un champ, et les relie au contrôle. Ne pas y placer `CheckboxControl`, `RadioControl` ni `SwitchControl`, qui ont leur propre libellé : un groupe d’options va dans un `Fieldset`.
 
-Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, que l’erreur remplace), `error?` (message d’erreur ; marque le champ invalide), `layout`: `"stacked" \| "inline"` (`inline` : libellé à gauche, dans une barre d’outils), `children` (un `TextInput`, `TextArea`, `SelectControl` ou une combobox).
+Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, que l’erreur remplace), `error?` (message d’erreur ; marque le champ invalide), `layout`: `"stacked" \| "inline"` (`inline` : libellé à gauche, dans une barre d’outils), `children` (un `TextInput`, `TextArea`, `SelectControl` ou une combobox), `htmlFor?` (`id` du contrôle quand ce n’est pas l’enfant direct), `compound` (`false` ; champ qui réunit plusieurs commandes, par exemple une liste et son bouton : passer alors `htmlFor`), `messageId?` (identifiant imposé du message d’aide ou d’erreur). Les autres attributs vont au `label`.
 
 **`TextInput`**, **`TextArea`**, **`SelectControl`** — champs natifs habillés ; ils acceptent les attributs de `<input>`, `<textarea>` et `<select>`. `TextArea` a une prop `variant` (`"default"`, `"composer"`, `"inline"`) : garder `default` dans un formulaire. Exemple en 12.3.
 
@@ -324,7 +324,7 @@ Props : `columns: DataTableColumn<Row>[]`, `rows: Row[]`, `rowKey: (row) => stri
 
 `DataTableColumn<Row>` : `key: string` (identifiant, et clé lue dans la ligne par défaut), `header: ReactNode` (un texte, ou une icône accompagnée de `headerLabel: string`, son nom pour les lecteurs d’écran), `render?: (row) => ReactNode`, `sortValue?: (row) => string | number | null | undefined`, `sortable?: boolean`, `align?: "start" | "end"`, `width?: string` (`"140px"`, `"30%"`).
 
-Tri : une colonne est triable si elle a un `sortValue` ou si `row[key]` est une valeur simple (texte, nombre, booléen) ; sinon son en-tête est un simple texte. Fournir `sortValue` dès que `render` affiche autre chose que `row[key]`, et `sortable: false` pour une colonne qu’il n’a pas de sens de trier. Une ligne activable par `onRowClick` laisse leurs clics et leurs touches aux boutons, liens et champs de ses cellules : une action de ligne y a sa place (`IconButton appearance="table"`, `OverflowMenu size="small"`).
+Tri : une colonne est triable si elle a un `sortValue` ou si `row[key]` est une valeur simple (texte, nombre, booléen) et renseignée sur au moins une ligne ; sinon son en-tête est un simple texte. Fournir `sortValue` dès que `render` affiche autre chose que `row[key]`, et `sortable: false` pour une colonne qu’il n’a pas de sens de trier. Une ligne activable par `onRowClick` laisse leurs clics et leurs touches aux boutons, liens et champs de ses cellules : une action de ligne y a sa place (`IconButton appearance="table"`, `OverflowMenu size="small"`).
 
 **`StatusBadge`** — état textuel compact. Props : `children` (le libellé), `tone` (`"neutral"`), `size`: `"default" \| "compact"` (`compact` dans une cellule, une fiche ou une liste), `title?`. Ni étiquette décorative, ni compteur.
 
@@ -392,7 +392,7 @@ return (
 );
 ```
 
-**`AnchoredPanel`** — volet flottant ouvert contre un bouton, sans voile : la page reste visible. Pour quelques réglages contextuels (filtres), pas pour un formulaire long. Il n’a pas de marge intérieure : y placer une seule `Surface`. Props : `anchor: HTMLElement` (obligatoire, le bouton d’ouverture), `label: string` (obligatoire), `onClose` (obligatoire ; Échap ou clic à côté), `placement`: `"below" \| "right"` (`"below"`), `width` en pixels (`440`), `canClose?: () => boolean` (`false` pendant une opération en cours).
+**`AnchoredPanel`** — volet flottant ouvert contre un bouton, sans voile : la page reste visible. Pour quelques réglages contextuels (filtres), pas pour un formulaire long. Il n’a pas de marge intérieure : y placer une seule `Surface`. Props : `anchor: HTMLElement` (obligatoire, le bouton d’ouverture), `label: string` (obligatoire), `onClose` (obligatoire ; Échap, ou clic à côté tant que rien n’a été saisi dans le volet : après une saisie, le clic à côté est refusé d’un court rebond), `placement`: `"below" \| "right"` (`"below"`), `width` en pixels (`440`), `canClose?: () => boolean` (`false` pendant une opération en cours).
 
 ```tsx
 const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -446,7 +446,7 @@ return (
 
 **`Disclosure`** — contenu secondaire replié (options avancées, détail technique). Ne pas y cacher une information nécessaire à la décision. Props : `label: ReactNode`, `children`, `appearance`: `"default" \| "subtle"` (`subtle` : ligne pleine largeur), `lazy` (`false` ; contenu rendu à la première ouverture), `open` et `onToggle` natifs.
 
-**`InlineEdit`** — valeur modifiable sur place : un clic, F2 ou Entrée ouvre la saisie, Entrée ou un clic à côté enregistre, Échap annule. Pour un titre ou une valeur isolée, pas pour un formulaire. Props : `value` (obligatoire), `label: string` (obligatoire, nom du champ), `onSave(value)` (obligatoire ; peut renvoyer une promesse), `renderEditor(editor)` (obligatoire ; `editor` expose `value`, `setValue`, `commit`, `pending`, `label`), `children` (l’affichage au repos), `mode`: `"line" \| "multiline"` (`"line"` ; en `multiline`, Ctrl+Entrée enregistre), `disabled`, `editing` et `onEditingChange` (ouverture pilotée). Si `onSave` rejette sa promesse, la saisie reste ouverte : notifier l’échec, puis relancer l’erreur. `renderEditor` rend en général `<TextInput autoFocus aria-label={editor.label} value={editor.value} disabled={editor.pending} onChange={…} />`.
+**`InlineEdit`** — valeur modifiable sur place : un clic, F2 ou Entrée ouvre la saisie, Entrée ou un clic à côté enregistre, Échap annule. Pour un titre ou une valeur isolée, pas pour un formulaire. Props : `value` (obligatoire), `label: string` (obligatoire, nom du champ), `onSave(value)` (obligatoire ; peut renvoyer une promesse), `renderEditor(editor)` (obligatoire ; `editor` expose `value`, `setValue`, `commit`, `pending`, `label`), `children` (l’affichage au repos), `mode`: `"line" \| "multiline"` (`"line"` ; en `line`, Maj+Entrée n’enregistre pas ; en `multiline`, Ctrl+Entrée ou Cmd+Entrée enregistre), `disabled`, `editing` et `onEditingChange` (ouverture pilotée). Si `onSave` rejette sa promesse, la saisie reste ouverte : notifier l’échec, puis relancer l’erreur. `renderEditor` rend en général `<TextInput autoFocus aria-label={editor.label} value={editor.value} disabled={editor.pending} onChange={…} />`.
 
 ### 5.7 Exports réservés à la coquille
 

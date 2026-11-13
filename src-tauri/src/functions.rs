@@ -122,6 +122,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             manifest.functions.retain(|declared| declared.id != function);
             space.write_module(&manifest)?;
             let _ = std::fs::remove_file(space.function_file(module, function));
+            crate::permissions::forget_function(state, &reference)?;
             crate::git::commit_all(&space.root, &format!("Suppression de la fonction {reference}"))?;
             state.emit("space:changed", Value::Null);
             Ok(Value::Null)

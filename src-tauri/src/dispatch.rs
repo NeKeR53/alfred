@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, clients, space_db, functions, ai, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages);
+    delegate!(vault, clients, space_db, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -173,6 +173,11 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
 
     let space = Space::open_or_create(path, name)?;
     crate::docs::materialize(&space)?;
+    // Les migrations écrites pendant qu’Alfred était fermé passent dès l’ouverture : les pages trouvent leurs tables.
+    // Une migration en échec n’empêche pas d’ouvrir l’espace ; `check` la signale.
+    if let Err(error) = crate::space_db::apply_migrations(&space) {
+        log::error!("migrations non appliquées à l’ouverture : {}", error.message);
+    }
     git::commit_all(&space.root, "Ouverture de l’espace")?;
     let root = space.root.clone();
     state.set_space(Some(space));

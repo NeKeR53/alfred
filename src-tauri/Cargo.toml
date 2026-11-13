@@ -14,7 +14,8 @@ name = "alfred_lib"
 crate-type = ["rlib"]
 
 [features]
-default = ["custom-protocol"]
+# Activé par `tauri build` (la CLI ajoute `tauri/custom-protocol`) : l’application embarque alors `dist/`. Sans lui,
+# un binaire de développement charge l’interface du serveur Vite (`devUrl`) au lieu d’un `dist/` peut-être périmé.
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
@@ -59,6 +60,9 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -27,6 +27,22 @@ describe("OverflowMenu", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("laisse le focus là où l’action l’a placé (champ de renommage)", async () => {
+    const user = userEvent.setup();
+    const field = document.createElement("input");
+    document.body.append(field);
+    render(
+      <OverflowMenu label="Autres actions">
+        <MenuItem onClick={() => field.focus()}>Renommer</MenuItem>
+      </OverflowMenu>,
+    );
+    await user.click(screen.getByRole("button", { name: "Autres actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Renommer" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(field).toHaveFocus();
+    field.remove();
+  });
+
   it("exécute l’action d’une entrée choisie au clavier", async () => {
     const user = userEvent.setup();
     const archiver = vi.fn();

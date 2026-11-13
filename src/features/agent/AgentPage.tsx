@@ -1,6 +1,15 @@
-import { EmptyState, IconButton, PageTopBar, useConfirm } from "@alfred/ui";
-import { Bot, Trash2 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import {
+  EmptyState,
+  IconButton,
+  InlineEdit,
+  MenuItem,
+  OverflowMenu,
+  PageTopBar,
+  TextInput,
+  useConfirm,
+} from "@alfred/ui";
+import { Archive, Bot, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { NotificationBell } from "../../shell/NotificationCenter";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -28,6 +37,11 @@ export function AgentPage() {
   const open = useAgents((state) => state.open);
   const create = useAgents((state) => state.create);
   const remove = useAgents((state) => state.remove);
+  const rename = useAgents((state) => state.rename);
+  const archive = useAgents((state) => state.archive);
+  const unarchive = useAgents((state) => state.unarchive);
+  const markUnread = useAgents((state) => state.markUnread);
+  const [renaming, setRenaming] = useState(false);
   const { confirm, confirmDialog } = useConfirm();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: les conversations sont celles de l’espace ouvert.
@@ -43,6 +57,17 @@ export function AgentPage() {
   }, [load, spacePath]);
 
   const visible = useMemo(() => headers.filter((header) => !header.archived && header.started), [headers]);
+
+  /** Archive, puis propose de revenir en arrière ; les conversations archivées se retrouvent dans Réglages › Agents. */
+  const archiveConversation = async (id: string, title: string) => {
+    await archive(id);
+    notify({
+      title: "Conversation archivée",
+      description: `${title} · retrouvez-la dans Réglages, onglet Agents.`,
+      tone: "info",
+      action: { label: "Annuler", run: () => void unarchive(id) },
+    });
+  };
 
   // Une conversation est toujours ouverte : la saisie est disponible dès l’arrivée sur la page.
   useEffect(() => {
@@ -62,7 +87,35 @@ export function AgentPage() {
     <section className="agents-page" aria-label="Agent">
       <PageTopBar
         className="agents-page__bar"
-        title={conversation?.title ?? "Agent"}
+        title={
+          <InlineEdit
+            key={conversation?.id}
+            className="agents-page__title-edit"
+            label="Nom de la conversation"
+            value={conversation?.title ?? ""}
+            disabled={!conversation?.started}
+            editing={renaming}
+            onEditingChange={setRenaming}
+            // Vide, l’ancien nom est gardé.
+            onSave={(title) => {
+              if (conversation && title.trim() && title.trim() !== conversation.title)
+                void rename(conversation.id, title);
+            }}
+            renderEditor={(editor) => (
+              <TextInput
+                className="agents-page__title-input"
+                aria-label={editor.label}
+                value={editor.value}
+                maxLength={120}
+                autoFocus
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) => editor.setValue(event.target.value)}
+              />
+            )}
+          >
+            <h1>{conversation?.title ?? "Agent"}</h1>
+          </InlineEdit>
+        }
         context={context}
         panelToggle={{
           hidden: panel.layout.hidden,
@@ -78,6 +131,21 @@ export function AgentPage() {
         >
           <Bot size={16} aria-hidden="true" />
         </IconButton>
+        {conversation?.started ? (
+          <IconButton
+            label={`Archiver ${conversation.title}`}
+            tooltip="Archiver la conversation"
+            onClick={() => void archiveConversation(conversation.id, conversation.title)}
+          >
+            <Archive size={16} aria-hidden="true" />
+          </IconButton>
+        ) : null}
+        {conversation?.started ? (
+          <OverflowMenu label="Autres actions sur la conversation">
+            <MenuItem onClickCapture={() => setRenaming(true)}>Renommer</MenuItem>
+            <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
+          </OverflowMenu>
+        ) : null}
         {conversation && conversation.turns.length > 0 ? (
           <IconButton
             label="Supprimer la conversation"
@@ -124,7 +192,13 @@ export function AgentPage() {
           ) : null}
         </section>
         {panel.layout.hidden ? null : (
-          <ConversationList conversations={visible} activeId={activeId} active={conversation} panel={panel} />
+          <ConversationList
+            conversations={visible}
+            activeId={activeId}
+            active={conversation}
+            panel={panel}
+            onArchive={(header) => void archiveConversation(header.id, header.title)}
+          />
         )}
       </div>
     </section>

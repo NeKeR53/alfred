@@ -292,10 +292,7 @@ describe("conversation d’agent · accords et erreurs", () => {
   });
 });
 
-/**
- * Défauts connus de `store.ts`, laissés à corriger dans ce fichier : ces tests décrivent le comportement attendu et
- * échouent aujourd’hui (`it.fails`). Une fois la correction faite, retirer `.fails`.
- */
+/** Régressions corrigées dans `store.ts` : fin de tour unique et tour interrompu marqué annulé. */
 describe("conversation d’agent · défauts connus", () => {
   it("deux fins de tour rapprochées ne créent qu’un commit", async () => {
     const id = start();

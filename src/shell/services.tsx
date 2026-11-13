@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { invoke, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { callFunction } from "./functionHost";
+import { capturePage, SnapshotFrames } from "./pageSnapshot";
 import { useShell } from "./store";
 
 interface PermissionRequest {
@@ -50,6 +51,16 @@ function bind() {
       .filter(([reference]) => !request.module || reference.startsWith(`${request.module}/`))
       .map(([page, error]) => ({ page, ...error }));
     void resolve(request.requestId, errors);
+  });
+  onNativeEvent("agent:pageSnapshot", async (payload) => {
+    const request = payload as { requestId: string; page: string };
+    // Une seule interface capture la page, même si plusieurs fenêtres sont ouvertes.
+    const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
+    if (!claimed) return;
+    capturePage(request.page).then(
+      (snapshot) => resolve(request.requestId, snapshot),
+      (error) => reject(request.requestId, error),
+    );
   });
   onNativeEvent("permission:ask", (payload) => {
     const request = payload as PermissionRequest;
@@ -117,18 +128,21 @@ export function ShellServices() {
   };
 
   return (
-    <ConfirmDialog
-      open={request !== undefined}
-      title={request ? `Autoriser l’accès ${toResource(request.label)} ?` : ""}
-      message={
-        request
-          ? `${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages, onglet Espace.`
-          : undefined
-      }
-      confirmLabel="Autoriser"
-      cancelLabel="Refuser"
-      onConfirm={() => answer(true)}
-      onCancel={() => answer(false)}
-    />
+    <>
+      <SnapshotFrames />
+      <ConfirmDialog
+        open={request !== undefined}
+        title={request ? `Autoriser l’accès ${toResource(request.label)} ?` : ""}
+        message={
+          request
+            ? `${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages, onglet Espace.`
+            : undefined
+        }
+        confirmLabel="Autoriser"
+        cancelLabel="Refuser"
+        onConfirm={() => answer(true)}
+        onCancel={() => answer(false)}
+      />
+    </>
   );
 }

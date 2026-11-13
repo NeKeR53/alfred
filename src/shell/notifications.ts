@@ -11,13 +11,26 @@ export interface AppNotification {
   read: boolean;
   /** Origine affichée : page, fonction, webhook ou agent. */
   source?: string;
+  /** Action proposée dans la surimpression, par exemple « Annuler » après un archivage. */
+  action?: NotificationAction;
+}
+
+export interface NotificationAction {
+  label: string;
+  run: () => void;
 }
 
 interface NotificationState {
   items: AppNotification[];
   /** Notifications encore affichées en surimpression. */
   toasts: number[];
-  notify: (notification: { title: string; description?: string; tone?: NotificationTone; source?: string }) => void;
+  notify: (notification: {
+    title: string;
+    description?: string;
+    tone?: NotificationTone;
+    source?: string;
+    action?: NotificationAction;
+  }) => void;
   dismissToast: (id: number) => void;
   markAllRead: () => void;
   clear: () => void;
@@ -28,10 +41,13 @@ let nextId = 1;
 export const useNotifications = create<NotificationState>((set) => ({
   items: [],
   toasts: [],
-  notify({ title, description, tone = "info", source }) {
+  notify({ title, description, tone = "info", source, action }) {
     const id = nextId++;
     set((state) => ({
-      items: [{ id, title, description, tone, source, at: Date.now(), read: false }, ...state.items].slice(0, 200),
+      items: [{ id, title, description, tone, source, action, at: Date.now(), read: false }, ...state.items].slice(
+        0,
+        200,
+      ),
       toasts: [...state.toasts, id],
     }));
     // Une erreur reste affichée jusqu’à ce qu’on la ferme ; le reste s’efface seul.

@@ -21,7 +21,7 @@ pub fn table_prefix(module: &str) -> String {
     format!("{}_", module.replace('-', "_"))
 }
 
-fn open(space: &Space) -> AppResult<Connection> {
+pub(crate) fn open(space: &Space) -> AppResult<Connection> {
     std::fs::create_dir_all(space.root.join(LOCAL_DIR))?;
     let db = Connection::open(space.root.join(LOCAL_DIR).join("data.sqlite"))?;
     db.execute_batch(
@@ -40,7 +40,7 @@ fn open(space: &Space) -> AppResult<Connection> {
 }
 
 /// Empreinte d’une migration, insensible aux fins de ligne et aux espaces en fin de fichier.
-fn checksum(sql: &str) -> String {
+pub(crate) fn checksum(sql: &str) -> String {
     use sha2::{Digest, Sha256};
     let normalized = sql.replace("\r\n", "\n");
     Sha256::digest(normalized.trim_end().as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
@@ -150,6 +150,7 @@ pub fn run(space: &Space, module: &str, sql: &str, parameters: &[SqlValue], writ
     if !valid_id(module) {
         return Err(AppError::new("Module inconnu."));
     }
+    apply_pending_for(space, module)?;
     let db = open(space)?;
     restrict(&db, space, module, Scope::Data);
     let mut statement = db.prepare(sql).map_err(|error| sql_error(error, module))?;
@@ -197,85 +198,102 @@ pub struct MigrationProblem {
 pub fn apply_migrations(space: &Space) -> AppResult<Vec<MigrationProblem>> {
     let mut problems = Vec::new();
     for module in space.module_ids() {
-        let dir = space.module_dir(&module).join("migrations");
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        let mut files: Vec<String> = entries
-            .flatten()
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| name.ends_with(".sql"))
-            .collect();
-        files.sort();
-        for file in files {
-            let db = open(space)?;
-            let sql = match std::fs::read_to_string(dir.join(&file)) {
-                Ok(sql) => sql,
-                Err(error) => {
-                    problems.push(MigrationProblem { module: module.clone(), file, message: error.to_string() });
-                    break;
-                }
-            };
-            let digest = checksum(&sql);
-            let applied: Option<Option<String>> = db
-                .query_row(
-                    "SELECT checksum FROM _alfred_migrations WHERE module = ?1 AND name = ?2",
-                    params![module, file],
-                    |row| row.get(0),
-                )
-                .ok();
-            match applied {
-                // Appliquée avant que les empreintes existent : celle du fichier actuel est adoptée.
-                Some(None) => {
-                    db.execute(
-                        "UPDATE _alfred_migrations SET checksum = ?3 WHERE module = ?1 AND name = ?2",
-                        params![module, file, digest],
-                    )?;
-                    continue;
-                }
-                Some(Some(recorded)) if recorded == digest => continue,
-                // Réécrite après application (ou recréée sous le même nom après une annulation) : la base ne
-                // correspond plus au fichier. Elle ne repasse jamais ; il faut une migration suivante.
-                Some(Some(_)) => {
-                    problems.push(MigrationProblem {
-                        module: module.clone(),
-                        file,
-                        message: "Cette migration a déjà été appliquée avec un autre contenu : la base ne suit pas ce \
-                                  fichier. Remettre son contenu d’origine et écrire les changements dans une migration \
-                                  suivante (0002_…), ou lire la structure réelle avec db_schema."
-                            .to_string(),
-                    });
-                    break;
-                }
-                None => {}
-            }
-            // La transaction est ouverte et close par Alfred : la migration ne peut pas la terminer elle-même (son
-            // autoriseur refuse `BEGIN`/`COMMIT`), si bien qu’un refus l’annule toujours en entier.
-            db.execute_batch("BEGIN;")?;
-            restrict(&db, space, &module, Scope::Schema);
-            let result = db.execute_batch(&sql);
-            db.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
-            let result = result.map_err(|error| sql_error(error, &module)).and_then(|()| {
-                foreign_references(&db, space, &module)?;
-                db.execute(
-                    "INSERT INTO _alfred_migrations (module, name, applied_at, checksum) VALUES (?1, ?2, ?3, ?4)",
-                    params![module, file, crate::app_db::now(), digest],
-                )?;
-                Ok(())
-            });
-            match result {
-                Ok(()) => db.execute_batch("COMMIT;")?,
-                Err(error) => {
-                    let _ = db.execute_batch("ROLLBACK;");
-                    problems.push(MigrationProblem { module: module.clone(), file, message: error.message });
-                    break;
-                }
-            }
-        }
+        apply_module_migrations(space, &module, &mut problems)?;
     }
     Ok(problems)
 }
 
+/// Migrations en attente d’un module et, pour un module d’ajouts, du module qu’il complète : appliquées avant chaque
+/// requête d’une page ou d’une fonction, pour qu’une table déclarée existe sans attendre un rafraîchissement de
+/// l’interface ni un `check` de l’agent. Une migration en échec reste signalée par `check`.
+fn apply_pending_for(space: &Space, module: &str) -> AppResult<()> {
+    for target in std::iter::once(module).chain(module.strip_suffix("-ajouts")) {
+        if space.module_dir(target).is_dir() {
+            apply_module_migrations(space, target, &mut Vec::new())?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<MigrationProblem>) -> AppResult<()> {
+    let dir = space.module_dir(module).join("migrations");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(()) };
+    let mut files: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".sql"))
+        .collect();
+    files.sort();
+    for file in files {
+        let db = open(space)?;
+        let sql = match std::fs::read_to_string(dir.join(&file)) {
+            Ok(sql) => sql,
+            Err(error) => {
+                problems.push(MigrationProblem { module: module.to_string(), file, message: error.to_string() });
+                return Ok(());
+            }
+        };
+        let digest = checksum(&sql);
+        let applied: Option<Option<String>> = db
+            .query_row(
+                "SELECT checksum FROM _alfred_migrations WHERE module = ?1 AND name = ?2",
+                params![module, file],
+                |row| row.get(0),
+            )
+            .ok();
+        match applied {
+            // Appliquée avant que les empreintes existent : celle du fichier actuel est adoptée.
+            Some(None) => {
+                db.execute(
+                    "UPDATE _alfred_migrations SET checksum = ?3 WHERE module = ?1 AND name = ?2",
+                    params![module, file, digest],
+                )?;
+                continue;
+            }
+            Some(Some(recorded)) if recorded == digest => continue,
+            // Réécrite après application (ou recréée sous le même nom après une annulation) : la base ne
+            // correspond plus au fichier. Elle ne repasse jamais ; il faut une migration suivante.
+            Some(Some(_)) => {
+                problems.push(MigrationProblem {
+                    module: module.to_string(),
+                    file,
+                    message: "Cette migration a déjà été appliquée avec un autre contenu : la base ne suit pas ce \
+                              fichier. Remettre son contenu d’origine et écrire les changements dans une migration \
+                              suivante (0002_…), ou lire la structure réelle avec db_schema."
+                        .to_string(),
+                });
+                return Ok(());
+            }
+            None => {}
+        }
+        // La transaction est ouverte et close par Alfred : la migration ne peut pas la terminer elle-même (son
+        // autoriseur refuse `BEGIN`/`COMMIT`), si bien qu’un refus l’annule toujours en entier.
+        db.execute_batch("BEGIN;")?;
+        restrict(&db, space, module, Scope::Schema);
+        let result = db.execute_batch(&sql);
+        db.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+        let result = result.map_err(|error| sql_error(error, module)).and_then(|()| {
+            foreign_references(&db, space, module)?;
+            db.execute(
+                "INSERT INTO _alfred_migrations (module, name, applied_at, checksum) VALUES (?1, ?2, ?3, ?4)",
+                params![module, file, crate::app_db::now(), digest],
+            )?;
+            Ok(())
+        });
+        match result {
+            Ok(()) => db.execute_batch("COMMIT;")?,
+            Err(error) => {
+                let _ = db.execute_batch("ROLLBACK;");
+                problems.push(MigrationProblem { module: module.to_string(), file, message: error.message });
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Tables du module qui ne sont à aucun module plus précis (celles de « suivi-ajouts » ne sont pas à « suivi »).
-fn owned_tables(db: &Connection, space: &Space, module: &str) -> AppResult<Vec<String>> {
+pub(crate) fn owned_tables(db: &Connection, space: &Space, module: &str) -> AppResult<Vec<String>> {
     let own = table_prefix(module);
     let longer: Vec<String> =
         space.module_ids().iter().map(|id| table_prefix(id)).filter(|prefix| prefix.len() > own.len()).collect();
@@ -408,6 +426,34 @@ mod tests {
         std::fs::write(migrations.join("0001_notes.sql"), original.replace('\n', "\r\n")).unwrap();
         assert!(apply_migrations(&space).unwrap().is_empty());
         assert_eq!(schema(&space, Some("notes")).unwrap()[0]["table"], "notes_notes");
+    }
+
+    #[test]
+    fn a_query_applies_the_module_migrations_still_pending() {
+        // Migration écrite alors qu’Alfred était fermé : ni rafraîchissement de l’interface ni `check` ne l’a passée.
+        let dir = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(dir.path(), Some("Test")).unwrap();
+        space
+            .place_page("Liste", None, "", &PlaceTarget::Menu { label: "Suivi".into(), icon: None, color: None }, None)
+            .unwrap();
+        let migrations = space.module_dir("suivi").join("migrations");
+        std::fs::create_dir_all(&migrations).unwrap();
+        std::fs::write(migrations.join("0001_taches.sql"), "CREATE TABLE suivi_taches (id INTEGER PRIMARY KEY, titre TEXT);")
+            .unwrap();
+
+        let rows = run(&space, "suivi", "SELECT id, titre FROM suivi_taches", &[], false).unwrap();
+        assert_eq!(rows, json!([]));
+        let inserted =
+            run(&space, "suivi", "INSERT INTO suivi_taches (titre) VALUES (?1)", &[SqlValue::Text("Une".into())], true)
+                .unwrap();
+        assert_eq!(inserted["changes"], 1);
+
+        // Une migration ajoutée plus tard passe aussi avant la requête suivante, sans repasser la première.
+        std::fs::write(migrations.join("0002_fait.sql"), "ALTER TABLE suivi_taches ADD COLUMN fait INTEGER NOT NULL DEFAULT 0;")
+            .unwrap();
+        let rows = run(&space, "suivi", "SELECT titre, fait FROM suivi_taches", &[], false).unwrap();
+        assert_eq!(rows, json!([{ "titre": "Une", "fait": 0 }]));
+        assert!(apply_migrations(&space).unwrap().is_empty());
     }
 
     #[test]

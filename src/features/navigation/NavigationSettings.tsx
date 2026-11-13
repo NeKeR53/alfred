@@ -3,7 +3,7 @@
  * réafficher, les renommer et les réordonner sans glisser-déposer.
  */
 import { EmptyState, IconButton, Page, Section, StatusBadge, Text } from "@alfred/ui";
-import { ArrowDown, ArrowUp, Eye, EyeOff, Pencil } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, EyeOff, History, Pencil } from "lucide-react";
 import { useState } from "react";
 import type { ResolvedPage } from "../../lib/types";
 import { NamedIcon } from "../../shell/icons";
@@ -20,6 +20,7 @@ import {
   shift,
 } from "../../shell/navigationLayout";
 import { useShell } from "../../shell/store";
+import { PageHistoryDialog } from "./PageHistory";
 import "./navigation.css";
 
 type Renaming = { kind: "section"; id: string; label: string } | { kind: "page"; reference: string; label: string };
@@ -42,6 +43,7 @@ function RowActions({
   onMove,
   onRename,
   onToggle,
+  onHistory,
 }: {
   subject: string;
   rowKey: string;
@@ -51,9 +53,16 @@ function RowActions({
   onMove: (offset: -1 | 1) => void;
   onRename: () => void;
   onToggle: () => void;
+  /** Pages seulement : ouvre l’historique des modifications de la page. */
+  onHistory?: () => void;
 }) {
   return (
     <span className="nav-settings__actions">
+      {onHistory ? (
+        <IconButton size="small" label={`Historique de ${subject}`} tooltip="Historique" onClick={onHistory}>
+          <History size={16} aria-hidden="true" />
+        </IconButton>
+      ) : null}
       <IconButton
         size="small"
         label={`Monter ${subject}`}
@@ -103,10 +112,12 @@ function PageRows({
   place,
   pages,
   onRename,
+  onHistory,
 }: {
   place: string;
   pages: ResolvedPage[];
   onRename: (renaming: Renaming) => void;
+  onHistory: (page: ResolvedPage) => void;
 }) {
   if (pages.length === 0)
     return (
@@ -148,6 +159,7 @@ function PageRows({
                 })
               }
               onRename={() => onRename({ kind: "page", reference: page.reference, label: page.title })}
+              onHistory={() => onHistory(page)}
               onToggle={() =>
                 void applyLayoutChange((snapshot) => setPageHidden(snapshot, page.reference, !page.hidden))
               }
@@ -162,6 +174,7 @@ function PageRows({
 export function NavigationSettings() {
   const snapshot = useShell((state) => state.snapshot);
   const [renaming, setRenaming] = useState<Renaming>();
+  const [history, setHistory] = useState<ResolvedPage>();
   if (!snapshot) return null;
   const { sections, settingsPages } = snapshot;
 
@@ -211,7 +224,7 @@ export function NavigationSettings() {
                       }
                     />
                   </div>
-                  <PageRows place={section.id} pages={section.pages} onRename={setRenaming} />
+                  <PageRows place={section.id} pages={section.pages} onRename={setRenaming} onHistory={setHistory} />
                 </li>
               );
             })}
@@ -222,8 +235,9 @@ export function NavigationSettings() {
         title="Pages des Réglages"
         description="Les pages de l’espace placées dans les Réglages, après les onglets intégrés."
       >
-        <PageRows place={SETTINGS_SECTION} pages={settingsPages} onRename={setRenaming} />
+        <PageRows place={SETTINGS_SECTION} pages={settingsPages} onRename={setRenaming} onHistory={setHistory} />
       </Section>
+      {history ? <PageHistoryDialog page={history} onClose={() => setHistory(undefined)} /> : null}
       {renaming ? (
         <RenameDialog
           title={`Renommer ${renaming.kind === "section" ? "la section" : "la page"} « ${renaming.label} »`}

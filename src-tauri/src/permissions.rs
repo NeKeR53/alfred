@@ -69,6 +69,13 @@ pub fn forget_module(state: &AppState, module: &str) -> AppResult<()> {
     app_db::revoke_module(&db, &space, module)
 }
 
+/// Oublie les accords donnés sur une fonction supprimée : une fonction recréée sous ce nom redemandera.
+pub fn forget_function(state: &AppState, reference: &str) -> AppResult<()> {
+    let space = state.space()?.root.to_string_lossy().to_string();
+    let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
+    app_db::revoke_resource(&db, &space, &format!("function:{reference}"))
+}
+
 /// Longueur maximale d’une adresse ouverte pour une page : au-delà, elle sert à faire sortir des données.
 const MAX_EXTERNAL_URL: usize = 2048;
 

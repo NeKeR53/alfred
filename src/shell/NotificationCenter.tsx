@@ -94,6 +94,16 @@ export function NotificationToasts() {
             <strong>{item.title}</strong>
             {item.description ? <p>{item.description}</p> : null}
           </div>
+          {item.action ? (
+            <Button
+              onClick={() => {
+                item.action?.run();
+                dismiss(item.id);
+              }}
+            >
+              {item.action.label}
+            </Button>
+          ) : null}
           <IconButton label="Fermer la notification" size="small" onClick={() => dismiss(item.id)}>
             <X size={14} aria-hidden="true" />
           </IconButton>

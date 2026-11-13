@@ -24,8 +24,10 @@ import {
 } from "./model";
 import { ChoicePicker } from "./panel/ChoicePicker";
 import { ModelPicker } from "./panel/ModelPicker";
+import { useComposerReferences } from "./ReferenceSuggestions";
 import { useAgents } from "./store";
 import { TextPreview } from "./TextPreview";
+import { QUOTE_EVENT } from "./Transcript";
 import "./agent-composer.css";
 
 const AUTONOMY_LABEL: Record<Autonomy, string> = {
@@ -116,6 +118,15 @@ export function Composer({
   const field = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const conversationId = conversation.id;
+  const spaceDir = useShell((state) => state.snapshot?.path ?? "");
+  // `/` : commandes et skills du harnais de la conversation ; `@` : fichiers de son dossier de travail.
+  const references = useComposerReferences({
+    field,
+    text,
+    setText,
+    cwd: conversation.cwd || spaceDir,
+    provider: conversation.provider,
+  });
 
   // Chaque conversation a son brouillon : en changer vide la saisie.
   // biome-ignore lint/correctness/useExhaustiveDependencies: réinitialisation voulue au changement de conversation.
@@ -123,7 +134,34 @@ export function Composer({
     setText("");
     setAttachments([]);
     setContexts([]);
+    references.reset();
     field.current?.focus();
+  }, [conversationId]);
+
+  // « Citer dans la réponse » ajoute le passage en citation Markdown à la fin de la saisie, puis y place le curseur.
+  useEffect(() => {
+    const quote = (event: Event) => {
+      const { conversationId: target, text: quoted } = (event as CustomEvent<{ conversationId: string; text: string }>)
+        .detail;
+      if (target !== conversationId) return;
+      const block = `${quoted
+        .trim()
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}\n\n`;
+      setText((current) => {
+        const before = current.replace(/\s*$/, "");
+        return before ? `${before}\n\n${block}` : block;
+      });
+      requestAnimationFrame(() => {
+        const input = field.current;
+        if (!input) return;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+    };
+    window.addEventListener(QUOTE_EVENT, quote);
+    return () => window.removeEventListener(QUOTE_EVENT, quote);
   }, [conversationId]);
 
   const addAttachments = useCallback(
@@ -196,7 +234,13 @@ export function Composer({
 
   const submit = async () => {
     if (!canSend) return;
-    const message: UserMessage = { text: text.trim(), attachments, contexts };
+    const chosen = references.take(text);
+    const message: UserMessage = {
+      text: text.trim(),
+      attachments,
+      contexts,
+      ...(chosen.length ? { references: chosen } : {}),
+    };
     setText("");
     setAttachments([]);
     setContexts([]);
@@ -208,6 +252,7 @@ export function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (references.onKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void submit();
@@ -312,7 +357,13 @@ export function Composer({
             }
             rows={1}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            {...references.inputProps}
+            onChange={(event) => {
+              setText(event.target.value);
+              references.track();
+            }}
+            onSelect={references.track}
+            onBlur={references.dismiss}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
@@ -330,6 +381,7 @@ export function Composer({
           </IconButton>
         </div>
       </form>
+      {references.popover}
       {compact ? null : <ConversationOptions conversation={conversation} locked={responding} />}
     </div>
   );

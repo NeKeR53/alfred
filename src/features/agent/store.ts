@@ -31,6 +31,7 @@ import {
   turnCommitMessage,
   type UserMessage,
 } from "./model";
+import { notifySystem } from "./systemNotification";
 
 export interface AgentDefaults {
   provider: Provider;
@@ -66,6 +67,12 @@ interface AgentState {
   ensureLoaded: (id: string) => Promise<void>;
   create: (options?: NewConversation) => Conversation;
   update: (id: string, patch: Partial<ConversationHeader>) => void;
+  /** Nouveau titre ; vide, l’ancien est gardé. */
+  rename: (id: string, title: string) => Promise<void>;
+  /** Masque la conversation de la liste sans rien effacer ; une réponse en cours est arrêtée. */
+  archive: (id: string) => Promise<void>;
+  unarchive: (id: string) => Promise<void>;
+  markUnread: (id: string) => Promise<void>;
   send: (id: string, message: UserMessage) => Promise<void>;
   cancel: (id: string) => Promise<void>;
   answerApproval: (id: string, approvalId: string, optionId: string) => Promise<void>;
@@ -214,6 +221,13 @@ export const useAgents = create<AgentState>((set, get) => {
     });
     await save(id);
     const finished = get().loaded[id]?.turns.at(-1);
+    if (finished && status !== "cancelled") {
+      const title = get().loaded[id]?.title ?? "L’agent";
+      void notifySystem(
+        status === "error" ? `${title} : l’agent a rencontré une erreur` : `${title} : l’agent a terminé`,
+        plainText(lastAssistantText(finished)) || undefined,
+      );
+    }
     if (finished) {
       for (const resolve of turnWaiters.get(id) ?? []) resolve(finished);
       turnWaiters.delete(id);
@@ -290,6 +304,7 @@ export const useAgents = create<AgentState>((set, get) => {
         return;
       case "approval":
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));
+        void notifySystem(`${get().loaded[id]?.title ?? "Un agent"} attend votre accord`, event.request.title);
         if (get().activeId !== id || useShell.getState().view.kind !== "agent") {
           notify({
             title: `${get().loaded[id]?.title ?? "Un agent"} attend votre accord`,
@@ -419,6 +434,40 @@ export const useAgents = create<AgentState>((set, get) => {
       patchConversation(id, (conversation) => ({ ...conversation, ...patch }));
     },
 
+    async rename(id, title) {
+      const next = title.trim().slice(0, 120);
+      if (!next) return;
+      await get().ensureLoaded(id);
+      patchConversation(id, (conversation) => ({ ...conversation, title: next }));
+      await save(id);
+    },
+
+    async archive(id) {
+      await get().ensureLoaded(id);
+      if ((get().runtime[id]?.status ?? "idle") !== "idle") await get().cancel(id);
+      patchConversation(id, (conversation) => ({ ...conversation, archived: true }));
+      if (get().activeId === id) set({ activeId: null });
+      await save(id);
+    },
+
+    async unarchive(id) {
+      await get().ensureLoaded(id);
+      // Rendue visible sans être signalée « à consulter », comme dans OneApp.
+      patchConversation(id, (conversation) => ({ ...conversation, archived: false, unread: false }));
+      await save(id);
+    },
+
+    async markUnread(id) {
+      await get().ensureLoaded(id);
+      patchConversation(id, (conversation) => ({ ...conversation, unread: true }));
+      await save(id);
+      // La conversation ouverte se lirait aussitôt : la page Agent passe à une autre, ou à un brouillon.
+      if (get().activeId === id) {
+        const other = get().headers.find((header) => header.id !== id && header.started && !header.archived);
+        await get().open(other?.id ?? get().create().id);
+      }
+    },
+
     async send(id, message) {
       const conversation = get().loaded[id];
       if (!conversation) return;
@@ -525,6 +574,11 @@ export function bindAgentQuestions() {
       kind: AgentQuestion["kind"];
       payload: Record<string, unknown>;
     };
+    const title = useAgents.getState().loaded[question.conversation]?.title ?? "Un agent";
+    void notifySystem(
+      `${title} attend votre réponse`,
+      question.kind === "placement" ? "Où placer la nouvelle page ?" : undefined,
+    );
     useAgents.setState((state) => {
       const runtime = state.runtime[question.conversation] ?? idleRuntime;
       return {

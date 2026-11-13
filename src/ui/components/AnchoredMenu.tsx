@@ -16,6 +16,15 @@ const margin = 8;
  * fermer en phase de capture laisserait React démonter le menu avant que l’action ne s’exécute (un vrai clic laisse
  * passer les microtâches entre les deux phases).
  */
+/**
+ * Après le choix d’une entrée, le focus ne revient au bouton que s’il est resté dans le menu (ou perdu) : une action
+ * qui l’a déjà placé ailleurs (champ de renommage, modale) le garde.
+ */
+export function focusStayed(menu: Element | null): boolean {
+  const active = document.activeElement;
+  return !active || active === document.body || Boolean(menu?.contains(active));
+}
+
 export function AnchoredMenu({
   id,
   anchor,
@@ -71,7 +80,7 @@ export function AnchoredMenu({
       onClick={(event) => {
         // Remontée : le `onClick` de l’entrée a déjà été appelé.
         if (event.target instanceof Element && event.target.closest('[role="menuitem"]:not(:disabled)')) {
-          onCloseLatest.current(true);
+          onCloseLatest.current(focusStayed(wrapper.current));
         }
       }}
       onKeyDown={(event) => {

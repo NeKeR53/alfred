@@ -1,7 +1,7 @@
 mod agents;
-mod ai;
 mod app_db;
 mod clients;
+mod composer;
 mod conversations;
 mod dispatch;
 mod docs;
@@ -15,6 +15,7 @@ mod oauth;
 mod pages;
 mod permissions;
 mod process_tree;
+mod reorganize;
 mod schedules;
 mod server;
 mod space;
@@ -23,6 +24,7 @@ mod state;
 mod transpile;
 mod vault;
 mod webhooks;
+mod webview;
 #[cfg(windows)]
 mod windows_env;
 #[cfg(windows)]
@@ -43,6 +45,18 @@ async fn alfred_invoke(
     args: Option<Value>,
 ) -> Result<Value, AppError> {
     dispatch::dispatch(state.inner().clone(), &command, args.unwrap_or(Value::Null)).await
+}
+
+/// Réaction du cœur à ses propres événements, avant leur envoi à la fenêtre.
+fn on_core_event(state: &AppState, event: &events::AppEvent) {
+    // Désinstallation avec suppression des données : les tables du module partent avec lui.
+    if event.name == "module:uninstalled" && event.payload.get("deleteData").and_then(Value::as_bool) == Some(true) {
+        if let (Some(module), Ok(space)) = (event.payload.get("module").and_then(Value::as_str), state.space()) {
+            if let Err(error) = space_db::drop_module(&space, module) {
+                log::error!("tables du module {module} non supprimées : {error}");
+            }
+        }
+    }
 }
 
 pub fn run() {
@@ -72,6 +86,10 @@ pub fn run() {
             response.body(page.body).unwrap_or_default()
         })
         .setup(|app| {
+            // Avant tout chargement de page : aucun document de la fenêtre n’a WebRTC.
+            if let Some(window) = app.get_webview_window("main") {
+                webview::harden(&window);
+            }
             let data_dir = app.path().app_data_dir()?;
             let state = AppState::new(&data_dir)?;
             app.manage(state.clone());
@@ -83,19 +101,7 @@ pub fn run() {
                 loop {
                     match events.recv().await {
                         Ok(event) => {
-                            // Désinstallation avec suppression des données : les tables du module partent avec lui.
-                            if event.name == "module:uninstalled"
-                                && event.payload.get("deleteData").and_then(Value::as_bool) == Some(true)
-                            {
-                                let state = handle.state::<Arc<AppState>>();
-                                if let (Some(module), Ok(space)) =
-                                    (event.payload.get("module").and_then(Value::as_str), state.space())
-                                {
-                                    if let Err(error) = space_db::drop_module(&space, module) {
-                                        log::error!("tables du module {module} non supprimées : {error}");
-                                    }
-                                }
-                            }
+                            on_core_event(&handle.state::<Arc<AppState>>(), &event);
                             let _ = handle.emit("alfred:event", event);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -117,4 +123,81 @@ pub fn run() {
                 agents::shutdown();
             }
         });
+}
+
+/// Accès réservé aux tests d’intégration (`src-tauri/tests/`) : le cœur d’Alfred sans la fenêtre Tauri. Rien ici ne
+/// change le comportement de l’application ; ces fonctions assemblent ce que `run` assemble, sur un port libre.
+#[doc(hidden)]
+pub mod testing {
+    use std::sync::Arc;
+
+    pub use crate::dispatch::dispatch;
+    pub use crate::error::{AppError, AppResult};
+    pub use crate::events::AppEvent;
+    pub use crate::state::AppState;
+
+    /// Démarre les routes HTTP locales (outils MCP, webhooks, retour OAuth) sur un port libre et le déclare, comme
+    /// `server::start`, sans prendre le port fixe de l’instance de développement.
+    pub async fn start_server(state: &Arc<AppState>) -> u16 {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("port local libre");
+        let port = listener.local_addr().expect("adresse locale").port();
+        let _ = state.server.set(crate::state::ServerInfo { port });
+        let router = axum::Router::new()
+            .merge(crate::clients::routes())
+            .merge(crate::mcp::routes())
+            .merge(crate::webhooks::routes())
+            .with_state(state.clone());
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        port
+    }
+
+    /// Abonne le cœur à ses propres événements, comme le fait `run` (suppression des tables d’un module désinstallé).
+    pub fn start_core_events(state: &Arc<AppState>) {
+        let mut events = state.events.subscribe();
+        let state = Arc::downgrade(state);
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => match state.upgrade() {
+                        Some(state) => super::on_core_event(&state, &event),
+                        None => break,
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    /// Lance la boucle de planification, comme au démarrage d’Alfred.
+    pub fn start_schedules(state: &Arc<AppState>) {
+        crate::schedules::start(state.clone());
+    }
+
+    /// Réponse du protocole `alfred-page` à un chemin, telle que la reçoit un cadre isolé.
+    pub struct Page {
+        pub status: u16,
+        pub content_type: &'static str,
+        pub csp: Option<String>,
+        pub body: String,
+    }
+
+    pub fn page(state: &AppState, path: &str) -> Page {
+        let page = crate::pages::respond(state, path, "", "alfred-page:");
+        Page {
+            status: page.status,
+            content_type: page.content_type,
+            csp: page.csp,
+            body: String::from_utf8_lossy(&page.body).into_owned(),
+        }
+    }
+
+    /// Remet un jeton d’outils à une conversation, comme le fait le lancement d’un agent.
+    pub fn register_agent(state: &AppState, token: &str, conversation: &str) {
+        if let Ok(mut tokens) = state.agent_tokens.lock() {
+            tokens.insert(token.to_string(), conversation.to_string());
+        }
+    }
 }

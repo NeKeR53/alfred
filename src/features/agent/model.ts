@@ -1,5 +1,6 @@
 /** Modèle d’une conversation d’agent, tel qu’Alfred l’affiche et l’enregistre. */
 import type { ActivityAction, ActivityKind, ActivityStatus, ApprovalRequest, Autonomy, Provider } from "./harness";
+import { type ComposerReference, referenceInstructions } from "./lib/composerReferences";
 
 export interface Attachment {
   path: string;
@@ -18,6 +19,8 @@ export interface UserMessage {
   text: string;
   attachments: Attachment[];
   contexts: PastedContext[];
+  /** Commandes, skills et fichiers choisis par `/` et `@` ; leur mention reste dans `text`. */
+  references?: ComposerReference[];
 }
 
 export type TurnItem =
@@ -109,7 +112,10 @@ export function outgoingText(message: UserMessage): string {
   const contexts = message.contexts.map(
     (context) => `\n\n<contexte titre="${context.title.replace(/"/g, "'")}">\n${context.text}\n</contexte>`,
   );
-  return `${message.text}${contexts.join("")}`.trim();
+  const references = message.references?.length
+    ? `\n\n<references>\n${referenceInstructions(message.references)}\n</references>`
+    : "";
+  return `${message.text}${contexts.join("")}${references}`.trim();
 }
 
 const MAX_ACTIVITY_CONTENT = 4000;

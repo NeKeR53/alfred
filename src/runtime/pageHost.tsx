@@ -8,6 +8,7 @@ import { EmptyState } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { frameShortcut, isShellShortcut } from "../sdk/protocol";
+import { describePage } from "./describePage";
 import { sealNetwork } from "./sealNetwork";
 
 sealNetwork();
@@ -55,7 +56,7 @@ function Failure({ title, error }: { title: string; error: unknown }) {
   return (
     <div className="alfred-frame__failure">
       <EmptyState title={title} description="L’agent peut corriger cette page : l’erreur lui est transmise.">
-        <pre>
+        <pre data-alfred-withheld="true">
           {details.diagnostics?.length
             ? details.diagnostics.map((item) => `${item.line ? `ligne ${item.line} : ` : ""}${item.message}`).join("\n")
             : details.message}
@@ -132,6 +133,13 @@ window.addEventListener(
   },
   true,
 );
+
+// Capture demandée par la coquille pour l’agent (outil `page_snapshot`) : ce que l’utilisateur voit, en texte.
+onShellEvent("describe", (payload) => {
+  const id = (payload as { id?: unknown } | null)?.id;
+  if (typeof id !== "string") return;
+  emitToShell("description", { id, ...describePage() });
+});
 
 window.addEventListener("error", (event) => report("runtime", event.error ?? event.message));
 window.addEventListener("unhandledrejection", (event) => report("runtime", event.reason));

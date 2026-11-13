@@ -153,11 +153,21 @@ pub fn revoke(db: &Connection, space: &str, subject: &str, resource: &str) -> Ap
 /// Retire tous les accords d’un module : ceux de ses pages, de ses panneaux et de ses fonctions. Un module installé
 /// plus tard sous le même identifiant repart de zéro.
 pub fn revoke_module(db: &Connection, space: &str, module: &str) -> AppResult<()> {
-    let pattern = format!("page:{}/%", like_escape(module));
+    let escaped = like_escape(module);
+    // Les accords que le module a reçus (ses pages, ses fonctions)… et ceux que d’autres ont reçus sur ses
+    // fonctions : un module recréé sous le même identifiant ne doit hériter d’aucun des deux.
     db.execute(
-        "DELETE FROM grants WHERE space = ?1 AND (subject LIKE ?2 ESCAPE '\\' OR subject = ?3)",
-        params![space, pattern, format!("function:{module}/*")],
+        "DELETE FROM grants WHERE space = ?1
+           AND (subject LIKE ?2 ESCAPE '\\' OR subject = ?3 OR resource LIKE ?4 ESCAPE '\\')",
+        params![space, format!("page:{escaped}/%"), format!("function:{module}/*"), format!("function:{escaped}/%")],
     )?;
+    Ok(())
+}
+
+/// Oublie les accords portant sur une ressource retirée (une fonction supprimée) : celle qui reprendrait son nom
+/// redemandera.
+pub fn revoke_resource(db: &Connection, space: &str, resource: &str) -> AppResult<()> {
+    db.execute("DELETE FROM grants WHERE space = ?1 AND resource = ?2", params![space, resource])?;
     Ok(())
 }
 
@@ -211,4 +221,36 @@ pub fn list_grants(db: &Connection, space: &str) -> AppResult<Vec<Value>> {
         }))
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Un module retiré emporte les accords qu’il a reçus et ceux donnés sur ses fonctions ; une fonction retirée,
+    /// ceux donnés sur elle. Les modules voisins (même préfixe) ne sont pas touchés.
+    #[test]
+    fn removing_a_module_or_a_function_forgets_the_grants_about_it() {
+        let db = Connection::open_in_memory().unwrap();
+        migrate(&db).unwrap();
+        let space = "/espace";
+        for (subject, resource) in [
+            ("page:recettes/carnet", "client:jira"),
+            ("function:recettes/*", "client:jira"),
+            ("page:semaine/menu", "function:recettes/compter"),
+            ("page:semaine/menu", "function:recettes-ajouts/compter"),
+            ("page:semaine/menu", "function:semaine/total"),
+        ] {
+            grant(&db, space, subject, resource).unwrap();
+        }
+        revoke_module(&db, space, "recettes").unwrap();
+        assert!(!is_granted(&db, space, "page:recettes/carnet", "client:jira").unwrap());
+        assert!(!is_granted(&db, space, "function:recettes/*", "client:jira").unwrap());
+        assert!(!is_granted(&db, space, "page:semaine/menu", "function:recettes/compter").unwrap());
+        assert!(is_granted(&db, space, "page:semaine/menu", "function:recettes-ajouts/compter").unwrap());
+
+        revoke_resource(&db, space, "function:semaine/total").unwrap();
+        assert!(!is_granted(&db, space, "page:semaine/menu", "function:semaine/total").unwrap());
+        assert!(is_granted(&db, space, "page:semaine/menu", "function:recettes-ajouts/compter").unwrap());
+    }
 }

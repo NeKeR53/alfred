@@ -1,5 +1,5 @@
 import { Button, Disclosure, IconButton, Markdown, useConfirm } from "@alfred/ui";
-import { Check, ChevronDown, ChevronUp, Copy, FileDiff, FileText, LoaderCircle, Undo2 } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, FileDiff, FileText, LoaderCircle, Quote, Undo2 } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { notify } from "../../shell/notifications";
 import { Activities, type Activity, hasActivityOutput } from "./Activities";
@@ -70,8 +70,11 @@ function activityExtras(activity: Activity, cwd: string): ReactNode {
   );
 }
 
-/** Copie du message au survol, comme les actions de message de OneApp. */
-function MessageActions({ content }: { content: string }) {
+/** Événement qui demande à la saisie d’une conversation d’ajouter une citation (« Citer dans la réponse »). */
+export const QUOTE_EVENT = "alfred:agent-quote";
+
+/** Copie et, pour l’agent, citation du message au survol, comme les actions de message de OneApp. */
+function MessageActions({ content, quoteIn }: { content: string; quoteIn?: string }) {
   const [copied, setCopied] = useState(false);
   if (!content.trim()) return null;
   return (
@@ -92,6 +95,18 @@ function MessageActions({ content }: { content: string }) {
       >
         {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       </IconButton>
+      {quoteIn ? (
+        <IconButton
+          size="small"
+          label="Citer dans la réponse"
+          tooltip="Citer"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent(QUOTE_EVENT, { detail: { conversationId: quoteIn, text: content } }))
+          }
+        >
+          <Quote aria-hidden="true" />
+        </IconButton>
+      ) : null}
     </fieldset>
   );
 }
@@ -133,7 +148,7 @@ export function turnSummary(turn: Turn): string {
   return `${worked} · ${count} outil${count === 1 ? " appelé" : "s appelés"}`;
 }
 
-function Entries({ blocks, cwd }: { blocks: Block[]; cwd: string }) {
+function Entries({ blocks, cwd, conversationId }: { blocks: Block[]; cwd: string; conversationId: string }) {
   const plugins = useMemo(() => [agentFileLinks], []);
   return blocks.map((block) =>
     block.message !== undefined ? (
@@ -144,7 +159,7 @@ function Entries({ blocks, cwd }: { blocks: Block[]; cwd: string }) {
             {block.message}
           </Markdown>
         </div>
-        <MessageActions content={block.message} />
+        <MessageActions content={block.message} quoteIn={conversationId} />
       </li>
     ) : (
       <li key={block.key} className="agent-chat__entry agent-chat__entry--activity">
@@ -326,7 +341,7 @@ function TurnView({
         {running ? (
           <>
             <ol className="agent-chat__work-entries">
-              <Entries blocks={blocks} cwd={cwd} />
+              <Entries blocks={blocks} cwd={cwd} conversationId={conversation.id} />
             </ol>
             {last ? <RunningWork startedAt={turn.startedAt} label={runningLabel(turn, runtime)} /> : null}
           </>
@@ -340,7 +355,7 @@ function TurnView({
                 label={<span>{turnSummary(turn)}</span>}
               >
                 <ol className="agent-chat__work-entries">
-                  <Entries blocks={work} cwd={cwd} />
+                  <Entries blocks={work} cwd={cwd} conversationId={conversation.id} />
                 </ol>
               </Disclosure>
             ) : turn.items.length || turn.status === "done" ? (
@@ -348,7 +363,7 @@ function TurnView({
             ) : null}
             {final ? (
               <ol className="agent-chat__work-entries">
-                <Entries blocks={[final]} cwd={cwd} />
+                <Entries blocks={[final]} cwd={cwd} conversationId={conversation.id} />
               </ol>
             ) : null}
           </>

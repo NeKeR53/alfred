@@ -23,6 +23,7 @@ import { useShell } from "../../shell/store";
 import { effortLabel } from "../agent/effort";
 import { type Autonomy, type HarnessModel, listModels, PROVIDER_LABEL, type Provider, probe } from "../agent/harness";
 import { type AgentDefaults, useAgents } from "../agent/store";
+import { ArchivedConversations } from "./ArchivedConversations";
 
 const PROVIDERS: Provider[] = ["claude", "codex", "opencode"];
 
@@ -325,6 +326,8 @@ export function AgentSettings() {
           ))}
         </Stack>
       </Section>
+
+      <ArchivedConversations />
     </Page>
   );
 }
