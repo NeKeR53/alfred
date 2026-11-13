@@ -1,5 +1,5 @@
 import { ChoiceButton, ChoiceGroup, FormField, SelectControl } from "@alfred/ui";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Lock } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useContextMenuDismiss } from "../../../ui/components/useContextMenuDismiss";
 import { effortLabel } from "../effort";
@@ -125,6 +125,19 @@ export function ModelPicker({
               </ChoiceButton>
             ))}
           </ChoiceGroup>
+          {providerLocked ? (
+            <p className="agent-model-picker__lock">
+              <Lock size={12} aria-hidden="true" />
+              <span>
+                Harnais fixé : cette conversation a commencé avec {PROVIDER_LABEL[value.provider]}. Pour{" "}
+                {(Object.keys(PROVIDER_LABEL) as Provider[])
+                  .filter((provider) => provider !== value.provider)
+                  .map((provider) => PROVIDER_LABEL[provider])
+                  .join(" ou ")}
+                , ouvre une nouvelle conversation.
+              </span>
+            </p>
+          ) : null}
           <FormField label="Modèle">
             <SelectControl
               value={value.model ?? ""}

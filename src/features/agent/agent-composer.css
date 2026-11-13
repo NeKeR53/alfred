@@ -111,6 +111,19 @@
   gap: 12px;
   padding: 12px;
 }
+.agent-model-picker__lock {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: -6px 0 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  line-height: 1.4;
+}
+.agent-model-picker__lock > svg {
+  flex: none;
+  margin-top: 2px;
+}
 
 /* Champ de saisie : une ligne de 20 px dans 28 px, centrée sur les boutons « + » et envoi (reference-composer de OneApp). */
 .agent-composer__input {
