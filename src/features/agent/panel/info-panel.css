@@ -181,6 +181,13 @@
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
+.info-panel-rows__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .info-panel-rows__button.is-selected .info-panel-rows__text {
   font-weight: 600;
 }
@@ -197,13 +204,6 @@
 .info-panel-rows li:hover .info-panel-rows__action,
 .info-panel-rows__action:focus-within {
   opacity: 1;
-}
-.info-panel-rows__text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .info-panel-rows__meta {
   flex: none;

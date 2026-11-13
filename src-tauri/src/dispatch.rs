@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, clients, space_db, functions, ai, agents, conversations, mcp, webhooks, schedules, marketplace, permissions);
+    delegate!(vault, clients, space_db, functions, ai, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages);
     match command {
         "app.info" => {
             let server = state.server()?;

@@ -125,12 +125,12 @@ fn last_received(db: &Connection, space: &str, hook: &str) -> Option<String> {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Comparaison à temps constant : la durée ne révèle pas jusqu’où deux valeurs coïncident.
-fn same(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn same(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len() && left.iter().zip(right).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0
 }
 
 /// HMAC-SHA256 (RFC 2104), écrit sur `sha2` pour ne pas ajouter de dépendance.
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     const BLOCK: usize = 64;
     let mut block = [0u8; BLOCK];
     if key.len() > BLOCK {

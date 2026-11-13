@@ -106,11 +106,43 @@ fn search_path() -> &'static str {
             }
         }
         #[cfg(windows)]
-        for entry in windows_user_dirs(|name| std::env::var(name).ok()) {
-            push(&entry);
+        {
+            let var = |name: &str| std::env::var(name).ok();
+            for registered in crate::windows_env::registered_path() {
+                for entry in expand_env(&registered, var).split(';') {
+                    push(entry.trim());
+                }
+            }
+            for entry in windows_user_dirs(var) {
+                push(&entry);
+            }
         }
         entries.join(&separator.to_string())
     })
+}
+
+/// Remplace les `%VARIABLE%` d’une valeur du registre, comme `ExpandEnvironmentStringsW` : une variable inconnue
+/// reste écrite telle quelle.
+#[cfg(any(windows, test))]
+fn expand_env(text: &str, var: impl Fn(&str) -> Option<String>) -> String {
+    let mut expanded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('%') {
+        expanded.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('%').filter(|&end| end > 0).and_then(|end| var(&after[..end]).map(|value| (end, value))) {
+            Some((end, value)) => {
+                expanded.push_str(&value);
+                rest = &after[end + 1..];
+            }
+            None => {
+                expanded.push('%');
+                rest = after;
+            }
+        }
+    }
+    expanded.push_str(rest);
+    expanded
 }
 
 /// Dossiers où les installateurs usuels posent les CLI sous Windows. Une application ouverte depuis le menu
@@ -155,6 +187,12 @@ fn program_candidates(program: &str, path: &str, windows: bool) -> Vec<PathBuf> 
 /// Emplacement du programme sur ce poste, ou `None` s’il n’est pas installé.
 fn resolve_program(program: &str) -> Option<PathBuf> {
     program_candidates(program, search_path(), cfg!(windows)).into_iter().find(|candidate| candidate.is_file())
+}
+
+/// Une valeur de variable d’environnement tient-elle sous la limite de Windows (32 767 caractères, zéro final
+/// compris) ? Ailleurs, seule la taille totale des arguments et de l’environnement est bornée, bien au-delà.
+fn fits_in_environment(value: &str, windows: bool) -> bool {
+    !windows || value.encode_utf16().count() < 32_767
 }
 
 /// Consignes de Claude Code, passées par fichier : en argument, des sauts de ligne empêchent de lancer un
@@ -365,6 +403,11 @@ fn spawn(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
                     Some(token) => config.replace(TOKEN_PLACEHOLDER, token),
                     None => config,
                 };
+                // Windows borne une variable d’environnement à 32 767 caractères : mieux vaut le dire que laisser
+                // OpenCode démarrer avec une configuration tronquée ou absente.
+                if !fits_in_environment(&config, cfg!(windows)) {
+                    return Err(AppError::new("La configuration OpenCode de la session est trop longue pour Windows."));
+                }
                 command.env("OPENCODE_CONFIG_CONTENT", config);
             }
         }
@@ -553,6 +596,24 @@ mod tests {
             PathBuf::from("/usr/bin/codex"),
             PathBuf::from("/opt/bin/codex")
         ]);
+    }
+
+    #[test]
+    fn opencode_configuration_respects_the_windows_environment_limit() {
+        assert!(fits_in_environment(&"a".repeat(32_766), true));
+        assert!(!fits_in_environment(&"a".repeat(32_767), true));
+        assert!(fits_in_environment(&"a".repeat(200_000), false));
+    }
+
+    #[test]
+    fn registry_paths_are_expanded_like_windows() {
+        let env = HashMap::from([("USERPROFILE", "C:\\Users\\c"), ("SystemRoot", "C:\\Windows")]);
+        let var = |name: &str| env.get(name).map(|value| value.to_string());
+        assert_eq!(
+            expand_env("%USERPROFILE%\\.local\\bin;%SystemRoot%\\system32;%INCONNUE%\\bin;100%", var),
+            "C:\\Users\\c\\.local\\bin;C:\\Windows\\system32;%INCONNUE%\\bin;100%"
+        );
+        assert_eq!(expand_env("%%USERPROFILE%", var), "%C:\\Users\\c");
     }
 
     #[test]

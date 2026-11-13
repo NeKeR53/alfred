@@ -24,6 +24,8 @@ mod transpile;
 mod vault;
 mod webhooks;
 #[cfg(windows)]
+mod windows_env;
+#[cfg(windows)]
 mod windows_job;
 
 use std::sync::Arc;

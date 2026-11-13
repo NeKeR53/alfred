@@ -23,6 +23,7 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import "../vault/settings-dialog.css";
 import "./functions.css";
+import { DialogHeader } from "../../shell/DialogHeader";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -138,9 +139,7 @@ function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () => void 
       onClose={onClose}
     >
       <form id={formId} noValidate onSubmit={run}>
-        <header className="settings-dialog__header">
-          <h2 id={titleId}>Essayer « {fn.id} »</h2>
-        </header>
+        <DialogHeader title={`Essayer « ${fn.id} »`} titleId={titleId} dialogRef={dialog} />
         <div className="settings-dialog__body">
           <Stack gap="md">
             <Text tone="muted">

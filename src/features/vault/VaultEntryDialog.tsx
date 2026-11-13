@@ -12,6 +12,7 @@ import {
   vaultKindLabel,
 } from "./api";
 import "./settings-dialog.css";
+import { DialogHeader } from "../../shell/DialogHeader";
 
 interface KindFields {
   /** Champ non secret, rangé dans `meta`. */
@@ -127,9 +128,11 @@ export function VaultEntryDialog({
       onClose={onClose}
     >
       <form id={formId} noValidate onSubmit={submit}>
-        <header className="settings-dialog__header">
-          <h2 id={titleId}>{entry ? `Modifier « ${entry.label} »` : "Nouvelle entrée du coffre"}</h2>
-        </header>
+        <DialogHeader
+          title={entry ? `Modifier « ${entry.label} »` : "Nouvelle entrée du coffre"}
+          titleId={titleId}
+          dialogRef={dialog}
+        />
         <div className="settings-dialog__body">
           <Stack gap="md">
             <FormField label="Libellé" error={errors.label}>

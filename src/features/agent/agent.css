@@ -75,10 +75,6 @@
   font-size: var(--font-size-meta);
   text-align: center;
 }
-.agents-page__column .agent-chat__entry--assistant {
-  font-size: var(--font-size-panel);
-  line-height: 1.6;
-}
 .agents-page__footer {
   width: calc(100% - 32px);
   max-width: 760px;
@@ -215,6 +211,15 @@
   border-radius: var(--radius-panel);
   background: var(--color-surface);
 }
+.agent-chat__message-pastes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.agent-chat__message-pastes:last-child {
+  margin-bottom: 0;
+}
 .agent-chat__entry--user .agent-chat__message-pastes {
   justify-content: flex-end;
   margin-bottom: 0;
@@ -285,20 +290,6 @@
   white-space: pre-wrap;
   line-height: 1.6;
   font-size: var(--font-size-body);
-}
-.agent-chat__message-pastes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.agent-chat__message-pastes:last-child {
-  margin-bottom: 0;
-}
-.agent-chat__message-pastes .chat-text-preview__chip > span {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
 }
 .agent-chat__entry--activity {
   padding: 0;
@@ -408,17 +399,6 @@
   justify-content: flex-end;
   margin: 0;
 }
-/* Cartes arrondies : une vignette cadrée par image, le nom pour les autres fichiers ; un clic agrandit l’image. */
-.agent-chat__entry--user .image-preview--message {
-  width: 160px;
-}
-.agent-chat__entry--user .image-preview .image-preview__thumbnail {
-  aspect-ratio: 1;
-  border-radius: 12px;
-}
-.agent-chat__entry--user .image-preview__thumbnail img {
-  object-fit: cover;
-}
 .agent-chat__attachment-file {
   display: flex;
   align-items: center;
@@ -449,6 +429,10 @@
   padding-bottom: 28px;
 }
 .agent-chat__message-actions {
+  /* Groupe porté par un fieldset dans Alfred : ni marge ni cadre. */
+  margin: 0;
+  padding: 0;
+  border: 0;
   position: absolute;
   top: calc(100% - 4px);
   right: 0;
@@ -675,12 +659,6 @@ button.agent-chat__attachment-file:hover {
 .agent-chat__entry--assistant .markdown-text {
   white-space: normal;
 }
-.agent-chat__entry--user .agent-chat__message-actions,
-.agent-chat__entry--assistant .agent-chat__message-actions {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
 .agent-chat__change-title {
   flex: 1;
   min-width: 0;
@@ -764,4 +742,14 @@ button.agent-chat__attachment-file:hover {
 .agent-panel .agents-page__footer {
   width: calc(100% - 24px);
   padding-bottom: 12px;
+}
+/* Après les règles de base qu’elles précisent. */
+.agent-chat__message-pastes .chat-text-preview__chip > span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.agents-page__column .agent-chat__entry--assistant {
+  font-size: var(--font-size-panel);
+  line-height: 1.6;
 }

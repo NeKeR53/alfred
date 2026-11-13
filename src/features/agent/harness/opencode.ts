@@ -8,6 +8,8 @@ import { AgentProtocol, object, type RpcMessage } from "./rpc";
 import type {
   ActivityAction,
   ActivityKind,
+  ApprovalRequest,
+  Autonomy,
   HarnessEvent,
   HarnessModel,
   HarnessSession,
@@ -56,12 +58,39 @@ function optionValues(value: unknown): Array<{ id: string; name: string }> {
   });
 }
 
+type PermissionRule = { action: string; resource: string; effect: "allow" | "ask" | "deny" };
+const rule = (action: string, effect: PermissionRule["effect"]): PermissionRule => ({ action, resource: "*", effect });
+
 /**
- * Configuration propre à la session, passée par l’environnement : elle déclare les outils d’Alfred sans toucher
- * aux fichiers de l’utilisateur. Le jeton y est un marqueur que Rust remplace au lancement.
+ * Règles d’autorisation d’OpenCode pour une autonomie. OpenCode applique la dernière règle qui correspond, après
+ * celles de son agent, qui autorisent tout par défaut : sans règle, il écrit et lance des commandes sans demander.
+ * Sans outils (appel unique), tout est refusé : personne ne répondrait à une demande d’accord.
  */
-export function openCodeSessionConfig(toolsUrl: string | undefined, instructionsFile?: string) {
+export function openCodePermissions(autonomy: Autonomy, tools: boolean, alfred: boolean): PermissionRule[] {
+  if (!tools) return [rule("*", "deny")];
+  const rules =
+    autonomy === "auto"
+      ? []
+      : autonomy === "strict"
+        ? ["edit", "write", "shell", "external_directory"].map((action) => rule(action, "ask"))
+        : [rule("external_directory", "ask")];
+  return alfred ? [...rules, rule("alfred_*", "allow")] : rules;
+}
+
+/**
+ * Configuration propre à la session, passée par l’environnement : elle déclare les outils d’Alfred et les règles
+ * d’autorisation sans toucher aux fichiers de l’utilisateur. Le jeton y est un marqueur que Rust remplace au
+ * lancement.
+ */
+export function openCodeSessionConfig(
+  toolsUrl: string | undefined,
+  instructionsFile?: string,
+  autonomy: Autonomy = "ask",
+  tools = true,
+) {
   const config: Record<string, unknown> = {};
+  const permissions = openCodePermissions(autonomy, tools, Boolean(toolsUrl));
+  if (permissions.length) config.permissions = permissions;
   if (toolsUrl) {
     config.mcp = {
       servers: {
@@ -75,7 +104,6 @@ export function openCodeSessionConfig(toolsUrl: string | undefined, instructions
         },
       },
     };
-    config.permissions = [{ action: "alfred_*", resource: "*", effect: "allow" }];
   }
   if (instructionsFile) config.instructions = [instructionsFile];
   return JSON.stringify(config);
@@ -243,7 +271,13 @@ function acpActivity(
       kind: "command",
       title: "Lecture",
       detail: path ?? tool.title,
-      actions: [{ type: tool.title === "list" ? "listFiles" : "read", ...(path ? { path } : {}) }],
+      // L’outil `read` d’OpenCode lit aussi un dossier : sa sortie commence alors par « Read directory ».
+      actions: [
+        {
+          type: tool.title === "list" || /^Read directory\b/.test(text) ? "listFiles" : "read",
+          ...(path ? { path } : {}),
+        },
+      ],
       content: serializedContent,
     };
   if (tool.kind === "search") {
@@ -271,7 +305,14 @@ function acpActivity(
           path: String(diff.path),
           ...changedLines(typeof diff.oldText === "string" ? diff.oldText : "", String(diff.newText ?? "")),
         }))
-      : [...new Set([...(path ? [path] : []), ...tool.paths])].map((changed) => ({ type: "edit", path: changed }));
+      : [...new Set([...(path ? [path] : []), ...tool.paths])].map((changed) => ({
+          type: "edit",
+          path: changed,
+          // L’outil `write` ne renvoie pas de diff : son contenu complet est dans l’entrée.
+          ...(typeof tool.input.content === "string" && changed === path
+            ? changedLines("", String(tool.input.content).replace(/\n$/, ""))
+            : {}),
+        }));
     return {
       kind: "file",
       title: "Modification de fichiers",
@@ -295,9 +336,53 @@ function acpActivity(
   };
 }
 
+const OPTION_LABEL = { allow: "Autoriser", allowAlways: "Toujours autoriser", deny: "Refuser" } as const;
+
+/** Carte d’accord d’une demande ACP : titre et détail en français, d’après l’outil plutôt que son libellé brut. */
+function approvalFor(id: string, toolCall: Record<string, unknown>, rawOptions: Record<string, unknown>[]) {
+  const input = object(toolCall.rawInput);
+  const name = typeof toolCall.name === "string" ? toolCall.name : undefined;
+  const locations = Array.isArray(toolCall.locations) ? toolCall.locations.map(object) : [];
+  const path = inputText(input, "filePath", "file_path", "path") ?? locations.map((l) => l.path).find(Boolean);
+  const command = inputText(input, "command", "cmd");
+  const title =
+    toolCall.kind === "execute" || command
+      ? "Exécuter une commande"
+      : toolCall.kind === "edit" || toolCall.kind === "delete" || toolCall.kind === "move"
+        ? "Modifier un fichier"
+        : toolCall.kind === "fetch"
+          ? "Accéder au web"
+          : name
+            ? `Utiliser l’outil ${name}`
+            : String(toolCall.title ?? "Autorisation demandée par OpenCode");
+  const options = rawOptions
+    .filter((option) => typeof option.optionId === "string")
+    .map((option) => {
+      const kind =
+        option.kind === "allow_always"
+          ? ("allowAlways" as const)
+          : option.kind === "allow_once"
+            ? ("allow" as const)
+            : ("deny" as const);
+      return { id: String(option.optionId), label: OPTION_LABEL[kind], kind };
+    });
+  const request: ApprovalRequest = {
+    id,
+    title,
+    detail:
+      command ??
+      (typeof path === "string" ? path : undefined) ??
+      (Object.keys(input).length ? JSON.stringify(input, null, 2) : undefined),
+    options,
+  };
+  return request;
+}
+
 export interface OpenCodeOptions extends Omit<SessionOptions, "provider"> {
   /** Session supprimée de l’historique d’OpenCode à la fermeture, pour les appels uniques. */
   ephemeral?: boolean;
+  /** Appel unique : tout outil est refusé, faute de quelqu’un pour répondre à une demande d’accord. */
+  withoutTools?: boolean;
   /** Fichier qui porte les consignes d’Alfred : OpenCode lit des chemins, pas du texte. */
   instructionsFile?: string;
 }
@@ -314,18 +399,9 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
     const params = message.params ?? {};
     if (message.method === "session/request_permission" && message.id !== undefined) {
       const raw = Array.isArray(params.options) ? params.options.map(object) : [];
-      const choices = raw
-        .filter((option) => typeof option.optionId === "string")
-        .map((option) => ({
-          id: String(option.optionId),
-          label: String(option.name ?? option.kind),
-          kind:
-            option.kind === "allow_always"
-              ? ("allowAlways" as const)
-              : option.kind === "allow_once"
-                ? ("allow" as const)
-                : ("deny" as const),
-        }));
+      const id = `opencode-${String(message.id)}`;
+      const request = approvalFor(id, object(params.toolCall), raw);
+      const choices = request.options;
       const allow =
         choices.find((choice) => choice.kind === "allow") ?? choices.find((choice) => choice.kind === "allowAlways");
       if (options.autonomy === "auto" && allow) {
@@ -334,18 +410,8 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
           .catch(() => undefined);
         return;
       }
-      const id = `opencode-${String(message.id)}`;
       permissions.set(id, { rpcId: message.id, options: choices.map((choice) => choice.id) });
-      const tool = object(params.toolCall);
-      emit({
-        type: "approval",
-        request: {
-          id,
-          title: String(tool.title ?? "Autorisation demandée par OpenCode"),
-          detail: tool.rawInput ? JSON.stringify(tool.rawInput, null, 2) : undefined,
-          options: choices,
-        },
-      });
+      emit({ type: "approval", request });
       return;
     }
     if (message.id !== undefined && message.method) {
@@ -364,6 +430,8 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
     opencodeConfig: openCodeSessionConfig(
       options.conversation ? options.toolsUrl : undefined,
       options.instructionsFile,
+      options.autonomy,
+      !options.withoutTools,
     ),
   });
   const rpc = new AgentProtocol(process, onMessage, () => {

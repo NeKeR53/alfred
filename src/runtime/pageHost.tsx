@@ -20,6 +20,8 @@ interface Diagnostic {
 
 const params = new URLSearchParams(window.location.search);
 const moduleId = params.get("module") ?? "";
+/** Clé que la coquille remet au cadre pour le code de son module, et de lui seul. */
+const moduleKey = params.get("key") ?? "";
 const pageId = params.get("page") ?? "";
 const base = new URL(".", import.meta.url).href.replace(/runtime\/$/, "");
 
@@ -84,7 +86,7 @@ function Host() {
 
   useEffect(() => {
     let active = true;
-    import(/* @vite-ignore */ `${base}m/${moduleId}/pages/${pageId}?v=${params.get("v") ?? ""}`).then(
+    import(/* @vite-ignore */ `${base}m/${moduleId}/${moduleKey}/pages/${pageId}?v=${params.get("v") ?? ""}`).then(
       (module: { default?: ComponentType }) => {
         if (!active) return;
         if (typeof module.default !== "function") {

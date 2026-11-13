@@ -169,7 +169,7 @@ it("montre l’état de chaque fonction, l’expose aux agents, l’essaie et la
   await user.click(within(dialog).getByRole("button", { name: "Exécuter" }));
   expect(await within(dialog).findByText("Échec de l’exécution")).toBeInTheDocument();
   expect(dialog.querySelector("pre code")?.textContent).toContain("Le client Jira a répondu 401.");
-  await user.click(within(dialog).getByRole("button", { name: "Fermer" }));
+  await user.click(within(dialog).getAllByRole("button", { name: "Fermer" }).at(-1) as HTMLElement);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
   // Supprimer : confirmé.

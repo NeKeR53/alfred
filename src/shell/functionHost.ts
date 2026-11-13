@@ -6,6 +6,7 @@
 import { AlfredError, frameBase, invoke } from "../lib/native";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protocol";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
+import { frameKey } from "./frameKeys";
 import { useShell } from "./store";
 
 interface Host {
@@ -29,16 +30,22 @@ function createHost(module: string): Host {
   frame.setAttribute("aria-hidden", "true");
   frame.tabIndex = -1;
   frame.style.display = "none";
-  frame.src = `${frameBase(info.pageBase)}/host/functions?${new URLSearchParams({ module, theme, v: String(revision) })}`;
+  // Le cadre ne reçoit son adresse qu’avec la clé de son module : sans elle, il ne charge aucune fonction.
+  const keyed = frameKey(module).then((key) => {
+    frame.src = `${frameBase(info.pageBase)}/host/functions?${new URLSearchParams({ module, key, theme, v: String(revision) })}`;
+  });
   const identity: FrameIdentity = { kind: "function", module, reference: `${module}/*` };
   let markReady: () => void = () => undefined;
   const host: Host = {
     frame,
     pending: new Map(),
     revision,
-    ready: new Promise<void>((resolve) => {
-      markReady = resolve;
-    }),
+    ready: Promise.all([
+      keyed,
+      new Promise<void>((resolve) => {
+        markReady = resolve;
+      }),
+    ]).then(() => undefined),
   };
   const post = (message: FrameMessage) => frame.contentWindow?.postMessage(message, "*");
   window.addEventListener("message", (event) => {
@@ -76,6 +83,11 @@ function createHost(module: string): Host {
     );
   });
   document.body.append(frame);
+  // Clé refusée (Alfred redémarré, module invalide) : le prochain appel recrée le cadre.
+  host.ready.catch(() => {
+    if (hosts.get(module) === host) hosts.delete(module);
+    frame.remove();
+  });
   return host;
 }
 

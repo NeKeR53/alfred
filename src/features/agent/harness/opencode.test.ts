@@ -84,7 +84,11 @@ describe("OpenCode · ouverture", () => {
       url: "http://127.0.0.1:4100/mcp",
       headers: { Authorization: "Bearer __ALFRED_MCP_TOKEN__" },
     });
-    expect(config.permissions).toEqual([{ action: "alfred_*", resource: "*", effect: "allow" }]);
+    // Forme réelle d’OpenCode 2.1 : la dernière règle qui correspond l’emporte sur celles de l’agent.
+    expect(config.permissions).toEqual([
+      { action: "external_directory", resource: "*", effect: "ask" },
+      { action: "alfred_*", resource: "*", effect: "allow" },
+    ]);
     expect(config.instructions).toEqual(["/espace/.alfred/consignes.md"]);
     // Seul le marqueur figure dans la configuration : Rust le remplace au lancement.
     expect([...launch.options.opencodeConfig!.matchAll(/Bearer ([^"]*)/g)].map((match) => match[1])).toEqual([
@@ -94,7 +98,9 @@ describe("OpenCode · ouverture", () => {
 
   it("n’ajoute pas les outils d’Alfred hors d’une conversation", async () => {
     const { launch } = await open({ toolsUrl: "http://127.0.0.1:4100/mcp" });
-    expect(JSON.parse(launch.options.opencodeConfig!)).toEqual({});
+    expect(JSON.parse(launch.options.opencodeConfig!)).toEqual({
+      permissions: [{ action: "external_directory", resource: "*", effect: "ask" }],
+    });
   });
 
   it("se présente, crée la session puis règle le modèle et l’effort", async () => {
@@ -294,11 +300,19 @@ describe("OpenCode · autorisations", () => {
     method: "session/request_permission",
     params: {
       sessionId: SESSION,
-      toolCall: { toolCallId: "call_3", title: "bash", rawInput: { command: "rm -rf dist" } },
+      toolCall: {
+        toolCallId: "call_3",
+        name: "shell",
+        title: "rm -rf dist",
+        kind: "execute",
+        status: "pending",
+        locations: [{ path: "/espace/projet" }],
+        rawInput: { command: "rm -rf dist", cwd: "/espace/projet" },
+      },
       options: [
-        { optionId: "once", name: "Autoriser une fois", kind: "allow_once" },
-        { optionId: "always", name: "Toujours autoriser", kind: "allow_always" },
-        { optionId: "reject", name: "Refuser", kind: "reject_once" },
+        { optionId: "once", kind: "allow_once", name: "Allow once" },
+        { optionId: "always", kind: "allow_always", name: "Always allow" },
+        { optionId: "reject", kind: "reject_once", name: "Reject" },
       ],
     },
   });
@@ -310,10 +324,10 @@ describe("OpenCode · autorisations", () => {
     expect(opened.events.view.approvals).toEqual([
       {
         id: "opencode-90",
-        title: "bash",
-        detail: JSON.stringify({ command: "rm -rf dist" }, null, 2),
+        title: "Exécuter une commande",
+        detail: "rm -rf dist",
         options: [
-          { id: "once", label: "Autoriser une fois", kind: "allow" },
+          { id: "once", label: "Autoriser", kind: "allow" },
           { id: "always", label: "Toujours autoriser", kind: "allowAlways" },
           { id: "reject", label: "Refuser", kind: "deny" },
         ],

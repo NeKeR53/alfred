@@ -80,7 +80,7 @@ async function ask(
           })
         : provider === "codex"
           ? await createCodexSession({ ...common, readOnly: true, ephemeral: true, outputSchema: request.schema })
-          : await createOpenCodeSession({ ...common, ephemeral: true });
+          : await createOpenCodeSession({ ...common, ephemeral: true, withoutTools: true });
     await session.send(text);
     await Promise.race([
       done,

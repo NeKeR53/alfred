@@ -138,12 +138,39 @@ pub fn respond(state: &AppState, path: &str, prefix: &str, origin: &str) -> Page
         "/host/functions" => return host_document("function-host", prefix, origin),
         _ => {}
     }
+    // `/m/<module>/<clé>/<fichier>` : sans la clé de ce module, pas de code. Tous les cadres ont la même origine
+    // opaque, le serveur ne sait pas lequel demande ; seule la coquille connaît les clés, et ne remet à chaque cadre
+    // que celle de son module. Une page ne charge donc pas le code d’un autre module.
     if let Some(rest) = path.strip_prefix("/m/") {
-        if let Some((module, file)) = rest.split_once('/') {
-            return module_script(state, module, file);
+        if let Some((module, rest)) = rest.split_once('/') {
+            if let Some((key, file)) = rest.split_once('/') {
+                if crate::webhooks::same(key.as_bytes(), frame_key(state, module).as_bytes()) {
+                    return module_script(state, module, file);
+                }
+            }
         }
     }
     PageResponse::not_found()
+}
+
+/// Clé qui ouvre le code d’un module à son cadre : signée par le secret du lancement, inconnue des pages.
+pub fn frame_key(state: &AppState, module: &str) -> String {
+    let mac = crate::webhooks::hmac_sha256(&state.frame_secret, format!("cadre:{module}").as_bytes());
+    mac[..16].iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// `pages.frameKey` : la coquille demande la clé du module d’un cadre qu’elle va créer.
+pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &serde_json::Value) -> Option<crate::error::AppResult<serde_json::Value>> {
+    if command != "pages.frameKey" {
+        return None;
+    }
+    Some((|| {
+        let module: String = crate::error::arg(args, "module")?;
+        if !crate::space::valid_id(&module) {
+            return Err(crate::error::AppError::new("Module inconnu."));
+        }
+        Ok(serde_json::json!({ "key": frame_key(state, &module) }))
+    })())
 }
 
 #[cfg(test)]
@@ -159,5 +186,31 @@ mod tests {
             assert!(csp.contains(directive), "{directive} absent de {csp}");
         }
         assert!(String::from_utf8(page.body).unwrap().contains(r#"x-dns-prefetch-control" content="off""#));
+    }
+
+    /// Le code d’un module ne sort que par la clé de ce module : une page ne charge pas celui d’un autre.
+    #[test]
+    fn a_frame_loads_only_the_code_of_its_own_module() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let space = state.space().unwrap();
+        for (module, title) in [("notes", "Notes"), ("banque", "Banque")] {
+            space
+                .place_page("Liste", None, "", &crate::space::PlaceTarget::Menu { label: title.into(), icon: None, color: None }, None)
+                .unwrap();
+            std::fs::write(space.module_dir(module).join("pages/liste.tsx"), "export default function Page() { return null; }").unwrap();
+        }
+        let get = |path: String| respond(&state, &path, "", "alfred-page:").status;
+        let notes = frame_key(&state, "notes");
+        let banque = frame_key(&state, "banque");
+        assert_ne!(notes, banque);
+        assert_eq!(get(format!("/m/notes/{notes}/pages/liste")), 200);
+        assert_eq!(get(format!("/m/banque/{banque}/pages/liste")), 200);
+        // Sans clé (l’ancienne adresse), avec la clé d’un autre module ou une clé inventée : rien.
+        assert_eq!(get("/m/banque/pages/liste".into()), 404);
+        assert_eq!(get(format!("/m/banque/{notes}/pages/liste")), 404);
+        assert_eq!(get(format!("/m/banque/{}/pages/liste", "0".repeat(32))), 404);
+        // Un autre lancement d’Alfred tire un autre secret.
+        let (other, _other_dir) = crate::clients::testing::test_state();
+        assert_ne!(frame_key(&other, "notes"), notes);
     }
 }

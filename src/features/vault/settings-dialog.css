@@ -1,6 +1,6 @@
 /* Modale de formulaire des Réglages : en-tête, corps défilant, actions. Uniquement les variables de `src/ui/styles.css`. */
 .settings-dialog {
-  width: min(520px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 32px));
   overflow: hidden;
 }
 .settings-dialog > form {
@@ -26,6 +26,10 @@
   overscroll-behavior: contain;
 }
 .settings-dialog__footer {
-  padding: 12px 16px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 16px;
   border-top: 1px solid var(--line);
 }

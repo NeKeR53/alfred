@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { frameBase } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
 import { type FrameIdentity, frameContext, handleFrameRequest, onSelectionChange, registerPeer } from "./frameBridge";
 import { frameErrors, sanitizeFrameError } from "./frameErrors";
+import { frameKey } from "./frameKeys";
 import { useShell } from "./store";
 
 /**
@@ -23,17 +24,31 @@ export function PageFrame({ page, kind, host }: { page: ResolvedPage; kind: "pag
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
   const initialTheme = useRef({ theme, accent });
+  // Clé du module de la page : sans elle, le cadre ne charge aucun code (et jamais celui d’un autre module).
+  const [key, setKey] = useState<{ module: string; key: string }>();
+  useEffect(() => {
+    let active = true;
+    frameKey(page.module).then(
+      (value) => active && setKey({ module: page.module, key: value }),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [page.module]);
+  const moduleKey = key?.module === page.module ? key.key : undefined;
   const source = useMemo(() => {
-    if (!info) return undefined;
+    if (!info || !moduleKey) return undefined;
     const query = new URLSearchParams({
       module: page.module,
+      key: moduleKey,
       page: page.id,
       v: String(revision),
       theme: initialTheme.current.theme,
     });
     if (initialTheme.current.accent) query.set("accent", initialTheme.current.accent);
     return `${frameBase(info.pageBase)}/host/page?${query}`;
-  }, [info, page.module, page.id, revision]);
+  }, [info, moduleKey, page.module, page.id, revision]);
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");

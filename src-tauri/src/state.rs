@@ -34,6 +34,16 @@ pub struct AppState {
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Jeton des outils d’Alfred remis à chaque processus d’agent → conversation qui l’a lancé.
     pub agent_tokens: Mutex<HashMap<String, String>>,
+    /// Secret tiré à chaque lancement : il signe la clé qui ouvre le code d’un module à son seul cadre.
+    pub frame_secret: [u8; 32],
+}
+
+/// Deux UUID v4, soit 244 bits tirés du générateur du système.
+fn random_secret() -> [u8; 32] {
+    let mut secret = [0u8; 32];
+    secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+    secret
 }
 
 impl AppState {
@@ -52,6 +62,7 @@ impl AppState {
             claimed: Mutex::new(HashSet::new()),
             watcher: Mutex::new(None),
             agent_tokens: Mutex::new(HashMap::new()),
+            frame_secret: random_secret(),
         }))
     }
 

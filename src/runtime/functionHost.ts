@@ -16,6 +16,8 @@ interface FunctionCall {
 
 const params = new URLSearchParams(window.location.search);
 const moduleId = params.get("module") ?? "";
+/** Clé que la coquille remet au cadre pour le code de son module, et de lui seul. */
+const moduleKey = params.get("key") ?? "";
 const base = new URL(".", import.meta.url).href.replace(/runtime\/$/, "");
 
 onShellEvent("call", (payload) => {
@@ -23,7 +25,7 @@ onShellEvent("call", (payload) => {
   void (async () => {
     try {
       const module = (await import(
-        /* @vite-ignore */ `${base}m/${moduleId}/functions/${call.function}?v=${call.revision}`
+        /* @vite-ignore */ `${base}m/${moduleId}/${moduleKey}/functions/${call.function}?v=${call.revision}`
       )) as { default?: (input: unknown) => unknown };
       if (typeof module.default !== "function") {
         throw new Error("La fonction doit être exportée par défaut : `export default async function (input)`.");

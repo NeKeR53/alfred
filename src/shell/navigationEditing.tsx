@@ -22,6 +22,7 @@ import { create } from "zustand";
 import { invoke } from "../lib/native";
 import { SECTION_COLORS, type Snapshot } from "../lib/types";
 import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
+import { DialogHeader } from "./DialogHeader";
 import { NamedIcon } from "./icons";
 import {
   COLOR_LABELS,
@@ -277,9 +278,7 @@ export function RenameDialog({
   return (
     <Dialog ref={dialog} className="nav-dialog" aria-labelledby={titleId} onClose={onClose}>
       <form id={formId} noValidate onSubmit={submit}>
-        <header className="nav-dialog__header">
-          <h2 id={titleId}>{title}</h2>
-        </header>
+        <DialogHeader title={title} titleId={titleId} dialogRef={dialog} />
         <div className="nav-dialog__body">
           <FormField label="Nom" hint="Laisser vide pour revenir au nom donné par le module.">
             <TextInput
@@ -334,9 +333,7 @@ export function IconDialog({
   return (
     <Dialog ref={dialog} className="nav-dialog" aria-labelledby={titleId} onClose={onClose}>
       <form id={formId} noValidate onSubmit={submit}>
-        <header className="nav-dialog__header">
-          <h2 id={titleId}>Icône de la section « {section} »</h2>
-        </header>
+        <DialogHeader title={`Icône de la section « ${section} »`} titleId={titleId} dialogRef={dialog} />
         <div className="nav-dialog__body">
           <Stack gap="md">
             <FormField
