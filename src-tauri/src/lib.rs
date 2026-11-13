@@ -23,6 +23,8 @@ mod space_db;
 mod state;
 mod transpile;
 mod vault;
+#[cfg(feature = "verify")]
+mod verify;
 mod webhooks;
 mod webview;
 #[cfg(windows)]
@@ -57,6 +59,17 @@ fn on_core_event(state: &AppState, event: &events::AppEvent) {
             }
         }
     }
+}
+
+/// Commandes de la fenêtre ; le banc de vérification ajoute la sienne, absente des versions normales.
+#[cfg(not(feature = "verify"))]
+fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![alfred_invoke]
+}
+
+#[cfg(feature = "verify")]
+fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![alfred_invoke, verify::verify_result]
 }
 
 pub fn run() {
@@ -111,11 +124,13 @@ pub fn run() {
             });
 
             tauri::async_runtime::block_on(server::start(state.clone()))?;
+            #[cfg(feature = "verify")]
+            verify::attach(app.handle(), &data_dir, state.server()?.port)?;
             let _runtime = tauri::async_runtime::handle().inner().enter();
             schedules::start(state);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![alfred_invoke])
+        .invoke_handler(handlers())
         .build(tauri::generate_context!())
         .expect("Alfred n’a pas pu démarrer")
         .run(|_app, event| {

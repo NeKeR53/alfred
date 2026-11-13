@@ -43,6 +43,10 @@ fn router(state: Shared, dev: bool) -> Router {
             .route("/__dev/events", get(dev_events))
             .route("/__page/{*path}", get(dev_page));
     }
+    #[cfg(feature = "verify")]
+    {
+        router = router.merge(crate::verify::routes());
+    }
     router
         .merge(crate::clients::routes())
         .merge(crate::mcp::routes())
@@ -218,5 +222,42 @@ mod tests {
         assert_eq!(get("/__page/host/page", "https://attaquant.example").await.unwrap().status(), 403);
         // Le cadre isolé de la coquille (origine opaque) charge toujours ses scripts.
         assert_eq!(get("/__page/host/page", "null").await.unwrap().status(), 200);
+    }
+
+    async fn bench_call(port: u16, path: &str, token: Option<&str>) -> reqwest::StatusCode {
+        let mut request = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}{path}"))
+            .json(&json!({ "script": "return 1;", "paths": [], "page": "a/b" }));
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        request.send().await.unwrap().status()
+    }
+
+    const BENCH_ROUTES: [&str; 3] = ["/__verify/eval", "/__verify/drop", "/__verify/snapshot"];
+
+    /// Sans la fonctionnalité `verify`, le serveur n’a aucune route du banc, même avec un jeton.
+    #[cfg(not(feature = "verify"))]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn normal_builds_have_no_verification_bench() {
+        let (_state, port, _dir) = serve().await;
+        for path in BENCH_ROUTES {
+            assert_eq!(bench_call(port, path, None).await, 404, "{path}");
+            assert_eq!(bench_call(port, path, Some("x")).await, 404, "{path}");
+        }
+    }
+
+    /// Avec `verify`, chaque route du banc exige son jeton ; sans fenêtre (ici), un appel prouvé reçoit 503.
+    #[cfg(feature = "verify")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_verification_bench_requires_its_token() {
+        let (_state, port, _dir) = serve().await;
+        for path in BENCH_ROUTES {
+            assert_eq!(bench_call(port, path, None).await, 401, "{path}");
+            assert_eq!(bench_call(port, path, Some("faux")).await, 401, "{path}");
+        }
+        let token = crate::verify::token();
+        assert_eq!(bench_call(port, "/__verify/eval", Some(token)).await, 503);
+        assert_eq!(bench_call(port, "/__verify/drop", Some(token)).await, 503);
     }
 }

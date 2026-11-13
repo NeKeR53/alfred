@@ -17,6 +17,9 @@ crate-type = ["rlib"]
 # Activé par `tauri build` (la CLI ajoute `tauri/custom-protocol`) : l’application embarque alors `dist/`. Sans lui,
 # un binaire de développement charge l’interface du serveur Vite (`devUrl`) au lieu d’un `dist/` peut-être périmé.
 custom-protocol = ["tauri/custom-protocol"]
+# Banc de vérification (`src/verify.rs`) : le serveur local exécute un script dans la vraie fenêtre et y émet un dépôt de
+# fichiers, protégé par un jeton écrit dans `verify.json`. Jamais dans une version distribuée.
+verify = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

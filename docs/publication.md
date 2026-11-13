@@ -144,6 +144,36 @@ Vérifier :
 signtool verify /pa /v src-tauri\target\release\bundle\nsis\Alfred_0.1.0_x64-setup.exe
 ```
 
+## Vérifier la vraie fenêtre sans écran (banc `verify`)
+
+La fonctionnalité Cargo `verify`, désactivée par défaut, ajoute au serveur local trois routes protégées par un jeton
+(`src-tauri/src/verify.rs`). Elle ne sert qu’à vérifier : ne jamais distribuer un binaire construit avec elle.
+
+```bash
+pnpm tauri build --features verify --bundles app --config '{"identifier":"app.alfred.verifybench","productName":"AlfredVerify"}'
+```
+
+Un identifiant à part donne un dossier de données et un verrou d’instance à part. Au démarrage, le port et le jeton
+sont écrits dans `~/Library/Application Support/app.alfred.verifybench/verify.json` (lisible par le seul utilisateur) :
+
+```bash
+F="$HOME/Library/Application Support/app.alfred.verifybench/verify.json"
+P=$(jq -r .port "$F"); T=$(jq -r .token "$F")
+curl -s -X POST "http://127.0.0.1:$P/__verify/eval" -H "Authorization: Bearer $T" -H 'content-type: application/json' \
+  -d '{"script":"return document.title;"}'
+```
+
+- `POST /__verify/eval` `{ script, timeoutMs? }` : exécute `script` (corps d’une fonction asynchrone, `return` donne le
+  résultat) dans la webview principale et renvoie `{ ok, value }` ou `{ ok: false, error }`. Le script voit la coquille,
+  pas le contenu des cadres isolés (origine opaque).
+- `POST /__verify/snapshot` `{ page: "module/page" }` : ce que la page affiche, en texte, par la capture de l’outil
+  `page_snapshot`.
+- `POST /__verify/drop` `{ paths, position? }` : émet vers la fenêtre l’entrée, le survol et le dépôt de fichiers, comme
+  Tauri le fait pour un vrai glisser-déposer.
+
+Sans le jeton, chaque route répond 401 ; sans la fonctionnalité, elles n’existent pas (404). Les tests du module
+`server` couvrent les deux cas (`cargo test` et `cargo test --features verify`).
+
 ## À garder en tête
 
 - `identifier` (`app.alfred.desktop`) fixe le dossier de données, le trousseau et le verrou d’instance unique : ne plus
