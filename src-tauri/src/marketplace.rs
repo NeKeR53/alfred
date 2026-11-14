@@ -628,18 +628,8 @@ fn catalog_manifest(clone: &Path, id: &str) -> AppResult<ModuleManifest> {
 // Versions et notes
 // ---------------------------------------------------------------------------------------------------------------
 
-/// Version « majeur.mineur.correctif » ; les composantes absentes valent zéro.
 fn parse_version(text: &str) -> Option<[u64; 3]> {
-    let text = text.trim();
-    let text = text.strip_prefix('v').unwrap_or(text);
-    let mut parts = [0u64; 3];
-    for (index, piece) in text.split('.').enumerate() {
-        if index == 3 || piece.is_empty() || !piece.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-        parts[index] = piece.parse().ok()?;
-    }
-    Some(parts)
+    space::parse_version(text)
 }
 
 fn format_version(version: [u64; 3]) -> String {
@@ -707,7 +697,8 @@ fn notes_since(module_dir: &Path, current: Option<&str>) -> String {
 /// nouveau quand une mise à jour en ajoute.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 struct Access {
-    /// `client`, `tool`, `webhook`, `schedule` ou `tables` (lecture des données du module qu’un `x-ajouts` complète).
+    /// `module` (dépendance), `client`, `tool`, `webhook`, `schedule` ou `tables` (lecture des données du module
+    /// qu’un `x-ajouts` complète).
     kind: &'static str,
     id: String,
     label: String,
@@ -718,6 +709,13 @@ fn accesses(manifest: &ModuleManifest) -> Vec<Access> {
     let mut accesses = Vec::new();
     if let Some(base) = extended_module(manifest) {
         accesses.push(Access { kind: "tables", id: base.to_string(), label: format!("lecture des données du module « {base} »") });
+    }
+    for requirement in &manifest.requires {
+        accesses.push(Access {
+            kind: "module",
+            id: requirement.module.clone(),
+            label: format!("fonctions et clients du module {}", requirement.describe()),
+        });
     }
     for client in &manifest.clients {
         accesses.push(Access { kind: "client", id: client.id.clone(), label: label(&client.label, &client.id) });
@@ -765,6 +763,7 @@ fn describe(manifest: &ModuleManifest) -> Value {
         "functions": manifest.functions.iter().map(|function| json!({
             "id": function.id, "description": function.description, "tool": function.tool,
         })).collect::<Vec<_>>(),
+        "requires": manifest.requires,
         "clients": manifest.clients,
         "webhooks": manifest.webhooks,
         "schedules": manifest.schedules,
@@ -822,6 +821,13 @@ fn modules(state: &AppState, id: &str) -> AppResult<Value> {
         entry["notes"] = json!(notes_since(&clone.join(&module_id), None));
         // Un module de même identifiant venu d’ailleurs (local, détaché, autre marketplace) bloque l’installation.
         entry["conflict"] = json!(local.is_some() && installed.is_none());
+        match dependency_plan(space.as_ref(), &clone, &marketplace, &manifest) {
+            Ok(steps) => entry["dependencies"] = json!(steps),
+            Err(error) => {
+                entry["dependencies"] = json!([]);
+                entry["blocked"] = json!(error.message);
+            }
+        }
         entry["installed"] = json!(installed);
         modules.push(entry);
     }
@@ -897,6 +903,7 @@ fn install(state: &AppState, marketplace_id: &str, module_id: &str) -> AppResult
         )));
     }
     let manifest = catalog_manifest(&clone, module_id)?;
+    let steps = dependency_plan(Some(&space), &clone, &marketplace, &manifest)?;
     let origin = Origin {
         marketplace: marketplace.url.clone(),
         version: manifest.version.clone(),
@@ -904,12 +911,133 @@ fn install(state: &AppState, marketplace_id: &str, module_id: &str) -> AppResult
         ..Origin::default()
     };
     checkpoint(&space, "l’installation d’un module")?;
+    apply_dependencies(&space, &clone, &marketplace, &steps)?;
     place_module(&space, &source, module_id, &origin)?;
-    let message = format!("Installation du module {} v{}", display_name(&manifest), manifest.version);
+    let message =
+        format!("Installation du module {} v{}{}", display_name(&manifest), manifest.version, steps_summary(&steps));
     let commit = git::commit_all(&space.root, &message)?;
     journal(state, &space, module_id, &message);
     state.emit("space:changed", Value::Null);
-    Ok(json!({ "module": module_id, "version": manifest.version, "commit": commit }))
+    Ok(json!({ "module": module_id, "version": manifest.version, "commit": commit, "dependencies": steps }))
+}
+
+/// Ce que l’installation ou la mise à jour d’un module fait d’une de ses dépendances.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct DependencyStep {
+    module: String,
+    name: String,
+    /// `install` (absente : installée et masquée du menu) ou `update` (trop ancienne : mise à jour).
+    action: &'static str,
+    version: String,
+}
+
+/// Dépendances à installer ou à mettre à jour, depuis le même marketplace, avant `manifest` : les plus profondes
+/// d’abord. L’erreur dit ce qui empêche l’opération (dépendance introuvable, trop ancienne, figée, locale…).
+fn dependency_plan(
+    space: Option<&Space>,
+    clone: &Path,
+    marketplace: &Marketplace,
+    manifest: &ModuleManifest,
+) -> AppResult<Vec<DependencyStep>> {
+    fn visit(
+        space: Option<&Space>,
+        clone: &Path,
+        marketplace: &Marketplace,
+        manifest: &ModuleManifest,
+        path: &mut Vec<String>,
+        steps: &mut Vec<DependencyStep>,
+    ) -> AppResult<()> {
+        path.push(manifest.id.clone());
+        for requirement in &manifest.requires {
+            let wanted = requirement.module.as_str();
+            if path.iter().any(|id| id == wanted) {
+                return Err(AppError::new(format!("Dépendances en boucle : {} → {wanted}.", path.join(" → "))));
+            }
+            if steps.iter().any(|step| step.module == wanted) {
+                continue;
+            }
+            let who = display_name(manifest).to_string();
+            let local = space.and_then(|space| space.module(wanted).ok());
+            let action = match &local {
+                Some(local) if requirement.accepts(&local.version) => continue,
+                Some(local) => {
+                    let from_here = local
+                        .origin
+                        .as_ref()
+                        .is_some_and(|origin| !origin.detached && same_url(&origin.marketplace, &marketplace.url));
+                    if !from_here {
+                        return Err(AppError::new(format!(
+                            "« {who} » demande le module {}, mais celui de l’espace est en v{} et ne vient pas de ce marketplace : le mettre à jour d’abord.",
+                            requirement.describe(),
+                            local.version
+                        )));
+                    }
+                    if local.origin.as_ref().is_some_and(|origin| origin.pinned) {
+                        return Err(AppError::new(format!(
+                            "« {who} » demande le module {}, figé en v{} : le libérer pour qu’il soit mis à jour.",
+                            requirement.describe(),
+                            local.version
+                        )));
+                    }
+                    "update"
+                }
+                None => "install",
+            };
+            let available = catalog_manifest(clone, wanted).map_err(|_| {
+                AppError::new(format!(
+                    "« {who} » dépend du module {}, que le marketplace « {} » ne propose pas.",
+                    requirement.describe(),
+                    marketplace.name
+                ))
+            })?;
+            if !requirement.accepts(&available.version) {
+                return Err(AppError::new(format!(
+                    "« {who} » dépend du module {}, mais le marketplace « {} » ne propose que la v{}.",
+                    requirement.describe(),
+                    marketplace.name,
+                    available.version
+                )));
+            }
+            visit(space, clone, marketplace, &available, path, steps)?;
+            steps.push(DependencyStep {
+                module: wanted.to_string(),
+                name: display_name(&available).to_string(),
+                action,
+                version: available.version.clone(),
+            });
+        }
+        path.pop();
+        Ok(())
+    }
+    let mut steps = Vec::new();
+    visit(space, clone, marketplace, manifest, &mut Vec::new(), &mut steps)?;
+    Ok(steps)
+}
+
+/// Pose les dépendances prévues ; une dépendance nouvellement installée ne s’affiche pas dans le menu.
+fn apply_dependencies(space: &Space, clone: &Path, marketplace: &Marketplace, steps: &[DependencyStep]) -> AppResult<()> {
+    for step in steps {
+        let origin = Origin {
+            marketplace: marketplace.url.clone(),
+            version: step.version.clone(),
+            commit: last_commit(clone, &step.module),
+            ..Origin::default()
+        };
+        place_module(space, &clone.join(&step.module), &step.module, &origin)?;
+        if step.action == "install" {
+            space.set_visibility(&space::module_key(&step.module), true)?;
+        }
+    }
+    Ok(())
+}
+
+fn steps_summary(steps: &[DependencyStep]) -> String {
+    if steps.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = steps.iter().map(|step| format!("{} v{}", step.name, step.version)).collect();
+    format!(" (avec {})", items.join(", "))
 }
 
 /// Où en est la source d’un module installé.
@@ -1017,6 +1145,8 @@ fn updates(state: &AppState) -> AppResult<Value> {
             "source": origin.marketplace,
             "notes": "",
             "changes": changes(&manifest, &manifest),
+            "dependencies": [],
+            "blocked": null,
             "locallyModified": locally_modified(&space, &module_id, &origin),
         });
         match source_of(state, &marketplaces, &module_id, &origin) {
@@ -1030,6 +1160,11 @@ fn updates(state: &AppState) -> AppResult<Value> {
                 entry["marketplace"] = json!(marketplace.id);
                 entry["marketplaceName"] = json!(marketplace.name);
                 if is_newer(&available.version, &current) {
+                    let clone = clone_dir(state, &marketplace.id);
+                    match dependency_plan(Some(&space), &clone, &marketplace, &available) {
+                        Ok(steps) => entry["dependencies"] = json!(steps),
+                        Err(error) => entry["blocked"] = json!(error.message),
+                    }
                     entry["available"] = json!(available.version);
                     entry["notes"] = json!(notes_since(&dir, Some(&current)));
                     entry["changes"] = changes(&manifest, &available);
@@ -1065,6 +1200,7 @@ fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Val
         return Err(AppError::new(format!("Le module « {name} » est déjà à jour (v{current}).")));
     }
     let clone = clone_dir(state, &marketplace.id);
+    let steps = dependency_plan(Some(space), &clone, &marketplace, &available)?;
     let new_origin = Origin {
         marketplace: origin.marketplace.clone(),
         version: available.version.clone(),
@@ -1073,11 +1209,17 @@ fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Val
         pinned: origin.pinned,
     };
     checkpoint(space, "la mise à jour d’un module")?;
+    apply_dependencies(space, &clone, &marketplace, &steps)?;
     place_module(space, &dir, module_id, &new_origin)?;
-    let message = format!("Mise à jour du module {} v{current} → v{}", display_name(&available), available.version);
+    let message = format!(
+        "Mise à jour du module {} v{current} → v{}{}",
+        display_name(&available),
+        available.version,
+        steps_summary(&steps)
+    );
     let commit = git::commit_all(&space.root, &message)?;
     journal(state, space, module_id, &message);
-    Ok(json!({ "module": module_id, "name": display_name(&available), "from": current, "to": available.version, "commit": commit }))
+    Ok(json!({ "module": module_id, "name": display_name(&available), "from": current, "to": available.version, "commit": commit, "dependencies": steps }))
 }
 
 fn update_all(state: &AppState) -> AppResult<Value> {
@@ -1146,6 +1288,20 @@ fn detach(state: &AppState, module_id: &str) -> AppResult<Value> {
 fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<Value> {
     let space = state.space()?;
     let manifest = space.module(module_id)?;
+    let dependents = space.dependents(module_id);
+    if !dependents.is_empty() {
+        let names: Vec<String> = dependents
+            .iter()
+            .map(|id| space.module(id).map(|module| display_name(&module).to_string()).unwrap_or_else(|_| id.clone()))
+            .map(|name| format!("« {name} »"))
+            .collect();
+        return Err(AppError::new(format!(
+            "Le module « {} » est utilisé par {} : désinstaller d’abord {}.",
+            display_name(&manifest),
+            names.join(", "),
+            if names.len() > 1 { "ces modules" } else { "ce module" }
+        )));
+    }
     checkpoint(&space, "la désinstallation d’un module")?;
     remove_tree(&space.module_dir(module_id))?;
     crate::permissions::forget_module(state, module_id)?;
@@ -1161,7 +1317,11 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
         pages.retain(|page| !page.starts_with(&prefix));
     }
     layout.overrides.retain(|key, _| {
-        !key.strip_prefix("page:").or_else(|| key.strip_prefix("section:")).is_some_and(|target| target.starts_with(&prefix))
+        key != &space::module_key(module_id)
+            && !key
+                .strip_prefix("page:")
+                .or_else(|| key.strip_prefix("section:"))
+                .is_some_and(|target| target.starts_with(&prefix))
     });
     layout_owner.bindings.retain(|need, _| !need.starts_with(&prefix));
     space.write_manifest(&layout_owner)?;
@@ -1512,6 +1672,32 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
 
     let clone = clone_dir(state, &marketplace.id);
     sync_clone(&clone, &marketplace.url)?;
+    // Qui installe le module doit pouvoir installer ses dépendances depuis le même marketplace.
+    let missing: Vec<Problem> = manifest
+        .requires
+        .iter()
+        .filter(|requirement| {
+            requirement.module != module_id
+                && !catalog_manifest(&clone, &requirement.module).is_ok_and(|found| requirement.accepts(&found.version))
+        })
+        .map(|requirement| Problem {
+            file: MODULE_FILE.to_string(),
+            line: None,
+            column: None,
+            message: format!(
+                "Dépendance {} absente du marketplace « {} » (ou en version trop ancienne) : la publier d’abord.",
+                requirement.describe(),
+                marketplace.name
+            ),
+        })
+        .collect();
+    if !missing.is_empty() {
+        let count = missing.len();
+        return Err(AppError::with_detail(
+            format!("Publication bloquée : {count} dépendance{} à publier d’abord.", if count > 1 { "s" } else { "" }),
+            json!({ "problems": missing }),
+        ));
+    }
     let release =
         Release { source: &source, id: module_id, name: &name, version: wanted, manifest: &published_manifest, notes };
     let commit = match publish_into_clone(&clone, &release, &mut || {}) {
@@ -1991,5 +2177,78 @@ mod tests {
         assert_eq!((listed[0].kind, listed[0].id.as_str()), ("tables", "banque"));
         assert_eq!(describe(&extension)["extends"], json!("banque"));
         assert!(accesses(&ModuleManifest { id: "banque".into(), ..ModuleManifest::default() }).is_empty());
+    }
+
+    /// Un module qui en utilise un autre l’installe avec lui (masqué), le met à jour avec lui, et le protège.
+    #[tokio::test]
+    async fn installs_updates_and_protects_the_modules_a_module_requires() {
+        let root = tempfile::tempdir().unwrap();
+        let remote = bare_remote(root.path());
+        let (author, author_space) = desk(root.path(), "auteur");
+        for label in ["CRM", "Devis"] {
+            let page = author_space
+                .place_page("Liste", None, "", &PlaceTarget::Menu { label: label.into(), icon: None, color: None }, None)
+                .unwrap();
+            fs::write(&page.file, PAGE).unwrap();
+        }
+        let require = |min: &str| {
+            let mut devis = author_space.module("devis").unwrap();
+            devis.requires = vec![crate::space::Requirement { module: "crm".into(), min_version: Some(min.into()) }];
+            author_space.write_module(&devis).unwrap();
+            git::commit_all(&author_space.root, "Dépendance").unwrap();
+        };
+        require("1.0.0");
+        call(&author, "marketplace.add", json!({ "url": remote, "name": "Équipe" })).await.unwrap();
+        let publish = |module: &str, version: &str| {
+            let author = author.clone();
+            let args = json!({ "module": module, "marketplace": "equipe", "version": version, "notes": "" });
+            async move { call(&author, "marketplace.publish", args).await }
+        };
+
+        // La dépendance doit être publiée d’abord.
+        let blocked = publish("devis", "1.0.0").await.unwrap_err();
+        assert!(blocked.message.contains("dépendance"), "{}", blocked.message);
+        publish("crm", "1.0.0").await.unwrap();
+        publish("devis", "1.0.0").await.unwrap();
+
+        // Le catalogue annonce la dépendance et ce que l’installation en fera.
+        let (reader, reader_space) = desk(root.path(), "lecteur");
+        call(&reader, "marketplace.add", json!({ "url": remote })).await.unwrap();
+        let catalog = call(&reader, "marketplace.modules", json!({ "id": "marketplace" })).await.unwrap();
+        let devis = catalog.as_array().unwrap().iter().find(|entry| entry["id"] == "devis").unwrap();
+        assert_eq!(devis["dependencies"], json!([{ "module": "crm", "name": "CRM", "action": "install", "version": "1.0.0" }]));
+        assert_eq!(devis["requires"][0]["module"], "crm");
+        assert!(accesses(&author_space.module("devis").unwrap()).iter().any(|access| access.kind == "module"));
+
+        // Installer « devis » installe « crm », masqué du menu, dans le même enregistrement.
+        call(&reader, "marketplace.install", json!({ "marketplace": "marketplace", "module": "devis" })).await.unwrap();
+        assert_eq!(last_message(&reader_space), "Installation du module Devis v1.0.0 (avec CRM v1.0.0)");
+        let snapshot = reader_space.snapshot().unwrap();
+        assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
+        let crm = snapshot.modules.iter().find(|module| module.id == "crm").unwrap();
+        assert!(crm.hidden && crm.read_only);
+        assert!(snapshot.sections.iter().find(|section| section.module == "crm").unwrap().hidden);
+        assert!(!snapshot.sections.iter().find(|section| section.module == "devis").unwrap().hidden);
+
+        // « crm » ne se désinstalle pas tant que « devis » s’en sert.
+        let refused = call(&reader, "marketplace.uninstall", json!({ "module": "crm", "deleteData": false })).await.unwrap_err();
+        assert!(refused.message.contains("« Devis »"), "{}", refused.message);
+
+        // Une nouvelle version de « devis » qui demande un « crm » plus récent le met à jour avec elle.
+        publish("crm", "1.1.0").await.unwrap();
+        require("1.1.0");
+        publish("devis", "1.1.0").await.unwrap();
+        let updates = call(&reader, "marketplace.updates", json!({ "refresh": true })).await.unwrap();
+        let entry = updates.as_array().unwrap().iter().find(|entry| entry["module"] == "devis").unwrap();
+        assert_eq!(entry["dependencies"][0]["action"], "update");
+        call(&reader, "marketplace.update", json!({ "module": "devis" })).await.unwrap();
+        assert_eq!(reader_space.module("crm").unwrap().version, "1.1.0");
+        assert_eq!(last_message(&reader_space), "Mise à jour du module Devis v1.0.0 → v1.1.0 (avec CRM v1.1.0)");
+        assert!(reader_space.snapshot().unwrap().modules.iter().find(|module| module.id == "crm").unwrap().hidden);
+
+        // Une fois « devis » parti, « crm » se désinstalle et son réglage d’affichage disparaît avec lui.
+        call(&reader, "marketplace.uninstall", json!({ "module": "devis", "deleteData": false })).await.unwrap();
+        call(&reader, "marketplace.uninstall", json!({ "module": "crm", "deleteData": false })).await.unwrap();
+        assert!(reader_space.manifest().unwrap().layout.overrides.is_empty());
     }
 }

@@ -87,16 +87,73 @@ pub struct Auth {
     pub scopes: Vec<String>,
 }
 
+/// Ce qu’Alfred utilise pour une requête : une instance d’un client, son adresse et son authentification résolues.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Client {
     pub id: String,
+    /// Instance du client ; `default` pour un client à une seule instance.
+    #[serde(skip)]
+    pub instance: String,
     pub label: String,
     pub base_url: String,
     pub auth: Auth,
     /// En-têtes fixes ajoutés à chaque requête (`Accept`…). Jamais d’authentification : elle vient du coffre.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+}
+
+/// Instance d’un client écrit sous sa forme simple (une adresse, une authentification), et méthode qu’elle utilise.
+pub const DEFAULT_INSTANCE: &str = "default";
+
+/// Façon de s’authentifier auprès du service, déclarée dans le client ; chaque instance en choisit une. Dans une
+/// adresse d’autorisation ou de jetons, `{url}` devient l’adresse de l’instance.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AuthMethod {
+    pub id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(flatten)]
+    pub auth: Auth,
+}
+
+/// Compte ou installation du service : son adresse, la méthode choisie et l’entrée du coffre qui la sert. Seul
+/// l’utilisateur, dans les Réglages, en crée ou en modifie une.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Instance {
+    pub id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// Adresse de base de l’instance ; à défaut, celle du client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub method: String,
+    /// Identifiant de l’entrée du coffre ; jamais la valeur.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+/// Fichier `clients/<id>.json`, sous l’une de ses deux formes : un client à une seule instance (`baseUrl`, `auth`
+/// avec son entrée du coffre), ou un client à plusieurs instances (`methods`, `instances`). En mémoire, il est
+/// toujours déplié : `auth` est vide, `methods` et `instances` portent tout.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClientDef {
+    pub id: String,
+    pub label: String,
+    /// Adresse par défaut des instances qui n’en ont pas.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<Auth>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<AuthMethod>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<Instance>,
 }
 
 fn clean(value: &mut Option<String>) {
@@ -147,53 +204,112 @@ pub fn check_url(text: &str, what: &str, allow_query: bool) -> AppResult<Url> {
     Ok(url)
 }
 
-impl Client {
+fn valid_headers(headers: &BTreeMap<String, String>) -> AppResult<()> {
+    for (name, value) in headers {
+        let lower = name.to_ascii_lowercase();
+        if RESERVED_HEADERS.contains(&lower.as_str()) {
+            return Err(AppError::new(format!(
+                "L’en-tête « {name} » ne se fixe pas dans un client : l’authentification vient du coffre."
+            )));
+        }
+        if HeaderName::from_bytes(name.as_bytes()).is_err() || HeaderValue::from_str(value).is_err() {
+            return Err(AppError::new(format!("L’en-tête « {name} » n’est pas valide.")));
+        }
+    }
+    Ok(())
+}
+
+fn clean_headers(headers: &mut BTreeMap<String, String>) {
+    *headers = std::mem::take(headers)
+        .into_iter()
+        .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+        .filter(|(name, _)| !name.is_empty())
+        .collect();
+}
+
+impl Auth {
     /// Retire les espaces et les champs sans objet pour le type d’authentification : le fichier reste lisible et
     /// ne garde pas, par exemple, l’en-tête d’une ancienne clé d’API.
     fn normalize(&mut self) {
-        self.label = self.label.trim().to_string();
-        self.id = self.id.trim().to_string();
-        if self.id.is_empty() && !self.label.is_empty() {
-            self.id = slug(&self.label);
-        }
-        self.base_url = self.base_url.trim().to_string();
-        self.headers = std::mem::take(&mut self.headers)
-            .into_iter()
-            .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
-            .filter(|(name, _)| !name.is_empty())
-            .collect();
-        let auth = &mut self.auth;
         for value in [
-            &mut auth.secret,
-            &mut auth.header,
-            &mut auth.query_param,
-            &mut auth.authorization_url,
-            &mut auth.token_url,
+            &mut self.secret,
+            &mut self.header,
+            &mut self.query_param,
+            &mut self.authorization_url,
+            &mut self.token_url,
         ] {
             clean(value);
         }
         // Le préfixe garde ses espaces : « Token  » en a besoin.
-        auth.prefix = auth.prefix.take().filter(|prefix| !prefix.is_empty());
-        auth.scopes = std::mem::take(&mut auth.scopes)
+        self.prefix = self.prefix.take().filter(|prefix| !prefix.is_empty());
+        self.scopes = std::mem::take(&mut self.scopes)
             .into_iter()
             .map(|scope| scope.trim().to_string())
             .filter(|scope| !scope.is_empty())
             .collect();
-        if auth.kind != AuthKind::ApiKey {
-            (auth.header, auth.prefix, auth.query_param) = (None, None, None);
+        if self.kind != AuthKind::ApiKey {
+            (self.header, self.prefix, self.query_param) = (None, None, None);
         }
-        if auth.kind != AuthKind::Oauth2 {
-            auth.authorization_url = None;
+        if self.kind != AuthKind::Oauth2 {
+            self.authorization_url = None;
         }
-        if !auth.kind.uses_token_endpoint() {
-            auth.token_url = None;
-            auth.scopes.clear();
+        if !self.kind.uses_token_endpoint() {
+            self.token_url = None;
+            self.scopes.clear();
         }
-        if auth.kind == AuthKind::None {
-            auth.secret = None;
+        if self.kind == AuthKind::None {
+            self.secret = None;
         }
     }
 
+    fn validate(&self) -> AppResult<()> {
+        if let Some(secret) = &self.secret {
+            if !valid_id(secret) {
+                return Err(AppError::new(format!("Identifiant d’entrée du coffre invalide : « {secret} ».")));
+            }
+        }
+        match self.kind {
+            AuthKind::ApiKey => match (&self.header, &self.query_param) {
+                (Some(header), None) => {
+                    if HeaderName::from_bytes(header.as_bytes()).is_err() {
+                        return Err(AppError::new(format!("L’en-tête « {header} » n’est pas valide.")));
+                    }
+                }
+                (None, Some(_)) => {}
+                _ => {
+                    return Err(AppError::new(
+                        "Indiquer où va la clé d’API : un en-tête ou un paramètre d’URL, mais pas les deux.",
+                    ))
+                }
+            },
+            AuthKind::Oauth2 => {
+                let url = self
+                    .authorization_url
+                    .as_deref()
+                    .ok_or_else(|| AppError::new("Saisir l’adresse d’autorisation."))?;
+                check_url(url, "L’adresse d’autorisation", true)?;
+            }
+            _ => {}
+        }
+        if self.kind.uses_token_endpoint() {
+            let url =
+                self.token_url.as_deref().ok_or_else(|| AppError::new("Saisir l’adresse du serveur de jetons."))?;
+            check_url(url, "L’adresse du serveur de jetons", true)?;
+        }
+        Ok(())
+    }
+
+    /// `{url}` remplacé par l’adresse de l’instance dans les adresses d’autorisation et de jetons.
+    fn for_instance(&self, root: &str) -> Auth {
+        let mut auth = self.clone();
+        for value in [&mut auth.authorization_url, &mut auth.token_url].into_iter().flatten() {
+            *value = value.replace("{url}", root);
+        }
+        auth
+    }
+}
+
+impl Client {
     pub fn base(&self) -> AppResult<Url> {
         check_url(&self.base_url, "L’adresse de base du client", false)
     }
@@ -208,53 +324,247 @@ impl Client {
         if self.label.trim().is_empty() {
             return Err(AppError::new("Le client doit avoir un libellé."));
         }
+        if self.base_url.trim().is_empty() {
+            return Err(AppError::new(format!("Saisir l’adresse de « {} ».", self.label)));
+        }
         self.base()?;
-        for (name, value) in &self.headers {
-            let lower = name.to_ascii_lowercase();
-            if RESERVED_HEADERS.contains(&lower.as_str()) {
+        valid_headers(&self.headers)?;
+        self.auth.validate()
+    }
+
+    /// Clé de la validation de l’utilisateur : une par instance. Celle d’un client à une seule instance est son
+    /// identifiant, comme avant que les instances existent.
+    fn trust_key(&self) -> String {
+        trust_key(&self.id, &self.instance)
+    }
+}
+
+fn trust_key(client: &str, instance: &str) -> String {
+    if instance.is_empty() || instance == DEFAULT_INSTANCE {
+        client.to_string()
+    } else {
+        format!("{client}#{instance}")
+    }
+}
+
+impl Instance {
+    fn normalize(&mut self) {
+        self.label = self.label.trim().to_string();
+        self.id = self.id.trim().to_string();
+        if self.id.is_empty() && !self.label.is_empty() {
+            self.id = slug(&self.label);
+        }
+        self.method = self.method.trim().to_string();
+        clean(&mut self.url);
+        clean(&mut self.secret);
+    }
+
+    /// Nom affiché : l’instance d’un client à une seule instance n’en a pas toujours.
+    pub fn display_label(&self) -> &str {
+        if self.label.is_empty() {
+            "Principale"
+        } else {
+            &self.label
+        }
+    }
+}
+
+impl ClientDef {
+    /// Déplie la forme simple : son authentification devient la méthode `default`, son adresse et son entrée du
+    /// coffre l’instance `default`.
+    fn expand(&mut self) {
+        if self.methods.is_empty() {
+            let mut auth = self.auth.take().unwrap_or_default();
+            let secret = auth.secret.take();
+            self.methods.push(AuthMethod { id: DEFAULT_INSTANCE.to_string(), label: String::new(), auth });
+            if self.instances.is_empty() && !self.base_url.trim().is_empty() {
+                self.instances.push(Instance {
+                    id: DEFAULT_INSTANCE.to_string(),
+                    method: DEFAULT_INSTANCE.to_string(),
+                    secret,
+                    ..Instance::default()
+                });
+            }
+        }
+        self.auth = None;
+    }
+
+    /// Fichier écrit sous la forme simple, avec son instance : vrai quand c’est cette forme qui a été reçue.
+    fn carries_instance(&self) -> bool {
+        self.methods.is_empty()
+    }
+
+    /// Un client que la forme simple suffit à écrire : il garde le fichier qu’il avait avant les instances.
+    pub fn is_simple(&self) -> bool {
+        let [method] = self.methods.as_slice() else { return false };
+        let [instance] = self.instances.as_slice() else { return false };
+        method.id == DEFAULT_INSTANCE
+            && method.label.is_empty()
+            && instance.id == DEFAULT_INSTANCE
+            && instance.method == DEFAULT_INSTANCE
+            && instance.label.is_empty()
+            && instance.url.is_none()
+            && !self.base_url.is_empty()
+    }
+
+    /// Contenu écrit sur le disque : la forme simple quand elle suffit.
+    fn to_file(&self) -> ClientDef {
+        let mut file = self.clone();
+        if self.is_simple() {
+            let mut auth = file.methods.remove(0).auth;
+            auth.secret = file.instances.remove(0).secret;
+            file.auth = Some(auth);
+        }
+        file
+    }
+
+    fn normalize(&mut self) {
+        self.expand();
+        self.label = self.label.trim().to_string();
+        self.id = self.id.trim().to_string();
+        if self.id.is_empty() && !self.label.is_empty() {
+            self.id = slug(&self.label);
+        }
+        self.base_url = self.base_url.trim().to_string();
+        clean_headers(&mut self.headers);
+        for method in &mut self.methods {
+            method.id = method.id.trim().to_string();
+            if method.id.is_empty() && !method.label.is_empty() {
+                method.id = slug(&method.label);
+            }
+            method.label = method.label.trim().to_string();
+            method.auth.normalize();
+            // Le secret appartient à l’instance, jamais à la méthode.
+            method.auth.secret = None;
+        }
+        for instance in &mut self.instances {
+            instance.normalize();
+        }
+    }
+
+    /// Ce que le client décrit, indépendamment de ses instances : identifiant, en-têtes, méthodes.
+    pub fn validate_definition(&self) -> AppResult<()> {
+        if !valid_id(&self.id) {
+            return Err(AppError::new(format!(
+                "Identifiant de client invalide : « {} ». Utiliser des minuscules, des chiffres et des tirets.",
+                self.id
+            )));
+        }
+        if self.label.trim().is_empty() {
+            return Err(AppError::new("Le client doit avoir un libellé."));
+        }
+        if !self.base_url.is_empty() {
+            check_url(&self.base_url, "L’adresse de base du client", false)?;
+        }
+        valid_headers(&self.headers)?;
+        if self.methods.is_empty() {
+            return Err(AppError::new("Le client doit proposer au moins une méthode d’authentification."));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for method in &self.methods {
+            if !valid_id(&method.id) || !seen.insert(method.id.as_str()) {
                 return Err(AppError::new(format!(
-                    "L’en-tête « {name} » ne se fixe pas dans un client : l’authentification vient du coffre."
+                    "Identifiant de méthode invalide ou répété : « {} ».",
+                    method.id
                 )));
             }
-            if HeaderName::from_bytes(name.as_bytes()).is_err() || HeaderValue::from_str(value).is_err() {
-                return Err(AppError::new(format!("L’en-tête « {name} » n’est pas valide.")));
-            }
+            // Les adresses relatives à l’instance sont vérifiées avec une adresse d’exemple.
+            let mut auth = method.auth.for_instance("https://instance.exemple");
+            auth.secret = None;
+            auth.validate().map_err(|error| {
+                AppError::new(format!("Méthode « {} » : {}", method_label(method), error.message))
+            })?;
         }
-        let auth = &self.auth;
-        if let Some(secret) = &auth.secret {
-            if !valid_id(secret) {
-                return Err(AppError::new(format!("Identifiant d’entrée du coffre invalide : « {secret} ».")));
+        let mut seen = std::collections::HashSet::new();
+        for instance in &self.instances {
+            if !valid_id(&instance.id) || !seen.insert(instance.id.as_str()) {
+                return Err(AppError::new(format!(
+                    "Identifiant d’instance invalide ou répété : « {} ».",
+                    instance.id
+                )));
             }
-        }
-        match auth.kind {
-            AuthKind::ApiKey => match (&auth.header, &auth.query_param) {
-                (Some(header), None) => {
-                    if HeaderName::from_bytes(header.as_bytes()).is_err() {
-                        return Err(AppError::new(format!("L’en-tête « {header} » n’est pas valide.")));
-                    }
-                }
-                (None, Some(_)) => {}
-                _ => {
-                    return Err(AppError::new(
-                        "Indiquer où va la clé d’API : un en-tête ou un paramètre d’URL, mais pas les deux.",
-                    ))
-                }
-            },
-            AuthKind::Oauth2 => {
-                let url = auth
-                    .authorization_url
-                    .as_deref()
-                    .ok_or_else(|| AppError::new("Saisir l’adresse d’autorisation."))?;
-                check_url(url, "L’adresse d’autorisation", true)?;
-            }
-            _ => {}
-        }
-        if auth.kind.uses_token_endpoint() {
-            let url =
-                auth.token_url.as_deref().ok_or_else(|| AppError::new("Saisir l’adresse du serveur de jetons."))?;
-            check_url(url, "L’adresse du serveur de jetons", true)?;
         }
         Ok(())
+    }
+
+    pub fn method(&self, id: &str) -> Option<&AuthMethod> {
+        self.methods.iter().find(|method| method.id == id)
+    }
+
+    fn find_instance(&self, id: &str) -> Option<&Instance> {
+        self.instances.iter().find(|instance| instance.id == id)
+    }
+
+    /// L’instance demandée, ou la première (celle par défaut) quand la demande n’en nomme pas.
+    pub fn instance(&self, wanted: Option<&str>) -> AppResult<&Instance> {
+        match wanted.map(str::trim).filter(|wanted| !wanted.is_empty()) {
+            Some(id) => self.find_instance(id).ok_or_else(|| {
+                let known: Vec<&str> = self.instances.iter().map(|instance| instance.id.as_str()).collect();
+                AppError::new(format!(
+                    "Le client « {} » n’a pas d’instance « {id} ». Instances : {}.",
+                    self.label,
+                    if known.is_empty() { "aucune".to_string() } else { known.join(", ") }
+                ))
+            }),
+            None => self.instances.first().ok_or_else(|| {
+                AppError::new(format!(
+                    "Le client « {} » n’a aucune instance : en ajouter une dans Réglages → Clients.",
+                    self.label
+                ))
+            }),
+        }
+    }
+
+    /// Requête vers une instance : son adresse, la méthode qu’elle a choisie et son entrée du coffre.
+    pub fn resolve_instance(&self, instance: &Instance) -> AppResult<Client> {
+        let method = self.method(&instance.method).ok_or_else(|| {
+            AppError::new(format!(
+                "L’instance « {} » du client « {} » utilise la méthode « {} », qui n’existe plus : en choisir une autre dans Réglages → Clients.",
+                instance.display_label(),
+                self.label,
+                instance.method
+            ))
+        })?;
+        let base_url = instance.url.clone().unwrap_or_else(|| self.base_url.clone());
+        let mut auth = method.auth.for_instance(base_url.trim_end_matches('/'));
+        auth.secret = instance.secret.clone().filter(|_| auth.kind != AuthKind::None);
+        let label = if self.instances.len() > 1 {
+            format!("{} — {}", self.label, instance.display_label())
+        } else {
+            self.label.clone()
+        };
+        Ok(Client {
+            id: self.id.clone(),
+            instance: instance.id.clone(),
+            label,
+            base_url,
+            auth,
+            headers: self.headers.clone(),
+        })
+    }
+
+    pub fn effective(&self, wanted: Option<&str>) -> AppResult<Client> {
+        self.resolve_instance(self.instance(wanted)?)
+    }
+}
+
+fn method_label(method: &AuthMethod) -> String {
+    if method.label.is_empty() {
+        crate::clients::auth_label(method.auth.kind).to_string()
+    } else {
+        method.label.clone()
+    }
+}
+
+/// Nom d’une authentification pour l’utilisateur.
+pub fn auth_label(kind: AuthKind) -> &'static str {
+    match kind {
+        AuthKind::None => "Aucune",
+        AuthKind::Bearer => "Jeton porteur",
+        AuthKind::ApiKey => "Clé d’API",
+        AuthKind::Basic => "Identifiant et mot de passe",
+        AuthKind::Oauth2 => "OAuth 2",
+        AuthKind::ClientCredentials => "Identifiants d’application",
     }
 }
 
@@ -272,7 +582,7 @@ fn client_path(space: &Space, id: &str) -> PathBuf {
 
 /// Lit un client ; `None` s’il n’existe pas. L’identifiant est validé avant de toucher au disque : il vient d’une
 /// page et ne doit pas pouvoir désigner un autre fichier.
-pub fn load(space: &Space, id: &str) -> AppResult<Option<Client>> {
+pub fn load(space: &Space, id: &str) -> AppResult<Option<ClientDef>> {
     if !valid_id(id) {
         return Ok(None);
     }
@@ -281,8 +591,9 @@ pub fn load(space: &Space, id: &str) -> AppResult<Option<Client>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)?;
-    let mut client: Client = serde_json::from_str(&text)
+    let mut client: ClientDef = serde_json::from_str(&text)
         .map_err(|error| AppError::new(format!("Le fichier du client « {id} » est illisible : {error}")))?;
+    client.expand();
     // Le nom du fichier fait foi, comme pour les modules.
     client.id = id.to_string();
     if client.label.trim().is_empty() {
@@ -291,12 +602,18 @@ pub fn load(space: &Space, id: &str) -> AppResult<Option<Client>> {
     Ok(Some(client))
 }
 
-fn require(space: &Space, id: &str) -> AppResult<Client> {
+fn require(space: &Space, id: &str) -> AppResult<ClientDef> {
     load(space, id)?.ok_or_else(|| AppError::new(format!("Le client « {id} » n’existe pas dans cet espace.")))
 }
 
+/// Instance d’un client des Réglages : celle nommée, sinon celle par défaut.
+fn require_instance(space: &Space, args: &Value) -> AppResult<Client> {
+    let def = require(space, &arg::<String>(args, "id")?)?;
+    def.effective(opt_arg::<String>(args, "instance")?.as_deref())
+}
+
 /// Tous les clients de l’espace ; un fichier illisible est rendu avec son erreur plutôt que de masquer les autres.
-fn load_all(space: &Space) -> Vec<(String, AppResult<Client>)> {
+fn load_all(space: &Space) -> Vec<(String, AppResult<ClientDef>)> {
     let Ok(entries) = std::fs::read_dir(clients_dir(space)) else { return Vec::new() };
     let mut ids: Vec<String> = entries
         .flatten()
@@ -314,19 +631,34 @@ fn load_all(space: &Space) -> Vec<(String, AppResult<Client>)> {
         .collect()
 }
 
-/// Libellés des clients de l’espace qui utilisent cette entrée du coffre.
+/// Libellés des clients (et de leurs instances) de l’espace qui utilisent cette entrée du coffre.
 pub fn using_secret(space: &Space, secret: &str) -> Vec<String> {
     load_all(space)
         .into_iter()
         .filter_map(|(_, client)| client.ok())
-        .filter(|client| client.auth.secret.as_deref() == Some(secret))
-        .map(|client| client.label)
+        .flat_map(|client| {
+            client
+                .instances
+                .iter()
+                .filter(|instance| instance.secret.as_deref() == Some(secret))
+                .filter_map(|instance| client.resolve_instance(instance).ok().map(|resolved| resolved.label))
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
+/// Client qui répond au besoin `need` du module : celui que suivent ses sections par instance.
+pub fn client_for(space: &Space, module: &str, need: &str) -> AppResult<ClientDef> {
+    resolve(space, module, need)
+}
+
 /// Client que désigne le nom demandé par un module : la liaison faite par l’utilisateur d’abord, sinon le client de
-/// l’espace qui porte ce nom.
-fn resolve(space: &Space, module: &str, name: &str) -> AppResult<Client> {
+/// l’espace qui porte ce nom. `dépendance/besoin` désigne le client d’un module dont celui-ci dépend : il suit
+/// toujours la liaison de ce module.
+fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
+    if let Some((owner, need)) = dependency_reference(name) {
+        return resolve(space, owner, &dependency_need(space, module, owner, need)?);
+    }
     let need = format!("{module}/{name}");
     if let Some(bound) = space.manifest()?.bindings.get(&need) {
         return load(space, bound)?.ok_or_else(|| {
@@ -342,6 +674,7 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<Client> {
     })
 }
 
+// ---------------------------------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------------------------
 // Validation par l’utilisateur
 // ---------------------------------------------------------------------------------------------------------------
@@ -430,7 +763,7 @@ fn record_trust(state: &AppState, space: &Space, client: &Client) -> AppResult<(
     db.execute(
         "INSERT INTO client_trust (space, client, fingerprint, validated_at) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT (space, client) DO UPDATE SET fingerprint = excluded.fingerprint, validated_at = excluded.validated_at",
-        params![space_key(space), client.id, fingerprint(client).to_string(), app_db::now()],
+        params![space_key(space), client.trust_key(), fingerprint(client).to_string(), app_db::now()],
     )?;
     Ok(())
 }
@@ -443,7 +776,7 @@ pub fn ensure_trusted(state: &AppState, client: &Client) -> AppResult<()> {
         return Ok(());
     }
     let space = state.space()?;
-    if trusted_fingerprint(state, &space, &client.id)?.as_ref() == Some(&fingerprint(client)) {
+    if trusted_fingerprint(state, &space, &client.trust_key())?.as_ref() == Some(&fingerprint(client)) {
         return Ok(());
     }
     Err(AppError::new(format!(
@@ -939,7 +1272,10 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     let subject: Subject = arg(args, "subject")?;
     let name: String = arg(args, "client")?;
     let space = state.space()?;
-    let client = resolve(&space, &subject.module, &name)?;
+    let def = resolve(&space, &subject.module, &name)?;
+    // Une page d’une section par instance appelle son instance, sauf si elle en nomme une autre.
+    let instance = opt_arg::<String>(args, "instance")?.or_else(|| subject.instance.clone());
+    let client = def.effective(instance.as_deref())?;
     let path: String = arg(args, "path")?;
     let call = Call {
         method: method_of(opt_arg::<String>(args, "method")?.as_deref())?,
@@ -956,10 +1292,21 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
         journal(state, &space, &client, &call, requester, started, outcome_of(&Err(error.clone())));
         return Err(error);
     }
+    // L’accord vaut pour le client et toutes ses instances : la question montre donc chacune de leurs adresses.
     let resource = format!("client:{}", client.id);
+    let addresses: Vec<String> = def
+        .instances
+        .iter()
+        .filter_map(|instance| def.resolve_instance(instance).ok())
+        .map(|resolved| canonical_url(&resolved.base_url, true))
+        .collect();
     // Le libellé n’est pas dans l’empreinte validée : la question montre aussi l’identifiant et l’adresse validés.
-    let label = format!("le client {} (« {} », {})", client.label, client.id, canonical_url(&client.base_url, true));
-    if let Err(error) = permissions::ensure(state, &subject, &resource, &label).await {
+    let label = format!("le client {} (« {} », {})", def.label, client.id, addresses.join(", "));
+    // Le client d’une dépendance a été annoncé à l’installation ou déclaré dans `requires` : pas de question.
+    let through_dependency = dependency_reference(&name).is_some();
+    let allowed =
+        if through_dependency { Ok(()) } else { permissions::ensure(state, &subject, &resource, &label).await };
+    if let Err(error) = allowed {
         // Un refus est une tentative d’accès : elle doit se retrouver au journal comme une requête.
         journal(state, &space, &client, &call, requester, started, (None, "accès refusé".to_string()));
         return Err(error);
@@ -970,14 +1317,50 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     result
 }
 
+/// Instances d’un client, pour qu’une page propose de choisir : identifiant et nom seulement, jamais l’adresse ni
+/// l’entrée du coffre.
+fn frame_instances(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let subject: Subject = arg(args, "subject")?;
+    let name: String = arg(args, "client")?;
+    let def = resolve(&state.space()?, &subject.module, &name)?;
+    Ok(Value::Array(
+        def.instances
+            .iter()
+            .enumerate()
+            .map(|(index, instance)| {
+                json!({ "id": instance.id, "label": instance.display_label(), "default": index == 0 })
+            })
+            .collect(),
+    ))
+}
+
+/// `dépendance/besoin`, quand les deux sont des identifiants valides ; tout autre nom est cherché tel quel.
+fn dependency_reference(name: &str) -> Option<(&str, &str)> {
+    name.split_once('/').filter(|(owner, need)| crate::space::valid_id(owner) && crate::space::valid_id(need))
+}
+
+/// Besoin `need` du module `owner`, demandé par `module` qui doit en dépendre ; renvoie l’identifiant du besoin.
+fn dependency_need(space: &Space, module: &str, owner: &str, need: &str) -> AppResult<String> {
+    let requester = space.module(module)?;
+    if !requester.requires_module(owner) {
+        return Err(AppError::new(format!(
+            "Le client « {owner}/{need} » appartient au module « {owner} », dont « {module} » ne dépend pas : ajouter `{{ \"module\": \"{owner}\" }}` à `requires` dans son module.json."
+        )));
+    }
+    let provider = space.module(owner)?;
+    if !provider.clients.iter().any(|declared| declared.id == need) {
+        return Err(AppError::new(format!("Le module « {owner} » ne déclare pas de client « {need} » dans `clients`.")));
+    }
+    Ok(need.to_string())
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Réglages
 // ---------------------------------------------------------------------------------------------------------------
 
-/// État d’un client : `ready`, `toValidate`, `missingSecret`, `toConnect` ou `invalid`, avec le détail qui
+/// État d’une instance : `ready`, `toValidate`, `missingSecret`, `toConnect` ou `invalid`, avec le détail qui
 /// l’explique.
-fn describe(state: &AppState, client: &Client, used_by: &[Value]) -> Value {
-    let mut item = serde_json::to_value(client).unwrap_or_else(|_| json!({}));
+fn instance_state(state: &AppState, client: &Client) -> Value {
     let auth = &client.auth;
     let mut problem = client.validate().err().map(|error| error.message);
     let (mut has_secret, mut connected) = (auth.kind == AuthKind::None, None);
@@ -1001,7 +1384,8 @@ fn describe(state: &AppState, client: &Client, used_by: &[Value]) -> Value {
     // Validation : ce que l’utilisateur a approuvé, comparé à ce que dit le fichier aujourd’hui.
     let validation = (auth.kind != AuthKind::None).then(|| {
         let current = fingerprint(client);
-        let stored = state.try_space().and_then(|space| trusted_fingerprint(state, &space, &client.id).ok().flatten());
+        let stored =
+            state.try_space().and_then(|space| trusted_fingerprint(state, &space, &client.trust_key()).ok().flatten());
         json!({
             "validated": stored.as_ref() == Some(&current),
             "everValidated": stored.is_some(),
@@ -1021,12 +1405,141 @@ fn describe(state: &AppState, client: &Client, used_by: &[Value]) -> Value {
     } else {
         "ready"
     };
-    item["status"] = json!(status);
-    item["hasSecret"] = json!(has_secret);
-    item["connected"] = json!(connected);
-    item["usedBy"] = json!(used_by);
-    item["problem"] = json!(problem);
-    item["validation"] = json!(validation);
+    json!({
+        "status": status,
+        "hasSecret": has_secret,
+        "connected": connected,
+        "problem": problem,
+        "validation": validation,
+    })
+}
+
+/// Ordre de gravité des états : celui d’un client est le pire de ses instances.
+const STATUS_ORDER: [&str; 6] = ["invalid", "toValidate", "noInstance", "missingSecret", "toConnect", "ready"];
+
+fn describe_instance(state: &AppState, def: &ClientDef, index: usize, instance: &Instance) -> Value {
+    let base = json!({
+        "id": instance.id,
+        "label": instance.display_label(),
+        "url": instance.url,
+        "method": instance.method,
+        "secret": instance.secret,
+        "default": index == 0,
+    });
+    let mut item = base;
+    match def.resolve_instance(instance) {
+        Ok(client) => {
+            let described = instance_state(state, &client);
+            for (key, value) in described.as_object().into_iter().flatten() {
+                item[key] = value.clone();
+            }
+            item["effectiveUrl"] = json!(client.base_url);
+            item["authType"] = json!(client.auth.kind);
+        }
+        Err(error) => {
+            item["status"] = json!("invalid");
+            item["problem"] = json!(error.message);
+            item["hasSecret"] = json!(false);
+            item["connected"] = Value::Null;
+            item["validation"] = Value::Null;
+            item["effectiveUrl"] = Value::Null;
+            item["authType"] = Value::Null;
+        }
+    }
+    item
+}
+
+/// Un client tel que les Réglages et l’agent le voient : sa définition, ses instances et leur état. Un client à
+/// une seule instance garde aussi la forme d’avant les instances (`auth` avec son entrée du coffre, `validation`
+/// avec une seule empreinte).
+fn describe(state: &AppState, def: &ClientDef, used_by: &[Value]) -> Value {
+    let instances: Vec<Value> =
+        def.instances.iter().enumerate().map(|(index, instance)| describe_instance(state, def, index, instance)).collect();
+    let definition_problem = def.validate_definition().err().map(|error| error.message);
+    let status = if definition_problem.is_some() {
+        "invalid"
+    } else if instances.is_empty() {
+        "noInstance"
+    } else {
+        STATUS_ORDER
+            .iter()
+            .find(|status| instances.iter().any(|instance| instance["status"].as_str() == Some(status)))
+            .copied()
+            .unwrap_or("ready")
+    };
+    let simple = def.is_simple();
+    let checked: Vec<&Value> = instances.iter().filter(|instance| !instance["validation"].is_null()).collect();
+    let validation = (!checked.is_empty()).then(|| {
+        let pending: Vec<&&Value> =
+            checked.iter().filter(|instance| instance["validation"]["validated"] == json!(false)).collect();
+        let changes: Vec<Value> = if simple {
+            checked[0]["validation"]["changes"].as_array().cloned().unwrap_or_default()
+        } else {
+            pending
+                .iter()
+                .flat_map(|instance| {
+                    instance["validation"]["changes"].as_array().cloned().unwrap_or_default().into_iter().map(
+                        |mut change| {
+                            change["instance"] = instance["id"].clone();
+                            change["instanceLabel"] = instance["label"].clone();
+                            change
+                        },
+                    )
+                })
+                .collect()
+        };
+        let fingerprints: Map<String, Value> = checked
+            .iter()
+            .map(|instance| {
+                (instance["id"].as_str().unwrap_or_default().to_string(), instance["validation"]["fingerprint"].clone())
+            })
+            .collect();
+        json!({
+            "validated": pending.is_empty(),
+            "everValidated": if pending.is_empty() {
+                true
+            } else {
+                pending.iter().all(|instance| instance["validation"]["everValidated"] == json!(true))
+            },
+            "changes": changes,
+            "fingerprint": if simple { checked[0]["validation"]["fingerprint"].clone() } else { Value::Null },
+            "fingerprints": fingerprints,
+        })
+    });
+    let problem = definition_problem.or_else(|| {
+        instances.iter().find_map(|instance| {
+            instance["problem"].as_str().map(|problem| {
+                if simple {
+                    problem.to_string()
+                } else {
+                    format!("{} : {problem}", instance["label"].as_str().unwrap_or_default())
+                }
+            })
+        })
+    });
+    let single = (instances.len() == 1).then(|| &instances[0]);
+    let mut item = json!({
+        "id": def.id,
+        "label": def.label,
+        "baseUrl": def.base_url,
+        "headers": def.headers,
+        "methods": def.methods,
+        "instances": instances,
+        "simple": simple,
+        "status": status,
+        "problem": problem,
+        "usedBy": used_by,
+        "validation": validation,
+        "hasSecret": single.map_or(json!(false), |instance| instance["hasSecret"].clone()),
+        "connected": single.map_or(Value::Null, |instance| instance["connected"].clone()),
+    });
+    if simple {
+        let mut auth = serde_json::to_value(&def.methods[0].auth).unwrap_or_else(|_| json!({}));
+        if let Some(secret) = &def.instances[0].secret {
+            auth["secret"] = json!(secret);
+        }
+        item["auth"] = auth;
+    }
     item
 }
 
@@ -1072,7 +1585,7 @@ fn list(state: &Arc<AppState>) -> AppResult<Value> {
             match client {
                 Ok(client) => describe(state, client, &used_by),
                 Err(error) => json!({
-                    "id": id, "label": id, "baseUrl": "", "auth": { "type": "none" },
+                    "id": id, "label": id, "baseUrl": "", "headers": {}, "methods": [], "instances": [], "simple": false,
                     "status": "invalid", "hasSecret": false, "connected": null, "usedBy": used_by, "problem": error.message,
                     "validation": null,
                 }),
@@ -1082,19 +1595,9 @@ fn list(state: &Arc<AppState>) -> AppResult<Value> {
     Ok(json!({ "clients": clients, "needs": needs, "redirectUri": oauth::redirect_uri(state).ok() }))
 }
 
-/// Écrit le fichier d’un client. `validated` distingue les deux origines : l’utilisateur, dans les Réglages, dont
-/// l’enregistrement vaut validation, et l’agent, dont le client naît ou redevient « à valider ».
-fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResult<Value> {
-    let space = state.space()?;
-    let mut client: Client = arg(args, "client")?;
-    client.normalize();
-    client.validate()?;
-    let path = client_path(&space, &client.id);
-    if opt_arg::<bool>(args, "create")?.unwrap_or(false) && path.exists() {
-        return Err(AppError::new(format!("Un client porte déjà l’identifiant « {} ».", client.id)));
-    }
-    // Une entrée absente du coffre est admise (le fichier voyage entre postes, pas le coffre), mais pas une entrée
-    // du mauvais type : la requête échouerait à chaque fois.
+/// Une entrée absente du coffre est admise (le fichier voyage entre postes, pas le coffre), mais pas une entrée
+/// du mauvais type : la requête échouerait à chaque fois.
+fn check_entry_kind(state: &AppState, client: &Client) -> AppResult<()> {
     if let (Some(secret), Some(kind)) = (&client.auth.secret, client.auth.kind.vault_kind()) {
         if vault::entry(state, secret)?.is_some_and(|entry| entry.kind != kind) {
             return Err(AppError::new(
@@ -1102,36 +1605,220 @@ fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResu
             ));
         }
     }
-    std::fs::create_dir_all(clients_dir(&space))?;
-    write_json(&path, &client)?;
-    if validated {
-        record_trust(state, &space, &client)?;
-    }
-    let message = if validated {
-        format!("Client {}", client.label)
-    } else {
-        format!("Client {} (déclaré par l’agent)", client.label)
-    };
-    git::commit_all(&space.root, &message)?;
-    state.emit("clients:changed", json!({ "client": client.id }));
-    Ok(describe(state, &client, &[]))
+    Ok(())
 }
 
-/// Validation depuis les Réglages : l’utilisateur a vu les valeurs (`fingerprint`, tel que la liste le lui a
-/// montré) et les approuve. Si le fichier a encore changé entre-temps, rien n’est validé.
-fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+/// Instances dont l’empreinte actuelle est celle que l’utilisateur a validée.
+fn trusted_instances(state: &AppState, space: &Space, def: &ClientDef) -> Vec<String> {
+    def.instances
+        .iter()
+        .filter(|instance| {
+            def.resolve_instance(instance).is_ok_and(|client| {
+                trusted_fingerprint(state, space, &client.trust_key()).ok().flatten() == Some(fingerprint(&client))
+            })
+        })
+        .map(|instance| instance.id.clone())
+        .collect()
+}
+
+fn store(space: &Space, def: &ClientDef) -> AppResult<()> {
+    std::fs::create_dir_all(clients_dir(space))?;
+    write_json(&client_path(space, &def.id), &def.to_file())
+}
+
+/// Écrit le fichier d’un client. `validated` distingue les deux origines : l’utilisateur, dans les Réglages, dont
+/// l’enregistrement vaut validation, et l’agent, dont le client naît ou redevient « à valider ».
+///
+/// Sous sa forme simple, le client porte son instance : celle de l’utilisateur est validée avec lui. Sous la forme
+/// à plusieurs instances, les instances du fichier existant sont gardées telles quelles : elles se modifient une à
+/// une (`clients.saveInstance`), et l’agent n’y touche jamais.
+fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResult<Value> {
     let space = state.space()?;
-    let client = require(&space, &arg::<String>(args, "id")?)?;
-    client.validate()?;
-    if args.get("fingerprint") != Some(&fingerprint(&client)) {
+    let mut def: ClientDef = arg(args, "client")?;
+    let carried = def.carries_instance();
+    def.normalize();
+    def.validate_definition()?;
+    let existing = load(&space, &def.id)?;
+    if opt_arg::<bool>(args, "create")?.unwrap_or(false) && existing.is_some() {
+        return Err(AppError::new(format!("Un client porte déjà l’identifiant « {} ».", def.id)));
+    }
+    let mut previously_trusted =
+        existing.as_ref().map(|old| trusted_instances(state, &space, old)).unwrap_or_default();
+    match (&existing, carried) {
+        // L’agent redéclare un client existant : les instances, leurs adresses et leurs entrées du coffre restent.
+        (Some(old), _) if !validated => def.instances = old.instances.clone(),
+        (Some(old), false) => def.instances = old.instances.clone(),
+        (None, false) if !def.base_url.is_empty() => {
+            // Un nouveau client à adresse fixe naît avec son instance, à relier à une entrée du coffre.
+            def.instances = vec![Instance {
+                id: DEFAULT_INSTANCE.to_string(),
+                method: def.methods[0].id.clone(),
+                ..Instance::default()
+            }];
+            // Créée avec le client par l’utilisateur, elle n’a rien qu’il n’ait vu.
+            previously_trusted.push(DEFAULT_INSTANCE.to_string());
+        }
+        (None, false) => def.instances.clear(),
+        _ => {}
+    }
+    // L’instance reçue avec le client est vérifiée comme une instance des Réglages ; celles gardées du fichier
+    // existant montrent leurs problèmes dans la liste.
+    if carried {
+        for instance in &def.instances {
+            let client = def.resolve_instance(instance)?;
+            if validated {
+                client.validate()?;
+            }
+            check_entry_kind(state, &client)?;
+        }
+    }
+    store(&space, &def)?;
+    if validated {
+        for instance in &def.instances {
+            let Ok(client) = def.resolve_instance(instance) else { continue };
+            // L’utilisateur a vu l’instance qu’il enregistre avec le client ; les autres ne restent validées que si
+            // elles l’étaient déjà : une instance réécrite hors des Réglages le reste jusqu’à sa validation.
+            if (carried || previously_trusted.contains(&instance.id)) && client.validate().is_ok() {
+                record_trust(state, &space, &client)?;
+            }
+        }
+    }
+    let message = if validated {
+        format!("Client {}", def.label)
+    } else {
+        format!("Client {} (déclaré par l’agent)", def.label)
+    };
+    git::commit_all(&space.root, &message)?;
+    state.emit("clients:changed", json!({ "client": def.id }));
+    Ok(describe(state, &def, &[]))
+}
+
+/// Ajout ou modification d’une instance depuis les Réglages : l’utilisateur saisit son adresse et choisit son
+/// entrée du coffre, l’enregistrement vaut validation.
+fn save_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let mut def = require(&space, &arg::<String>(args, "client")?)?;
+    def.validate_definition()?;
+    let mut instance: Instance = arg(args, "instance")?;
+    instance.normalize();
+    if instance.label.is_empty() && instance.id != DEFAULT_INSTANCE {
+        return Err(AppError::new("Saisir le nom de l’instance."));
+    }
+    if !valid_id(&instance.id) {
         return Err(AppError::new(format!(
-            "Le client « {} » a changé depuis l’affichage de ses valeurs. Les relire avant de le valider.",
-            client.label
+            "Identifiant d’instance invalide : « {} ». Utiliser des minuscules, des chiffres et des tirets.",
+            instance.id
         )));
     }
+    if def.method(&instance.method).is_none() {
+        return Err(AppError::new(format!("Le client « {} » n’a pas de méthode « {} ».", def.label, instance.method)));
+    }
+    let position = def.instances.iter().position(|known| known.id == instance.id);
+    let create = opt_arg::<bool>(args, "create")?.unwrap_or(false);
+    match (position, create) {
+        (Some(_), true) => {
+            return Err(AppError::new(format!("Le client « {} » a déjà une instance « {} ».", def.label, instance.id)))
+        }
+        (None, false) => {
+            return Err(AppError::new(format!("Le client « {} » n’a pas d’instance « {} ».", def.label, instance.id)))
+        }
+        (Some(index), false) => def.instances[index] = instance.clone(),
+        (None, true) => def.instances.push(instance.clone()),
+    }
+    let client = def.resolve_instance(&instance)?;
+    client.validate()?;
+    check_entry_kind(state, &client)?;
+    store(&space, &def)?;
     record_trust(state, &space, &client)?;
-    state.emit("clients:changed", json!({ "client": client.id }));
-    Ok(describe(state, &client, &[]))
+    git::commit_all(&space.root, &format!("Instance {} du client {}", instance.display_label(), def.label))?;
+    state.emit("clients:changed", json!({ "client": def.id, "instance": instance.id }));
+    Ok(describe(state, &def, &[]))
+}
+
+fn forget_trust(state: &AppState, space: &Space, key: &str) -> AppResult<()> {
+    let db = trust_db(state)?;
+    db.execute("DELETE FROM client_trust WHERE space = ?1 AND client = ?2", params![space_key(space), key])?;
+    Ok(())
+}
+
+fn delete_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let mut def = require(&space, &arg::<String>(args, "client")?)?;
+    let id: String = arg(args, "instance")?;
+    let index = def
+        .instances
+        .iter()
+        .position(|instance| instance.id == id)
+        .ok_or_else(|| AppError::new(format!("Le client « {} » n’a pas d’instance « {id} ».", def.label)))?;
+    let removed = def.instances.remove(index);
+    store(&space, &def)?;
+    // Une future instance du même identifiant ne doit pas hériter de cette validation.
+    forget_trust(state, &space, &trust_key(&def.id, &id))?;
+    git::commit_all(
+        &space.root,
+        &format!("Suppression de l’instance {} du client {}", removed.display_label(), def.label),
+    )?;
+    state.emit("clients:changed", json!({ "client": def.id, "instance": id }));
+    Ok(describe(state, &def, &[]))
+}
+
+/// L’instance par défaut est la première : celle qu’utilise une page qui n’en nomme pas.
+fn default_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let mut def = require(&space, &arg::<String>(args, "client")?)?;
+    let id: String = arg(args, "instance")?;
+    let index = def
+        .instances
+        .iter()
+        .position(|instance| instance.id == id)
+        .ok_or_else(|| AppError::new(format!("Le client « {} » n’a pas d’instance « {id} ».", def.label)))?;
+    let instance = def.instances.remove(index);
+    let label = instance.display_label().to_string();
+    def.instances.insert(0, instance);
+    store(&space, &def)?;
+    git::commit_all(&space.root, &format!("Instance {label} par défaut pour le client {}", def.label))?;
+    state.emit("clients:changed", json!({ "client": def.id, "instance": id }));
+    Ok(describe(state, &def, &[]))
+}
+
+/// Validation depuis les Réglages : l’utilisateur a vu les valeurs (`fingerprints`, une par instance, telles que
+/// la liste les lui a montrées ; `fingerprint` pour un client à une seule instance) et les approuve. Si le fichier
+/// a encore changé entre-temps, rien n’est validé.
+fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let def = require(&space, &arg::<String>(args, "id")?)?;
+    def.validate_definition()?;
+    let shown: Map<String, Value> = match (args.get("fingerprints"), args.get("fingerprint")) {
+        (Some(Value::Object(map)), _) => map.clone(),
+        (_, Some(single)) => {
+            def.instances.first().map(|instance| (instance.id.clone(), single.clone())).into_iter().collect()
+        }
+        _ => Map::new(),
+    };
+    let mut approved = Vec::new();
+    for instance in &def.instances {
+        let client = def.resolve_instance(instance)?;
+        if client.auth.kind == AuthKind::None {
+            continue;
+        }
+        let current = fingerprint(&client);
+        if trusted_fingerprint(state, &space, &client.trust_key())?.as_ref() == Some(&current) {
+            continue;
+        }
+        client.validate()?;
+        if shown.get(&instance.id) != Some(&current) {
+            return Err(AppError::new(format!(
+                "Le client « {} » a changé depuis l’affichage de ses valeurs. Les relire avant de le valider.",
+                def.label
+            )));
+        }
+        approved.push(client);
+    }
+    for client in &approved {
+        record_trust(state, &space, client)?;
+    }
+    state.emit("clients:changed", json!({ "client": def.id }));
+    Ok(describe(state, &def, &[]))
 }
 
 fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
@@ -1152,7 +1839,10 @@ fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     {
         // Un futur client du même identifiant ne doit hériter ni de la validation ni des accords de celui-ci.
         let db = trust_db(state)?;
-        db.execute("DELETE FROM client_trust WHERE space = ?1 AND client = ?2", params![space_key(&space), id])?;
+        db.execute(
+            "DELETE FROM client_trust WHERE space = ?1 AND (client = ?2 OR client LIKE ?3)",
+            params![space_key(&space), id, format!("{id}#%")],
+        )?;
         db.execute(
             "DELETE FROM grants WHERE space = ?1 AND resource = ?2",
             params![space_key(&space), format!("client:{id}")],
@@ -1188,7 +1878,7 @@ fn bind(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
 
 async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
-    let client = require(&space, &arg::<String>(args, "id")?)?;
+    let client = require_instance(&space, args)?;
     let path = opt_arg::<String>(args, "path")?.unwrap_or_default();
     let call = Call { method: Method::GET, path: &path, query: None, headers: None, body: None };
     let started = Instant::now();
@@ -1214,17 +1904,18 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     let result = match command {
         "frame.clients.request" => frame_request(state, args).await,
+        "frame.clients.instances" => frame_instances(state, args),
         "clients.test" => test_client(state, args).await,
-        "clients.connect" => match state.space().and_then(|space| require(&space, &arg::<String>(args, "id")?)) {
+        "clients.connect" => match state.space().and_then(|space| require_instance(&space, args)) {
             Ok(client) => oauth::begin(state, &client).await.map(|url| json!({ "authorizationUrl": url })),
             Err(error) => Err(error),
         },
-        "clients.disconnect" => match state.space().and_then(|space| require(&space, &arg::<String>(args, "id")?)) {
+        "clients.disconnect" => match state.space().and_then(|space| require_instance(&space, args)) {
             Ok(client) => oauth::disconnect(state, &client).await,
             Err(error) => Err(error),
         },
         "clients.list" | "clients.save" | "clients.declare" | "clients.validate" | "clients.delete"
-        | "clients.bind" => {
+        | "clients.bind" | "clients.saveInstance" | "clients.deleteInstance" | "clients.defaultInstance" => {
             // Lecture du trousseau et git : hors des fils asynchrones.
             let (state, command, args) = (state.clone(), command.to_string(), args.clone());
             vault::blocking(move || match command.as_str() {
@@ -1233,6 +1924,9 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 "clients.declare" => write_client(&state, &args, false),
                 "clients.validate" => validate_client(&state, &args),
                 "clients.delete" => delete(&state, &args),
+                "clients.saveInstance" => save_instance(&state, &args),
+                "clients.deleteInstance" => delete_instance(&state, &args),
+                "clients.defaultInstance" => default_instance(&state, &args),
                 _ => bind(&state, &args),
             })
             .await
@@ -1308,7 +2002,7 @@ pub mod testing {
     }
 
     pub fn page_subject(module: &str) -> Subject {
-        Subject { kind: "page".to_string(), module: module.to_string(), reference: format!("{module}/accueil") }
+        Subject { kind: "page".to_string(), module: module.to_string(), reference: format!("{module}/accueil"), instance: None }
     }
 
     /// L’accord passe normalement par une question à l’interface ; les tests l’accordent d’avance.
@@ -1986,6 +2680,46 @@ mod tests {
         assert!(!git::has_changes(&space.root).unwrap());
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_module_uses_the_client_of_a_module_it_requires_without_asking() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let space = state.space().unwrap();
+        let base = format!("{}/api", remote.origin);
+        let saved = save_client(&state, json!({ "id": "hubspot-equipe", "label": "HubSpot", "baseUrl": base, "auth": { "type": "none" } })).await;
+        assert_eq!(saved["status"], json!("ready"));
+        let write = |id: &str, manifest: Value| {
+            std::fs::create_dir_all(space.root.join(format!("modules/{id}"))).unwrap();
+            std::fs::write(space.root.join(format!("modules/{id}/module.json")), manifest.to_string()).unwrap();
+        };
+        write("crm", json!({ "id": "crm", "name": "CRM", "version": "1.0.0", "clients": [{ "id": "hubspot", "label": "HubSpot" }] }));
+        write("devis", json!({ "id": "devis", "name": "Devis", "version": "0.1.0", "requires": [{ "module": "crm" }] }));
+        write("autre", json!({ "id": "autre", "name": "Autre", "version": "0.1.0" }));
+        invoke(&state, "clients.bind", json!({ "need": "crm/hubspot", "client": "hubspot-equipe" })).await.unwrap();
+
+        // Aucun accord n’est enregistré pour « devis » : la requête passe quand même, par la liaison de « crm ».
+        let devis = page_subject("devis");
+        let response = request(&state, &devis, "crm/hubspot", json!({ "path": "/echo" })).await.unwrap();
+        assert_eq!(response["status"], json!(200));
+        assert_eq!(remote.last().path, "/api/echo");
+
+        // Sans dépendance déclarée, ou vers un besoin que « crm » ne déclare pas : refus qui dit quoi faire.
+        let error = request(&state, &page_subject("autre"), "crm/hubspot", json!({ "path": "/echo" })).await.unwrap_err();
+        assert!(error.message.contains("requires"), "{}", error.message);
+        let error = request(&state, &devis, "crm/jira", json!({ "path": "/echo" })).await.unwrap_err();
+        assert!(error.message.contains("ne déclare pas"), "{}", error.message);
+
+        // Les fonctions de la dépendance sont accordées d’office, pas celles d’un autre module.
+        let authorize = |subject: &Subject, function: &str| {
+            let args = json!({ "subject": subject, "function": function });
+            let state = state.clone();
+            async move { crate::functions::handle(&state, "frame.functions.authorize", &args).await.unwrap() }
+        };
+        assert!(authorize(&devis, "crm/synchroniser").await.is_ok());
+        let pending = tokio::time::timeout(std::time::Duration::from_millis(300), authorize(&devis, "autre/exporter")).await;
+        assert!(pending.is_err(), "une fonction d’un module non requis attend l’accord de l’utilisateur");
+    }
+
     fn journal_lines(state: &Arc<AppState>) -> Vec<Value> {
         let db = state.app_db.lock().unwrap();
         app_db::read_journal(&db, &state.space().unwrap().root.to_string_lossy(), Some("client"), 100).unwrap()
@@ -2209,5 +2943,234 @@ mod tests {
             (json!("client"), json!("error"), json!("api"))
         );
         assert_eq!(line["detail"]["requester"], json!("crm/accueil"));
+    }
+
+    /// Un client à plusieurs instances : chaque instance a son adresse, sa méthode et son secret ; l’agent ne peut en
+    /// détourner aucune, et une page choisit celle qu’elle appelle.
+    #[tokio::test]
+    async fn a_client_with_several_instances_sends_each_secret_to_its_own_address() {
+        let (state, _dir) = test_state();
+        let (acme, autre) = (remote().await, remote().await);
+        let subject = page_subject("crm");
+        let (token_id, key_id, machine_id) = (unique("pat"), unique("cle"), unique("machine"));
+        for (id, kind, extra) in [
+            (&token_id, "token", json!({ "secrets": { "value": TOKEN } })),
+            (&key_id, "token", json!({ "secrets": { "value": "c13-AUTRE-instance" } })),
+            (
+                &machine_id,
+                "clientCredentials",
+                json!({ "meta": { "clientId": REMOTE_CLIENT_ID }, "secrets": { "clientSecret": REMOTE_CLIENT_SECRET } }),
+            ),
+        ] {
+            let mut args = json!({ "id": id, "label": id, "kind": kind });
+            for (key, value) in extra.as_object().unwrap() {
+                args[key] = value.clone();
+            }
+            invoke(&state, "vault.save", args).await.unwrap();
+        }
+
+        // Le client décrit l’API et ses méthodes, sans adresse ni secret : il attend ses instances.
+        let saved = save_client(
+            &state,
+            json!({ "id": "jira", "label": "Jira", "methods": [
+                { "id": "pat", "label": "Data Center (PAT)", "type": "bearer" },
+                { "id": "cle", "label": "Clé d’API", "type": "apiKey", "header": "X-Api-Key" },
+                { "id": "app", "label": "Application", "type": "clientCredentials", "tokenUrl": "{url}/token" },
+            ] }),
+        )
+        .await;
+        assert_eq!((saved["status"].clone(), saved["instances"].clone()), (json!("noInstance"), json!([])));
+        grant(&state, &subject, "jira");
+        let error = request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap_err();
+        assert!(error.message.contains("aucune instance"), "{}", error.message);
+
+        let add = |id: &str, label: &str, url: &str, method: &str, secret: &str| {
+            json!({ "client": "jira", "create": true, "instance": { "id": id, "label": label, "url": url, "method": method, "secret": secret } })
+        };
+        invoke(&state, "clients.saveInstance", add("acme", "Acme", &acme.origin, "pat", &token_id)).await.unwrap();
+        invoke(&state, "clients.saveInstance", add("autre", "Autre", &autre.origin, "cle", &key_id)).await.unwrap();
+        let listed_jira = listed(&invoke(&state, "clients.list", json!({})).await.unwrap(), "jira");
+        assert_eq!(listed_jira["status"], json!("ready"));
+        assert_eq!(listed_jira["instances"][1]["effectiveUrl"], json!(autre.origin));
+        // Le fichier garde la forme à plusieurs instances, sans aucun secret.
+        let file = std::fs::read_to_string(state.space().unwrap().root.join("clients/jira.json")).unwrap();
+        let file: Value = serde_json::from_str(&file).unwrap();
+        assert!(file.get("auth").is_none() && file["instances"][1]["secret"] == json!(key_id));
+        assert!(!file.to_string().contains(TOKEN));
+
+        // Sans instance nommée, la page appelle la première ; sinon celle qu’elle nomme, avec son secret à elle.
+        let instances = invoke(
+            &state,
+            "frame.clients.instances",
+            json!({ "subject": serde_json::to_value(&subject).unwrap(), "client": "jira" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            instances,
+            json!([{ "id": "acme", "label": "Acme", "default": true }, { "id": "autre", "label": "Autre", "default": false }])
+        );
+        request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap();
+        assert_eq!(acme.last().headers["authorization"], format!("Bearer {TOKEN}"));
+        request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "autre" })).await.unwrap();
+        let seen = autre.last();
+        assert_eq!(seen.headers["x-api-key"], "c13-AUTRE-instance");
+        assert!(!seen.headers.contains_key("authorization"));
+        let error =
+            request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "inconnue" })).await.unwrap_err();
+        assert!(error.message.contains("pas d’instance « inconnue »"), "{}", error.message);
+
+        // `{url}` suit l’adresse de l’instance : le serveur de jetons de l’instance reçoit les identifiants.
+        invoke(&state, "clients.saveInstance", add("robot", "Robot", &acme.origin, "app", &machine_id)).await.unwrap();
+        request(&state, &subject, "jira", json!({ "path": "/api/protected", "instance": "robot" })).await.unwrap();
+        assert_eq!(acme.state.token_requests.lock().unwrap().len(), 1);
+
+        // L’agent détourne l’adresse d’une instance dans le fichier : elle seule est bloquée, les autres répondent.
+        let sent = autre.seen_paths().len();
+        agent_edits(&state, "jira", |file| file["instances"][1]["url"] = json!(format!("{}/ailleurs", acme.origin)));
+        let error =
+            request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "autre" })).await.unwrap_err();
+        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap();
+        assert_eq!(autre.seen_paths().len(), sent);
+        let client = listed(&invoke(&state, "clients.list", json!({})).await.unwrap(), "jira");
+        assert_eq!(client["status"], json!("toValidate"));
+        let change = &client["validation"]["changes"][0];
+        assert_eq!((change["instance"].clone(), change["field"].clone()), (json!("autre"), json!("baseUrl")));
+        // Enregistrer la définition depuis les Réglages ne valide pas en passant une instance détournée.
+        save_client(&state, json!({ "id": "jira", "label": "Jira", "methods": file["methods"] })).await;
+        assert_eq!(listed(&invoke(&state, "clients.list", json!({})).await.unwrap(), "jira")["status"], json!("toValidate"));
+        let validated = invoke(
+            &state,
+            "clients.validate",
+            json!({ "id": "jira", "fingerprints": client["validation"]["fingerprints"] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(validated["status"], json!("ready"));
+
+        // L’agent redéclare le client en changeant une méthode : les instances restent celles de l’utilisateur, et
+        // seules celles qui utilisent la méthode modifiée redeviennent « à valider ».
+        let declared = invoke(
+            &state,
+            "clients.declare",
+            json!({ "client": { "id": "jira", "label": "Jira", "methods": [
+                { "id": "pat", "label": "Data Center (PAT)", "type": "bearer" },
+                { "id": "cle", "label": "Clé d’API", "type": "apiKey", "header": "X-Autre-Cle" },
+                { "id": "app", "label": "Application", "type": "clientCredentials", "tokenUrl": "{url}/token" },
+            ], "instances": [] } }),
+        )
+        .await
+        .unwrap();
+        let statuses: Vec<Value> =
+            declared["instances"].as_array().unwrap().iter().map(|instance| instance["status"].clone()).collect();
+        assert_eq!(statuses, [json!("ready"), json!("toValidate"), json!("ready")]);
+
+        // L’instance par défaut change, puis une instance supprimée n’est plus joignable.
+        invoke(&state, "clients.defaultInstance", json!({ "client": "jira", "instance": "robot" })).await.unwrap();
+        request(&state, &subject, "jira", json!({ "path": "/api/protected" })).await.unwrap();
+        invoke(&state, "clients.deleteInstance", json!({ "client": "jira", "instance": "acme" })).await.unwrap();
+        let error =
+            request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "acme" })).await.unwrap_err();
+        assert!(error.message.contains("pas d’instance « acme »"), "{}", error.message);
+        // Une instance recréée sous le même identifiant n’hérite pas de l’ancienne validation.
+        agent_edits(&state, "jira", |file| {
+            file["instances"].as_array_mut().unwrap().push(
+                json!({ "id": "acme", "label": "Acme", "url": acme.origin, "method": "pat", "secret": token_id }),
+            )
+        });
+        let error =
+            request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "acme" })).await.unwrap_err();
+        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+    }
+
+    /// Une section par instance : elle attend le client et ses instances, puis apparaît une fois par instance, et
+    /// chaque copie appelle sa propre instance.
+    #[tokio::test]
+    async fn a_section_per_instance_follows_the_instances_of_its_client() {
+        let (state, _dir) = test_state();
+        let (acme, autre) = (remote().await, remote().await);
+        let space = state.space().unwrap();
+        space
+            .place_page(
+                "Tickets",
+                None,
+                "",
+                &crate::space::PlaceTarget::Menu { label: "Jira".into(), icon: None, color: None },
+                None,
+            )
+            .unwrap();
+        let mut module = space.module("jira").unwrap();
+        module.sections[0].per_instance = Some("jira".into());
+        module.clients.push(crate::space::ClientNeed { id: "jira".into(), label: "Jira".into(), ..Default::default() });
+        space.write_module(&module).unwrap();
+        let sections = |space: &Space| space.snapshot().unwrap().sections;
+
+        // Pas encore de client : la section reste seule, avec ses onglets, et dit quoi faire.
+        let waiting = sections(&space);
+        assert_eq!(waiting.len(), 1);
+        assert!(waiting[0].waiting.as_deref().unwrap().contains("n’existe pas"), "{:?}", waiting[0].waiting);
+        save_client(
+            &state,
+            json!({ "id": "jira", "label": "Jira", "methods": [{ "id": "pat", "label": "PAT", "type": "bearer" }] }),
+        )
+        .await;
+        assert!(sections(&space)[0].waiting.as_deref().unwrap().contains("aucune instance"));
+
+        // Une copie par instance, avec ses pages, dans l’ordre des instances.
+        let token_id = unique("pat");
+        invoke(&state, "vault.save", json!({ "id": token_id, "label": "PAT", "kind": "token", "secrets": { "value": TOKEN } }))
+            .await
+            .unwrap();
+        for (id, label, origin) in [("acme", "Acme", &acme.origin), ("autre", "Autre", &autre.origin)] {
+            invoke(
+                &state,
+                "clients.saveInstance",
+                json!({ "client": "jira", "create": true, "instance": { "id": id, "label": label, "url": origin, "method": "pat", "secret": token_id } }),
+            )
+            .await
+            .unwrap();
+        }
+        let copies = sections(&space);
+        let shown: Vec<(&str, &str, &str)> = copies
+            .iter()
+            .map(|section| (section.id.as_str(), section.label.as_str(), section.pages[0].reference.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("jira/principal@acme", "Jira — Acme", "jira/tickets@acme"),
+                ("jira/principal@autre", "Jira — Autre", "jira/tickets@autre"),
+            ]
+        );
+        assert_eq!(copies[1].instance_of.as_deref(), Some("jira/principal"));
+        assert_eq!(copies[1].pages[0].instance.as_deref(), Some("autre"));
+        assert_eq!(copies[1].pages[0].id, "tickets", "la page chargée reste la même");
+
+        // Chaque copie se masque, se renomme et se range à part.
+        assert!(space.set_visibility("section:jira/principal@autre", true).unwrap().unwrap().contains("instance autre"));
+        let mut manifest = space.manifest().unwrap();
+        manifest.layout.overrides.entry("section:jira/principal@acme".into()).or_default().label = Some("Acme".into());
+        manifest.layout.sections = vec!["jira/principal@autre".into()];
+        space.write_manifest(&manifest).unwrap();
+        let copies = sections(&space);
+        let shown: Vec<(&str, bool)> = copies.iter().map(|section| (section.label.as_str(), section.hidden)).collect();
+        assert_eq!(shown, [("Jira — Autre", true), ("Acme", false)]);
+
+        // La page d’une copie appelle son instance, sans la nommer ; l’accord vaut pour toutes les copies.
+        let mut subject = page_subject("jira");
+        subject.reference = "jira/tickets".into();
+        grant(&state, &subject, "jira");
+        subject.instance = Some("autre".into());
+        request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap();
+        assert_eq!(autre.seen_paths().len(), 1);
+        assert!(acme.seen_paths().is_empty());
+        request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "acme" })).await.unwrap();
+        assert_eq!(acme.seen_paths().len(), 1);
+
+        // Une instance supprimée emporte sa copie de la section.
+        invoke(&state, "clients.deleteInstance", json!({ "client": "jira", "instance": "autre" })).await.unwrap();
+        let ids: Vec<String> = sections(&space).into_iter().map(|section| section.id).collect();
+        assert_eq!(ids, ["jira/principal@acme"]);
     }
 }

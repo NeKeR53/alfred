@@ -1,6 +1,6 @@
 /** Commandes `marketplace.*` du backend (voir `src-tauri/src/marketplace.rs`) et leurs modèles. */
 import { invoke } from "../../lib/native";
-import type { ClientNeed } from "../../lib/types";
+import type { ClientNeed, Requirement } from "../../lib/types";
 
 export interface Marketplace {
   id: string;
@@ -12,13 +12,22 @@ export interface Marketplace {
   error?: string;
 }
 
-export type AccessKind = "tables" | "client" | "tool" | "webhook" | "schedule";
+export type AccessKind = "module" | "tables" | "client" | "tool" | "webhook" | "schedule";
 
 /** Ce qu’un module demande au-delà de ses pages : client, fonction proposée aux agents, webhook, planification. */
 export interface ModuleAccess {
   kind: AccessKind;
   id: string;
   label: string;
+}
+
+/** Ce que l’installation ou la mise à jour d’un module fait d’une de ses dépendances. */
+export interface DependencyStep {
+  module: string;
+  name: string;
+  /** `install` : absente, installée et masquée du menu ; `update` : trop ancienne, mise à jour. */
+  action: "install" | "update";
+  version: string;
 }
 
 export interface ModuleChanges {
@@ -47,6 +56,10 @@ export interface ModuleUpdate {
   source: string;
   notes: string;
   changes: ModuleChanges;
+  /** Dépendances installées ou mises à jour avec la nouvelle version. */
+  dependencies: DependencyStep[];
+  /** Ce qui empêche la mise à jour (dépendance introuvable, figée…), ou `null`. */
+  blocked: string | null;
   locallyModified: boolean;
 }
 
@@ -65,6 +78,12 @@ export interface CatalogModule {
   tools?: Array<{ id: string; description: string }>;
   /** Module dont celui-ci lit les données (`x` pour un module `x-ajouts`). */
   extends?: string | null;
+  /** Modules dont celui-ci utilise les fonctions et les clients. */
+  requires?: Requirement[];
+  /** Dépendances que l’installation pose ou met à jour, depuis le même marketplace. */
+  dependencies?: DependencyStep[];
+  /** Ce qui empêche l’installation (dépendance introuvable, trop ancienne…). */
+  blocked?: string;
   /** Version installée depuis ce marketplace, ou `null`. */
   installed?: string | null;
   /** Un module de même identifiant existe déjà dans l’espace sans venir de ce marketplace. */
@@ -131,6 +150,13 @@ export function catalogAccesses(module: CatalogModule): ModuleAccess[] {
           },
         ]
       : []),
+    ...(module.requires ?? []).map((requirement) => ({
+      kind: "module" as const,
+      id: requirement.module,
+      label: `fonctions et clients du module « ${requirement.module} »${
+        requirement.minVersion ? ` v${requirement.minVersion} ou plus` : ""
+      }`,
+    })),
     ...(module.clients ?? []).map((client) => ({
       kind: "client" as const,
       id: client.id,
@@ -162,6 +188,7 @@ export function catalogAccesses(module: CatalogModule): ModuleAccess[] {
 }
 
 export const accessKindLabel: Record<AccessKind, string> = {
+  module: "Module requis",
   tables: "Données d’un autre module",
   client: "Client",
   tool: "Fonction proposée aux agents",

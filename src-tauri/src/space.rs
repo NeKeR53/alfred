@@ -41,7 +41,7 @@ pub struct Layout {
     pub tabs: BTreeMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<String>,
-    /// Clés `section:<id>` et `page:<module>/<page>`.
+    /// Clés `module:<module>`, `section:<id>` et `page:<module>/<page>`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, Override>,
 }
@@ -68,6 +68,9 @@ pub struct ModuleManifest {
     pub name: String,
     pub version: String,
     pub description: String,
+    /// Modules dont celui-ci utilise les fonctions et les clients.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<Requirement>,
     /// Présent quand le module vient d’un marketplace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
@@ -103,6 +106,56 @@ impl ModuleManifest {
     pub fn read_only(&self) -> bool {
         self.origin.as_ref().is_some_and(|origin| !origin.detached)
     }
+
+    /// Le module déclare-t-il dépendre de `module` ?
+    pub fn requires_module(&self, module: &str) -> bool {
+        self.requires.iter().any(|requirement| requirement.module == module)
+    }
+}
+
+/// Dépendance d’un module : il appelle les fonctions de `module` et se sert de ses clients sans demander d’accord,
+/// et ne fonctionne pas sans lui.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Requirement {
+    pub module: String,
+    /// Version minimale, « majeur.mineur.correctif ».
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
+}
+
+impl Requirement {
+    /// La version `version` convient-elle ? Une version illisible ne convient qu’à une dépendance sans minimum.
+    pub fn accepts(&self, version: &str) -> bool {
+        match self.min_version.as_deref().map(str::trim).filter(|min| !min.is_empty()) {
+            None => true,
+            Some(min) => match (parse_version(version), parse_version(min)) {
+                (Some(version), Some(min)) => version >= min,
+                _ => false,
+            },
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self.min_version.as_deref().filter(|min| !min.trim().is_empty()) {
+            Some(min) => format!("« {} » v{} ou plus", self.module, min.trim()),
+            None => format!("« {} »", self.module),
+        }
+    }
+}
+
+/// Version « majeur.mineur.correctif » ; les composantes absentes valent zéro.
+pub fn parse_version(text: &str) -> Option<[u64; 3]> {
+    let text = text.trim();
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let mut parts = [0u64; 3];
+    for (index, piece) in text.split('.').enumerate() {
+        if index == 3 || piece.is_empty() || !piece.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        parts[index] = piece.parse().ok()?;
+    }
+    Some(parts)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -114,6 +167,10 @@ pub struct SectionDecl {
     pub icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Besoin client du module (`jira`, ou `dépendance/besoin`) : la section est répétée pour chaque instance du
+    /// client qui y répond, et ses pages appellent cette instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub per_instance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -237,6 +294,14 @@ pub struct ResolvedSection {
     pub color: Option<String>,
     pub hidden: bool,
     pub pages: Vec<ResolvedPage>,
+    /// Besoin client dont la section suit les instances (`perInstance` du module).
+    pub per_instance: Option<String>,
+    /// Instance que montre cette copie de la section ; son identifiant est alors `module/section@instance`.
+    pub instance: Option<String>,
+    /// Section déclarée dont celle-ci est la copie pour une instance.
+    pub instance_of: Option<String>,
+    /// Section par instance qui n’a encore aucune instance à montrer : ce qu’il faut faire.
+    pub waiting: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -257,6 +322,9 @@ pub struct ResolvedPage {
     pub uses: Uses,
     /// Panneau de droite déclaré pour cette page.
     pub panel: Option<Box<ResolvedPage>>,
+    /// Instance du client que montre cette page, dans une section par instance ; sa référence est alors
+    /// `module/page@instance`.
+    pub instance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,6 +336,11 @@ pub struct ModuleSummary {
     pub description: String,
     pub read_only: bool,
     pub origin: Option<Origin>,
+    /// Masqué par l’utilisateur (ou installé comme dépendance) : ses sections et ses pages quittent le menu.
+    pub hidden: bool,
+    pub requires: Vec<Requirement>,
+    /// Modules de l’espace qui dépendent de celui-ci.
+    pub required_by: Vec<String>,
     pub pages: usize,
     pub functions: usize,
     pub clients: Vec<ClientNeed>,
@@ -538,6 +611,7 @@ impl Space {
                         label: label.to_string(),
                         icon: section_icon.clone(),
                         color: color.clone(),
+                        per_instance: None,
                     }],
                     ..ModuleManifest::default()
                 };
@@ -659,6 +733,124 @@ impl Space {
         self.write_manifest(&manifest)
     }
 
+    /// Modules de l’espace qui déclarent dépendre de `module`.
+    pub fn dependents(&self, module: &str) -> Vec<String> {
+        self.module_ids()
+            .into_iter()
+            .filter(|id| id != module)
+            .filter(|id| self.module(id).is_ok_and(|manifest| manifest.requires_module(module)))
+            .collect()
+    }
+
+    /// Masque ou réaffiche un module (`module:<id>`), une section (`section:<module>/<section>`) ou une page
+    /// (`page:<module>/<page>`) dans le menu, sans rien supprimer. Renvoie la phrase qui décrit le changement, ou
+    /// `None` s’il n’y avait rien à changer.
+    pub fn set_visibility(&self, target: &str, hidden: bool) -> AppResult<Option<String>> {
+        let (kind, reference) = target.split_once(':').ok_or_else(|| {
+            AppError::new("Cible attendue : « module:<module> », « section:<module>/<section> » ou « page:<module>/<page> ».")
+        })?;
+        let what = match kind {
+            "module" => {
+                let module = self.module(reference)?;
+                format!("du module {}", if module.name.is_empty() { &module.id } else { &module.name })
+            }
+            "section" | "page" => {
+                let (module_id, id) = reference
+                    .split_once('/')
+                    .ok_or_else(|| AppError::new(format!("La {kind} doit être désignée par « module/{kind} ».")))?;
+                let module = self.module(module_id)?;
+                // `@instance` désigne la copie d’une section par instance (ou de l’une de ses pages).
+                let (id, instance) = match id.split_once('@') {
+                    Some((id, instance)) if valid_id(instance) => (id, Some(instance)),
+                    _ => (id, None),
+                };
+                let label = if kind == "section" {
+                    module.sections.iter().find(|section| section.id == id).map(|section| section.label.clone())
+                } else {
+                    module.pages.iter().find(|page| page.id == id).map(|page| page.title.clone())
+                };
+                let label =
+                    label.ok_or_else(|| AppError::new(format!("La {kind} « {reference} » n’existe pas.")))?;
+                match instance {
+                    Some(instance) => format!("de la {kind} {label} pour l’instance {instance}"),
+                    None => format!("de la {kind} {label}"),
+                }
+            }
+            _ => return Err(AppError::new(format!("Type de cible inconnu : « {kind} ». Attendu : module, section ou page."))),
+        };
+        let mut manifest = self.manifest()?;
+        let entry = manifest.layout.overrides.entry(target.to_string()).or_default();
+        if entry.hidden == hidden {
+            return Ok(None);
+        }
+        entry.hidden = hidden;
+        if *entry == Override::default() {
+            manifest.layout.overrides.remove(target);
+        }
+        self.write_manifest(&manifest)?;
+        Ok(Some(format!("{} {what}", if hidden { "Masquage" } else { "Réaffichage" })))
+    }
+
+    /// Remplace chaque section par instance par une copie pour chaque instance du client qu’elle suit. Sans
+    /// instance (ou sans client), la section reste seule et dit quoi faire.
+    fn expand_instances(
+        &self,
+        sections: Vec<ResolvedSection>,
+        manifest: &SpaceManifest,
+        problems: &mut Vec<Problem>,
+    ) -> Vec<ResolvedSection> {
+        let overrides = &manifest.layout.overrides;
+        let mut expanded = Vec::new();
+        for section in sections {
+            let Some(need) = section.per_instance.clone() else {
+                expanded.push(section);
+                continue;
+            };
+            let declared = self
+                .module(&section.module)
+                .is_ok_and(|module| need.contains('/') || module.clients.iter().any(|client| client.id == need));
+            if !declared {
+                problems.push(Problem {
+                    module: section.module.clone(),
+                    message: format!(
+                        "La section « {} » suit les instances de « {need} », que le module ne déclare pas dans `clients`.",
+                        section.id
+                    ),
+                });
+            }
+            match crate::clients::client_for(self, &section.module, &need) {
+                Ok(client) if !client.instances.is_empty() => {
+                    for instance in &client.instances {
+                        let id = format!("{}@{}", section.id, instance.id);
+                        let own = overrides.get(&format!("section:{id}"));
+                        let mut copy = section.clone();
+                        copy.label = own
+                            .and_then(|o| o.label.clone())
+                            .unwrap_or_else(|| format!("{} — {}", section.label, instance.display_label()));
+                        copy.icon = own.and_then(|o| o.icon.clone()).or_else(|| section.icon.clone());
+                        copy.color = own.and_then(|o| o.color.clone()).or_else(|| section.color.clone());
+                        copy.hidden = section.hidden || own.is_some_and(|o| o.hidden);
+                        copy.pages =
+                            section.pages.iter().map(|page| page_for_instance(page, &instance.id, overrides)).collect();
+                        copy.instance = Some(instance.id.clone());
+                        copy.instance_of = Some(section.id.clone());
+                        copy.id = id;
+                        expanded.push(copy);
+                    }
+                }
+                Ok(client) => expanded.push(ResolvedSection {
+                    waiting: Some(format!(
+                        "Le client « {} » n’a encore aucune instance. En ajouter une dans Réglages → Clients : cette section apparaîtra pour chacune.",
+                        client.label
+                    )),
+                    ..section
+                }),
+                Err(error) => expanded.push(ResolvedSection { waiting: Some(error.message), ..section }),
+            }
+        }
+        expanded
+    }
+
     /// Calcule la navigation affichée et l’état de compilation de chaque page et fonction.
     pub fn snapshot(&self) -> AppResult<Snapshot> {
         let manifest = self.manifest()?;
@@ -671,6 +863,9 @@ impl Space {
             }
         }
 
+        problems.extend(dependency_problems(&modules));
+        let module_hidden =
+            |module: &str| manifest.layout.overrides.get(&module_key(module)).is_some_and(|o| o.hidden);
         let page_override = |reference: &str| manifest.layout.overrides.get(&format!("page:{reference}"));
         let mut pages: Vec<(ResolvedPage, Placement)> = Vec::new();
         for module in &modules {
@@ -691,12 +886,13 @@ impl Space {
                     title: overridden.and_then(|o| o.label.clone()).unwrap_or_else(|| page.title.clone()),
                     icon: overridden.and_then(|o| o.icon.clone()).or_else(|| page.icon.clone()),
                     description: page.description.clone(),
-                    hidden: overridden.is_some_and(|o| o.hidden),
+                    hidden: overridden.is_some_and(|o| o.hidden) || module_hidden(&module.id),
                     read_only: module.read_only(),
                     missing,
                     errors,
                     uses: page.uses.clone(),
                     panel: None,
+                    instance: None,
                     reference,
                 };
                 pages.push((resolved, placement));
@@ -735,8 +931,12 @@ impl Space {
                     label: overridden.and_then(|o| o.label.clone()).unwrap_or_else(|| section.label.clone()),
                     icon: overridden.and_then(|o| o.icon.clone()).or_else(|| section.icon.clone()),
                     color: overridden.and_then(|o| o.color.clone()).or_else(|| section.color.clone()),
-                    hidden: overridden.is_some_and(|o| o.hidden),
+                    hidden: overridden.is_some_and(|o| o.hidden) || module_hidden(&module.id),
                     pages: Vec::new(),
+                    per_instance: section.per_instance.clone().filter(|need| !need.trim().is_empty()),
+                    instance: None,
+                    instance_of: None,
+                    waiting: None,
                     id,
                 });
             }
@@ -757,10 +957,21 @@ impl Space {
             }
         }
 
-        order_by(&mut sections, &manifest.layout.sections, |section| section.id.as_str());
+        let mut sections = self.expand_instances(sections, &manifest, &mut problems);
+        // Une copie par instance prend la place de sa section tant que l’utilisateur ne l’a pas rangée elle-même.
+        order_by_either(&mut sections, &manifest.layout.sections, |section| {
+            (section.id.as_str(), section.instance_of.as_deref())
+        });
         for section in &mut sections {
-            if let Some(order) = manifest.layout.tabs.get(&section.id) {
-                order_by(&mut section.pages, order, |page| page.reference.as_str());
+            let order = manifest
+                .layout
+                .tabs
+                .get(&section.id)
+                .or_else(|| section.instance_of.as_ref().and_then(|base| manifest.layout.tabs.get(base)));
+            if let Some(order) = order {
+                order_by_either(&mut section.pages, order, |page| {
+                    (page.reference.as_str(), page.reference.split_once('@').map(|(base, _)| base))
+                });
             }
         }
         order_by(&mut settings_pages, &manifest.layout.settings, |page| page.reference.as_str());
@@ -803,6 +1014,13 @@ impl Space {
                     description: module.description.clone(),
                     read_only: module.read_only(),
                     origin: module.origin.clone(),
+                    hidden: module_hidden(&module.id),
+                    requires: module.requires.clone(),
+                    required_by: modules
+                        .iter()
+                        .filter(|other| other.requires_module(&module.id))
+                        .map(|other| other.id.clone())
+                        .collect(),
                     pages: module.pages.len(),
                     functions: module.functions.len(),
                     clients: module.clients.clone(),
@@ -818,6 +1036,78 @@ impl Space {
     }
 }
 
+/// Clé du réglage d’affichage d’un module dans `layout.overrides`.
+pub fn module_key(module: &str) -> String {
+    format!("module:{module}")
+}
+
+/// Dépendances qui ne tiennent pas : module requis absent ou trop ancien, dépendance à soi-même, cycle.
+fn dependency_problems(modules: &[ModuleManifest]) -> Vec<Problem> {
+    let find = |id: &str| modules.iter().find(|module| module.id == id);
+    let mut problems = Vec::new();
+    for module in modules {
+        for requirement in &module.requires {
+            let message = if requirement.module == module.id {
+                Some("Le module ne peut pas dépendre de lui-même.".to_string())
+            } else if !valid_id(&requirement.module) {
+                Some(format!("Dépendance invalide : « {} » n’est pas un identifiant de module.", requirement.module))
+            } else {
+                match find(&requirement.module) {
+                    None => Some(format!(
+                        "Le module dépend de {}, absent de l’espace : l’installer ou retirer la dépendance de `requires`.",
+                        requirement.describe()
+                    )),
+                    Some(required) if !requirement.accepts(&required.version) => Some(format!(
+                        "Le module dépend de {}, mais la version présente est la v{} : le mettre à jour.",
+                        requirement.describe(),
+                        required.version
+                    )),
+                    Some(_) => None,
+                }
+            };
+            if let Some(message) = message {
+                problems.push(Problem { module: module.id.clone(), message });
+            }
+        }
+        if let Some(path) = cycle_through(modules, &module.id) {
+            problems.push(Problem {
+                module: module.id.clone(),
+                message: format!("Dépendances en boucle : {}. Retirer l’une d’elles de `requires`.", path.join(" → ")),
+            });
+        }
+    }
+    problems
+}
+
+/// Chemin de dépendances qui part de `start` et y revient, s’il existe (`start` exclu des dépendances directes
+/// vers lui-même, signalées à part).
+fn cycle_through(modules: &[ModuleManifest], start: &str) -> Option<Vec<String>> {
+    fn walk(modules: &[ModuleManifest], start: &str, current: &str, path: &mut Vec<String>, seen: &mut BTreeSet<String>) -> bool {
+        let Some(module) = modules.iter().find(|module| module.id == current) else { return false };
+        for requirement in &module.requires {
+            let next = requirement.module.as_str();
+            if next == current {
+                continue;
+            }
+            if next == start {
+                path.push(next.to_string());
+                return true;
+            }
+            if seen.insert(next.to_string()) {
+                path.push(next.to_string());
+                if walk(modules, start, next, path, seen) {
+                    return true;
+                }
+                path.pop();
+            }
+        }
+        false
+    }
+    let mut path = vec![start.to_string()];
+    let mut seen = BTreeSet::new();
+    walk(modules, start, start, &mut path, &mut seen).then_some(path)
+}
+
 /// Rend absolue une référence de section écrite sans son module.
 fn qualify(placement: &Placement, module: &str) -> Placement {
     match placement {
@@ -831,6 +1121,34 @@ fn qualify(placement: &Placement, module: &str) -> Placement {
 /// Classe `items` selon `order` ; ce qui n’y figure pas garde son ordre d’origine, à la suite.
 fn order_by<T>(items: &mut [T], order: &[String], key: impl Fn(&T) -> &str) {
     items.sort_by_key(|item| order.iter().position(|id| id == key(item)).unwrap_or(usize::MAX));
+}
+
+/// Classe d’après sa propre clé, sinon d’après celle de l’élément dont il est la copie.
+fn order_by_either<T>(items: &mut [T], order: &[String], key: impl Fn(&T) -> (&str, Option<&str>)) {
+    let rank = |item: &T| {
+        let (own, base) = key(item);
+        order
+            .iter()
+            .position(|id| id == own)
+            .or_else(|| base.and_then(|base| order.iter().position(|id| id == base)))
+            .unwrap_or(usize::MAX)
+    };
+    items.sort_by_key(|item| rank(item));
+}
+
+/// Copie d’une page pour une instance : sa référence et celle de son panneau prennent `@instance`, et ses propres
+/// réglages d’affichage s’ajoutent à ceux de la page déclarée.
+fn page_for_instance(page: &ResolvedPage, instance: &str, overrides: &BTreeMap<String, Override>) -> ResolvedPage {
+    let reference = format!("{}@{instance}", page.reference);
+    let own = overrides.get(&format!("page:{reference}"));
+    let mut copy = page.clone();
+    copy.title = own.and_then(|o| o.label.clone()).unwrap_or_else(|| page.title.clone());
+    copy.icon = own.and_then(|o| o.icon.clone()).or_else(|| page.icon.clone());
+    copy.hidden = page.hidden || own.is_some_and(|o| o.hidden);
+    copy.panel = page.panel.as_ref().map(|panel| Box::new(page_for_instance(panel, instance, overrides)));
+    copy.instance = Some(instance.to_string());
+    copy.reference = reference;
+    copy
 }
 
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
@@ -910,5 +1228,50 @@ mod tests {
         manifest.layout.tabs.insert("suivi/principal".into(), vec!["suivi-ajouts/notes".into()]);
         space.write_manifest(&manifest).unwrap();
         assert_eq!(space.snapshot().unwrap().sections[0].pages[0].title, "Notes");
+    }
+
+    #[test]
+    fn reports_broken_dependencies_and_hides_a_whole_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(dir.path(), Some("Test")).unwrap();
+        for label in ["CRM", "Devis", "Boucle"] {
+            space.place_page("Liste", None, "", &PlaceTarget::Menu { label: label.into(), icon: None, color: None }, None).unwrap();
+        }
+        let require = |id: &str, requires: Vec<Requirement>| {
+            let mut module = space.module(id).unwrap();
+            module.requires = requires;
+            space.write_module(&module).unwrap();
+        };
+        let on = |module: &str, min: Option<&str>| Requirement { module: module.into(), min_version: min.map(str::to_string) };
+        require("devis", vec![on("crm", Some("0.2.0")), on("absent", None)]);
+        let problems: Vec<String> = space.snapshot().unwrap().problems.into_iter().map(|p| format!("{}: {}", p.module, p.message)).collect();
+        assert!(problems.iter().any(|p| p.starts_with("devis:") && p.contains("v0.1.0")), "{problems:?}");
+        assert!(problems.iter().any(|p| p.starts_with("devis:") && p.contains("« absent »")), "{problems:?}");
+
+        require("devis", vec![on("crm", Some("0.1"))]);
+        require("crm", vec![on("boucle", None)]);
+        require("boucle", vec![on("devis", None)]);
+        let snapshot = space.snapshot().unwrap();
+        assert!(snapshot.problems.iter().any(|p| p.module == "crm" && p.message.contains("crm → boucle → devis → crm")));
+        require("boucle", vec![]);
+        let snapshot = space.snapshot().unwrap();
+        assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
+        let crm = snapshot.modules.iter().find(|module| module.id == "crm").unwrap();
+        assert_eq!(crm.required_by, ["devis"]);
+        assert_eq!(space.dependents("crm"), ["devis"]);
+
+        // Masquer le module retire du menu sa section et ses pages, où qu’elles soient rangées.
+        assert!(space.set_visibility("module:crm", true).unwrap().is_some());
+        assert!(space.set_visibility("module:crm", true).unwrap().is_none(), "rien à changer");
+        let snapshot = space.snapshot().unwrap();
+        let section = snapshot.sections.iter().find(|section| section.module == "crm").unwrap();
+        assert!(section.hidden && section.pages.iter().all(|page| page.hidden));
+        assert!(snapshot.modules.iter().find(|module| module.id == "crm").unwrap().hidden);
+        assert!(snapshot.sections.iter().filter(|section| section.module != "crm").all(|section| !section.hidden));
+        space.set_visibility("module:crm", false).unwrap();
+        assert!(space.manifest().unwrap().layout.overrides.is_empty(), "un réglage revenu par défaut disparaît");
+        assert!(space.set_visibility("page:crm/liste", true).unwrap().is_some());
+        assert!(space.set_visibility("page:crm/absente", true).is_err());
+        assert!(space.set_visibility("crm", true).is_err());
     }
 }

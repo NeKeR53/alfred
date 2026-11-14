@@ -39,6 +39,12 @@ export const COLOR_LABELS: Record<SectionColor, string> = {
 
 const sectionKey = (id: string) => `section:${id}`;
 const pageKey = (reference: string) => `page:${reference}`;
+const moduleKey = (id: string) => `module:${id}`;
+
+/** Le module est-il masqué du menu, avec toutes ses sections et ses pages ? */
+export function isModuleHidden(snapshot: Snapshot, module: string): boolean {
+  return Boolean(snapshot.layout?.overrides?.[moduleKey(module)]?.hidden);
+}
 
 /** Copie modifiable du `layout` enregistré, avec toutes ses rubriques. */
 export function readLayout(snapshot: Snapshot): FullLayout {
@@ -78,7 +84,14 @@ export function findPage(
     if (page) return { page, section };
   }
   const page = snapshot.settingsPages.find((candidate) => candidate.reference === reference);
-  return page ? { page, section: null } : undefined;
+  if (page) return { page, section: null };
+  // Une page déclarée dont seules des copies par instance sont affichées : la première copie la représente.
+  if (!reference.includes("@"))
+    for (const section of snapshot.sections) {
+      const copy = section.pages.find((candidate) => baseReference(candidate.reference) === reference);
+      if (copy) return { page: copy, section };
+    }
+  return undefined;
 }
 
 /** Pages d’un emplacement, masquées comprises, dans leur ordre affiché. */
@@ -191,6 +204,17 @@ export function setSectionHidden(snapshot: Snapshot, id: string, hidden: boolean
   };
 }
 
+export function setModuleHidden(snapshot: Snapshot, id: string, hidden: boolean): LayoutChange | null {
+  const module = snapshot.modules.find((candidate) => candidate.id === id);
+  if (!module || isModuleHidden(snapshot, id) === hidden) return null;
+  const name = module.name || module.id;
+  return {
+    layout: patchOverride(readLayout(snapshot), moduleKey(id), { hidden }),
+    message: `${hidden ? "Masquage" : "Réaffichage"} du module ${name}`,
+    announce: `Module ${name} ${hidden ? "masqué" : "réaffiché"}.`,
+  };
+}
+
 export function renamePage(snapshot: Snapshot, reference: string, label: string): LayoutChange | null {
   const found = findPage(snapshot, reference);
   const value = label.trim();
@@ -240,10 +264,20 @@ export function movePage(snapshot: Snapshot, reference: string, destination: Pag
   };
 }
 
-function orderBy<T>(items: T[], order: string[], key: (item: T) => string): T[] {
+/** Référence d’une page sans l’instance qu’elle montre (`module/page@instance` → `module/page`). */
+export function baseReference(reference: string): string {
+  return reference.split("@")[0];
+}
+
+/** Classe d’après la clé de l’élément, sinon d’après celle dont il est la copie (section ou page par instance). */
+function orderBy<T>(items: T[], order: string[], key: (item: T) => string | Array<string | null | undefined>): T[] {
   const rank = (item: T) => {
-    const index = order.indexOf(key(item));
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+    const keys = [key(item)].flat();
+    for (const candidate of keys) {
+      const index = candidate ? order.indexOf(candidate) : -1;
+      if (index >= 0) return index;
+    }
+    return Number.MAX_SAFE_INTEGER;
   };
   return items
     .map((item, index) => ({ item, index }))
@@ -257,26 +291,35 @@ function orderBy<T>(items: T[], order: string[], key: (item: T) => string): T[] 
  */
 export function project(snapshot: Snapshot, layout: FullLayout): Snapshot {
   const overrideOf = (key: string) => layout.overrides[key];
+  const moduleHidden = (module: string) => Boolean(overrideOf(moduleKey(module))?.hidden);
   const located: Array<{ page: ResolvedPage; at: string }> = [
     ...snapshot.sections.flatMap((section) => section.pages.map((page) => ({ page, at: section.id }))),
     ...snapshot.settingsPages.map((page) => ({ page, at: SETTINGS_SECTION })),
   ];
   const sections: ResolvedSection[] = snapshot.sections.map((section) => {
     const override = overrideOf(sectionKey(section.id));
+    // La copie d’une section par instance hérite de ce que l’utilisateur a réglé pour la section déclarée.
+    const declared = section.instanceOf ? overrideOf(sectionKey(section.instanceOf)) : undefined;
     return {
       ...section,
       label: override?.label ?? section.label,
       icon: override?.icon ?? section.icon,
       color: override?.color ?? section.color,
-      hidden: Boolean(override?.hidden),
+      hidden: Boolean(override?.hidden) || Boolean(declared?.hidden) || moduleHidden(section.module),
       pages: [],
     };
   });
   const settingsPages: ResolvedPage[] = [];
   for (const { page, at } of located) {
     const override = overrideOf(pageKey(page.reference));
-    const next: ResolvedPage = { ...page, title: override?.label ?? page.title, hidden: Boolean(override?.hidden) };
-    const placement = override?.placement;
+    const declared = page.instance ? overrideOf(pageKey(baseReference(page.reference))) : undefined;
+    const next: ResolvedPage = {
+      ...page,
+      title: override?.label ?? page.title,
+      hidden: Boolean(override?.hidden) || Boolean(declared?.hidden) || moduleHidden(page.module),
+    };
+    // Une page d’une copie par instance reste dans sa copie : elle ne se déplace pas seule.
+    const placement = page.instance ? undefined : override?.placement;
     let target = at;
     if (placement?.kind === "settings") target = SETTINGS_SECTION;
     else if (placement?.kind === "tab" && sections.some((section) => section.id === placement.section))
@@ -287,9 +330,13 @@ export function project(snapshot: Snapshot, layout: FullLayout): Snapshot {
   return {
     ...snapshot,
     layout,
-    sections: orderBy(sections, layout.sections, (section) => section.id).map((section) => ({
+    sections: orderBy(sections, layout.sections, (section) => [section.id, section.instanceOf]).map((section) => ({
       ...section,
-      pages: orderBy(section.pages, layout.tabs[section.id] ?? [], (page) => page.reference),
+      pages: orderBy(
+        section.pages,
+        layout.tabs[section.id] ?? (section.instanceOf ? layout.tabs[section.instanceOf] : undefined) ?? [],
+        (page) => [page.reference, baseReference(page.reference)],
+      ),
     })),
     settingsPages: orderBy(settingsPages, layout.settings, (page) => page.reference),
   };

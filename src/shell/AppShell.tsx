@@ -1,5 +1,6 @@
-import { EmptyState, IconButton, PageTopBar, SearchField, Tabs } from "@alfred/ui";
+import { Button, EmptyState, IconButton, PageTopBar, SearchField, Tabs } from "@alfred/ui";
 import {
+  AppWindow,
   Bot,
   CircleCheck,
   LoaderCircle,
@@ -9,11 +10,13 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { NamedIcon } from "./icons";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
 import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
 import { mergeVisibleOrder, pagesOf, reorderSections, reorderTabs, SETTINGS_SECTION } from "./navigationLayout";
+import { notify } from "./notifications";
 import { PageFrame } from "./PageFrame";
 import { ResizablePanel } from "./ResizablePanel";
 import { useShell, type View } from "./store";
@@ -47,7 +50,7 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
  * Corps d’une section : la page de l’onglet actif et, si elle en déclare un, son panneau de droite. Les Réglages
  * et la page Agent passent par le même gabarit avec leurs onglets intégrés.
  */
-function SectionView({
+export function SectionView({
   title,
   sectionId,
   pages,
@@ -56,10 +59,16 @@ function SectionView({
   renderAgentPanel,
   onPageMenu,
   variant = "section",
+  waiting,
+  detachable = true,
 }: {
   title: string;
   sectionId: string;
   pages: ResolvedPage[];
+  /** Section par instance qui attend encore une instance : ce qu’il faut faire, à la place des pages. */
+  waiting?: string | null;
+  /** Propose d’ouvrir la page affichée dans sa propre fenêtre (pas dans une fenêtre de page elle-même). */
+  detachable?: boolean;
   builtIn?: BuiltInTab[];
   actions?: ReactNode;
   renderAgentPanel?: AgentPanelRenderer;
@@ -173,6 +182,22 @@ function SectionView({
           </div>
         ) : null}
         {actions}
+        {detachable && inTauri && page && !builtInTab && !waiting ? (
+          <IconButton
+            label="Ouvrir dans une nouvelle fenêtre"
+            onClick={() =>
+              void openPageWindow(page.reference).catch((error: unknown) =>
+                notify({
+                  title: "La fenêtre n’a pas pu s’ouvrir",
+                  description: error instanceof Error ? error.message : String(error),
+                  tone: "error",
+                }),
+              )
+            }
+          >
+            <AppWindow size={16} aria-hidden="true" />
+          </IconButton>
+        ) : null}
         <NotificationBell />
       </PageTopBar>
       <div
@@ -181,13 +206,24 @@ function SectionView({
         <div className="shell-body__main">
           {builtInTab ? (
             builtInTab.render()
+          ) : waiting ? (
+            <EmptyState title="En attente d’une instance" description={waiting}>
+              <Button
+                onClick={() => {
+                  useShell.getState().setView({ kind: "settings" });
+                  useShell.getState().setActiveTab(SETTINGS_SECTION, "clients");
+                }}
+              >
+                Ouvrir les clients
+              </Button>
+            </EmptyState>
           ) : page ? (
             <SpacePage key={page.reference} page={page} kind="page" />
           ) : (
             <EmptyState title="Section vide" description="Demander à l’agent d’y créer une page." />
           )}
         </div>
-        {page && panelVisible && agentConversation && renderAgentPanel ? (
+        {waiting ? null : page && panelVisible && agentConversation && renderAgentPanel ? (
           <ResizablePanel storageKey="shell.panelWidth" label="Conversation avec l’agent">
             {renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))}
           </ResizablePanel>
@@ -482,6 +518,7 @@ export function AppShell({
             title={current.label}
             sectionId={current.id}
             pages={current.pages}
+            waiting={current.waiting}
             renderAgentPanel={renderAgentPanel}
             onPageMenu={editor.openPageMenu}
           />

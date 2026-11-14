@@ -3,7 +3,7 @@
  * du cadre qui a émis le message, jamais par le contenu du message : une page ne peut pas se faire passer pour une
  * autre.
  */
-import { AlfredError, invoke, openExternal } from "../lib/native";
+import { AlfredError, invoke, openExternal, openPageWindow } from "../lib/native";
 import { notify } from "./notifications";
 import { useShell } from "./store";
 
@@ -14,6 +14,13 @@ export interface FrameIdentity {
   reference: string;
   /** Pour un panneau : la page hôte. */
   host?: string;
+  /** Instance du client que montre la page (section par instance) ; `reference` porte alors `@instance`. */
+  instance?: string;
+}
+
+/** Référence déclarée de la page, sans l’instance qu’elle montre. */
+export function declaredReference(identity: FrameIdentity): string {
+  return identity.instance ? identity.reference.replace(new RegExp(`@${identity.instance}$`), "") : identity.reference;
 }
 
 const selections = new Map<string, unknown>();
@@ -32,11 +39,13 @@ export function onSelectionChange(listener: (page: string) => void): () => void 
 
 export function frameContext(identity: FrameIdentity) {
   const { theme, snapshot } = useShell.getState();
-  const [module, page] = identity.reference.split("/");
+  const reference = declaredReference(identity);
+  const [module, page] = reference.split("/");
   return {
-    reference: identity.reference,
+    reference,
     module,
     page,
+    instance: identity.instance ?? null,
     kind: identity.kind,
     theme,
     accent: snapshot?.accent ?? null,
@@ -76,7 +85,13 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
 }
 
 export async function handleFrameRequest(identity: FrameIdentity, method: string, params: Params): Promise<unknown> {
-  const subject = { kind: identity.kind, module: identity.module, reference: identity.reference };
+  // Le backend reçoit la page déclarée (les accords valent pour toutes ses instances) et, à part, son instance.
+  const subject = {
+    kind: identity.kind,
+    module: identity.module,
+    reference: declaredReference(identity),
+    ...(identity.instance ? { instance: identity.instance } : {}),
+  };
   switch (method) {
     case "shell.context":
       return frameContext(identity);
@@ -91,6 +106,12 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "shell.navigate":
       useShell.getState().openPage(String(params.reference ?? ""));
       return null;
+    case "shell.openWindow": {
+      // Sans référence, la page s’ouvre elle-même dans sa fenêtre ; une page inconnue est refusée par Rust.
+      const reference = params.reference ? String(params.reference) : (identity.host ?? identity.reference);
+      await openPageWindow(reference);
+      return null;
+    }
     case "shell.setPanelVisible":
       useShell.getState().setPanelVisible(identity.host ?? identity.reference, Boolean(params.visible));
       return null;
@@ -136,9 +157,11 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
     case "clients.request":
       return invoke("frame.clients.request", {
-        ...pick(params, ["client", "method", "path", "query", "headers", "body"]),
+        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body"]),
         subject,
       });
+    case "clients.instances":
+      return invoke("frame.clients.instances", { ...pick(params, ["client"]), subject });
     default:
       throw new AlfredError({ message: `Appel inconnu : ${method}` });
   }

@@ -32,6 +32,7 @@ fn now() -> u64 {
 /// modifier le fichier du client pendant la connexion ne change pas le serveur auquel le code sera envoyé.
 struct Flow {
     client: String,
+    instance: String,
     label: String,
     secret: String,
     client_id: String,
@@ -280,7 +281,7 @@ pub async fn access_token(state: &Arc<AppState>, client: &Client, stale: Option<
             if clear_tokens(&mut secret) {
                 vault::write_secret_async(&entry.id, secret).await?;
             }
-            state.emit("clients:changed", json!({ "client": client.id, "connected": false }));
+            state.emit("clients:changed", json!({ "client": client.id, "instance": client.instance, "connected": false }));
             Err(AppError::new(format!(
                 "La connexion du client « {} » a expiré. Ouvrir Réglages → Clients et choisir « Se connecter ».",
                 client.label
@@ -302,7 +303,7 @@ pub async fn disconnect(state: &Arc<AppState>, client: &Client) -> AppResult<Val
     if clear_tokens(&mut secret) {
         vault::write_secret_async(&entry.id, secret).await?;
     }
-    state.emit("clients:changed", json!({ "client": client.id, "connected": false }));
+    state.emit("clients:changed", json!({ "client": client.id, "instance": client.instance, "connected": false }));
     Ok(Value::Null)
 }
 
@@ -349,6 +350,7 @@ pub async fn begin(state: &Arc<AppState>, client: &Client) -> AppResult<String> 
         key,
         Flow {
             client: client.id.clone(),
+            instance: client.instance.clone(),
             label: client.label.clone(),
             secret: entry.id,
             client_id,
@@ -445,7 +447,7 @@ pub async fn callback(State(state): State<Arc<AppState>>, Query(params): Query<H
     };
     match exchange(&flow, &params).await {
         Ok(()) => {
-            state.emit("clients:changed", json!({ "client": flow.client, "connected": true }));
+            state.emit("clients:changed", json!({ "client": flow.client, "instance": flow.instance, "connected": true }));
             page(
                 StatusCode::OK,
                 "Connexion réussie",
@@ -456,7 +458,10 @@ pub async fn callback(State(state): State<Arc<AppState>>, Query(params): Query<H
             )
         }
         Err(error) => {
-            state.emit("clients:changed", json!({ "client": flow.client, "connected": false, "error": error.message }));
+            state.emit(
+                "clients:changed",
+                json!({ "client": flow.client, "instance": flow.instance, "connected": false, "error": error.message }),
+            );
             page(StatusCode::BAD_REQUEST, "Connexion impossible", &error.message)
         }
     }
@@ -545,7 +550,7 @@ mod tests {
         assert!(html.contains("Connexion réussie") && html.contains("revenir dans Alfred"), "{html}");
         let event = events.try_recv().unwrap();
         assert_eq!(event.name, "clients:changed");
-        assert_eq!(event.payload, json!({ "client": "portail", "connected": true }));
+        assert_eq!(event.payload, json!({ "client": "portail", "instance": "default", "connected": true }));
         outputs.push(html);
 
         // L’échange a prouvé la possession du vérificateur, sans secret client pour cette application publique.

@@ -86,7 +86,11 @@ fn refused() -> Response {
 }
 
 fn window() -> Option<tauri::WebviewWindow> {
-    bench().app.get().and_then(|app| app.get_webview_window(WINDOW))
+    labeled(WINDOW)
+}
+
+fn labeled(label: &str) -> Option<tauri::WebviewWindow> {
+    bench().app.get().and_then(|app| app.get_webview_window(label))
 }
 
 fn no_window() -> Response {
@@ -99,6 +103,8 @@ struct EvalRequest {
     /// Corps d’une fonction asynchrone : `return` donne le résultat, sérialisé en JSON.
     script: String,
     timeout_ms: Option<u64>,
+    /// Étiquette d’une autre fenêtre (une fenêtre de page, `page-…`) ; à défaut, la fenêtre principale.
+    window: Option<String>,
 }
 
 /// Exécute le script dans la webview principale ; il rend son résultat par la commande `verify_result`.
@@ -106,7 +112,11 @@ async fn eval(headers: HeaderMap, Json(request): Json<EvalRequest>) -> Response 
     if !authorized(&headers) {
         return refused();
     }
-    let Some(window) = window() else { return no_window() };
+    let target = match &request.window {
+        Some(label) => labeled(label),
+        None => window(),
+    };
+    let Some(window) = target else { return no_window() };
     let id = uuid::Uuid::new_v4().to_string();
     let (sender, receiver) = oneshot::channel();
     if let Ok(mut pending) = bench().pending.lock() {

@@ -145,7 +145,7 @@ CREATE INDEX carnet_notes_cree_le ON carnet_notes (cree_le);
 functions.call<Output = unknown>(reference: string, input?: unknown): Promise<Output>;
 ```
 
-`reference` vaut `"fonction"` dans le même module, `"module/fonction"` sinon. La première fois qu’une page appelle la fonction d’un autre module, l’utilisateur doit l’accepter. Rejets possibles : fonction non déclarée ou « pas encore écrite », accès refusé, pas de réponse en 120 s, exception levée par la fonction (son message).
+`reference` vaut `"fonction"` dans le même module, `"module/fonction"` sinon. La première fois qu’une page appelle la fonction d’un autre module, l’utilisateur doit l’accepter, sauf si ce module figure dans `requires` du `module.json` (AGENTS.md) : la fonction d’une dépendance est accordée d’office. Rejets possibles : fonction non déclarée ou « pas encore écrite », accès refusé, pas de réponse en 120 s, exception levée par la fonction (son message).
 
 `functions/compter.ts`, puis son appel depuis une page du module :
 
@@ -178,13 +178,14 @@ Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }`
 ## 6. Clients : `client(id)`
 
 ```ts
-client(id: string): {
+client(id: string, options?: { instance?: string }): {
   request<Body>(options: ClientRequest): Promise<ClientResponse<Body>>;
   get<Body>(path: string, query?: Record<string, string | number | boolean>): Promise<ClientResponse<Body>>;
   post<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   put<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   patch<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   delete<Body>(path: string): Promise<ClientResponse<Body>>;
+  instances(): Promise<{ id: string; label: string; default: boolean }[]>;
 };
 interface ClientRequest {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
@@ -200,22 +201,28 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 **Un statut HTTP d’erreur ne rejette pas la promesse** : teste `ok` ou `status`. Le rejet signifie que la requête n’a pas abouti : client inconnu ou à valider, secret manquant, accès refusé, chemin refusé, erreur réseau. La première requête d’une page vers un client (et, séparément, de son panneau, ou des fonctions d’un module) demande l’accord de l’utilisateur.
 
+Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
+
+Dans une section par instance (`perInstance` du module, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et `client(id)` l’appelle d’office ; `client(id, { instance })` en vise une autre. Le même fichier de page sert à toutes les instances.
+
+`client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
+
 ```tsx
 import { client, useAsync } from "@alfred/sdk";
 
-export function useTicketsOuverts(projet: string) {
+export function useTicketsOuverts(projet: string, instance?: string) {
   return useAsync(async () => {
-    const reponse = await client("jira").get<{ issues: { key: string }[] }>("/rest/api/3/search", {
+    const reponse = await client("jira", { instance }).get<{ issues: { key: string }[] }>("/rest/api/3/search", {
       jql: `project = ${projet} AND statusCategory != Done`,
       maxResults: 50,
     });
     if (!reponse.ok) throw new Error(`Jira a répondu ${reponse.status}.`);
     return reponse.body.issues;
-  }, [projet]);
+  }, [projet, instance]);
 }
 ```
 
-Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.json` sans aucun secret ; son argument `client` a la forme du fichier :
+Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.json` sans aucun secret. Pour un service à une seule adresse, son argument `client` a la forme du fichier :
 
 ```json
 {
@@ -231,7 +238,25 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 - `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes`.
 - `auth.secret` (entrée du coffre) : ne le passe jamais, l’utilisateur la choisit ; `declare_client` garde celle qu’il a reliée. `headers` : en-têtes fixes, jamais d’authentification.
 
-Un client déclaré ou modifié par l’agent est « à valider » : l’utilisateur l’ouvre dans Réglages, onglet Clients, et le valide avant qu’il serve ; il saisit le secret dans Réglages, onglet Coffre.
+Pour un service à plusieurs instances, `methods` remplace `baseUrl` et `auth` : la liste des façons de s’authentifier, que l’utilisateur choisira pour chaque instance qu’il ajoute dans Réglages, onglet Clients (nom, adresse libre, méthode, entrée du coffre). Tu ne déclares jamais d’instance : `declare_client` garde celles de l’utilisateur.
+
+```json
+{
+  "id": "jira",
+  "label": "Jira",
+  "methods": [
+    { "id": "cloud", "label": "Jira Cloud (jeton d’API)", "type": "basic" },
+    { "id": "pat", "label": "Data Center (jeton personnel)", "type": "bearer" },
+    { "id": "oauth", "label": "OAuth", "type": "oauth2", "authorizationUrl": "{url}/rest/oauth2/latest/authorize", "tokenUrl": "{url}/rest/oauth2/latest/token", "scopes": ["WRITE"] }
+  ],
+  "headers": { "Accept": "application/json" }
+}
+```
+
+- `methods[].id` et `label` : identifiant et nom montré à l’utilisateur ; les autres champs sont ceux de `auth`. `{url}` au début de `authorizationUrl` ou `tokenUrl` devient l’adresse de l’instance.
+- `baseUrl` (facultatif) : adresse proposée aux instances qui n’ont pas la leur.
+
+Un client déclaré ou modifié par l’agent est « à valider » : l’utilisateur l’ouvre dans Réglages, onglet Clients, et le valide avant qu’il serve ; il saisit le secret dans Réglages, onglet Coffre. Chaque instance se valide séparément : modifier une méthode ne remet « à valider » que les instances qui l’utilisent.
 
 ## 7. IA
 
@@ -304,7 +329,8 @@ export async function trier(ticket: { id: number; titre: string }) {
 
 ```ts
 shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
-shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page »
+shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@instance » dans une section par instance)
+shell.openWindow(reference?: string): Promise<void>;    // ouvre la page (sans argument : celle-ci) seule dans sa fenêtre
 shell.setPanelVisible(visible: boolean): Promise<void>; // panneau de droite de la page
 shell.publish(selection: unknown): Promise<void>;       // sélection transmise au panneau
 shell.send(message: unknown): Promise<void>;            // page vers panneau, ou panneau vers page
@@ -319,6 +345,7 @@ interface PageContext {
   kind: "page" | "panel";
   theme: "light" | "dark"; // appliqué par Alfred, rien à faire
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
+  instance: string | null; // section par instance : l’instance du client que montre la page ; sinon null
 }
 ```
 

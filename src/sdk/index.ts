@@ -104,13 +104,27 @@ export interface ClientResponse<Body = unknown> {
   body: Body;
 }
 
+/** Instance d’un client : un compte ou une installation du service, ajoutée par l’utilisateur dans les Réglages. */
+export interface ClientInstance {
+  id: string;
+  label: string;
+  /** Instance utilisée quand une requête n’en nomme pas. */
+  default: boolean;
+}
+
+export interface ClientOptions {
+  /** Instance à appeler ; à défaut, celle par défaut. */
+  instance?: string;
+}
+
 /**
  * Client déclaré dans l’espace. Alfred exécute la requête et y ajoute l’authentification : la page ne voit jamais
- * le secret et ne peut joindre que l’adresse de base du client.
+ * le secret et ne peut joindre que l’adresse de base de l’instance appelée.
  */
-export function client(id: string) {
-  const send = <Body>(options: ClientRequest) =>
-    request<ClientResponse<Body>>("clients.request", { client: id, ...options });
+export function client(id: string, options: ClientOptions = {}) {
+  const instance = options.instance;
+  const send = <Body>(call: ClientRequest) =>
+    request<ClientResponse<Body>>("clients.request", { client: id, ...call, ...(instance ? { instance } : {}) });
   return {
     request: send,
     get: <Body = unknown>(path: string, query?: ClientRequest["query"]) => send<Body>({ method: "GET", path, query }),
@@ -118,6 +132,8 @@ export function client(id: string) {
     put: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PUT", path, body }),
     patch: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PATCH", path, body }),
     delete: <Body = unknown>(path: string) => send<Body>({ method: "DELETE", path }),
+    /** Instances du client, la première étant celle par défaut. */
+    instances: () => request<ClientInstance[]>("clients.instances", { client: id }),
   };
 }
 
@@ -182,6 +198,11 @@ export interface PageContext {
   theme: "light" | "dark";
   /** Pour un panneau : la sélection publiée par la page hôte (`shell.publish`). */
   selection: unknown;
+  /**
+   * Dans une section par instance (`perInstance`) : l’instance du client que montre la page. `client()` l’appelle
+   * alors sans qu’on la nomme. `null` ailleurs.
+   */
+  instance: string | null;
 }
 
 export const shell = {
@@ -189,9 +210,16 @@ export const shell = {
   notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }) {
     return request<void>("shell.notify", options);
   },
-  /** Ouvre une autre page de l’espace (« module/page »). */
+  /** Ouvre une autre page de l’espace (« module/page », ou « module/page@instance » dans une section par instance). */
   navigate(reference: string) {
     return request<void>("shell.navigate", { reference });
+  },
+  /**
+   * Ouvre une page de l’espace seule dans sa propre fenêtre (sans argument : la page elle-même), ou ramène au
+   * premier plan la fenêtre qui l’affiche déjà.
+   */
+  openWindow(reference?: string) {
+    return request<void>("shell.openWindow", reference ? { reference } : {});
   },
   /** Affiche ou masque le panneau de droite de la page. */
   setPanelVisible(visible: boolean) {

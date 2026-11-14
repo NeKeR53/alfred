@@ -34,9 +34,12 @@ N’ajoute jamais une page en écrivant `module.json` à la main : `place_page` 
 - **Panneau de droite** : une page n’en a qu’un ; s’il existe, modifie-le. La page publie sa sélection, le panneau la lit (SDK.md, section 8).
 - **Onglet des Réglages** : `{ "kind": "settings" }`, gabarit décrit dans DESIGN.md.
 - **Module installé** (`"readOnly": true`) : un onglet ou un panneau qu’on lui ajoute va dans le module local `<id>-ajouts`, qui lit ses tables sans pouvoir y écrire.
+- **Dépendance** : un module qui se sert des fonctions ou d’un client d’un autre module le déclare dans `requires` de son `module.json` : `[{ "module": "crm", "minVersion": "1.2.0" }]` (`minVersion` facultatif). Ses pages et ses fonctions appellent alors `functions.call("crm/fonction")` et `client("crm/hubspot")` sans que l’utilisateur ait à l’accepter. `client("crm/hubspot")` suit toujours le client relié au besoin `hubspot` de `crm` : ne redéclare pas ce besoin dans le module qui en dépend. Les tables d’une dépendance ne se lisent pas : passe par ses fonctions. `check` signale (dans `structure`) une dépendance absente, trop ancienne ou en boucle.
+- **Une section par instance** : pour un service dont l’utilisateur a plusieurs comptes ou installations (un module Jira, plusieurs sites Jira), ajoute `"perInstance": "<besoin>"` à la section, où `<besoin>` est un `id` de `clients` du module. Le menu montre alors la section une fois par instance du client relié (« Jira — Acme », « Jira — Cloud »), avec tous ses onglets ; ajouter ou supprimer une instance dans Réglages → Clients ajoute ou retire sa section, sans toucher au code. Chaque page y connaît son instance (`usePageContext().instance`) et `client("jira")` l’appelle sans la nommer : écris la page une seule fois. Les tables du module sont communes à toutes les instances : range les lignes avec une colonne `instance`, et passe l’instance aux fonctions dans leur `input`. Sans instance, la section s’affiche seule avec un message qui mène aux clients.
+- **Affichage** : `set_visibility` (`target` : `module:<id>`, `section:<module>/<section>` ou `page:<module>/<page>`, avec `@<instance>` pour la copie d’une section par instance ; `hidden`) masque ou réaffiche dans le menu sans rien supprimer. Un module masqué garde ses pages ouvrables par `shell.navigate`, et ses fonctions et ses clients servent toujours. Ne t’en sers que si l’utilisateur le demande, ou pour masquer un module que tu as créé seulement comme dépendance de celui qu’il a demandé. Il revient dessus dans Réglages → Navigation.
 - **Fonction** : `declare_function` (`module` existant, `id`, `description`, schémas `input` et `output`, `tool: true` pour l’offrir aux agents comme outil `fn__module__fonction`), écris le fichier renvoyé, `check`, puis essaie-la avec `call_function`.
 - **Table** : écris `modules/<module>/migrations/0001_nom.sql`, puis `check`, qui l’applique. N’y écris ni `BEGIN` ni `COMMIT` (Alfred ouvre et ferme la transaction), et ne référence par clé étrangère que des tables du même module. Les tables du module `suivi-projets` commencent par `suivi_projets_`. Vérifie avec `db_schema`, lis ou insère des lignes avec `db_query`. Une migration appliquée ne repasse jamais : pour changer la structure, ajoute `0002_…`. Si le module existait déjà (tables gardées après une suppression ou une annulation), regarde d’abord `db_schema` : une table du même nom est peut-être déjà là.
-- **Client** (service web) : `declare_client` avec `client` (`id`, `label`, `baseUrl`, `auth`, `headers` ; voir SDK.md, section 6) et `create: true` pour un nouveau, puis déclare le besoin dans `clients` du `module.json`. Un client authentifié naît « à valider » (un client `none` est prêt aussitôt) : l’utilisateur le valide dans Réglages, onglet Clients, et y relie le secret qu’il saisit dans l’onglet Coffre. Avant cela, toute requête échoue, et chacune de tes modifications de l’adresse, de l’authentification ou des en-têtes le remet « à valider ». Dis-le à l’utilisateur. N’écris pas `clients/<id>.json` à la main.
+- **Client** (service web) : `declare_client` avec `client` (`id`, `label`, `baseUrl`, `auth`, `headers` ; voir SDK.md, section 6) et `create: true` pour un nouveau, puis déclare le besoin dans `clients` du `module.json`. Si l’utilisateur a plusieurs comptes ou installations du même service (plusieurs Jira, plusieurs boîtes mail), déclare **un seul** client avec `methods` (les façons de s’authentifier) à la place de `auth`, `baseUrl` facultatif : l’utilisateur ajoute lui-même chaque instance (adresse, méthode, secret) dans Réglages, onglet Clients, et les pages choisissent par `client(id, { instance })` et `client(id).instances()`. Ne crée pas un client par compte, et ne déclare jamais d’instance. Un client authentifié naît « à valider » (un client `none` est prêt aussitôt) : l’utilisateur le valide dans Réglages, onglet Clients, et y relie le secret qu’il saisit dans l’onglet Coffre. Avant cela, toute requête échoue, et chacune de tes modifications de l’adresse, de l’authentification ou des en-têtes le remet « à valider ». Dis-le à l’utilisateur. N’écris pas `clients/<id>.json` à la main.
 - **Webhook** : déclare la fonction, puis `declare_webhook` (`module`, `id`, `description`, `function` : identifiant local de la fonction). L’outil renvoie l’adresse locale `http://127.0.0.1:<port>/hooks/<module>/<id>` ; le service l’appelle avec le secret du webhook, que tu ne vois jamais : l’utilisateur le lit dans Réglages, onglet Webhooks. `remove_webhook` (`hook` : « module/id ») le retire.
 - **Planification** : déclare la fonction, puis `declare_schedule` (`module`, `id`, `description`, `function`, `everyMinutes` **ou** `at`, `input`). Elle ne tourne que pendant qu’Alfred est ouvert. `remove_schedule` (`schedule` : « module/id ») la retire.
 
@@ -57,7 +60,7 @@ N’ajoute jamais une page en écrivant `module.json` à la main : `place_page` 
 alfred.json                  navigation et liaisons de l’utilisateur (ne pas modifier)
 AGENTS.md, CLAUDE.md         ce guide (géré par Alfred)
 docs/alfred/                 DESIGN.md et SDK.md (gérés par Alfred)
-clients/<id>.json            clients (écrits par `declare_client`) : adresse et authentification, jamais de secret
+clients/<id>.json            clients (écrits par `declare_client`) : adresse et authentification (ou méthodes et instances), jamais de secret
 modules/<module>/
   module.json                manifeste du module
   pages/<page>.tsx           page, panneau ou onglet des Réglages
@@ -71,7 +74,7 @@ Les identifiants sont en minuscules, chiffres et tirets, 64 caractères au plus.
 
 ### `module.json`
 
-`place_page`, `declare_function`, `declare_webhook` et `declare_schedule` l’écrivent. Tu le modifies à la main pour `clients`, `uses` ou un titre. Champs en camelCase ; **un champ mal orthographié est ignoré sans erreur**. N’écris jamais `origin`, qui marque un module installé.
+`place_page`, `declare_function`, `declare_webhook` et `declare_schedule` l’écrivent. Tu le modifies à la main pour `requires`, `clients`, `uses` ou un titre. Champs en camelCase ; **un champ mal orthographié est ignoré sans erreur**. N’écris jamais `origin`, qui marque un module installé.
 
 ```json
 {
@@ -79,6 +82,7 @@ Les identifiants sont en minuscules, chiffres et tirets, 64 caractères au plus.
   "name": "Suivi",
   "version": "0.1.0",
   "description": "Tâches de l’équipe, synchronisées avec Jira.",
+  "requires": [{ "module": "annuaire", "minVersion": "1.0.0" }],
   "sections": [{ "id": "principal", "label": "Suivi", "icon": "list-checks", "color": "blue" }],
   "pages": [
     {
@@ -125,7 +129,9 @@ Les identifiants sont en minuscules, chiffres et tirets, 64 caractères au plus.
 ```
 
 - `placement` : `tab` (`section` : section du même module, ou `module/section`), `panel` (`page` : toujours `module/page`), `settings`.
+- `sections[].perInstance` (facultatif) : besoin client (`clients[].id`, ou `dépendance/besoin`) dont la section suit les instances ; voir « Une section par instance ».
 - `uses` informe l’utilisateur ; il n’accorde rien. L’accès est demandé à l’utilisateur au premier usage.
+- `requires` : modules dont celui-ci appelle les fonctions (`"module/fonction"`) et utilise les clients (`client("module/besoin")`), accordés d’office. Un module installé depuis un marketplace installe ses dépendances avec lui, masquées du menu, et un module dont un autre dépend ne se désinstalle pas.
 - `clients[].auth` : `none`, `bearer`, `apiKey`, `basic`, `oauth2` ou `clientCredentials`. Dans le module, `client("jira")` désigne le client que l’utilisateur a relié à ce besoin, sinon `clients/jira.json`.
 - `webhooks[].function`, `schedules[].function` : identifiant d’une fonction **du même module**, sans préfixe.
 - `schedules` : `everyMinutes` (au moins 1) **ou** `at` (« HH:MM », heure locale, une fois par jour), jamais les deux ; `input` est passé à la fonction (`{}` par défaut).

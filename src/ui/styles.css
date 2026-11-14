@@ -867,6 +867,10 @@ html select:not([multiple], [data-slot="native-select"]) {
 .app-shell--sidebar-collapsed {
   grid-template-columns: 52px minmax(0, 1fr);
 }
+/* Fenêtre de page : la page seule, sans le menu de l’espace. */
+.app-shell--page-window {
+  grid-template-columns: minmax(0, 1fr);
+}
 .sidebar {
   min-width: 0;
   min-height: 0;

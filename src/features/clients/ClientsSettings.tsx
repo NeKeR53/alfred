@@ -23,37 +23,70 @@ import { onNativeEvent, openExternal } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { errorMessage } from "../vault/api";
 import {
+  type AuthType,
   authTypeLabel,
   bindNeed,
   type ClientConfig,
+  type ClientInstanceItem,
   type ClientItem,
   type ClientNeedItem,
   type ClientsOverview,
   type ClientTestResult,
   connectClient,
   deleteClient,
+  deleteInstance,
   disconnectClient,
   listClients,
+  makeDefaultInstance,
+  methodLabel,
   testClient,
   validateClient,
 } from "./api";
 import { ClientEditor } from "./ClientEditor";
+import { InstanceEditor } from "./InstanceEditor";
 
 const STATUS: Record<ClientItem["status"], { label: string; tone: "success" | "warning" | "danger" }> = {
   ready: { label: "Prêt", tone: "success" },
   toValidate: { label: "À valider", tone: "warning" },
+  noInstance: { label: "Aucune instance", tone: "warning" },
   missingSecret: { label: "Secret manquant", tone: "warning" },
   toConnect: { label: "À connecter", tone: "warning" },
   invalid: { label: "Invalide", tone: "danger" },
 };
 
-type Editing = { client?: ClientItem; preset?: Partial<ClientConfig> };
+type Editing =
+  | { kind: "client"; client?: ClientItem; preset?: Partial<ClientConfig> }
+  | { kind: "instance"; client: ClientItem; instance?: ClientInstanceItem };
 
 /** Changement annoncé par le backend : retour d’une connexion OAuth, ou simple modification d’un client. */
 interface ClientsChange {
   client?: string;
+  instance?: string;
   connected?: boolean;
   error?: string;
+}
+
+/** Ce qu’on teste, connecte ou déconnecte : un client à une seule adresse, ou une instance d’un client. */
+interface Target {
+  client: ClientItem;
+  /** Absente pour un client à une seule adresse : son instance par défaut. */
+  instance?: ClientInstanceItem;
+}
+
+const targetKey = (client: string, instance?: string) => (instance ? `${client}#${instance}` : client);
+const targetLabel = ({ client, instance }: Target) => (instance ? `${client.label} — ${instance.label}` : client.label);
+
+/** L’instance `default` d’un client à une seule adresse se suit sous le seul identifiant du client. */
+function connectingKey(change: ClientsChange, clients: ClientItem[] | undefined) {
+  const client = clients?.find((known) => known.id === change.client);
+  return client?.simple || !change.instance ? (change.client ?? "") : targetKey(change.client ?? "", change.instance);
+}
+
+/** Une instance par ligne, pour les clients à plusieurs instances. */
+interface InstanceRow {
+  key: string;
+  client: ClientItem;
+  instance: ClientInstanceItem;
 }
 
 /**
@@ -91,7 +124,8 @@ export function ClientsSettings() {
     void load();
     const stopClients = onNativeEvent("clients:changed", (payload) => {
       const change = (payload ?? {}) as ClientsChange;
-      if (change.client && change.client === connectingRef.current && typeof change.connected === "boolean") {
+      const key = change.client ? connectingKey(change, overviewRef.current?.clients) : undefined;
+      if (key && key === connectingRef.current && typeof change.connected === "boolean") {
         const label =
           overviewRef.current?.clients.find((client) => client.id === change.client)?.label ?? change.client;
         connectingRef.current = undefined;
@@ -110,47 +144,51 @@ export function ClientsSettings() {
     };
   }, [load]);
 
-  const test = async (client: ClientItem) => {
-    setTesting(client.id);
+  const test = async (target: Target) => {
+    const key = targetKey(target.client.id, target.instance?.id);
+    const label = targetLabel(target);
+    setTesting(key);
     try {
-      const result = await testClient(client.id);
-      setTests((current) => ({ ...current, [client.id]: result }));
+      const result = await testClient(target.client.id, target.instance?.id);
+      setTests((current) => ({ ...current, [key]: result }));
       notify({
-        title: result.ok ? `${client.label} : le service répond` : `${client.label} : le test a échoué`,
+        title: result.ok ? `${label} : le service répond` : `${label} : le test a échoué`,
         description: `${result.message} ${result.durationMs} ms.`,
         tone: result.ok ? "success" : "error",
       });
     } catch (failure) {
-      notify({ title: `${client.label} : le test a échoué`, description: errorMessage(failure), tone: "error" });
+      notify({ title: `${label} : le test a échoué`, description: errorMessage(failure), tone: "error" });
     } finally {
       setTesting(undefined);
     }
   };
 
-  const connect = async (client: ClientItem) => {
+  const connect = async (target: Target) => {
+    const key = targetKey(target.client.id, target.instance?.id);
     try {
-      const { authorizationUrl } = await connectClient(client.id);
-      connectingRef.current = client.id;
-      setConnecting(client.id);
+      const { authorizationUrl } = await connectClient(target.client.id, target.instance?.id);
+      connectingRef.current = key;
+      setConnecting(key);
       await openExternal(authorizationUrl);
     } catch (failure) {
       connectingRef.current = undefined;
       setConnecting(undefined);
       notify({
-        title: `La connexion de ${client.label} n’a pas pu démarrer`,
+        title: `La connexion de ${targetLabel(target)} n’a pas pu démarrer`,
         description: errorMessage(failure),
         tone: "error",
       });
     }
   };
 
-  const disconnect = async (client: ClientItem) => {
+  const disconnect = async (target: Target) => {
+    const label = targetLabel(target);
     try {
-      await disconnectClient(client.id);
-      notify({ title: `${client.label} est déconnecté`, tone: "success" });
+      await disconnectClient(target.client.id, target.instance?.id);
+      notify({ title: `${label} est déconnecté`, tone: "success" });
       await load();
     } catch (failure) {
-      notify({ title: `${client.label} n’a pas été déconnecté`, description: errorMessage(failure), tone: "error" });
+      notify({ title: `${label} n’a pas été déconnecté`, description: errorMessage(failure), tone: "error" });
     }
   };
 
@@ -171,7 +209,7 @@ export function ClientsSettings() {
           </Text>
           <KeyValueList
             items={validation.changes.map((change) => ({
-              label: change.label,
+              label: change.instanceLabel ? `${change.instanceLabel} · ${change.label}` : change.label,
               value: validation.everValidated ? (
                 <Stack gap="none">
                   <Text size="meta" tone="muted">
@@ -190,7 +228,7 @@ export function ClientsSettings() {
     });
     if (!confirmed) return;
     try {
-      await validateClient(client.id, validation.fingerprint);
+      await validateClient(client);
       notify({ title: `${client.label} est validé`, tone: "success" });
     } catch (failure) {
       notify({ title: `${client.label} n’a pas été validé`, description: errorMessage(failure), tone: "error" });
@@ -218,6 +256,35 @@ export function ClientsSettings() {
     }
   };
 
+  const removeInstance = async ({ client, instance }: InstanceRow) => {
+    const confirmed = await confirm({
+      title: `Supprimer l’instance « ${instance.label} » de ${client.label} ?`,
+      message: instance.default
+        ? "C’est l’instance par défaut : les pages qui ne nomment pas d’instance utiliseront la suivante. L’entrée du coffre est conservée."
+        : "Les pages qui la nomment ne pourront plus la joindre. L’entrée du coffre est conservée.",
+      confirmLabel: "Supprimer",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    try {
+      await deleteInstance(client.id, instance.id);
+      notify({ title: "Instance supprimée", tone: "success" });
+    } catch (failure) {
+      notify({ title: "L’instance n’a pas été supprimée", description: errorMessage(failure), tone: "error" });
+    }
+    await load();
+  };
+
+  const makeDefault = async ({ client, instance }: InstanceRow) => {
+    try {
+      await makeDefaultInstance(client.id, instance.id);
+      notify({ title: `${instance.label} est l’instance par défaut de ${client.label}`, tone: "success" });
+    } catch (failure) {
+      notify({ title: "L’instance par défaut n’a pas changé", description: errorMessage(failure), tone: "error" });
+    }
+    await load();
+  };
+
   const bind = async (need: ClientNeedItem, client: string) => {
     try {
       await bindNeed(need.key, client || null);
@@ -229,6 +296,22 @@ export function ClientsSettings() {
     }
   };
 
+  if (editing?.kind === "instance") {
+    return (
+      <InstanceEditor
+        key={`${editing.client.id}:${editing.instance?.id ?? "nouvelle"}`}
+        client={editing.client}
+        initial={editing.instance}
+        redirectUri={overview?.redirectUri ?? null}
+        onCancel={() => setEditing(undefined)}
+        onSaved={() => {
+          setEditing(undefined);
+          void load();
+        }}
+      />
+    );
+  }
+
   if (editing) {
     return (
       <ClientEditor
@@ -238,8 +321,14 @@ export function ClientsSettings() {
         preset={editing.preset}
         redirectUri={overview?.redirectUri ?? null}
         onCancel={() => setEditing(undefined)}
-        onSaved={() => {
-          setEditing(undefined);
+        onSaved={(saved) => {
+          // Un nouveau client à plusieurs instances n’a encore rien à appeler : on enchaîne sur sa première instance.
+          if (!editing.client && !saved.simple) {
+            const first = saved.instances[0];
+            setEditing({ kind: "instance", client: saved, instance: first });
+          } else {
+            setEditing(undefined);
+          }
           void load();
         }}
       />
@@ -266,10 +355,77 @@ export function ClientsSettings() {
 
   const { clients, needs } = overview;
   const create = (
-    <Button variant="primary" onClick={() => setEditing({})}>
+    <Button variant="primary" onClick={() => setEditing({ kind: "client" })}>
       Nouveau client
     </Button>
   );
+
+  /** État d’un client ou d’une instance, avec ce qui l’explique et le dernier test. */
+  const statusCell = (item: Pick<ClientItem, "status" | "problem" | "validation">, key: string, showsTest: boolean) => {
+    const status = STATUS[item.status];
+    const tested = showsTest ? tests[key] : undefined;
+    return (
+      <Stack gap="xs">
+        <Row gap="xs">
+          <StatusBadge tone={status.tone} size="compact" title={item.problem ?? undefined}>
+            {status.label}
+          </StatusBadge>
+        </Row>
+        {item.problem ? (
+          <Text size="meta" tone="danger">
+            {item.problem}
+          </Text>
+        ) : null}
+        {item.status === "toValidate" ? (
+          <Text size="meta" tone="warning">
+            {item.validation?.everValidated ? "Modifié" : "Créé"} hors des Réglages : rien n’est envoyé avant
+            validation.
+          </Text>
+        ) : null}
+        {connecting === key ? (
+          <Text size="meta" tone="muted">
+            En attente du navigateur…
+          </Text>
+        ) : null}
+        {tested ? (
+          <Text size="meta" tone={tested.ok ? "success" : "danger"}>
+            Dernier test : {tested.status ?? "sans réponse"} · {tested.durationMs} ms
+          </Text>
+        ) : null}
+      </Stack>
+    );
+  };
+
+  /** Connexion et test d’un client à une seule adresse, ou d’une instance. */
+  const targetActions = (target: Target, state: Pick<ClientItem, "status" | "connected">, oauth: boolean) => {
+    const key = targetKey(target.client.id, target.instance?.id);
+    const label = targetLabel(target);
+    return (
+      <>
+        {oauth && state.status === "toConnect" ? (
+          <Button aria-label={`Se connecter à ${label}`} onClick={() => void connect(target)}>
+            Se connecter
+          </Button>
+        ) : null}
+        {oauth && state.connected ? (
+          <Button aria-label={`Se déconnecter de ${label}`} onClick={() => void disconnect(target)}>
+            Se déconnecter
+          </Button>
+        ) : null}
+        <Button
+          aria-label={`Tester ${label}`}
+          loading={testing === key}
+          loadingLabel="Test…"
+          disabled={
+            state.status === "invalid" || state.status === "toValidate" || (testing !== undefined && testing !== key)
+          }
+          onClick={() => void test(target)}
+        >
+          Tester
+        </Button>
+      </>
+    );
+  };
 
   const clientColumns: DataTableColumn<ClientItem>[] = [
     {
@@ -284,51 +440,42 @@ export function ClientsSettings() {
         </Stack>
       ),
     },
-    { key: "baseUrl", header: "Adresse" },
+    {
+      key: "baseUrl",
+      header: "Adresse",
+      sortValue: (client) => (client.simple ? client.baseUrl : `${client.instances.length}`),
+      render: (client) =>
+        client.simple ? (
+          client.baseUrl
+        ) : (
+          <Stack gap="none">
+            <Text>
+              {client.instances.length === 0
+                ? "Aucune instance"
+                : `${client.instances.length} instance${client.instances.length > 1 ? "s" : ""}`}
+            </Text>
+            {client.baseUrl ? (
+              <Text size="meta" tone="muted">
+                Par défaut : {client.baseUrl}
+              </Text>
+            ) : null}
+          </Stack>
+        ),
+    },
     {
       key: "auth",
       header: "Authentification",
-      sortValue: (client) => authTypeLabel(client.auth.type),
-      render: (client) => authTypeLabel(client.auth.type),
+      sortValue: (client) => (client.simple ? authTypeLabel(client.auth?.type ?? "none") : "~"),
+      render: (client) =>
+        client.simple
+          ? authTypeLabel(client.auth?.type ?? "none")
+          : client.methods.map((method) => methodLabel(method)).join(", "),
     },
     {
       key: "status",
       header: "État",
       width: "200px",
-      render: (client) => {
-        const status = STATUS[client.status];
-        const tested = tests[client.id];
-        return (
-          <Stack gap="xs">
-            <Row gap="xs">
-              <StatusBadge tone={status.tone} size="compact" title={client.problem ?? undefined}>
-                {status.label}
-              </StatusBadge>
-            </Row>
-            {client.problem ? (
-              <Text size="meta" tone="danger">
-                {client.problem}
-              </Text>
-            ) : null}
-            {client.status === "toValidate" ? (
-              <Text size="meta" tone="warning">
-                {client.validation?.everValidated ? "Modifié" : "Créé"} hors des Réglages : rien n’est envoyé avant
-                validation.
-              </Text>
-            ) : null}
-            {connecting === client.id ? (
-              <Text size="meta" tone="muted">
-                En attente du navigateur…
-              </Text>
-            ) : null}
-            {tested ? (
-              <Text size="meta" tone={tested.ok ? "success" : "danger"}>
-                Dernier test : {tested.status ?? "sans réponse"} · {tested.durationMs} ms
-              </Text>
-            ) : null}
-          </Stack>
-        );
-      },
+      render: (client) => statusCell(client, client.id, client.simple),
     },
     {
       key: "actions",
@@ -342,34 +489,22 @@ export function ClientsSettings() {
               Valider
             </Button>
           ) : null}
-          {client.auth.type === "oauth2" && client.status === "toConnect" ? (
-            <Button aria-label={`Se connecter à ${client.label}`} onClick={() => void connect(client)}>
-              Se connecter
+          {client.simple ? (
+            targetActions({ client }, client, client.auth?.type === "oauth2")
+          ) : (
+            <Button
+              aria-label={`Ajouter une instance à ${client.label}`}
+              disabled={client.status === "invalid" && client.methods.length === 0}
+              onClick={() => setEditing({ kind: "instance", client })}
+            >
+              Ajouter une instance
             </Button>
-          ) : null}
-          {client.auth.type === "oauth2" && client.connected ? (
-            <Button aria-label={`Se déconnecter de ${client.label}`} onClick={() => void disconnect(client)}>
-              Se déconnecter
-            </Button>
-          ) : null}
-          <Button
-            aria-label={`Tester ${client.label}`}
-            loading={testing === client.id}
-            loadingLabel="Test…"
-            disabled={
-              client.status === "invalid" ||
-              client.status === "toValidate" ||
-              (testing !== undefined && testing !== client.id)
-            }
-            onClick={() => void test(client)}
-          >
-            Tester
-          </Button>
+          )}
           <IconButton
             label={`Modifier ${client.label}`}
             size="small"
-            disabled={client.status === "invalid" && !client.baseUrl}
-            onClick={() => setEditing({ client })}
+            disabled={client.status === "invalid" && !client.baseUrl && client.methods.length === 0}
+            onClick={() => setEditing({ kind: "client", client })}
           >
             <Pencil size={14} aria-hidden="true" />
           </IconButton>
@@ -383,6 +518,92 @@ export function ClientsSettings() {
           </IconButton>
         </Row>
       ),
+    },
+  ];
+
+  const instanceRows: InstanceRow[] = clients
+    .filter((client) => !client.simple)
+    .flatMap((client) =>
+      client.instances.map((instance) => ({ key: targetKey(client.id, instance.id), client, instance })),
+    );
+
+  const instanceColumns: DataTableColumn<InstanceRow>[] = [
+    {
+      key: "instance",
+      header: "Instance",
+      sortValue: (row) => `${row.client.label} ${row.instance.label}`,
+      render: ({ client, instance }) => (
+        <Stack gap="none">
+          <Row gap="xs">
+            <Text weight="medium">{instance.label}</Text>
+            {instance.default ? (
+              <StatusBadge tone="neutral" size="compact">
+                Par défaut
+              </StatusBadge>
+            ) : null}
+          </Row>
+          <Text size="meta" tone="muted">
+            {client.label} · {instance.id}
+          </Text>
+        </Stack>
+      ),
+    },
+    {
+      key: "url",
+      header: "Adresse",
+      sortValue: (row) => row.instance.effectiveUrl,
+      render: ({ instance }) => instance.effectiveUrl ?? instance.url ?? "—",
+    },
+    {
+      key: "method",
+      header: "Authentification",
+      sortValue: (row) => row.instance.method,
+      render: ({ client, instance }) => {
+        const method = client.methods.find((known) => known.id === instance.method);
+        return method ? methodLabel(method) : `${instance.method} (introuvable)`;
+      },
+    },
+    {
+      key: "status",
+      header: "État",
+      width: "200px",
+      sortValue: (row) => row.instance.status,
+      render: ({ key, instance }) => statusCell(instance, key, true),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      align: "end",
+      sortable: false,
+      render: (row) => {
+        const { client, instance } = row;
+        const label = `${client.label} — ${instance.label}`;
+        return (
+          <Row gap="xs" justify="end">
+            {targetActions({ client, instance }, instance, instance.authType === "oauth2")}
+            {instance.default ? null : (
+              <Button aria-label={`Utiliser ${label} par défaut`} onClick={() => void makeDefault(row)}>
+                Par défaut
+              </Button>
+            )}
+            <IconButton
+              label={`Modifier ${label}`}
+              size="small"
+              onClick={() => setEditing({ kind: "instance", client, instance })}
+            >
+              <Pencil size={14} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              label={`Supprimer ${label}`}
+              size="small"
+              tone="danger"
+              onClick={() => void removeInstance(row)}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+            </IconButton>
+          </Row>
+        );
+      },
     },
   ];
 
@@ -452,11 +673,12 @@ export function ClientsSettings() {
             aria-label={`Créer le client demandé par ${need.moduleName} : ${need.label}`}
             onClick={() =>
               setEditing({
+                kind: "client",
                 preset: {
                   id: clients.some((client) => client.id === need.id) ? undefined : need.id,
                   label: need.label,
                   baseUrl: need.baseUrl ?? "",
-                  auth: { type: (need.auth ?? "none") as ClientConfig["auth"]["type"] },
+                  auth: { type: (need.auth ?? "none") as AuthType },
                 },
               })
             }
@@ -521,6 +743,14 @@ export function ClientsSettings() {
           loading={loading}
         />
       </Section>
+      {instanceRows.length > 0 ? (
+        <Section
+          title="Instances"
+          description="Comptes ou installations des clients à plusieurs instances. Une page qui ne nomme pas d’instance utilise celle par défaut."
+        >
+          <DataTable label="Instances" columns={instanceColumns} rows={instanceRows} rowKey={(row) => row.key} />
+        </Section>
+      ) : null}
       {needsSection}
       {confirmDialog}
     </Page>

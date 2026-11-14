@@ -15,6 +15,7 @@ import {
   accessKindLabel,
   type CatalogModule,
   catalogAccesses,
+  type DependencyStep,
   errorMessage,
   type Marketplace,
   type ModuleAccess,
@@ -79,6 +80,26 @@ function AccessList({ accesses }: { accesses: ModuleAccess[] }) {
   );
 }
 
+/** Dépendances posées avec le module : installées (et masquées du menu) ou mises à jour. */
+function DependencySteps({ steps }: { steps: DependencyStep[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <section>
+      <h3>Modules requis, installés avec lui</h3>
+      <ul className="modules-facts">
+        {steps.map((step) => (
+          <li key={step.module}>
+            {step.name} v{step.version} :{" "}
+            {step.action === "install"
+              ? "installé, masqué du menu (Réglages → Navigation pour l’afficher)"
+              : "mis à jour"}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Facts({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
@@ -136,6 +157,7 @@ export function UpdateDialog({
           submitLabel="Mettre à jour"
           pendingLabel="Mise à jour…"
           pending={busy}
+          disabled={Boolean(update.blocked)}
         />
       )}
     >
@@ -149,6 +171,12 @@ export function UpdateDialog({
           {error}
         </FeedbackBanner>
       ) : null}
+      {update.blocked ? (
+        <FeedbackBanner tone="error" appearance="contained">
+          {update.blocked}
+        </FeedbackBanner>
+      ) : null}
+      <DependencySteps steps={update.dependencies ?? []} />
       {update.locallyModified ? (
         <FeedbackBanner tone="warning" appearance="contained">
           Ce module a été modifié sur place depuis son installation. La mise à jour écrase ces modifications ; le
@@ -287,6 +315,7 @@ export function InstallDialog({
           submitLabel="Installer"
           pendingLabel="Installation…"
           pending={busy}
+          disabled={Boolean(module.blocked)}
         />
       )}
     >
@@ -299,7 +328,13 @@ export function InstallDialog({
           {error}
         </FeedbackBanner>
       ) : null}
+      {module.blocked ? (
+        <FeedbackBanner tone="error" appearance="contained">
+          {module.blocked}
+        </FeedbackBanner>
+      ) : null}
       {module.description ? <p>{module.description}</p> : null}
+      <DependencySteps steps={module.dependencies ?? []} />
       <section>
         <h3>Accès demandés</h3>
         {accesses.length > 0 ? (

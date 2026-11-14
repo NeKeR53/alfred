@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NavigationSettings } from "../features/navigation/NavigationSettings";
-import { invoke } from "../lib/native";
+import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
 import { type FullLayout, project } from "./navigationLayout";
@@ -21,6 +21,8 @@ vi.mock("../lib/native", () => ({
   invoke: vi.fn(),
   onNativeEvent: vi.fn(() => () => undefined),
   frameBase: (base: string) => base,
+  inTauri: true,
+  openPageWindow: vi.fn(async () => undefined),
 }));
 
 HTMLDialogElement.prototype.showModal = function showModal() {
@@ -77,6 +79,9 @@ function fixture(): Snapshot {
         description: "",
         readOnly: true,
         origin: null,
+        hidden: false,
+        requires: [],
+        requiredBy: [],
         pages: 1,
         functions: 0,
         clients: [],
@@ -217,6 +222,26 @@ describe("réorganisation de la navigation", () => {
     expect(lastLayoutCall()?.layout.overrides).toEqual({});
   });
 
+  it("masque un module entier depuis les Réglages, puis le réaffiche depuis sa section", async () => {
+    renderShell(true);
+    act(() => useShell.getState().setView({ kind: "settings" }));
+    const moduleRow = screen.getByText("CRM partagé").closest("[data-nav-row]") as HTMLElement;
+    fireEvent.click(within(moduleRow).getByRole("button", { name: "Masquer le module CRM partagé" }));
+    expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage du module CRM partagé"));
+    expect(lastLayoutCall()?.layout.overrides).toEqual({ "module:crm": { hidden: true } });
+
+    // La section et la page du module disent qui les masque ; leur bouton réaffiche le module.
+    const sectionRow = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
+    expect(within(sectionRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
+    const pageRow = screen.getByText("Contacts").closest("[data-nav-row]") as HTMLElement;
+    expect(within(pageRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
+    fireEvent.click(within(sectionRow).getByRole("button", { name: "Réafficher le module CRM partagé" }));
+    expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage du module CRM partagé"));
+    expect(lastLayoutCall()?.layout.overrides).toEqual({});
+  });
+
   it("réordonne et renomme sans glisser-déposer depuis les Réglages", async () => {
     renderShell(true);
     act(() => useShell.getState().setView({ kind: "settings" }));
@@ -306,5 +331,87 @@ describe("réorganisation de la navigation", () => {
       title: "La navigation n’a pas été modifiée",
       description: "Écriture impossible.",
     });
+  });
+});
+
+describe("sections par instance", () => {
+  /** Une section Jira par instance du client, et une section Mail qui attend encore la sienne. */
+  function withInstances(): Snapshot {
+    const copy = (instance: string, label: string) =>
+      section(
+        `jira/principal@${instance}`,
+        `Jira — ${label}`,
+        [
+          page("jira", "tickets", "Tickets", { reference: `jira/tickets@${instance}`, instance }),
+          page("jira", "projets", "Projets", { reference: `jira/projets@${instance}`, instance }),
+        ],
+        { perInstance: "jira", instance, instanceOf: "jira/principal" },
+      );
+    return {
+      ...fixture(),
+      sections: [
+        section("suivi/principal", "Suivi", [page("suivi", "taches", "Tâches")]),
+        copy("acme", "Acme"),
+        copy("cloud", "Cloud"),
+        section("mail/principal", "Mail", [page("mail", "boite", "Boîte")], {
+          perInstance: "mail",
+          waiting: "Le client « Mail » n’a encore aucune instance.",
+        }),
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    backend = withInstances();
+    useShell.setState({ snapshot: withInstances(), view: { kind: "section", id: "suivi/principal" }, activeTab: {} });
+  });
+
+  it("montre une entrée par instance, et une section en attente qui mène aux clients", () => {
+    renderShell();
+    expect(sidebarLabels()).toEqual(["Suivi", "Jira — Acme", "Jira — Cloud", "Mail"]);
+    fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+    expect(screen.getByText("En attente d’une instance")).toBeInTheDocument();
+    expect(screen.getByText("Le client « Mail » n’a encore aucune instance.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ouvrir les clients" }));
+    expect(useShell.getState().view).toEqual({ kind: "settings" });
+    expect(useShell.getState().activeTab.réglages).toBe("clients");
+  });
+
+  it("ouvre la page déclarée dans la première copie, ou celle de l’instance nommée", () => {
+    useShell.getState().openPage("jira/tickets");
+    expect(useShell.getState().view).toEqual({ kind: "section", id: "jira/principal@acme" });
+    expect(useShell.getState().activeTab["jira/principal@acme"]).toBe("jira/tickets@acme");
+    useShell.getState().openPage("jira/tickets@cloud");
+    expect(useShell.getState().view).toEqual({ kind: "section", id: "jira/principal@cloud" });
+  });
+
+  it("applique aux copies ce qui est réglé pour la section déclarée, sauf ce que chacune règle elle-même", () => {
+    const projected = project(withInstances(), {
+      sections: ["mail/principal", "jira/principal", "suivi/principal"],
+      tabs: {},
+      settings: [],
+      overrides: {
+        "section:jira/principal": { hidden: true },
+        "section:jira/principal@cloud": { label: "Mon cloud" },
+      },
+    });
+    expect(projected.sections.map((s) => [s.label, s.hidden])).toEqual([
+      ["Mail", false],
+      ["Jira — Acme", true],
+      ["Mon cloud", true],
+      ["Suivi", false],
+    ]);
+  });
+
+  it("ne propose pas de déplacer la page d’une copie", () => {
+    useShell.setState({ view: { kind: "section", id: "jira/principal@acme" } });
+    renderShell();
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Tickets" }));
+    const menu = screen.getByRole("menu");
+    expect(within(menu).queryByText("Déplacer vers")).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: /Masquer l’onglet/ })).toBeInTheDocument();
+    // Ouvrir la copie seule dans sa fenêtre garde son instance.
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Ouvrir dans une nouvelle fenêtre/ }));
+    expect(vi.mocked(openPageWindow)).toHaveBeenCalledWith("jira/tickets@acme");
   });
 });

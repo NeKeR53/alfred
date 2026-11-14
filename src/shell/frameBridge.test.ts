@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => {
   // jsdom n’a pas `matchMedia`, que le magasin de la coque lit à sa création.
   window.matchMedia ??= ((query: string) => ({ matches: false, media: query })) as unknown as typeof window.matchMedia;
-  return { invoke: vi.fn(), openExternal: vi.fn() };
+  return { invoke: vi.fn(), openExternal: vi.fn(), openPageWindow: vi.fn() };
 });
 vi.mock("../lib/native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/native")>()),
   invoke: native.invoke,
   openExternal: native.openExternal,
+  openPageWindow: native.openPageWindow,
 }));
 
 import { type FrameIdentity, handleFrameRequest } from "./frameBridge";
@@ -27,14 +28,16 @@ describe("identité du demandeur", () => {
     await handleFrameRequest(page, "db.query", { subject: forged, sql: "SELECT * FROM banque_operations", params: [] });
     await handleFrameRequest(page, "db.execute", { subject: forged, sql: "DELETE FROM banque_operations" });
     await handleFrameRequest(page, "clients.request", { subject: forged, client: "jira", path: "/x" });
+    await handleFrameRequest(page, "clients.instances", { subject: forged, client: "jira" });
     const subjects = native.invoke.mock.calls.map(([, args]) => (args as { subject: unknown }).subject);
-    expect(subjects).toEqual([own, own, own]);
+    expect(subjects).toEqual([own, own, own, own]);
   });
 
   it("ne transmet au backend que les champs attendus", async () => {
     await handleFrameRequest(page, "db.query", { sql: "SELECT 1", params: [1], autre: "x" });
     await handleFrameRequest(page, "clients.request", {
       client: "jira",
+      instance: "acme",
       method: "GET",
       path: "/x",
       query: { a: 1 },
@@ -49,6 +52,7 @@ describe("identité du demandeur", () => {
         {
           subject: own,
           client: "jira",
+          instance: "acme",
           method: "GET",
           path: "/x",
           query: { a: 1 },
@@ -75,5 +79,35 @@ describe("liens externes", () => {
     native.invoke.mockRejectedValue(new Error("Accès refusé"));
     await expect(handleFrameRequest(page, "shell.openExternal", { url: "https://x.example/?d=1" })).rejects.toThrow();
     expect(native.openExternal).not.toHaveBeenCalled();
+  });
+});
+
+describe("page d’une section par instance", () => {
+  const copy: FrameIdentity = { kind: "page", module: "jira", reference: "jira/tickets@acme", instance: "acme" };
+
+  it("se présente comme la page déclarée, avec son instance à part", async () => {
+    const context = (await handleFrameRequest(copy, "shell.context", {})) as Record<string, unknown>;
+    expect(context).toMatchObject({ reference: "jira/tickets", module: "jira", page: "tickets", instance: "acme" });
+    await handleFrameRequest(copy, "clients.request", { client: "jira", path: "/x", subject: forged });
+    expect(native.invoke).toHaveBeenCalledWith("frame.clients.request", {
+      subject: { kind: "page", module: "jira", reference: "jira/tickets", instance: "acme" },
+      client: "jira",
+      path: "/x",
+    });
+  });
+
+  it("n’a pas d’instance hors d’une section par instance", async () => {
+    const context = (await handleFrameRequest(page, "shell.context", {})) as Record<string, unknown>;
+    expect(context.instance).toBeNull();
+  });
+});
+
+describe("fenêtres de page", () => {
+  it("ouvrent la page nommée, ou la page elle-même sans argument", async () => {
+    await handleFrameRequest(page, "shell.openWindow", { reference: "jira/tickets@acme" });
+    await handleFrameRequest(page, "shell.openWindow", {});
+    const panel: FrameIdentity = { kind: "panel", module: "notes", reference: "notes/detail", host: "notes/liste" };
+    await handleFrameRequest(panel, "shell.openWindow", {});
+    expect(native.openPageWindow.mock.calls).toEqual([["jira/tickets@acme"], ["notes/liste"], ["notes/liste"]]);
   });
 });

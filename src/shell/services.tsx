@@ -109,6 +109,18 @@ export function ShellServices() {
     const listener = (request: PermissionRequest) => setQueue((current) => [...current, request]);
     permissionListeners.add(listener);
     if (waitingPermissions.length) setQueue((current) => [...current, ...waitingPermissions.splice(0)]);
+    // Une fenêtre ouverte pendant qu’une question attend (fenêtre de page) l’affiche aussi : la réponse donnée
+    // ici ou ailleurs la retire partout.
+    void invoke<PermissionRequest[]>("ui.waiting", { name: "permission:ask" }).then(
+      (waiting) =>
+        setQueue((current) => [
+          ...current,
+          ...(Array.isArray(waiting) ? waiting : []).filter(
+            (request) => !current.some((known) => known.requestId === request.requestId),
+          ),
+        ]),
+      () => undefined,
+    );
     // Tranchée ailleurs (une autre fenêtre, ou un délai dépassé) : la demande ne reste pas affichée ici.
     const stopResolved = onNativeEvent("ui:resolved", (payload) => {
       const { requestId } = payload as { requestId: string };

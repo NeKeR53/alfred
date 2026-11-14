@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke, onNativeEvent } from "../lib/native";
 import type { AppInfo, Snapshot } from "../lib/types";
+import { pageWindowReference } from "./pageWindowMode";
 
 export type View = { kind: "agent" } | { kind: "section"; id: string } | { kind: "settings" };
 export type Theme = "light" | "dark";
@@ -67,7 +68,10 @@ export const useShell = create<ShellState>((set, get) => ({
     try {
       const info = await invoke<AppInfo>("app.info");
       const [snapshot, theme, collapsed] = await Promise.all([
-        invoke<Snapshot | null>("space.restore"),
+        // Une fenêtre de page relit l’espace que la fenêtre principale a ouvert, sans le rouvrir.
+        pageWindowReference()
+          ? invoke<Snapshot | null>("space.snapshot").catch(() => null)
+          : invoke<Snapshot | null>("space.restore"),
         invoke<Theme | null>("settings.get", { key: "appearance.theme" }),
         invoke<boolean | null>("settings.get", { key: "shell.sidebarCollapsed" }),
       ]);
@@ -90,6 +94,15 @@ export const useShell = create<ShellState>((set, get) => ({
       onNativeEvent("space:changed", () => {
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => void get().refresh(), 150);
+      });
+      // Une instance ajoutée ou retirée change les sections par instance : le menu est relu, sans recharger les
+      // pages ouvertes.
+      onNativeEvent("clients:changed", () => {
+        if (!get().snapshot) return;
+        void invoke<Snapshot>("space.snapshot").then(
+          (snapshot) => set({ snapshot }),
+          () => undefined,
+        );
       });
     } catch (error) {
       set({ startupError: error instanceof Error ? error.message : String(error), snapshot: null });
@@ -122,11 +135,20 @@ export const useShell = create<ShellState>((set, get) => ({
   openPage(reference) {
     const snapshot = get().snapshot;
     if (!snapshot) return;
-    const section = snapshot.sections.find((candidate) => candidate.pages.some((page) => page.reference === reference));
+    const find = (wanted: (page: string) => boolean) =>
+      snapshot.sections.find((candidate) => candidate.pages.some((page) => wanted(page.reference)));
+    // Une page d’une section par instance s’ouvre aussi sans instance : celle de la première copie.
+    const section =
+      find((page) => page === reference) ??
+      (reference.includes("@") ? undefined : find((page) => page.startsWith(`${reference}@`)));
     if (section) {
+      const target =
+        section.pages.find((page) => page.reference === reference)?.reference ??
+        section.pages.find((page) => page.reference.startsWith(`${reference}@`))?.reference ??
+        reference;
       set((state) => ({
         view: { kind: "section", id: section.id },
-        activeTab: { ...state.activeTab, [section.id]: reference },
+        activeTab: { ...state.activeTab, [section.id]: target },
       }));
     } else if (snapshot.settingsPages.some((page) => page.reference === reference)) {
       set((state) => ({ view: { kind: "settings" }, activeTab: { ...state.activeTab, réglages: reference } }));

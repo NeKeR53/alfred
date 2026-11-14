@@ -114,8 +114,8 @@ async fn serve(State(state): State<Shared>, headers: HeaderMap, Json(body): Json
 }
 
 /// Outils qui enregistrent un commit dans l’espace.
-const COMMITTING_TOOLS: [&str; 5] =
-    ["declare_client", "declare_webhook", "remove_webhook", "declare_schedule", "remove_schedule"];
+const COMMITTING_TOOLS: [&str; 6] =
+    ["declare_client", "declare_webhook", "remove_webhook", "declare_schedule", "remove_schedule", "set_visibility"];
 
 fn commit_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -260,28 +260,41 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_client",
-            "Déclare (ou met à jour) un client, c’est-à-dire un service web que les pages et les fonctions appellent par `client(id)`. Un client authentifié naît « à valider » : l’utilisateur le valide dans Réglages, onglet Clients, et y relie l’entrée du coffre qu’il saisit dans Réglages, onglet Coffre. Tu ne vois ni ne saisis jamais un secret. Toute modification remet le client « à valider ». Ne pas écrire `clients/<id>.json` à la main.",
+            "Déclare (ou met à jour) un client, c’est-à-dire un service web que les pages et les fonctions appellent par `client(id)`. Deux formes : un service à une seule adresse (`baseUrl` + `auth`), ou un service à plusieurs instances (plusieurs comptes, plusieurs installations Jira…) : `methods` liste les façons de s’authentifier, et l’utilisateur ajoute lui-même chaque instance (nom, adresse, méthode, secret) dans Réglages, onglet Clients. Tu ne crées ni ne modifies jamais une instance, et tu ne vois ni ne saisis jamais un secret. Un client authentifié naît « à valider » ; toute modification de ce qui décide où part le secret le remet « à valider ». Ne pas écrire `clients/<id>.json` à la main.",
             json!({
                 "client": {
                     "type": "object",
-                    "required": ["id", "label", "baseUrl", "auth"],
+                    "required": ["id", "label"],
                     "additionalProperties": false,
                     "properties": {
                         "id": { "type": "string", "description": "Identifiant en minuscules et tirets (ex. jira)." },
                         "label": { "type": "string", "description": "Nom affiché à l’utilisateur." },
-                        "baseUrl": { "type": "string", "description": "Adresse de base en https://, sans identifiants, paramètres ni ancre." },
+                        "baseUrl": { "type": "string", "description": "Adresse de base en https://, sans identifiants, paramètres ni ancre. Obligatoire avec `auth` ; avec `methods`, adresse proposée par défaut aux instances (facultative : l’utilisateur saisit l’adresse de chaque instance)." },
                         "auth": {
                             "type": "object",
+                            "description": "Forme à une seule adresse : la façon de s’authentifier. Ne pas combiner avec `methods`.",
                             "required": ["type"],
                             "additionalProperties": false,
-                            "properties": {
-                                "type": { "enum": ["none", "bearer", "apiKey", "basic", "oauth2", "clientCredentials"] },
-                                "header": { "type": "string", "description": "apiKey : en-tête qui porte la clé." },
-                                "prefix": { "type": "string", "description": "apiKey : préfixe placé avant la clé (ex. « Token  »)." },
-                                "queryParam": { "type": "string", "description": "apiKey : paramètre d’URL qui porte la clé, à la place de `header`." },
-                                "authorizationUrl": { "type": "string", "description": "oauth2 : page d’autorisation." },
-                                "tokenUrl": { "type": "string", "description": "oauth2, clientCredentials : serveur de jetons." },
-                                "scopes": { "type": "array", "items": { "type": "string" } },
+                            "properties": auth_properties(),
+                        },
+                        "methods": {
+                            "type": "array",
+                            "description": "Forme à plusieurs instances : les façons de s’authentifier que l’utilisateur choisira pour chaque instance (ex. Jira Cloud par jeton d’API en `basic`, Data Center par PAT en `bearer`, OAuth). Dans `authorizationUrl` et `tokenUrl`, `{url}` devient l’adresse de l’instance.",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "label", "type"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "id": { "type": "string", "description": "Identifiant de la méthode (ex. cloud)." },
+                                    "label": { "type": "string", "description": "Nom montré à l’utilisateur (ex. « Jira Cloud (jeton d’API) »)." },
+                                    "type": auth_properties()["type"].clone(),
+                                    "header": auth_properties()["header"].clone(),
+                                    "prefix": auth_properties()["prefix"].clone(),
+                                    "queryParam": auth_properties()["queryParam"].clone(),
+                                    "authorizationUrl": auth_properties()["authorizationUrl"].clone(),
+                                    "tokenUrl": auth_properties()["tokenUrl"].clone(),
+                                    "scopes": auth_properties()["scopes"].clone(),
+                                },
                             },
                         },
                         "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "En-têtes fixes (Accept…), jamais d’authentification." },
@@ -327,6 +340,15 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "Retire une planification.",
             json!({ "schedule": { "type": "string", "description": "« module/planification »." } }),
             &["schedule"],
+        ),
+        tool(
+            "set_visibility",
+            "Masque ou réaffiche dans le menu un module entier, une section ou une page, sans rien supprimer : ses pages restent ouvrables par `shell.navigate`, ses fonctions et ses clients servent toujours. L’utilisateur peut revenir dessus dans Réglages → Navigation. À utiliser quand l’utilisateur le demande, ou pour masquer un module que tu as créé uniquement comme dépendance d’un autre.",
+            json!({
+                "target": { "type": "string", "description": "« module:<module> », « section:<module>/<section> » ou « page:<module>/<page> » ; ajouter « @<instance> » pour la copie d’une section par instance (« section:jira/principal@acme »)." },
+                "hidden": { "type": "boolean", "description": "true pour masquer, false pour réafficher." },
+            }),
+            &["target", "hidden"],
         ),
         tool(
             "check",
@@ -417,6 +439,7 @@ fn overview(snapshot: &Snapshot, clients: Value) -> Value {
         "settingsPages": snapshot.settings_pages.iter().map(page).collect::<Vec<_>>(),
         "modules": snapshot.modules.iter().map(|module| json!({
             "module": module.id, "name": module.name, "version": module.version, "readOnly": module.read_only,
+            "hidden": module.hidden, "requires": module.requires, "requiredBy": module.required_by,
             "directory": format!("{}/modules/{}", snapshot.path, module.id),
         })).collect::<Vec<_>>(),
         "functions": snapshot.functions.iter().map(|function| json!({
@@ -515,6 +538,19 @@ fn trigger_problems(snapshot: &Snapshot, keep: &impl Fn(&str) -> bool) -> (Vec<V
 }
 
 /// Clients de l’espace à corriger (fichier illisible ou invalide) et clients qui attendent l’utilisateur.
+/// Champs d’une authentification, communs à `auth` et à chaque méthode de `declare_client`.
+fn auth_properties() -> Value {
+    json!({
+        "type": { "enum": ["none", "bearer", "apiKey", "basic", "oauth2", "clientCredentials"] },
+        "header": { "type": "string", "description": "apiKey : en-tête qui porte la clé." },
+        "prefix": { "type": "string", "description": "apiKey : préfixe placé avant la clé (ex. « Token  »)." },
+        "queryParam": { "type": "string", "description": "apiKey : paramètre d’URL qui porte la clé, à la place de `header`." },
+        "authorizationUrl": { "type": "string", "description": "oauth2 : page d’autorisation." },
+        "tokenUrl": { "type": "string", "description": "oauth2, clientCredentials : serveur de jetons." },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+    })
+}
+
 fn client_problems(listed: Value) -> (Vec<Value>, Vec<Value>) {
     let (mut problems, mut waiting) = (Vec::new(), Vec::new());
     for client in listed["clients"].as_array().into_iter().flatten() {
@@ -524,6 +560,10 @@ fn client_problems(listed: Value) -> (Vec<Value>, Vec<Value>) {
                 "client": id,
                 "file": format!("clients/{}.json", id.as_str().unwrap_or_default()),
                 "problem": client["problem"],
+            })),
+            Some("noInstance") => waiting.push(json!({
+                "client": id,
+                "action": "Client sans instance : l’utilisateur doit en ajouter une (adresse, méthode, secret) dans Réglages, onglet Clients. Le lui dire.",
             })),
             Some("toValidate") => waiting.push(json!({
                 "client": id,
@@ -651,14 +691,17 @@ async fn call_tool(state: &Shared, conversation: &str, name: &str, args: &Value)
         }
         "declare_client" => {
             let mut client = args.get("client").cloned().unwrap_or(Value::Null);
-            let id = client.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-            // L’entrée du coffre est le choix de l’utilisateur : celle du fichier existant est gardée, jamais celle
-            // que proposerait l’agent.
-            let kept = crate::clients::load(&space, &id).ok().flatten().and_then(|existing| existing.auth.secret);
+            // Les instances et leurs entrées du coffre sont le choix de l’utilisateur : celles du fichier existant
+            // sont gardées par Alfred, jamais celles que proposerait l’agent.
+            if let Some(fields) = client.as_object_mut() {
+                fields.remove("instances");
+            }
             if let Some(auth) = client.get_mut("auth").and_then(Value::as_object_mut) {
                 auth.remove("secret");
-                if let Some(secret) = kept {
-                    auth.insert("secret".to_string(), Value::String(secret));
+            }
+            for method in client.get_mut("methods").and_then(Value::as_array_mut).into_iter().flatten() {
+                if let Some(method) = method.as_object_mut() {
+                    method.remove("secret");
                 }
             }
             let mut forwarded = json!({ "client": client });
@@ -672,10 +715,13 @@ async fn call_tool(state: &Shared, conversation: &str, name: &str, args: &Value)
                 "label": declared["label"],
                 "status": status,
                 "problem": declared["problem"],
-                "next": if status == "toValidate" {
-                    "Dire à l’utilisateur que ce client est « à valider » : il doit l’ouvrir dans Réglages, onglet Clients, vérifier ses valeurs et le valider, puis y relier le secret qu’il saisit dans Réglages, onglet Coffre. Avant cela, toute requête vers ce client échoue. Ne jamais lui demander le secret dans la conversation."
-                } else {
-                    "Client enregistré. Le déclarer dans `clients` du module.json qui l’utilise, puis appeler `check`."
+                "instances": declared["instances"].as_array().into_iter().flatten().map(|instance| json!({
+                    "id": instance["id"], "label": instance["label"], "status": instance["status"],
+                })).collect::<Vec<_>>(),
+                "next": match status {
+                    "toValidate" => "Dire à l’utilisateur que ce client est « à valider » : il doit l’ouvrir dans Réglages, onglet Clients, vérifier ses valeurs et le valider, puis y relier le secret qu’il saisit dans Réglages, onglet Coffre. Avant cela, toute requête vers ce client échoue. Ne jamais lui demander le secret dans la conversation.",
+                    "noInstance" => "Client enregistré, sans instance. Dire à l’utilisateur d’ajouter chaque instance (nom, adresse, méthode, secret) dans Réglages, onglet Clients, bouton « Ajouter une instance ». Le déclarer dans `clients` du module.json qui l’utilise, puis appeler `check`. Une page choisit l’instance par `client(id, { instance })` et liste les instances par `client(id).instances()`.",
+                    _ => "Client enregistré. Le déclarer dans `clients` du module.json qui l’utilise, puis appeler `check`.",
                 },
             }))
         }
@@ -715,6 +761,16 @@ async fn call_tool(state: &Shared, conversation: &str, name: &str, args: &Value)
             }
             delegated(crate::schedules::handle(state, "schedules.remove", args).await)?;
             Ok(json!({ "removed": schedule }))
+        }
+        "set_visibility" => {
+            let target: String = arg(args, "target")?;
+            let hidden: bool = arg(args, "hidden")?;
+            let changed = space.set_visibility(&target, hidden)?;
+            if let Some(message) = &changed {
+                crate::git::commit_all(&space.root, message)?;
+                state.emit("space:changed", Value::Null);
+            }
+            Ok(json!({ "target": target, "hidden": hidden, "changed": changed.is_some() }))
         }
         "check" => {
             let module: Option<String> = opt_arg(args, "module")?;
@@ -919,6 +975,34 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_hides_a_dependency_module_and_sees_its_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        state.set_space(Some(space.clone()));
+        for label in ["CRM", "Devis"] {
+            space.place_page("Liste", None, "", &PlaceTarget::Menu { label: label.into(), icon: None, color: None }, None).unwrap();
+        }
+        let mut devis = space.module("devis").unwrap();
+        devis.requires = vec![crate::space::Requirement { module: "crm".into(), min_version: None }];
+        space.write_module(&devis).unwrap();
+        crate::git::commit_all(&space.root, "Modules").unwrap();
+
+        let hidden = call(&state, "set_visibility", json!({ "target": "module:crm", "hidden": true })).await.unwrap();
+        assert_eq!(hidden["changed"], json!(true));
+        assert_eq!(crate::git::run(&space.root, &["log", "-1", "--format=%s"]).unwrap(), "Masquage du module CRM");
+        let again = call(&state, "set_visibility", json!({ "target": "module:crm", "hidden": true })).await.unwrap();
+        assert_eq!(again["changed"], json!(false));
+        assert!(call(&state, "set_visibility", json!({ "target": "module:absent", "hidden": true })).await.is_err());
+
+        let overview = call(&state, "space_overview", json!({})).await.unwrap();
+        let crm = overview["modules"].as_array().unwrap().iter().find(|module| module["module"] == "crm").unwrap();
+        assert_eq!((crm["hidden"].clone(), crm["requiredBy"].clone()), (json!(true), json!(["devis"])));
+        let devis = overview["modules"].as_array().unwrap().iter().find(|module| module["module"] == "devis").unwrap();
+        assert_eq!(devis["requires"], json!([{ "module": "crm" }]));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn an_agent_declares_clients_webhooks_and_schedules_and_check_leads_it_to_a_clean_space() {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::new(&dir.path().join("data")).unwrap();
@@ -969,7 +1053,7 @@ mod tests {
         assert_eq!(declared["status"], json!("toValidate"));
         assert!(declared["next"].as_str().unwrap().contains("onglet Clients"), "{declared}");
         assert!(declared["next"].as_str().unwrap().contains("onglet Coffre"), "{declared}");
-        assert_eq!(crate::clients::load(&space, "banque").unwrap().unwrap().auth.secret, None);
+        assert_eq!(crate::clients::load(&space, "banque").unwrap().unwrap().instances[0].secret, None);
         assert!(call(&state, "declare_client", json!({ "client": banque, "create": true })).await.is_err());
 
         // L’utilisateur saisit le secret et valide ; l’agent modifie ensuite le client : la liaison reste, le
@@ -987,7 +1071,7 @@ mod tests {
         let declared = call(&state, "declare_client", json!({ "client": renamed })).await.unwrap();
         assert_eq!(declared["status"], json!("toValidate"));
         assert_eq!(
-            crate::clients::load(&space, "banque").unwrap().unwrap().auth.secret.as_deref(),
+            crate::clients::load(&space, "banque").unwrap().unwrap().instances[0].secret.as_deref(),
             Some(entry.as_str())
         );
         let overview = call(&state, "space_overview", json!({})).await.unwrap();

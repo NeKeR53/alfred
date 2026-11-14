@@ -40,6 +40,9 @@ function module(summary: Partial<ModuleSummary> & { id: string; name: string }):
     description: "",
     readOnly: false,
     origin: null,
+    hidden: false,
+    requires: [],
+    requiredBy: [],
     pages: 1,
     functions: 0,
     clients: [],
@@ -92,6 +95,8 @@ function desk() {
           pagesAdded: ["Détails"],
           newAccesses: [{ kind: "client", id: "crm", label: "CRM de l’équipe" }],
         },
+        dependencies: [],
+        blocked: null,
         locallyModified: true,
       },
     ] as ModuleUpdate[],
@@ -150,6 +155,8 @@ function desk() {
           current: "1.1.0",
           available: null,
           changes: noChanges,
+          dependencies: [],
+          blocked: null,
           locallyModified: false,
         }));
         return { from: "1.0.0", to: "1.1.0" };

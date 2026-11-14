@@ -34,6 +34,10 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
                 "home": home_dir().map(|path| path.to_string_lossy().to_string()),
             }))
         }
+        "ui.waiting" => {
+            let name: String = arg(&args, "name")?;
+            Ok(Value::Array(state.waiting_ui(&name)))
+        }
         "ui.claim" => {
             let id: String = arg(&args, "requestId")?;
             Ok(Value::Bool(state.claim_ui(&id)))

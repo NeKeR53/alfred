@@ -15,18 +15,19 @@ import {
   TextInput,
   useConfirm,
 } from "@alfred/ui";
-import { ArrowRightLeft, Check, EyeOff, History, icons, Pencil, Shapes, Trash2 } from "lucide-react";
+import { AppWindow, ArrowRightLeft, Check, EyeOff, History, icons, Pencil, Shapes, Trash2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { PageHistoryDialog } from "../features/navigation/PageHistory";
-import { invoke } from "../lib/native";
+import { inTauri, invoke, openPageWindow } from "../lib/native";
 import { SECTION_COLORS, type Snapshot } from "../lib/types";
 import { focusStayed } from "../ui/components/AnchoredMenu";
 import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
 import { DialogHeader } from "./DialogHeader";
 import { NamedIcon } from "./icons";
 import {
+  baseReference,
   COLOR_LABELS,
   findPage,
   findSection,
@@ -477,7 +478,10 @@ export function useNavigationEditor() {
     const found = findPage(snapshot, menu.reference);
     if (found) {
       const { page, section } = found;
-      const targets = snapshot.sections.filter((candidate) => candidate.id !== section?.id);
+      // Les copies par instance se remplissent seules : on ne déplace ni vers elles, ni une page qui en vient.
+      const targets = page.instance
+        ? []
+        : snapshot.sections.filter((candidate) => candidate.id !== section?.id && !candidate.instanceOf);
       menuElement = (
         <ContextMenu
           label={`Actions de l’onglet ${page.title}`}
@@ -489,31 +493,51 @@ export function useNavigationEditor() {
             <Pencil size={16} aria-hidden="true" />
             Renommer…
           </MenuItem>
-          <MenuGroup label="Déplacer vers">
-            {targets.map((target) => (
-              <MenuItem
-                key={target.id}
-                onClick={() =>
-                  void applyLayoutChange((state) =>
-                    movePage(state, page.reference, { kind: "tab", section: target.id }),
-                  )
-                }
-              >
-                <ArrowRightLeft size={16} aria-hidden="true" />
-                {target.label}
-                {target.hidden ? " (masquée)" : ""}
-              </MenuItem>
-            ))}
-            {section ? (
-              <MenuItem
-                onClick={() => void applyLayoutChange((state) => movePage(state, page.reference, { kind: "settings" }))}
-              >
-                <ArrowRightLeft size={16} aria-hidden="true" />
-                Réglages
-              </MenuItem>
-            ) : null}
-          </MenuGroup>
-          <MenuItem onClick={() => setDialog({ kind: "history", reference: page.reference })}>
+          {inTauri ? (
+            <MenuItem
+              onClick={() =>
+                void openPageWindow(page.reference).catch((error: unknown) =>
+                  notify({
+                    title: "La fenêtre n’a pas pu s’ouvrir",
+                    description: error instanceof Error ? error.message : String(error),
+                    tone: "error",
+                  }),
+                )
+              }
+            >
+              <AppWindow size={16} aria-hidden="true" />
+              Ouvrir dans une nouvelle fenêtre
+            </MenuItem>
+          ) : null}
+          {page.instance ? null : (
+            <MenuGroup label="Déplacer vers">
+              {targets.map((target) => (
+                <MenuItem
+                  key={target.id}
+                  onClick={() =>
+                    void applyLayoutChange((state) =>
+                      movePage(state, page.reference, { kind: "tab", section: target.id }),
+                    )
+                  }
+                >
+                  <ArrowRightLeft size={16} aria-hidden="true" />
+                  {target.label}
+                  {target.hidden ? " (masquée)" : ""}
+                </MenuItem>
+              ))}
+              {section ? (
+                <MenuItem
+                  onClick={() =>
+                    void applyLayoutChange((state) => movePage(state, page.reference, { kind: "settings" }))
+                  }
+                >
+                  <ArrowRightLeft size={16} aria-hidden="true" />
+                  Réglages
+                </MenuItem>
+              ) : null}
+            </MenuGroup>
+          )}
+          <MenuItem onClick={() => setDialog({ kind: "history", reference: baseReference(page.reference) })}>
             <History size={16} aria-hidden="true" />
             Historique…
           </MenuItem>
@@ -521,7 +545,7 @@ export function useNavigationEditor() {
             <EyeOff size={16} aria-hidden="true" />
             Masquer l’onglet
           </MenuItem>
-          <MenuItem className="nav-menu__danger" onClick={() => void askDelete(page.reference)}>
+          <MenuItem className="nav-menu__danger" onClick={() => void askDelete(baseReference(page.reference))}>
             <Trash2 size={16} aria-hidden="true" />
             Supprimer la page…
           </MenuItem>

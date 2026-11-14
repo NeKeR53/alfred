@@ -1,20 +1,22 @@
 /**
- * Onglet « Navigation » des Réglages : toutes les sections et pages, masquées comprises, avec de quoi les
- * réafficher, les renommer et les réordonner sans glisser-déposer.
+ * Onglet « Navigation » des Réglages : les modules affichés, puis toutes les sections et pages, masquées
+ * comprises, avec de quoi les réafficher, les renommer et les réordonner sans glisser-déposer.
  */
 import { EmptyState, IconButton, Page, Section, StatusBadge, Text } from "@alfred/ui";
 import { ArrowDown, ArrowUp, Eye, EyeOff, History, Pencil } from "lucide-react";
 import { useState } from "react";
-import type { ResolvedPage } from "../../lib/types";
+import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { NamedIcon } from "../../shell/icons";
 import { applyLayoutChange, RenameDialog } from "../../shell/navigationEditing";
 import {
+  isModuleHidden,
   pagesOf,
   renamePage,
   renameSection,
   reorderSections,
   reorderTabs,
   SETTINGS_SECTION,
+  setModuleHidden,
   setPageHidden,
   setSectionHidden,
   shift,
@@ -22,6 +24,13 @@ import {
 import { useShell } from "../../shell/store";
 import { PageHistoryDialog } from "./PageHistory";
 import "./navigation.css";
+
+/** Module masqué qui emporte cette ligne : son bouton réaffiche le module plutôt que la ligne seule. */
+function hiddenModuleOf(snapshot: Snapshot, module: string): ModuleSummary | undefined {
+  return isModuleHidden(snapshot, module) ? snapshot.modules.find((candidate) => candidate.id === module) : undefined;
+}
+
+const moduleName = (module: ModuleSummary) => module.name || module.id;
 
 type Renaming = { kind: "section"; id: string; label: string } | { kind: "page"; reference: string; label: string };
 
@@ -44,10 +53,13 @@ function RowActions({
   onRename,
   onToggle,
   onHistory,
+  toggleLabel,
 }: {
   subject: string;
   rowKey: string;
   hidden: boolean;
+  /** Libellé du bouton d’affichage quand il agit sur autre chose que la ligne (le module qui la masque). */
+  toggleLabel?: string;
   first: boolean;
   last: boolean;
   onMove: (offset: -1 | 1) => void;
@@ -94,7 +106,7 @@ function RowActions({
       </IconButton>
       <IconButton
         size="small"
-        label={`${hidden ? "Réafficher" : "Masquer"} ${subject}`}
+        label={toggleLabel ?? `${hidden ? "Réafficher" : "Masquer"} ${subject}`}
         tooltip={hidden ? "Réafficher" : "Masquer"}
         data-nav-action="toggle"
         onClick={() => {
@@ -119,6 +131,7 @@ function PageRows({
   onRename: (renaming: Renaming) => void;
   onHistory: (page: ResolvedPage) => void;
 }) {
+  const snapshot = useShell((state) => state.snapshot);
   if (pages.length === 0)
     return (
       <Text size="meta" tone="muted">
@@ -129,13 +142,18 @@ function PageRows({
     <ul className="nav-settings__list nav-settings__list--pages">
       {pages.map((page, index) => {
         const key = `page:${page.reference}`;
+        const owner = snapshot ? hiddenModuleOf(snapshot, page.module) : undefined;
         return (
           <li key={page.reference} className="nav-settings__row" data-nav-row={key}>
             <span className="nav-settings__name">
               <Text as="span" tone={page.hidden ? "muted" : "default"}>
                 {page.title}
               </Text>
-              {page.hidden ? <StatusBadge size="compact">Masquée</StatusBadge> : null}
+              {owner ? (
+                <StatusBadge size="compact">Module {moduleName(owner)} masqué</StatusBadge>
+              ) : page.hidden ? (
+                <StatusBadge size="compact">Masquée</StatusBadge>
+              ) : null}
               {page.readOnly ? (
                 <StatusBadge size="compact" title="Module installé : seule sa présentation se règle ici.">
                   Lecture seule
@@ -160,8 +178,13 @@ function PageRows({
               }
               onRename={() => onRename({ kind: "page", reference: page.reference, label: page.title })}
               onHistory={() => onHistory(page)}
+              toggleLabel={owner ? `Réafficher le module ${moduleName(owner)}` : undefined}
               onToggle={() =>
-                void applyLayoutChange((snapshot) => setPageHidden(snapshot, page.reference, !page.hidden))
+                void applyLayoutChange((current) =>
+                  owner
+                    ? setModuleHidden(current, owner.id, false)
+                    : setPageHidden(current, page.reference, !page.hidden),
+                )
               }
             />
           </li>
@@ -176,10 +199,61 @@ export function NavigationSettings() {
   const [renaming, setRenaming] = useState<Renaming>();
   const [history, setHistory] = useState<ResolvedPage>();
   if (!snapshot) return null;
-  const { sections, settingsPages } = snapshot;
+  const { sections, settingsPages, modules } = snapshot;
+  const nameOf = (id: string) => {
+    const module = modules.find((candidate) => candidate.id === id);
+    return module ? moduleName(module) : id;
+  };
 
   return (
     <Page width="text">
+      <Section
+        title="Modules"
+        description="Un module masqué quitte le menu avec toutes ses sections et ses pages ; ses fonctions et ses clients servent toujours aux modules qui en dépendent."
+      >
+        {modules.length === 0 ? (
+          <Text size="meta" tone="muted">
+            Aucun module.
+          </Text>
+        ) : (
+          <ul className="nav-settings__list">
+            {modules.map((module) => {
+              const key = `module:${module.id}`;
+              const hidden = isModuleHidden(snapshot, module.id);
+              const name = moduleName(module);
+              return (
+                <li key={module.id} className="nav-settings__row" data-nav-row={key}>
+                  <span className="nav-settings__name">
+                    <Text as="span" weight="medium" tone={hidden ? "muted" : "default"}>
+                      {name}
+                    </Text>
+                    {hidden ? <StatusBadge size="compact">Masqué</StatusBadge> : null}
+                    {module.requiredBy.length > 0 ? (
+                      <Text as="span" size="meta" tone="muted">
+                        utilisé par {module.requiredBy.map(nameOf).join(", ")}
+                      </Text>
+                    ) : null}
+                  </span>
+                  <span className="nav-settings__actions">
+                    <IconButton
+                      size="small"
+                      label={`${hidden ? "Réafficher" : "Masquer"} le module ${name}`}
+                      tooltip={hidden ? "Réafficher" : "Masquer"}
+                      data-nav-action="toggle"
+                      onClick={() => {
+                        void applyLayoutChange((current) => setModuleHidden(current, module.id, !hidden));
+                        refocus(key, "toggle");
+                      }}
+                    >
+                      {hidden ? <Eye size={16} aria-hidden="true" /> : <EyeOff size={16} aria-hidden="true" />}
+                    </IconButton>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
       <Section
         title="Menu"
         description="Les sections du menu de gauche et leurs onglets, masqués compris. Le menu se réorganise aussi par glisser-déposer, Alt+Flèche ou clic droit."
@@ -190,6 +264,7 @@ export function NavigationSettings() {
           <ul className="nav-settings__list">
             {sections.map((section, index) => {
               const key = `section:${section.id}`;
+              const owner = hiddenModuleOf(snapshot, section.module);
               return (
                 <li key={section.id} className="nav-settings__section">
                   <div className="nav-settings__row" data-nav-row={key}>
@@ -200,7 +275,11 @@ export function NavigationSettings() {
                       <Text as="span" weight="medium" tone={section.hidden ? "muted" : "default"}>
                         {section.label}
                       </Text>
-                      {section.hidden ? <StatusBadge size="compact">Masquée</StatusBadge> : null}
+                      {owner ? (
+                        <StatusBadge size="compact">Module {moduleName(owner)} masqué</StatusBadge>
+                      ) : section.hidden ? (
+                        <StatusBadge size="compact">Masquée</StatusBadge>
+                      ) : null}
                     </span>
                     <RowActions
                       subject={`la section ${section.label}`}
@@ -219,8 +298,13 @@ export function NavigationSettings() {
                         })
                       }
                       onRename={() => setRenaming({ kind: "section", id: section.id, label: section.label })}
+                      toggleLabel={owner ? `Réafficher le module ${moduleName(owner)}` : undefined}
                       onToggle={() =>
-                        void applyLayoutChange((current) => setSectionHidden(current, section.id, !section.hidden))
+                        void applyLayoutChange((current) =>
+                          owner
+                            ? setModuleHidden(current, owner.id, false)
+                            : setSectionHidden(current, section.id, !section.hidden),
+                        )
                       }
                     />
                   </div>

@@ -7,7 +7,15 @@ vi.mock("../../lib/native");
 import { invoke, onNativeEvent, openExternal } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import type { VaultEntry } from "../vault/api";
-import type { ClientConfig, ClientItem, ClientNeedItem, ClientValidation } from "./api";
+import type {
+  AuthType,
+  ClientConfig,
+  ClientInstanceConfig,
+  ClientInstanceItem,
+  ClientItem,
+  ClientNeedItem,
+  ClientValidation,
+} from "./api";
 import { ClientsSettings } from "./ClientsSettings";
 
 // jsdom n’implémente pas les modales natives.
@@ -23,7 +31,6 @@ const REDIRECT = "http://127.0.0.1:14731/oauth/callback";
 const AUTHORIZE = "https://sso.exemple.com/authorize?state=abc";
 
 /** Faux backend : clients de l’espace, coffre du poste et demandes des modules. */
-let clients: ClientItem[];
 let needs: ClientNeedItem[];
 let vault: VaultEntry[];
 let calls: Array<{ command: string; args: Record<string, unknown> }>;
@@ -35,38 +42,112 @@ function entry(id: string, label: string, kind: VaultEntry["kind"], extra: Parti
   return { id, label, kind, meta: {}, updatedAt: "2026-11-12T09:00:00Z", hasSecret: true, ...extra };
 }
 
-/** Reproduit le calcul d’état du backend pour les cas du parcours. */
-function describe(config: ClientConfig): ClientItem {
-  const secret = vault.find((item) => item.id === config.auth.secret);
-  const oauth = config.auth.type === "oauth2";
-  const hasSecret = config.auth.type === "none" || Boolean(secret && (secret.hasSecret || oauth));
+type Stored = ClientConfig & { instances?: ClientInstanceConfig[] };
+
+/** État d’une instance, calculé comme le backend pour les cas du parcours. */
+function instanceState(type: AuthType, secretId: string | undefined, pendingKey: string) {
+  const secret = vault.find((item) => item.id === secretId);
+  const oauth = type === "oauth2";
+  const hasSecret = type === "none" || Boolean(secret && (secret.hasSecret || oauth));
   const connected = oauth ? Boolean(secret?.connected) : null;
   const validation: ClientValidation | null =
-    config.auth.type === "none"
+    type === "none"
       ? null
-      : (pending[config.id] ?? { validated: true, everValidated: true, changes: [], fingerprint: {} });
+      : (pending[pendingKey] ?? { validated: true, everValidated: true, changes: [], fingerprint: {} });
+  const status: ClientInstanceItem["status"] =
+    validation?.validated === false
+      ? "toValidate"
+      : !hasSecret
+        ? "missingSecret"
+        : connected === false
+          ? "toConnect"
+          : "ready";
+  return { hasSecret, connected, validation, status };
+}
+
+/** Reproduit le calcul d’état du backend pour les cas du parcours. */
+function describe(config: Stored): ClientItem {
+  const usedBy = needs
+    .filter((need) => need.client === config.id)
+    .map((need) => ({ key: need.key, module: need.module, moduleName: need.moduleName, label: need.label }));
+  if (config.auth) {
+    const { secret, ...method } = config.auth;
+    const state = instanceState(config.auth.type, secret, config.id);
+    const instance: ClientInstanceItem = {
+      id: "default",
+      label: "Principale",
+      method: "default",
+      secret,
+      default: true,
+      ...state,
+      problem: null,
+      effectiveUrl: config.baseUrl,
+      authType: config.auth.type,
+    };
+    return {
+      ...config,
+      methods: [{ id: "default", ...method }],
+      instances: [instance],
+      simple: true,
+      ...state,
+      usedBy,
+      problem: null,
+    };
+  }
+  const methods = config.methods ?? [];
+  const instances: ClientInstanceItem[] = (config.instances ?? []).map((instance, index) => {
+    const type = methods.find((method) => method.id === instance.method)?.type ?? "none";
+    return {
+      ...instance,
+      default: index === 0,
+      ...instanceState(type, instance.secret, `${config.id}#${instance.id}`),
+      problem: null,
+      effectiveUrl: instance.url ?? config.baseUrl,
+      authType: type,
+    };
+  });
+  const order: ClientItem["status"][] = ["invalid", "toValidate", "missingSecret", "toConnect", "ready"];
+  const status =
+    instances.length === 0
+      ? "noInstance"
+      : (order.find((known) => instances.some((instance) => instance.status === known)) ?? "ready");
+  const waiting = instances.filter((instance) => instance.validation?.validated === false);
   return {
     ...config,
-    validation,
-    status:
-      validation?.validated === false
-        ? "toValidate"
-        : !hasSecret
-          ? "missingSecret"
-          : connected === false
-            ? "toConnect"
-            : "ready",
-    hasSecret,
-    connected,
-    usedBy: needs
-      .filter((need) => need.client === config.id)
-      .map((need) => ({ key: need.key, module: need.module, moduleName: need.moduleName, label: need.label })),
+    methods,
+    instances,
+    simple: false,
+    status,
+    hasSecret: false,
+    connected: null,
+    usedBy,
     problem: null,
+    validation:
+      waiting.length === 0
+        ? null
+        : {
+            validated: false,
+            everValidated: true,
+            changes: waiting.flatMap((instance) =>
+              (instance.validation?.changes ?? []).map((change) => ({
+                ...change,
+                instance: instance.id,
+                instanceLabel: instance.label,
+              })),
+            ),
+            fingerprint: null,
+            fingerprints: Object.fromEntries(
+              waiting.map((instance) => [instance.id, instance.validation?.fingerprint ?? {}]),
+            ),
+          },
   };
 }
 
+/** Clients enregistrés, tels que le fichier les décrit. */
+let stored: Stored[];
+
 beforeEach(() => {
-  clients = [];
+  stored = [];
   needs = [];
   vault = [];
   calls = [];
@@ -83,7 +164,7 @@ beforeEach(() => {
     switch (command) {
       case "clients.list":
         return {
-          clients: clients.map((client) => describe(client)),
+          clients: stored.map((client) => describe(client)),
           needs: needs.map((need) => ({ ...need })),
           redirectUri: REDIRECT,
         };
@@ -97,11 +178,44 @@ beforeEach(() => {
       }
       case "clients.save": {
         const config = (args as { client: ClientConfig }).client;
-        clients = [...clients.filter((client) => client.id !== config.id), describe(config)];
-        return describe(config);
+        const previous = stored.find((client) => client.id === config.id);
+        // Comme le backend : la forme à plusieurs instances garde les instances du fichier.
+        const next: Stored = config.methods ? { ...config, instances: previous?.instances ?? [] } : config;
+        stored = [...stored.filter((client) => client.id !== config.id), next];
+        return describe(next);
+      }
+      case "clients.saveInstance": {
+        const { client, instance, create } = args as {
+          client: string;
+          instance: ClientInstanceConfig;
+          create: boolean;
+        };
+        const owner = stored.find((known) => known.id === client) as Stored;
+        const instances = owner.instances ?? [];
+        owner.instances = create
+          ? [...instances, instance]
+          : instances.map((known) => (known.id === instance.id ? instance : known));
+        delete pending[`${client}#${instance.id}`];
+        return describe(owner);
+      }
+      case "clients.deleteInstance": {
+        const { client, instance } = args as { client: string; instance: string };
+        const owner = stored.find((known) => known.id === client) as Stored;
+        owner.instances = (owner.instances ?? []).filter((known) => known.id !== instance);
+        return describe(owner);
+      }
+      case "clients.defaultInstance": {
+        const { client, instance } = args as { client: string; instance: string };
+        const owner = stored.find((known) => known.id === client) as Stored;
+        const instances = owner.instances ?? [];
+        owner.instances = [
+          ...instances.filter((known) => known.id === instance),
+          ...instances.filter((known) => known.id !== instance),
+        ];
+        return describe(owner);
       }
       case "clients.delete":
-        clients = clients.filter((client) => client.id !== (args as { id: string }).id);
+        stored = stored.filter((client) => client.id !== (args as { id: string }).id);
         return null;
       case "clients.test":
         return { ok: true, status: 200, durationMs: 42, message: "Le service répond (200)." };
@@ -110,9 +224,11 @@ beforeEach(() => {
         needs = needs.map((item) => (item.key === need ? { ...item, binding: client, client } : item));
         return { bindings: {} };
       }
-      case "clients.validate":
-        delete pending[(args as { id: string }).id];
-        return describe(clients.find((client) => client.id === (args as { id: string }).id) as ClientConfig);
+      case "clients.validate": {
+        const { id } = args as { id: string };
+        for (const key of Object.keys(pending)) if (key === id || key.startsWith(`${id}#`)) delete pending[key];
+        return describe(stored.find((client) => client.id === id) as Stored);
+      }
       case "clients.connect":
         return { authorizationUrl: AUTHORIZE };
       case "clients.disconnect":
@@ -229,8 +345,8 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
 it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", async () => {
   const user = userEvent.setup();
   vault = [entry("sso", "SSO", "oauth2", { meta: { clientId: "alfred-app" }, hasSecret: false, connected: false })];
-  clients = [
-    describe({
+  stored = [
+    {
       id: "portail",
       label: "Portail",
       baseUrl: "https://portail.exemple.com",
@@ -241,7 +357,7 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
         tokenUrl: "https://sso.exemple.com/token",
         scopes: ["lire"],
       },
-    }),
+    },
   ];
   render(<ClientsSettings />);
   const table = await screen.findByRole("table", { name: "Clients" });
@@ -355,13 +471,13 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
       fingerprint,
     },
   };
-  clients = [
-    describe({
+  stored = [
+    {
       id: "jira",
       label: "Jira",
       baseUrl: "https://ailleurs.exemple.com",
       auth: { type: "bearer", secret: "jeton-jira" },
-    }),
+    },
   ];
   render(<ClientsSettings />);
 
@@ -390,4 +506,117 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
   expect(notifications()).toContain("Jira est validé");
   expect(screen.queryByRole("button", { name: "Valider Jira" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Tester Jira" })).toBeEnabled();
+});
+
+it("crée un client à plusieurs instances, ajoute ses instances et les gère une à une", async () => {
+  const user = userEvent.setup();
+  vault = [entry("pat-acme", "PAT Acme", "token"), entry("cloud-compte", "Compte Cloud", "basic")];
+  render(<ClientsSettings />);
+  await user.click(await screen.findByRole("button", { name: "Nouveau client" }));
+
+  // Plusieurs instances : l’adresse devient facultative, l’entrée du coffre quitte le client pour l’instance.
+  await user.type(screen.getByLabelText("Libellé"), "Jira");
+  await user.click(screen.getByLabelText("Plusieurs instances"));
+  expect(screen.getByLabelText("Adresse par défaut (facultative)")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Entrée du coffre")).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Nom de la méthode"), "Data Center (PAT)");
+  await user.selectOptions(screen.getByLabelText("Authentification"), "bearer");
+  await user.click(screen.getByRole("button", { name: "Ajouter une méthode" }));
+  await user.type(screen.getAllByLabelText("Nom de la méthode")[1], "Jira Cloud");
+  await user.selectOptions(screen.getAllByLabelText("Authentification")[1], "basic");
+  await user.click(screen.getByRole("button", { name: "Créer" }));
+  expect(lastCall("clients.save")).toEqual({
+    create: true,
+    client: {
+      id: "jira",
+      label: "Jira",
+      baseUrl: "",
+      methods: [
+        { id: "data-center-pat", label: "Data Center (PAT)", type: "bearer" },
+        { id: "jira-cloud", label: "Jira Cloud", type: "basic" },
+      ],
+      headers: {},
+    },
+  });
+
+  // Le client créé n’a rien à appeler : la première instance se saisit tout de suite, champ par champ.
+  expect(await screen.findByText("Nouvelle instance de Jira")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Ajouter" }));
+  expect(screen.getByText("Saisissez le nom de l’instance.")).toBeInTheDocument();
+  expect(screen.getByText("Saisissez l’adresse de l’instance.")).toBeInTheDocument();
+  expect(screen.getByText("Choisissez une entrée du coffre.")).toBeInTheDocument();
+  expect(lastCall("clients.saveInstance")).toBeUndefined();
+  await user.type(screen.getByLabelText("Nom de l’instance"), "Acme");
+  expect(screen.getByLabelText("Identifiant de l’instance")).toHaveValue("acme");
+  await user.type(screen.getByLabelText("Adresse de l’instance"), "https://jira.acme.fr");
+  // Seules les entrées du type de la méthode choisie sont proposées.
+  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…", "PAT Acme"]);
+  await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "pat-acme");
+  await user.click(screen.getByRole("button", { name: "Ajouter" }));
+  expect(lastCall("clients.saveInstance")).toEqual({
+    client: "jira",
+    create: true,
+    instance: { id: "acme", label: "Acme", method: "data-center-pat", url: "https://jira.acme.fr", secret: "pat-acme" },
+  });
+
+  // La liste montre le client et, à part, chacune de ses instances.
+  const clientsTable = await screen.findByRole("table", { name: "Clients" });
+  expect(within(clientsTable).getByText("1 instance")).toBeInTheDocument();
+  expect(within(clientsTable).getByText("Data Center (PAT), Jira Cloud")).toBeInTheDocument();
+  const instancesTable = screen.getByRole("table", { name: "Instances" });
+  expect(within(instancesTable).getByText("https://jira.acme.fr")).toBeInTheDocument();
+  expect(within(instancesTable).getByText("Par défaut")).toBeInTheDocument();
+
+  // Une deuxième instance, avec une autre méthode et donc d’autres entrées du coffre.
+  await user.click(screen.getByRole("button", { name: "Ajouter une instance à Jira" }));
+  await user.type(screen.getByLabelText("Nom de l’instance"), "Cloud");
+  await user.type(screen.getByLabelText("Adresse de l’instance"), "https://acme.atlassian.net");
+  await user.selectOptions(screen.getByLabelText("Méthode d’authentification"), "jira-cloud");
+  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…", "Compte Cloud"]);
+  await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "cloud-compte");
+  await user.click(screen.getByRole("button", { name: "Ajouter" }));
+  const instances = await screen.findByRole("table", { name: "Instances" });
+  expect(within(instances).getByText("https://acme.atlassian.net")).toBeInTheDocument();
+
+  // Chaque instance se teste et peut devenir celle par défaut.
+  await user.click(screen.getByRole("button", { name: "Tester Jira — Cloud" }));
+  await waitFor(() => expect(notifications()).toContain("Jira — Cloud : le service répond"));
+  expect(lastCall("clients.test")).toEqual({ id: "jira", instance: "cloud" });
+  await user.click(screen.getByRole("button", { name: "Utiliser Jira — Cloud par défaut" }));
+  expect(lastCall("clients.defaultInstance")).toEqual({ client: "jira", instance: "cloud" });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Utiliser Jira — Cloud par défaut" })).not.toBeInTheDocument(),
+  );
+
+  // Une instance modifiée hors des Réglages : la validation du client montre l’instance concernée.
+  pending["jira#cloud"] = {
+    validated: false,
+    everValidated: true,
+    changes: [
+      {
+        field: "baseUrl",
+        label: "Adresse de base",
+        before: "https://acme.atlassian.net",
+        after: "https://ailleurs.fr",
+      },
+    ],
+    fingerprint: { baseUrl: "https://ailleurs.fr" },
+  };
+  listeners.get("clients:changed")?.({ client: "jira" });
+  await user.click(await screen.findByRole("button", { name: "Valider Jira" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(within(dialog).getByText("Cloud · Adresse de base")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Valider" }));
+  await waitFor(() => expect(notifications()).toContain("Jira est validé"));
+  expect(lastCall("clients.validate")).toEqual({
+    id: "jira",
+    fingerprints: { cloud: { baseUrl: "https://ailleurs.fr" } },
+  });
+
+  // Supprimer une instance est confirmé, et ne touche ni au client ni aux autres instances.
+  await user.click(screen.getByRole("button", { name: "Supprimer Jira — Acme" }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
+  await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "acme" }));
+  await waitFor(() => expect(screen.queryByText("https://jira.acme.fr")).not.toBeInTheDocument());
+  expect(screen.getByRole("table", { name: "Clients" })).toBeInTheDocument();
 });

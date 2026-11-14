@@ -222,6 +222,9 @@ export class FakeBackend {
         description: "",
         readOnly: false,
         origin: null,
+        hidden: false,
+        requires: [],
+        requiredBy: [],
         pages: module.pages.length,
         functions: module.functions.length,
         clients: [],
@@ -431,6 +434,8 @@ export class FakeBackend {
       this.agent.kill(String(args.session));
       return null;
     },
+    // Les questions sont diffusées à la seule interface du test : aucune n’attend une fenêtre ouverte après coup.
+    "ui.waiting": () => [],
     "ui.claim": (args) => this.pending.has(String(args.requestId)),
     "ui.resolve": (args) => {
       const settle = this.pending.get(String(args.requestId));

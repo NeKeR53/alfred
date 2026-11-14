@@ -9,7 +9,7 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect } from "react";
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
-import { type FrameIdentity, frameServices } from "../../shell/frameBridge";
+import { declaredReference, type FrameIdentity, frameServices } from "../../shell/frameBridge";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import { PROVIDER_LABEL } from "./harness";
@@ -69,7 +69,8 @@ async function runAgent(identity: FrameIdentity, options: Record<string, unknown
   });
   try {
     await invoke("frame.agents.authorize", {
-      subject: { kind: identity.kind, module: identity.module, reference: identity.reference },
+      // Les accords d’une page valent pour toutes ses copies par instance.
+      subject: { kind: identity.kind, module: identity.module, reference: declaredReference(identity) },
       conversation: conversation.id,
       functions,
     });

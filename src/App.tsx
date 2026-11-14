@@ -6,6 +6,7 @@ import { useModuleUpdates } from "./features/modules/useModuleUpdates";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
 import { AppShell } from "./shell/AppShell";
+import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
 import { useShell } from "./shell/store";
 import { Welcome } from "./shell/Welcome";
@@ -30,6 +31,19 @@ export function App() {
   );
 
   if (snapshot === undefined) return null;
+  // Fenêtre de page : la page seule, avec les demandes du backend (accès, fonctions) traitées ici aussi.
+  const windowPage = pageWindowReference();
+  if (windowPage) {
+    return (
+      <>
+        <PageWindow
+          reference={windowPage}
+          renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}
+        />
+        <ShellServices />
+      </>
+    );
+  }
   if (snapshot === null) return <Welcome />;
   return (
     <>

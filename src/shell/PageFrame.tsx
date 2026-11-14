@@ -30,8 +30,8 @@ export function PageFrame({
   const accent = useShell((state) => state.snapshot?.accent ?? null);
   const frame = useRef<HTMLIFrameElement>(null);
   const identity = useMemo<FrameIdentity>(
-    () => ({ kind, module: page.module, reference: page.reference, host }),
-    [kind, page.module, page.reference, host],
+    () => ({ kind, module: page.module, reference: page.reference, host, instance: page.instance ?? undefined }),
+    [kind, page.module, page.reference, host, page.instance],
   );
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.

@@ -21,6 +21,7 @@ vi.mock("../../lib/native", () => ({
   invoke: vi.fn(),
   onNativeEvent: vi.fn(() => () => undefined),
   frameBase: (base: string) => base,
+  inTauri: false,
 }));
 
 HTMLDialogElement.prototype.showModal = function showModal() {

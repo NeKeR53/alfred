@@ -162,8 +162,13 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 (|| Ok((arg(args, "subject")?, arg::<String>(args, "function")?)))();
             match parsed {
                 Ok((subject, function)) => {
-                    let same_module = split(&function).is_ok_and(|(module, _)| module == subject.module);
-                    if same_module {
+                    let owner = split(&function).map(|(module, _)| module.to_string());
+                    let same_module = owner.as_deref().is_ok_and(|module| module == subject.module);
+                    // Les fonctions d’une dépendance déclarée dans `requires` sont accordées d’office.
+                    let dependency = owner.as_deref().is_ok_and(|owner| {
+                        state.space().and_then(|space| space.module(&subject.module)).is_ok_and(|m| m.requires_module(owner))
+                    });
+                    if same_module || dependency {
                         Ok(Value::Null)
                     } else {
                         permissions::ensure(

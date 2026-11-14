@@ -31,6 +31,8 @@ pub struct AppState {
     /// Demandes déjà prises en charge par une interface (`ui.claim`) : chacune ne s’exécute qu’une fois, même si
     /// plusieurs interfaces écoutent (fenêtre et navigateur de test en développement).
     claimed: Mutex<HashSet<String>>,
+    /// Questions affichables encore en attente (accords) : une fenêtre ouverte après coup les montre aussi.
+    asked: Mutex<Vec<(String, Value)>>,
     pub watcher: Mutex<Option<notify::RecommendedWatcher>>,
     /// Jeton des outils d’Alfred remis à chaque processus d’agent → conversation qui l’a lancé.
     pub agent_tokens: Mutex<HashMap<String, String>>,
@@ -60,6 +62,7 @@ impl AppState {
             server: OnceLock::new(),
             pending: Mutex::new(HashMap::new()),
             claimed: Mutex::new(HashSet::new()),
+            asked: Mutex::new(Vec::new()),
             watcher: Mutex::new(None),
             agent_tokens: Mutex::new(HashMap::new()),
             frame_secret: random_secret(),
@@ -103,10 +106,18 @@ impl AppState {
         if let Some(object) = payload.as_object_mut() {
             object.insert("requestId".to_string(), Value::String(id.clone()));
         }
+        if name == "permission:ask" {
+            if let Ok(mut asked) = self.asked.lock() {
+                asked.push((name.to_string(), payload.clone()));
+            }
+        }
         self.emit(name, payload);
         let answer = tokio::time::timeout(timeout, receiver).await;
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&id);
+        }
+        if let Ok(mut asked) = self.asked.lock() {
+            asked.retain(|(_, payload)| payload.get("requestId").and_then(Value::as_str) != Some(id.as_str()));
         }
         if let Ok(mut claimed) = self.claimed.lock() {
             claimed.remove(&id);
@@ -129,6 +140,14 @@ impl AppState {
         waiting && self.claimed.lock().is_ok_and(|mut claimed| claimed.insert(id.to_string()))
     }
 
+    /// Questions `name` encore en attente, dans l’ordre où elles ont été posées.
+    pub fn waiting_ui(&self, name: &str) -> Vec<Value> {
+        self.asked
+            .lock()
+            .map(|asked| asked.iter().filter(|(asked, _)| asked == name).map(|(_, payload)| payload.clone()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn resolve_ui(&self, id: &str, result: Result<Value, String>) -> AppResult<()> {
         let sender = self.pending.lock().ok().and_then(|mut pending| pending.remove(id));
         match sender {
@@ -144,6 +163,32 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une fenêtre ouverte pendant qu’une question attend la retrouve, et elle disparaît une fois tranchée.
+    #[tokio::test]
+    async fn a_waiting_question_is_shown_to_a_window_opened_later() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path()).unwrap();
+        let mut events = state.events.subscribe();
+        let asking = state.clone();
+        let question = tokio::spawn(async move {
+            asking
+                .ask_ui("permission:ask", serde_json::json!({ "resource": "client:jira" }), std::time::Duration::from_secs(5))
+                .await
+        });
+        let id = loop {
+            let event = events.recv().await.unwrap();
+            if event.name == "permission:ask" {
+                break event.payload["requestId"].as_str().unwrap().to_string();
+            }
+        };
+        let waiting = state.waiting_ui("permission:ask");
+        assert_eq!((waiting.len(), waiting[0]["resource"].as_str()), (1, Some("client:jira")));
+        assert!(state.waiting_ui("function:call").is_empty());
+        state.resolve_ui(&id, Ok(serde_json::json!({ "granted": true }))).unwrap();
+        question.await.unwrap().unwrap();
+        assert!(state.waiting_ui("permission:ask").is_empty());
+    }
 
     #[tokio::test]
     async fn a_request_is_claimed_by_a_single_interface() {

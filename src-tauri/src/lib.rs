@@ -12,6 +12,7 @@ mod git;
 mod marketplace;
 mod mcp;
 mod oauth;
+mod page_windows;
 mod pages;
 mod permissions;
 mod process_tree;
@@ -64,12 +65,12 @@ fn on_core_event(state: &AppState, event: &events::AppEvent) {
 /// Commandes de la fenêtre ; le banc de vérification ajoute la sienne, absente des versions normales.
 #[cfg(not(feature = "verify"))]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![alfred_invoke]
+    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window]
 }
 
 #[cfg(feature = "verify")]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![alfred_invoke, verify::verify_result]
+    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window, verify::verify_result]
 }
 
 pub fn run() {
@@ -129,6 +130,17 @@ pub fn run() {
             let _runtime = tauri::async_runtime::handle().inner().enter();
             schedules::start(state);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Fermer la fenêtre principale ferme ses fenêtres de page : sans elle, rien ne permet d’en rouvrir une
+            // ni de changer d’espace.
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                for (label, page) in window.app_handle().webview_windows() {
+                    if label.starts_with(page_windows::PREFIX) {
+                        let _ = page.close();
+                    }
+                }
+            }
         })
         .invoke_handler(handlers())
         .build(tauri::generate_context!())

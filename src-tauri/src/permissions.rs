@@ -2,7 +2,9 @@
 //! la première utilisation d’une ressource sensible pose la question, et la réponse est mémorisée hors de l’espace,
 //! là où l’agent ne peut pas l’écrire.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -19,6 +21,9 @@ pub struct Subject {
     pub module: String,
     /// `module/page` ou `module/fonction`.
     pub reference: String,
+    /// Instance d’un client que montre la page (section par instance). Les accords ne dépendent pas d’elle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 impl Subject {
@@ -29,16 +34,53 @@ impl Subject {
     }
 }
 
+/// Question d’accès pour un même demandeur et une même ressource. Deux cadres qui demandent le même accès en même
+/// temps (la page dans la fenêtre principale et dans sa fenêtre à part, deux copies par instance) n’ouvrent qu’une
+/// question : le second attend son tour et reprend la réponse donnée entre-temps.
+#[derive(Default)]
+struct Question {
+    /// Nombre de réponses données, lu sans attendre son tour.
+    answered: AtomicU64,
+    granted: AtomicBool,
+    turn: tokio::sync::Mutex<()>,
+}
+
+type Questions = Mutex<HashMap<String, Arc<Question>>>;
+
+fn questions() -> &'static Questions {
+    static QUESTIONS: OnceLock<Questions> = OnceLock::new();
+    QUESTIONS.get_or_init(Questions::default)
+}
+
+fn is_granted(state: &AppState, space: &str, key: &str, resource: &str) -> AppResult<bool> {
+    let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
+    app_db::is_granted(&db, space, key, resource)
+}
+
+fn refused(subject: &Subject, label: &str) -> AppError {
+    AppError::new(format!("Accès refusé : {} n’a pas le droit d’utiliser {label}.", subject.reference))
+}
+
 /// Vérifie que `subject` a accès à `resource` (par exemple `client:jira`) ; sinon pose la question à l’utilisateur
 /// et attend sa réponse. `label` décrit la ressource dans la question (« le client Jira »).
 pub async fn ensure(state: &Arc<AppState>, subject: &Subject, resource: &str, label: &str) -> AppResult<()> {
     let space = state.space()?.root.to_string_lossy().to_string();
     let key = subject.key();
-    {
-        let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
-        if app_db::is_granted(&db, &space, &key, resource)? {
-            return Ok(());
-        }
+    if is_granted(state, &space, &key, resource)? {
+        return Ok(());
+    }
+    let question = {
+        let mut all = questions().lock().map_err(|_| AppError::new("Les accords sont indisponibles."))?;
+        all.entry(format!("{space}\n{key}\n{resource}")).or_default().clone()
+    };
+    let seen = question.answered.load(Ordering::SeqCst);
+    let _turn = question.turn.lock().await;
+    // Une question posée pendant l’attente vient d’être tranchée : sa réponse vaut aussi pour cette demande.
+    if question.answered.load(Ordering::SeqCst) != seen {
+        return if question.granted.load(Ordering::SeqCst) { Ok(()) } else { Err(refused(subject, label)) };
+    }
+    if is_granted(state, &space, &key, resource)? {
+        return Ok(());
     }
     let answer = state
         .ask_ui(
@@ -46,12 +88,19 @@ pub async fn ensure(state: &Arc<AppState>, subject: &Subject, resource: &str, la
             json!({ "subject": subject, "resource": resource, "label": label }),
             Duration::from_secs(300),
         )
-        .await?;
-    if answer.get("granted").and_then(Value::as_bool) != Some(true) {
-        return Err(AppError::new(format!("Accès refusé : {} n’a pas le droit d’utiliser {label}.", subject.reference)));
+        .await;
+    let granted = matches!(&answer, Ok(value) if value.get("granted").and_then(Value::as_bool) == Some(true));
+    if granted {
+        let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
+        app_db::grant(&db, &space, &key, resource)?;
     }
-    let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
-    app_db::grant(&db, &space, &key, resource)
+    question.granted.store(granted, Ordering::SeqCst);
+    question.answered.fetch_add(1, Ordering::SeqCst);
+    match answer {
+        Err(error) => Err(error),
+        Ok(_) if granted => Ok(()),
+        Ok(_) => Err(refused(subject, label)),
+    }
 }
 
 /// Oublie les accords d’une page supprimée (son panneau partage sa clé) : une page recréée sous le même nom
@@ -182,5 +231,48 @@ mod tests {
         assert!(open("javascript:alert(1)".into()).await.is_err());
         assert!(open("https://moi:motdepasse@docs.example.com/".into()).await.is_err());
         assert_eq!(*asked.lock().unwrap(), vec!["external:docs.example.com", "external:attaquant.example"]);
+    }
+
+    /// La même page ouverte deux fois (fenêtre principale et fenêtre à part) demande le même accès en même temps :
+    /// une seule question, et sa réponse vaut pour les deux demandes, accord comme refus.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn simultaneous_requests_for_the_same_access_share_one_question() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        {
+            let mut events = state.events.subscribe();
+            let (state, asked) = (state.clone(), asked.clone());
+            tokio::spawn(async move {
+                while let Ok(event) = events.recv().await {
+                    if event.name != "permission:ask" {
+                        continue;
+                    }
+                    let resource = event.payload["resource"].as_str().unwrap().to_string();
+                    asked.lock().unwrap().push(resource.clone());
+                    let id = event.payload["requestId"].as_str().unwrap().to_string();
+                    // L’utilisateur prend son temps : l’autre demande arrive pendant que la question est affichée.
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let _ = state.resolve_ui(&id, Ok(json!({ "granted": resource == "client:jira" })));
+                }
+            });
+        }
+        let subject = Subject {
+            kind: "page".into(),
+            module: "jira".into(),
+            reference: "jira/tickets".into(),
+            instance: Some("acme".into()),
+        };
+        let ask = |resource: &'static str| {
+            let (state, subject) = (state.clone(), subject.clone());
+            tokio::spawn(async move { ensure(&state, &subject, resource, "le client").await })
+        };
+        let (first, second) = (ask("client:jira"), ask("client:jira"));
+        assert!(first.await.unwrap().is_ok() && second.await.unwrap().is_ok());
+        let (first, second) = (ask("client:mail"), ask("client:mail"));
+        assert!(first.await.unwrap().is_err() && second.await.unwrap().is_err());
+        assert_eq!(*asked.lock().unwrap(), vec!["client:jira", "client:mail"]);
+        // Après un refus, une nouvelle demande pose de nouveau la question.
+        assert!(ask("client:mail").await.unwrap().is_err());
+        assert_eq!(asked.lock().unwrap().len(), 3);
     }
 }

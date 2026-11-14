@@ -12,7 +12,7 @@ export interface Uses {
 }
 
 export interface ResolvedPage {
-  /** `module/page`. */
+  /** `module/page`, ou `module/page@instance` dans une section par instance. */
   reference: string;
   module: string;
   id: string;
@@ -25,10 +25,12 @@ export interface ResolvedPage {
   errors: Diagnostic[];
   uses: Uses;
   panel: ResolvedPage | null;
+  /** Instance du client que montre la page, dans une section par instance. */
+  instance?: string | null;
 }
 
 export interface ResolvedSection {
-  /** `module/section`. */
+  /** `module/section`, ou `module/section@instance` pour la copie d’une section par instance. */
   id: string;
   module: string;
   label: string;
@@ -36,6 +38,14 @@ export interface ResolvedSection {
   color: string | null;
   hidden: boolean;
   pages: ResolvedPage[];
+  /** Besoin client dont la section suit les instances. */
+  perInstance?: string | null;
+  /** Instance que montre cette copie de la section. */
+  instance?: string | null;
+  /** Section déclarée dont celle-ci est la copie. */
+  instanceOf?: string | null;
+  /** Section par instance sans instance à montrer : ce qu’il faut faire. */
+  waiting?: string | null;
 }
 
 export interface ModuleOrigin {
@@ -53,6 +63,12 @@ export interface ClientNeed {
   auth?: string;
 }
 
+/** Module dont un autre utilise les fonctions et les clients (`requires` du manifeste). */
+export interface Requirement {
+  module: string;
+  minVersion?: string;
+}
+
 export interface ModuleSummary {
   id: string;
   name: string;
@@ -60,6 +76,11 @@ export interface ModuleSummary {
   description: string;
   readOnly: boolean;
   origin: ModuleOrigin | null;
+  /** Masqué du menu, avec toutes ses sections et ses pages (dépendance installée d’office, ou choix). */
+  hidden: boolean;
+  requires: Requirement[];
+  /** Modules de l’espace qui dépendent de celui-ci. */
+  requiredBy: string[];
   pages: number;
   functions: number;
   clients: ClientNeed[];
