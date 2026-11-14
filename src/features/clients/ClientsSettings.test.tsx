@@ -294,6 +294,11 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
   await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "jeton-jira");
   await user.type(screen.getByLabelText("Nom de l’en-tête"), "X-Api-Key");
   await user.type(screen.getByLabelText("En-têtes fixes (facultatif)"), "Accept: application/json");
+  await user.type(screen.getByLabelText("Chemin de test (facultatif)"), "myself");
+  await user.click(screen.getByRole("button", { name: "Créer" }));
+  expect(await screen.findByText("Saisissez un chemin qui commence par « / », ex. /me.")).toBeInTheDocument();
+  await user.clear(screen.getByLabelText("Chemin de test (facultatif)"));
+  await user.type(screen.getByLabelText("Chemin de test (facultatif)"), "/myself");
   await user.click(screen.getByRole("button", { name: "Créer" }));
 
   // Le fichier du client ne reçoit que l’identifiant de l’entrée du coffre.
@@ -306,6 +311,7 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
       baseUrl: "https://jira.exemple.com",
       auth: { type: "apiKey", secret: "jeton-jira", header: "X-Api-Key" },
       headers: { Accept: "application/json" },
+      testPath: "/myself",
     },
   });
   expect(within(table).getByText("https://jira.exemple.com")).toBeInTheDocument();

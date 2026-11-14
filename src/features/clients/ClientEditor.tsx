@@ -59,10 +59,11 @@ interface Draft {
   secret: string;
   methods: MethodDraft[];
   headers: string;
+  testPath: string;
 }
 
 type AuthErrors = Partial<Record<"keyName" | "authorizationUrl" | "tokenUrl" | "label", string>>;
-type Errors = Partial<Record<"label" | "id" | "baseUrl" | "secret" | "headers", string>> & {
+type Errors = Partial<Record<"label" | "id" | "baseUrl" | "secret" | "headers" | "testPath", string>> & {
   auth?: AuthErrors;
   methods?: Record<string, AuthErrors>;
 };
@@ -117,6 +118,7 @@ function toDraft(source: Partial<ClientItem> | undefined): Draft {
     headers: Object.entries(source?.headers ?? {})
       .map(([name, value]) => `${name}: ${value}`)
       .join("\n"),
+    testPath: source?.testPath ?? "",
   };
 }
 
@@ -337,7 +339,10 @@ export function ClientEditor({
     return onNativeEvent("vault:changed", () => void loadEntries());
   }, [loadEntries]);
 
-  const set = (changes: Partial<Draft>, cleared: Array<"label" | "id" | "baseUrl" | "secret" | "headers"> = []) => {
+  const set = (
+    changes: Partial<Draft>,
+    cleared: Array<"label" | "id" | "baseUrl" | "secret" | "headers" | "testPath"> = [],
+  ) => {
     setDraft((current) => ({ ...current, ...changes }));
     if (cleared.length > 0) {
       setErrors((current) => {
@@ -407,6 +412,7 @@ export function ClientEditor({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const headers = parseHeaders(draft.headers);
+    const testPath = draft.testPath.trim();
     const methodErrors: Record<string, AuthErrors> = {};
     if (draft.multiple) {
       for (const method of draft.methods) {
@@ -428,12 +434,14 @@ export function ClientEditor({
         : urlError(draft.baseUrl, "Saisissez l’adresse de base."),
       secret: !draft.multiple && vaultKind && !draft.secret ? "Choisissez une entrée du coffre." : undefined,
       headers: headers ? undefined : "Écrivez un en-tête par ligne, sous la forme « Nom: valeur ».",
+      testPath:
+        !testPath || testPath.startsWith("/") ? undefined : "Saisissez un chemin qui commence par « / », ex. /me.",
       auth: draft.multiple ? undefined : authErrors(draft.auth, false),
       methods: draft.multiple ? methodErrors : undefined,
     };
     setErrors(next);
     const invalid =
-      [next.label, next.id, next.baseUrl, next.secret, next.headers].some(Boolean) ||
+      [next.label, next.id, next.baseUrl, next.secret, next.headers, next.testPath].some(Boolean) ||
       hasErrors(next.auth) ||
       Object.values(methodErrors).some(hasErrors);
     if (invalid || !headers) return;
@@ -451,11 +459,19 @@ export function ClientEditor({
           ...toAuth(method),
         })),
         headers,
+        ...(testPath ? { testPath } : {}),
       };
     } else {
       const auth = toAuth(draft.auth);
       if (vaultKind) auth.secret = draft.secret;
-      config = { id: resolvedId, label: draft.label.trim(), baseUrl: draft.baseUrl.trim(), auth, headers };
+      config = {
+        id: resolvedId,
+        label: draft.label.trim(),
+        baseUrl: draft.baseUrl.trim(),
+        auth,
+        headers,
+        ...(testPath ? { testPath } : {}),
+      };
     }
     setPending(true);
     try {
@@ -645,6 +661,19 @@ export function ClientEditor({
                 placeholder="Ex. Accept: application/json"
                 spellCheck={false}
                 onChange={(event) => set({ headers: event.target.value }, ["headers"])}
+              />
+            </FormField>
+            <FormField
+              label="Chemin de test (facultatif)"
+              hint="Lu par le bouton Tester. Choisissez une lecture qui demande l’authentification, ex. /me ; sans chemin, Tester lit la racine de l’adresse de base."
+              error={errors.testPath}
+            >
+              <TextInput
+                value={draft.testPath}
+                placeholder="Ex. /me"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => set({ testPath: event.target.value }, ["testPath"])}
               />
             </FormField>
 

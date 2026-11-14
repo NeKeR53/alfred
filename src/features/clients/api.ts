@@ -34,6 +34,8 @@ export interface ClientConfig {
   auth?: ClientAuth;
   methods?: ClientMethod[];
   headers?: Record<string, string>;
+  /** Chemin lu par le bouton Tester, pour chaque instance ; sans lui, la racine de l’adresse. */
+  testPath?: string;
 }
 
 /** Instance d’un client : un compte ou une installation, avec son adresse, sa méthode et son entrée du coffre. */

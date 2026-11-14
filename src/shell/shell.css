@@ -374,9 +374,9 @@
 }
 
 /*
- * Rubriques intégrées des Réglages, comme celles de OneApp (`settings-section-header`) : chaque section ouvre sur un
- * en-tête à filet de toute la largeur, titre et actions sur la colonne centrée de 880 px, puis son contenu dans cette
- * même colonne. Les pages de l’espace placées dans les Réglages gardent leur propre mise en page.
+ * Rubriques intégrées des Réglages : un filet de toute la largeur sépare deux sections, et chaque section (titre,
+ * description, actions, puis contenu) tient sur la colonne centrée de 880 px. Le filet passe entre les blocs, jamais
+ * entre un titre et son contenu. Les pages de l’espace placées dans les Réglages gardent leur propre mise en page.
  */
 .shell-body--settings {
   --settings-column: 880px;
@@ -391,15 +391,16 @@
 }
 .shell-body--settings .al-page__body > .al-section {
   gap: 0;
+  padding-block: 20px 24px;
+}
+.shell-body--settings .al-page__body > .al-section + .al-section {
+  border-top: 1px solid var(--line);
 }
 .shell-body--settings .al-page__body > .al-section > .al-section__header {
-  min-height: 40px;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 4px var(--settings-inline);
-  border-bottom: 1px solid var(--line);
-  background: var(--color-bg);
+  padding-inline: var(--settings-inline);
 }
 .shell-body--settings .al-page__body > .al-section > .al-section__header .al-section__title {
   flex: 1 1 320px;
@@ -407,22 +408,19 @@
 .shell-body--settings .al-page__body > .al-section > .al-section__header h2 {
   font-size: var(--font-size-panel);
   font-weight: 600;
-  line-height: normal;
+  line-height: 20px;
 }
 .shell-body--settings .al-page__body > .al-section > .al-section__header p {
   max-width: 72ch;
   margin-top: 3px;
 }
-.shell-body--settings .al-page__body > .al-section > .al-section__actions {
-  justify-content: flex-end;
+.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog) {
+  width: auto;
+  margin: 16px var(--settings-inline) 0;
 }
-.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog),
 .shell-body--settings .al-page__body > :not(.al-section, dialog) {
   width: auto;
   margin: 16px var(--settings-inline) 8px;
-}
-.shell-body--settings .al-page__body > .al-section + .al-section {
-  margin-top: 16px;
 }
 .shell-body--settings .al-page > .page-toolbar {
   padding-inline: var(--settings-inline);

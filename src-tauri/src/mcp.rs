@@ -318,6 +318,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                             },
                         },
                         "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "En-têtes fixes (Accept…), jamais d’authentification." },
+                        "testPath": { "type": "string", "description": "Chemin lu par le bouton Tester des Réglages (ex. /me), pour chaque instance : une lecture légère qui demande l’authentification. Sans lui, la racine." },
                     },
                 },
                 "create": { "type": "boolean", "description": "Refuser si un client porte déjà cet identifiant." },

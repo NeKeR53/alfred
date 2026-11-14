@@ -101,6 +101,9 @@ pub struct Client {
     /// En-têtes fixes ajoutés à chaque requête (`Accept`…). Jamais d’authentification : elle vient du coffre.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// Chemin lu par le bouton Tester, celui du client (voir `ClientDef::test_path`).
+    #[serde(skip)]
+    pub test_path: Option<String>,
 }
 
 /// Instance d’un client écrit sous sa forme simple (une adresse, une authentification), et méthode qu’elle utilise.
@@ -154,6 +157,10 @@ pub struct ClientDef {
     pub methods: Vec<AuthMethod>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub instances: Vec<Instance>,
+    /// Chemin lu par le bouton Tester (`/me`, `/labels`…), pour chaque instance ; sans lui, la racine de l’adresse.
+    /// Beaucoup d’API n’ont rien à la racine : un chemin qui demande l’authentification vérifie aussi le secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_path: Option<String>,
 }
 
 fn clean(value: &mut Option<String>) {
@@ -426,6 +433,7 @@ impl ClientDef {
             self.id = slug(&self.label);
         }
         self.base_url = self.base_url.trim().to_string();
+        clean(&mut self.test_path);
         clean_headers(&mut self.headers);
         for method in &mut self.methods {
             method.id = method.id.trim().to_string();
@@ -455,6 +463,15 @@ impl ClientDef {
         }
         if !self.base_url.is_empty() {
             check_url(&self.base_url, "L’adresse de base du client", false)?;
+        }
+        if let Some(path) = &self.test_path {
+            // Vérifié contre une adresse d’exemple : chaque instance a la sienne, et le chemin reste sous chacune.
+            let example = Url::parse("https://instance.exemple/base").map_err(|_| AppError::new("Adresse d’exemple."))?;
+            if !path.starts_with('/') || build_url(&example, path, None, None).is_err() {
+                return Err(AppError::new(format!(
+                    "Chemin de test invalide : « {path} ». Il commence par « / » et reste sous l’adresse de base."
+                )));
+            }
         }
         valid_headers(&self.headers)?;
         if self.methods.is_empty() {
@@ -540,6 +557,7 @@ impl ClientDef {
             base_url,
             auth,
             headers: self.headers.clone(),
+            test_path: self.test_path.clone(),
         })
     }
 
@@ -1523,6 +1541,7 @@ fn describe(state: &AppState, def: &ClientDef, used_by: &[Value]) -> Value {
         "label": def.label,
         "baseUrl": def.base_url,
         "headers": def.headers,
+        "testPath": def.test_path,
         "methods": def.methods,
         "instances": instances,
         "simple": simple,
@@ -1922,7 +1941,7 @@ fn bind(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
 async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
     let client = require_instance(&space, args)?;
-    let path = opt_arg::<String>(args, "path")?.unwrap_or_default();
+    let path = opt_arg::<String>(args, "path")?.or_else(|| client.test_path.clone()).unwrap_or_default();
     let call = Call { method: Method::GET, path: &path, query: None, headers: None, body: None };
     let started = Instant::now();
     let result = perform(state, &client, &call).await;
@@ -1935,6 +1954,11 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             let message = match status {
                 200..=399 => format!("Le service répond ({status})."),
                 401 | 403 => format!("Le service refuse l’authentification ({status})."),
+                // La racine d’une API est souvent vide : le service est joignable, mais rien n’a été vérifié.
+                404 | 405 if path.is_empty() => format!(
+                    "Le service est joignable mais n’a rien à la racine ({status}). Indiquer un chemin de test, \
+                     par exemple /me, pour vérifier aussi l’authentification."
+                ),
                 _ => format!("Le service répond par une erreur ({status})."),
             };
             json!({ "ok": status < 400, "status": status, "durationMs": duration, "message": message })
@@ -2291,6 +2315,36 @@ mod tests {
 
     async fn save_client(state: &Arc<AppState>, client: Value) -> Value {
         invoke(state, "clients.save", json!({ "client": client })).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_test_button_reads_the_client_test_path_and_explains_an_empty_root() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let base = format!("{}/api", remote.origin);
+        let client = json!({ "id": "relais", "label": "Relais", "baseUrl": base, "auth": { "type": "none" } });
+        save_client(&state, client.clone()).await;
+
+        // Sans chemin de test, la racine : le service est joignable mais n’y a rien.
+        let tested = invoke(&state, "clients.test", json!({ "id": "relais" })).await.unwrap();
+        assert_eq!((tested["ok"].clone(), tested["status"].clone()), (json!(false), json!(404)));
+        assert!(tested["message"].as_str().unwrap().contains("chemin de test"), "{tested}");
+
+        // Avec un chemin de test, le bouton lit ce chemin.
+        let mut with_path = client.clone();
+        with_path["testPath"] = json!(" /texte ");
+        let saved = save_client(&state, with_path).await;
+        assert_eq!(saved["testPath"], json!("/texte"));
+        let tested = invoke(&state, "clients.test", json!({ "id": "relais" })).await.unwrap();
+        assert_eq!((tested["ok"].clone(), tested["status"].clone()), (json!(true), json!(200)));
+
+        // Un chemin de test ne sort pas de l’adresse de base.
+        for path in ["texte", "/../prive", "//ailleurs.example/x"] {
+            let mut wrong = client.clone();
+            wrong["testPath"] = json!(path);
+            let error = invoke(&state, "clients.save", json!({ "client": wrong })).await.unwrap_err();
+            assert!(error.message.contains("Chemin de test invalide"), "{path} : {}", error.message);
+        }
     }
 
     #[tokio::test]
