@@ -1,9 +1,7 @@
 /**
- * Erreurs rapportées par les cadres affichés. L’agent les lit (outil `check`) pour corriger ses pages. Le texte
- * d’une erreur d’exécution est écrit par le code de la page, qui tourne dans le même cadre que l’hôte qui la
- * rapporte : impossible de distinguer une vraie erreur d’une consigne déguisée. L’agent ne reçoit donc aucun texte
- * venu du cadre, seulement l’emplacement de l’erreur dans les fichiers du module ; il lit lui-même le code à cet
- * endroit. Les erreurs de compilation, elles, sont calculées par Alfred et rendues par `check` (`pages[].errors`).
+ * Erreurs rapportées par les cadres affichés, réduites à leur emplacement pour `check` (`runtimeErrors`). Le message
+ * et la pile, écrits par la page, vont au journal de la page (`frameLogs`), que l’agent lit par `page_logs`. Les
+ * erreurs de compilation, elles, sont calculées par Alfred et rendues par `check` (`pages[].errors`).
  */
 
 export interface FrameError {
@@ -12,7 +10,7 @@ export interface FrameError {
   file?: string;
   line?: number;
   column?: number;
-  /** Toujours vrai : le message, écrit par la page, n’est pas transmis. */
+  /** Toujours vrai : le message n’est pas dans `check`, il est dans le journal de la page (`page_logs`). */
   messageWithheld: true;
 }
 

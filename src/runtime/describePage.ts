@@ -363,3 +363,105 @@ export function describePage(root: Element = document.body): PageDescription {
   if (truncated) text = `${text.slice(0, MAX_CHARS)}\n…`;
   return { title: clean(root.ownerDocument.title), text, truncated };
 }
+
+export interface RegionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface RegionDescription {
+  /** Ancêtres de l’élément ciblé, du plus large au plus précis : balise, rôle et classes des composants. */
+  path: string[];
+  /** L’élément ciblé décrit comme `describePage` décrit la page. */
+  text: string;
+  truncated: boolean;
+}
+
+const MAX_REGION_CHARS = 6000;
+const MAX_REGION_ELEMENTS = 40;
+/** Points sondés par côté du cadre : assez pour toucher chaque ligne ou colonne d’un cadre moyen. */
+const SAMPLES = 7;
+
+function tagOf(element: Element): string {
+  const role = roleOf(element);
+  const classes = [...element.classList]
+    .slice(0, 3)
+    .map((name) => `.${name}`)
+    .join("");
+  // Un dialogue, une région ou un formulaire se reconnaît à son nom : « dialog "Trier la boîte" ».
+  const name = role && CONTAINER_ROLES.has(role) ? nameOf(element, role) : "";
+  return `${element.localName}${classes}${role ? ` [${role}${name ? ` ${quote(name)}` : ""}]` : ""}`;
+}
+
+/** Élément qui a du sens pour l’utilisateur au-dessus d’un nœud touché : contrôle, cellule, titre, élément de liste. */
+function meaningful(element: Element): Element {
+  let current: Element | null = element;
+  for (let depth = 0; current && depth < 6; depth += 1) {
+    const role = roleOf(current);
+    if (role && (LEAF_ROLES.has(role) || role === "listitem")) return current;
+    current = current.parentElement;
+  }
+  return element;
+}
+
+function commonAncestor(elements: Element[]): Element {
+  let common: Element | null = elements[0] ?? document.body;
+  for (const element of elements.slice(1)) {
+    while (common && !common.contains(element)) common = common.parentElement;
+  }
+  return common ?? document.body;
+}
+
+/**
+ * Éléments que l’utilisateur a encadrés dans la fenêtre du cadre (coordonnées de la partie visible) : ceux du dessus
+ * (un dialogue ouvert passe avant la page derrière lui), sondés sur une grille de points à l’intérieur du cadre.
+ */
+export function describeRegion(rect: RegionRect): RegionDescription {
+  const touched = new Set<Element>();
+  for (let column = 0; column < SAMPLES; column += 1) {
+    for (let row = 0; row < SAMPLES; row += 1) {
+      const x = rect.x + (rect.width * (column + 0.5)) / SAMPLES;
+      const y = rect.y + (rect.height * (row + 0.5)) / SAMPLES;
+      const top = document.elementFromPoint(x, y);
+      if (!top || top === document.documentElement || top === document.body) continue;
+      touched.add(meaningful(top));
+    }
+  }
+  // Un contrôle désactivé ignore le pointeur (`pointer-events: none`) : on retient aussi ceux dont le centre est dans
+  // le cadre, pris dans la couche du dessus (le dialogue ouvert s’il y en a un, sinon la page).
+  const first = [...touched][0];
+  const layer = first?.closest("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]") ?? document.body;
+  for (const candidate of layer.querySelectorAll("*")) {
+    const role = roleOf(candidate);
+    if (!role || !LEAF_ROLES.has(role) || isHidden(candidate)) continue;
+    const box = candidate.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) continue;
+    const centerX = box.left + box.width / 2;
+    const centerY = box.top + box.height / 2;
+    if (centerX >= rect.x && centerX <= rect.x + rect.width && centerY >= rect.y && centerY <= rect.y + rect.height)
+      touched.add(candidate);
+  }
+  // Le plus précis l’emporte : un élément qui en contient un autre touché n’est pas répété.
+  const hits = [...touched]
+    .filter((element) => ![...touched].some((other) => other !== element && element.contains(other)))
+    .sort((left, right) => (left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  const container = hits.length ? commonAncestor(hits) : document.body;
+  const path: string[] = [];
+  for (let current: Element | null = container; current && current !== document.documentElement; ) {
+    path.unshift(tagOf(current));
+    current = current.parentElement;
+  }
+  const lines = hits.slice(0, MAX_REGION_ELEMENTS).map((element) => {
+    const role = roleOf(element);
+    if (role) return line(role, element);
+    const text = textOf(element);
+    return text ? `text ${quote(text)}` : tagOf(element);
+  });
+  if (hits.length > MAX_REGION_ELEMENTS) lines.push(`… ${hits.length - MAX_REGION_ELEMENTS} éléments de plus`);
+  let text = lines.join("\n");
+  const truncated = text.length > MAX_REGION_CHARS;
+  if (truncated) text = `${text.slice(0, MAX_REGION_CHARS)}\n…`;
+  return { path: path.slice(-12), text, truncated };
+}

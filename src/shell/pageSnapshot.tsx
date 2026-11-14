@@ -137,8 +137,13 @@ function waitTarget(reference: string, timeout: number): Promise<Target> {
 
 let sequence = 0;
 
-/** Décrit ce que montre la page `reference` ; la charge hors de la vue si elle n’est pas affichée. */
-export async function capturePage(reference: string, timeout = 12_000): Promise<PageSnapshot> {
+/** Charge la page si besoin, lui envoie `name` et rend sa réponse ; `displayed` dit si elle était à l’écran. */
+async function askFrame(
+  reference: string,
+  name: "describe" | "screenshot" | "inspect",
+  extra: Record<string, unknown>,
+  timeout: number,
+): Promise<{ located: NonNullable<ReturnType<typeof findPage>>; displayed: boolean; answer: Record<string, unknown> }> {
   const located = findPage(useShell.getState().snapshot, reference);
   if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace.`);
   const visible = [...targets].find((target) => target.reference === reference && !target.hidden);
@@ -167,20 +172,92 @@ export async function capturePage(reference: string, timeout = 12_000): Promise<
         current.waiting.delete(id);
         resolve(answer);
       });
-      current.post({ alfred: ALFRED_MESSAGE, kind: "event", name: "describe", payload: { id } });
+      current.post({ alfred: ALFRED_MESSAGE, kind: "event", name, payload: { id, ...extra } });
     });
-    const answer = (payload ?? {}) as Record<string, unknown>;
-    return {
-      page: reference,
-      title: located.page.title,
-      displayed: visible !== undefined,
-      text: bounded(answer.text, MAX_TEXT),
-      truncated: answer.truncated === true || (typeof answer.text === "string" && answer.text.length > MAX_TEXT),
-      runtimeError: frameErrors.get(reference) ?? null,
-    };
+    return { located, displayed: visible !== undefined, answer: (payload ?? {}) as Record<string, unknown> };
   } finally {
     if (token) setHidden(hiddenPages.filter((item) => item.token !== token));
   }
+}
+
+/** Décrit ce que montre la page `reference` ; la charge hors de la vue si elle n’est pas affichée. */
+export async function capturePage(reference: string, timeout = 12_000): Promise<PageSnapshot> {
+  const { located, displayed, answer } = await askFrame(reference, "describe", {}, timeout);
+  return {
+    page: reference,
+    title: located.page.title,
+    displayed,
+    text: bounded(answer.text, MAX_TEXT),
+    truncated: answer.truncated === true || (typeof answer.text === "string" && answer.text.length > MAX_TEXT),
+    runtimeError: frameErrors.get(reference) ?? null,
+  };
+}
+
+export interface PageScreenshotResult {
+  page: string;
+  title: string;
+  displayed: boolean;
+  /** PNG en base64. */
+  data: string;
+  mimeType: "image/png";
+  width: number;
+  height: number;
+  clipped: boolean;
+  runtimeError: unknown;
+}
+
+/** Plus grande image acceptée d’un cadre (base64) : au-delà, le cadre ment ou la page est démesurée. */
+const MAX_IMAGE = 12_000_000;
+
+/** Image de la page `reference`, dessinée par son cadre ; la charge hors de la vue si elle n’est pas affichée. */
+export async function screenshotPage(
+  reference: string,
+  options: { fullPage?: boolean } = {},
+  timeout = 15_000,
+): Promise<PageScreenshotResult> {
+  const { located, displayed, answer } = await askFrame(
+    reference,
+    "screenshot",
+    { fullPage: options.fullPage === true },
+    timeout,
+  );
+  if (typeof answer.error === "string") throw new Error(`Capture impossible : ${bounded(answer.error, 500)}`);
+  const image = (answer.image ?? {}) as Record<string, unknown>;
+  const data = typeof image.data === "string" ? image.data : "";
+  if (!data || data.length > MAX_IMAGE || !/^[A-Za-z0-9+/]+=*$/.test(data)) {
+    throw new Error("La page n’a pas rendu d’image valide.");
+  }
+  const size = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0);
+  return {
+    page: reference,
+    title: located.page.title,
+    displayed,
+    data,
+    mimeType: "image/png",
+    width: size(image.width),
+    height: size(image.height),
+    clipped: image.clipped === true,
+    runtimeError: frameErrors.get(reference) ?? null,
+  };
+}
+
+export interface PageRegion {
+  /** Ancêtres de l’élément encadré, du plus large au plus précis. */
+  path: string[];
+  text: string;
+  truncated: boolean;
+}
+
+/** Décrit l’élément que l’utilisateur a encadré sur la page affichée (coordonnées de la partie visible du cadre). */
+export async function inspectRegion(
+  reference: string,
+  rect: { x: number; y: number; width: number; height: number },
+  timeout = 5_000,
+): Promise<PageRegion> {
+  const { answer } = await askFrame(reference, "inspect", { rect }, timeout);
+  const region = (answer.region ?? {}) as Record<string, unknown>;
+  const path = Array.isArray(region.path) ? region.path.slice(0, 12).map((item) => bounded(item, 200)) : [];
+  return { path, text: bounded(region.text, 8000), truncated: region.truncated === true };
 }
 
 /** Cadres invisibles des captures en cours : hors de la vue, sans focus, ignorés des lecteurs d’écran. */

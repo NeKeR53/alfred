@@ -8,7 +8,8 @@ import { EmptyState } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { frameShortcut, isShellShortcut } from "../sdk/protocol";
-import { describePage } from "./describePage";
+import { describePage, describeRegion } from "./describePage";
+import { screenshotPage } from "./screenshotPage";
 import { sealNetwork } from "./sealNetwork";
 
 sealNetwork();
@@ -141,7 +142,126 @@ onShellEvent("describe", (payload) => {
   emitToShell("description", { id, ...describePage() });
 });
 
-window.addEventListener("error", (event) => report("runtime", event.error ?? event.message));
+// Élément encadré par l’utilisateur (« Corriger un élément ») : ce qu’il contient et où il se trouve dans la page.
+onShellEvent("inspect", (payload) => {
+  const request = (payload ?? {}) as { id?: unknown; rect?: unknown };
+  const rect = request.rect as Record<string, unknown> | undefined;
+  if (typeof request.id !== "string" || !rect) return;
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  emitToShell("description", {
+    id: request.id,
+    region: describeRegion({
+      x: number(rect.x),
+      y: number(rect.y),
+      width: number(rect.width),
+      height: number(rect.height),
+    }),
+  });
+});
+
+// Capture en image pour l’agent (outil `page_screenshot`) : le cadre se dessine lui-même.
+onShellEvent("screenshot", (payload) => {
+  const request = (payload ?? {}) as { id?: unknown; fullPage?: unknown };
+  const id = request.id;
+  if (typeof id !== "string") return;
+  screenshotPage({ fullPage: request.fullPage === true }).then(
+    (image) => emitToShell("description", { id, image }),
+    (error: unknown) =>
+      emitToShell("description", { id, error: error instanceof Error ? error.message : String(error) }),
+  );
+});
+
+/** Message et pile : WebKit ne met pas le message dans `stack`. */
+function errorText(error: Error): string {
+  const head = `${error.name}: ${error.message}`;
+  if (!error.stack) return head;
+  return error.stack.startsWith(head) ? error.stack : `${head}\n${error.stack}`;
+}
+
+// Console de la page : chaque ligne part aussi au journal de la page, que l’agent lit (outil `page_logs`).
+function formatArgument(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return errorText(value);
+  if (value === undefined || typeof value === "function" || typeof value === "symbol") return String(value);
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === "bigint") return item.toString();
+      if (typeof item === "object" && item !== null) {
+        if (seen.has(item)) return "[circulaire]";
+        seen.add(item);
+      }
+      return item;
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+for (const level of ["debug", "log", "info", "warn", "error"] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    original(...args);
+    try {
+      emitToShell("log", { level, text: args.map(formatArgument).join(" ").slice(0, 8000) });
+    } catch {
+      // Le journal ne doit jamais casser la page.
+    }
+  };
+}
+
+// Le cadre a une origine opaque : une exception levée dans un minuteur ou un écouteur n’arrive à `window.onerror`
+// que sous la forme « Script error. ». Les rappels sont donc enveloppés pour rapporter l’erreur elle-même.
+let reportedAt = 0;
+function guard<Args extends unknown[], Result>(callback: (...args: Args) => Result) {
+  return function (this: unknown, ...args: Args): Result {
+    try {
+      return callback.apply(this, args);
+    } catch (error) {
+      reportedAt = Date.now();
+      report("runtime", error);
+      throw error;
+    }
+  };
+}
+const nativeSetTimeout = window.setTimeout.bind(window);
+const nativeSetInterval = window.setInterval.bind(window);
+const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+window.setTimeout = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
+  nativeSetTimeout(
+    typeof handler === "function" ? guard(handler as (...args: unknown[]) => unknown) : handler,
+    timeout,
+    ...rest,
+  )) as typeof window.setTimeout;
+window.setInterval = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
+  nativeSetInterval(
+    typeof handler === "function" ? guard(handler as (...args: unknown[]) => unknown) : handler,
+    timeout,
+    ...rest,
+  )) as typeof window.setInterval;
+window.requestAnimationFrame = (callback) => nativeRequestAnimationFrame(guard(callback));
+const wrappedListeners = new WeakMap<(...args: never[]) => unknown, EventListener>();
+const nativeAdd = EventTarget.prototype.addEventListener;
+const nativeRemove = EventTarget.prototype.removeEventListener;
+EventTarget.prototype.addEventListener = function (type, listener, options) {
+  if (typeof listener !== "function") return nativeAdd.call(this, type, listener, options);
+  let wrapped = wrappedListeners.get(listener);
+  if (!wrapped) {
+    wrapped = guard(listener);
+    wrappedListeners.set(listener, wrapped);
+  }
+  return nativeAdd.call(this, type, wrapped, options);
+};
+EventTarget.prototype.removeEventListener = function (type, listener, options) {
+  const wrapped = typeof listener === "function" ? wrappedListeners.get(listener) : undefined;
+  return nativeRemove.call(this, type, wrapped ?? listener, options);
+};
+
+window.addEventListener("error", (event) => {
+  // Déjà rapportée, avec son message, par le rappel enveloppé.
+  if (!event.error && Date.now() - reportedAt < 1000) return;
+  report("runtime", event.error ?? event.message);
+});
 window.addEventListener("unhandledrejection", (event) => report("runtime", event.reason));
 // Le contexte complet (accent compris) arrive dès que la coquille répond.
 void request<PageContext & { accent?: string | null }>("shell.context").then(applyTheme, () => undefined);

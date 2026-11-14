@@ -19,7 +19,7 @@ Le cadre d’une page est recréé quand l’utilisateur change d’onglet et ch
 
 ## 2. Contrat d’une page et d’une fonction
 
-Une page (`pages/<id>.tsx`) exporte par défaut un composant sans props, qui rend `Page` à la racine. Une erreur de compilation la remplace par « Cette page ne compile pas », une exception au rendu par « Cette page a rencontré une erreur » ; l’agent les retrouve dans `check`, comme une promesse rejetée que personne n’attrape : erreur de compilation avec son message, erreur d’exécution par son seul emplacement (le texte d’une exception n’est jamais transmis à l’agent).
+Une page (`pages/<id>.tsx`) exporte par défaut un composant sans props, qui rend `Page` à la racine. Une erreur de compilation la remplace par « Cette page ne compile pas », une exception au rendu par « Cette page a rencontré une erreur » ; l’agent les retrouve dans `check`, comme une promesse rejetée que personne n’attrape : erreur de compilation avec son message, erreur d’exécution par son emplacement ; le message, la pile et toute la console de la page (`console.log`…) sont dans l’outil `page_logs`.
 
 Une fonction (`functions/<id>.ts`) exporte par défaut une fonction asynchrone qui reçoit l’entrée et renvoie une valeur sérialisable en JSON (`undefined` devient `null`). Une exception devient une erreur pour l’appelant, avec son message.
 
@@ -231,7 +231,7 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 - `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes`.
 - `auth.secret` (entrée du coffre) : ne le passe jamais, l’utilisateur la choisit ; `declare_client` garde celle qu’il a reliée. `headers` : en-têtes fixes, jamais d’authentification.
 
-Un client déclaré ou modifié par l’agent est « à valider » : l’utilisateur l’ouvre dans Réglages, onglet Clients, et le valide avant qu’il serve ; il saisit le secret dans Réglages, onglet Coffre.
+Un client déclaré ou modifié par l’agent est « à valider » : l’agent range son secret avec `vault_store`, le relie (`auth.secret`), le valide avec `validate_client`, puis accorde l’accès à la page avec `grant_access` (voir AGENTS.md).
 
 ## 7. IA
 

@@ -128,7 +128,7 @@ async fn chaque_authentification_valide_accordee_sans_fuite() {
     assert_eq!(declared["status"], json!("toValidate"));
     let asked_before = desk.ui.asked_resources().len();
     let refused = page.request("agenda", json!({ "path": "/echo" })).await.unwrap_err();
-    assert!(refused.contains("valider"), "{refused}");
+    assert!(refused.contains("pas validé"), "{refused}");
     assert_eq!(desk.ui.asked_resources().len(), asked_before, "pas d’accord demandé pour un client non validé");
     let requests_before = remote.requests();
 
@@ -147,7 +147,7 @@ async fn chaque_authentification_valide_accordee_sans_fuite() {
     let file = desk.read("clients/agenda.json").unwrap();
     desk.write("clients/agenda.json", &file.replace("/api", "/ailleurs"));
     assert_eq!(status_of(&desk.invoke("clients.list", json!({})).await, "agenda"), "toValidate");
-    assert!(page.request("agenda", json!({ "path": "/echo" })).await.unwrap_err().contains("valider"));
+    assert!(page.request("agenda", json!({ "path": "/echo" })).await.unwrap_err().contains("pas validé"));
     assert_eq!(remote.requests(), requests_before + 1, "rien n’est parti vers la nouvelle adresse");
 
     // Une page ne sort pas de l’adresse de base du client.

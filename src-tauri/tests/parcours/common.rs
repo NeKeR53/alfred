@@ -185,6 +185,7 @@ impl Ui {
         self.permission_answers.lock().unwrap().extend(answers.iter().copied());
     }
 
+    #[allow(dead_code)]
     pub fn answer_question(&self, answer: Value) {
         self.question_answers.lock().unwrap().push_back(answer);
     }

@@ -447,7 +447,7 @@ pub fn ensure_trusted(state: &AppState, client: &Client) -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::new(format!(
-        "Le client « {} » a été créé ou modifié hors des Réglages : l’ouvrir dans Réglages, onglet Clients, et le valider.",
+        "Le client « {} » n’est pas validé dans son état actuel : l’agent le valide avec `validate_client`, ou l’utilisateur dans Réglages, onglet Clients.",
         client.label
     )))
 }
@@ -1129,6 +1129,17 @@ fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             client.label
         )));
     }
+    record_trust(state, &space, &client)?;
+    state.emit("clients:changed", json!({ "client": client.id }));
+    Ok(describe(state, &client, &[]))
+}
+
+/// Validation par l’agent, à la demande de l’utilisateur qui lui a confié le réglage : le client est approuvé tel que
+/// son fichier le décrit aujourd’hui. Toute modification ultérieure le remettra « à valider ».
+pub fn validate_by_agent(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
+    let space = state.space()?;
+    let client = require(&space, id)?;
+    client.validate()?;
     record_trust(state, &space, &client)?;
     state.emit("clients:changed", json!({ "client": client.id }));
     Ok(describe(state, &client, &[]))
@@ -2039,14 +2050,14 @@ mod tests {
         // L’agent détourne l’adresse dans le fichier : plus rien ne part, ni vers l’ancienne ni vers la nouvelle.
         agent_edits(&state, "api", |file| file["baseUrl"] = json!(format!("{}/api", elsewhere.origin)));
         let error = request(&state, &subject, "api", json!({ "path": "/echo" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages") && error.message.contains("valider"), "{}", error.message);
+        assert!(error.message.contains("pas validé") && error.message.contains("validate_client"), "{}", error.message);
         let tested = invoke(&state, "clients.test", json!({ "id": "api", "path": "/echo" })).await.unwrap();
         assert_eq!(tested["ok"], json!(false));
-        assert!(tested["message"].as_str().unwrap().contains("hors des Réglages"));
+        assert!(tested["message"].as_str().unwrap().contains("pas validé"));
         assert_eq!(remote.seen_paths().len(), 1);
         assert!(elsewhere.seen_paths().is_empty(), "le secret est parti vers l’adresse non validée");
         assert!(journal_lines(&state).iter().any(|line| {
-            line["status"] == json!("error") && line["summary"].as_str().unwrap().contains("hors des Réglages")
+            line["status"] == json!("error") && line["summary"].as_str().unwrap().contains("pas validé")
         }));
 
         // Les Réglages montrent ce qui a changé, avant et après.
@@ -2083,7 +2094,7 @@ mod tests {
             let before = std::fs::read_to_string(state.space().unwrap().root.join("clients/api.json")).unwrap();
             agent_edits(&state, "api", change);
             let error = request(&state, &subject, "api", json!({ "path": "/echo" })).await.unwrap_err();
-            assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+            assert!(error.message.contains("pas validé"), "{}", error.message);
             std::fs::write(state.space().unwrap().root.join("clients/api.json"), before).unwrap();
         }
         // Un changement sans effet sur la destination du secret (le libellé) ne demande rien.
@@ -2099,7 +2110,7 @@ mod tests {
         grant(&state, &subject, "machine");
         agent_edits(&state, "machine", |file| file["auth"]["tokenUrl"] = json!(format!("{}/token", elsewhere.origin)));
         let error = request(&state, &subject, "machine", json!({ "path": "/protected" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("pas validé"), "{}", error.message);
         assert!(elsewhere.state.token_requests.lock().unwrap().is_empty());
         assert!(remote.state.token_requests.lock().unwrap().is_empty());
 

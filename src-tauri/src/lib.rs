@@ -1,3 +1,4 @@
+mod agent_setup;
 mod agents;
 mod app_db;
 mod clients;
