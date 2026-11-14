@@ -5,6 +5,7 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut }
 import { type FrameIdentity, frameContext, handleFrameRequest, onSelectionChange, registerPeer } from "./frameBridge";
 import { frameErrors, sanitizeFrameError } from "./frameErrors";
 import { frameKey } from "./frameKeys";
+import { addFrameConsole, addFrameErrorLog, addFrameLog } from "./frameLogs";
 import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
 
@@ -69,8 +70,12 @@ export function PageFrame({
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
       const message = event.data;
       if (message.kind === "event") {
-        if (message.name === "error")
+        if (message.name === "error") {
           frameErrors.set(identity.reference, sanitizeFrameError(message.payload, identity.module));
+          addFrameErrorLog(identity.reference, message.payload);
+        }
+        if (message.name === "log") addFrameConsole(identity.reference, message.payload);
+        if (message.name === "ready") addFrameLog(identity.reference, "info", "Page chargée.");
         // Une page en échec se décrit aussi (son message d’erreur) : elle est prête pour une capture.
         if (message.name === "ready" || message.name === "error") snapshot.ready();
         if (message.name === "description") snapshot.receive(message.payload);
@@ -83,9 +88,23 @@ export function PageFrame({
         return;
       }
       if (message.kind !== "request") return;
-      handleFrameRequest(identity, message.method, (message.params ?? {}) as Record<string, unknown>).then(
-        (result) => post({ alfred: ALFRED_MESSAGE, kind: "response", id: message.id, result }),
-        (error: unknown) =>
+      const params = (message.params ?? {}) as Record<string, unknown>;
+      const started = Date.now();
+      handleFrameRequest(identity, message.method, params).then(
+        (result) => {
+          // Les échanges internes de la coquille (contexte, sélection) ne disent rien de la page.
+          if (!message.method.startsWith("shell."))
+            addFrameLog(identity.reference, "request", describeRequest(message.method, params, result, started));
+          post({ alfred: ALFRED_MESSAGE, kind: "response", id: message.id, result });
+        },
+        (error: unknown) => {
+          addFrameLog(
+            identity.reference,
+            "request",
+            `${describeCall(message.method, params)} → échec (${Date.now() - started} ms) : ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
           post({
             alfred: ALFRED_MESSAGE,
             kind: "response",
@@ -94,7 +113,8 @@ export function PageFrame({
               message: error instanceof Error ? error.message : String(error),
               detail: (error as { detail?: unknown })?.detail,
             },
-          }),
+          });
+        },
       );
     };
     window.addEventListener("message", onMessage);
@@ -131,4 +151,20 @@ export function PageFrame({
       referrerPolicy="no-referrer"
     />
   );
+}
+
+/** Résumé d’une requête d’une page, pour son journal : méthode et cible, sans le corps. */
+function describeCall(method: string, params: Record<string, unknown>): string {
+  if (method === "clients.request") {
+    return `${method} ${String(params.client ?? "?")} ${String(params.method ?? "GET")} ${String(params.path ?? "")}`;
+  }
+  if (method === "functions.call") return `${method} ${String(params.function ?? "?")}`;
+  if (method === "db.query" || method === "db.execute") return `${method} ${String(params.sql ?? "").slice(0, 200)}`;
+  return method;
+}
+
+function describeRequest(method: string, params: Record<string, unknown>, result: unknown, started: number): string {
+  const status = (result as { status?: unknown } | null)?.status;
+  const outcome = typeof status === "number" ? `HTTP ${status}` : "ok";
+  return `${describeCall(method, params)} → ${outcome} (${Date.now() - started} ms)`;
 }

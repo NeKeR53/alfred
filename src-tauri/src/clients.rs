@@ -780,7 +780,7 @@ pub fn ensure_trusted(state: &AppState, client: &Client) -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::new(format!(
-        "Le client « {} » a été créé ou modifié hors des Réglages : l’ouvrir dans Réglages, onglet Clients, et le valider.",
+        "Le client « {} » n’est pas validé dans son état actuel : l’agent le valide avec `validate_client`, ou l’utilisateur dans Réglages, onglet Clients.",
         client.label
     )))
 }
@@ -1644,11 +1644,17 @@ fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResu
     }
     let mut previously_trusted =
         existing.as_ref().map(|old| trusted_instances(state, &space, old)).unwrap_or_default();
-    match (&existing, carried) {
-        // L’agent redéclare un client existant : les instances, leurs adresses et leurs entrées du coffre restent.
-        (Some(old), _) if !validated => def.instances = old.instances.clone(),
-        (Some(old), false) => def.instances = old.instances.clone(),
-        (None, false) if !def.base_url.is_empty() => {
+    // Instances reçues : celle de la forme simple, ou la liste `instances` que l’agent déclare.
+    let incoming = std::mem::take(&mut def.instances);
+    let received = carried || !incoming.is_empty();
+    match &existing {
+        // L’utilisateur enregistre la forme simple : il a vu l’instance entière.
+        Some(_) if validated && carried => def.instances = incoming,
+        // Les autres instances du fichier restent ; celles reçues les complètent ou les remplacent, en gardant
+        // l’entrée du coffre déjà reliée quand elles n’en nomment pas.
+        Some(old) => def.instances = merge_instances(&old.instances, incoming),
+        None if received => def.instances = incoming,
+        None if !def.base_url.is_empty() => {
             // Un nouveau client à adresse fixe naît avec son instance, à relier à une entrée du coffre.
             def.instances = vec![Instance {
                 id: DEFAULT_INSTANCE.to_string(),
@@ -1658,12 +1664,11 @@ fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResu
             // Créée avec le client par l’utilisateur, elle n’a rien qu’il n’ait vu.
             previously_trusted.push(DEFAULT_INSTANCE.to_string());
         }
-        (None, false) => def.instances.clear(),
-        _ => {}
+        None => {}
     }
-    // L’instance reçue avec le client est vérifiée comme une instance des Réglages ; celles gardées du fichier
+    // Une instance reçue avec le client est vérifiée comme une instance des Réglages ; celles gardées du fichier
     // existant montrent leurs problèmes dans la liste.
-    if carried {
+    if received {
         for instance in &def.instances {
             let client = def.resolve_instance(instance)?;
             if validated {
@@ -1691,6 +1696,24 @@ fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResu
     git::commit_all(&space.root, &message)?;
     state.emit("clients:changed", json!({ "client": def.id }));
     Ok(describe(state, &def, &[]))
+}
+
+/// Instances du fichier complétées par celles reçues (même identifiant : remplacée ; sinon ajoutée à la fin). Une
+/// instance reçue sans entrée du coffre garde celle qui était reliée.
+fn merge_instances(old: &[Instance], incoming: Vec<Instance>) -> Vec<Instance> {
+    let mut merged = old.to_vec();
+    for mut instance in incoming {
+        match merged.iter_mut().find(|known| known.id == instance.id) {
+            Some(known) => {
+                if instance.secret.is_none() {
+                    instance.secret = known.secret.take();
+                }
+                *known = instance;
+            }
+            None => merged.push(instance),
+        }
+    }
+    merged
 }
 
 /// Ajout ou modification d’une instance depuis les Réglages : l’utilisateur saisit son adresse et choisit son
@@ -1812,6 +1835,26 @@ fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
                 def.label
             )));
         }
+        approved.push(client);
+    }
+    for client in &approved {
+        record_trust(state, &space, client)?;
+    }
+    state.emit("clients:changed", json!({ "client": def.id }));
+    Ok(describe(state, &def, &[]))
+}
+
+/// Validation par l’agent, à la demande de l’utilisateur qui lui a confié le réglage : le client est approuvé tel que
+/// son fichier le décrit aujourd’hui. Toute modification ultérieure le remettra « à valider ».
+pub fn validate_by_agent(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
+    let space = state.space()?;
+    let def = require(&space, id)?;
+    def.validate_definition()?;
+    // Toutes les instances, telles que le fichier les décrit : une instance invalide empêche la validation.
+    let mut approved = Vec::new();
+    for instance in &def.instances {
+        let client = def.resolve_instance(instance)?;
+        client.validate()?;
         approved.push(client);
     }
     for client in &approved {
@@ -2773,14 +2816,14 @@ mod tests {
         // L’agent détourne l’adresse dans le fichier : plus rien ne part, ni vers l’ancienne ni vers la nouvelle.
         agent_edits(&state, "api", |file| file["baseUrl"] = json!(format!("{}/api", elsewhere.origin)));
         let error = request(&state, &subject, "api", json!({ "path": "/echo" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages") && error.message.contains("valider"), "{}", error.message);
+        assert!(error.message.contains("pas validé") && error.message.contains("validate_client"), "{}", error.message);
         let tested = invoke(&state, "clients.test", json!({ "id": "api", "path": "/echo" })).await.unwrap();
         assert_eq!(tested["ok"], json!(false));
-        assert!(tested["message"].as_str().unwrap().contains("hors des Réglages"));
+        assert!(tested["message"].as_str().unwrap().contains("pas validé"));
         assert_eq!(remote.seen_paths().len(), 1);
         assert!(elsewhere.seen_paths().is_empty(), "le secret est parti vers l’adresse non validée");
         assert!(journal_lines(&state).iter().any(|line| {
-            line["status"] == json!("error") && line["summary"].as_str().unwrap().contains("hors des Réglages")
+            line["status"] == json!("error") && line["summary"].as_str().unwrap().contains("pas validé")
         }));
 
         // Les Réglages montrent ce qui a changé, avant et après.
@@ -2817,7 +2860,7 @@ mod tests {
             let before = std::fs::read_to_string(state.space().unwrap().root.join("clients/api.json")).unwrap();
             agent_edits(&state, "api", change);
             let error = request(&state, &subject, "api", json!({ "path": "/echo" })).await.unwrap_err();
-            assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+            assert!(error.message.contains("pas validé"), "{}", error.message);
             std::fs::write(state.space().unwrap().root.join("clients/api.json"), before).unwrap();
         }
         // Un changement sans effet sur la destination du secret (le libellé) ne demande rien.
@@ -2833,7 +2876,7 @@ mod tests {
         grant(&state, &subject, "machine");
         agent_edits(&state, "machine", |file| file["auth"]["tokenUrl"] = json!(format!("{}/token", elsewhere.origin)));
         let error = request(&state, &subject, "machine", json!({ "path": "/protected" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("pas validé"), "{}", error.message);
         assert!(elsewhere.state.token_requests.lock().unwrap().is_empty());
         assert!(remote.state.token_requests.lock().unwrap().is_empty());
 
@@ -3030,7 +3073,7 @@ mod tests {
         agent_edits(&state, "jira", |file| file["instances"][1]["url"] = json!(format!("{}/ailleurs", acme.origin)));
         let error =
             request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "autre" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("n’est pas validé"), "{}", error.message);
         request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap();
         assert_eq!(autre.seen_paths().len(), sent);
         let client = listed(&invoke(&state, "clients.list", json!({})).await.unwrap(), "jira");
@@ -3081,7 +3124,7 @@ mod tests {
         });
         let error =
             request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "acme" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("n’est pas validé"), "{}", error.message);
     }
 
     /// Une section par instance : elle attend le client et ses instances, puis apparaît une fois par instance, et
@@ -3172,5 +3215,54 @@ mod tests {
         invoke(&state, "clients.deleteInstance", json!({ "client": "jira", "instance": "autre" })).await.unwrap();
         let ids: Vec<String> = sections(&space).into_iter().map(|section| section.id).collect();
         assert_eq!(ids, ["jira/principal@acme"]);
+    }
+
+    /// L’agent autonome déclare lui-même les instances et leur entrée du coffre, puis les valide ; une redéclaration
+    /// sans secret garde celui qui était relié, et ne touche pas aux instances qu’elle ne nomme pas.
+    #[tokio::test]
+    async fn an_agent_declares_and_validates_the_instances_of_a_client() {
+        let (state, _dir) = test_state();
+        let (acme, autre) = (remote().await, remote().await);
+        let subject = page_subject("crm");
+        let (acme_id, autre_id) = (unique("acme"), unique("autre"));
+        for (id, value) in [(&acme_id, TOKEN), (&autre_id, "j3ton-AUTRE")] {
+            invoke(&state, "vault.save", json!({ "id": id, "label": id, "kind": "token", "secrets": { "value": value } }))
+                .await
+                .unwrap();
+        }
+        let declare = |instances: Value| {
+            json!({ "client": { "id": "jira", "label": "Jira",
+                "methods": [{ "id": "pat", "label": "PAT", "type": "bearer" }], "instances": instances } })
+        };
+        let declared = invoke(
+            &state,
+            "clients.declare",
+            declare(json!([
+                { "id": "acme", "label": "Acme", "url": acme.origin, "method": "pat", "secret": acme_id },
+                { "id": "autre", "label": "Autre", "url": autre.origin, "method": "pat", "secret": autre_id },
+            ])),
+        )
+        .await
+        .unwrap();
+        assert_eq!(declared["status"], json!("toValidate"));
+        let validated = validate_by_agent(&state, "jira").unwrap();
+        assert_eq!(validated["status"], json!("ready"));
+        grant(&state, &subject, "jira");
+        request(&state, &subject, "jira", json!({ "path": "/api/echo", "instance": "autre" })).await.unwrap();
+        assert_eq!(autre.last().headers["authorization"], "Bearer j3ton-AUTRE");
+
+        // Redéclarer une seule instance, sans secret : l’entrée reliée reste, l’autre instance aussi.
+        invoke(&state, "clients.declare", declare(json!([{ "id": "acme", "label": "Acme SA", "url": acme.origin, "method": "pat" }])))
+            .await
+            .unwrap();
+        let def = load(&state.space().unwrap(), "jira").unwrap().unwrap();
+        let kept: Vec<(&str, &str, Option<&str>)> = def
+            .instances
+            .iter()
+            .map(|instance| (instance.id.as_str(), instance.label.as_str(), instance.secret.as_deref()))
+            .collect();
+        assert_eq!(kept, [("acme", "Acme SA", Some(acme_id.as_str())), ("autre", "Autre", Some(autre_id.as_str()))]);
+        request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap();
+        assert_eq!(acme.last().headers["authorization"], format!("Bearer {TOKEN}"));
     }
 }

@@ -335,7 +335,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 280px;
+  max-height: min(70vh, 640px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -355,6 +355,13 @@
   font-size: var(--font-size-secondary);
 }
 .agent-chat__tool-output {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 0;
+  font-family: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 320px;
@@ -620,15 +627,9 @@ button.agent-chat__change-file:hover {
 .agents-page__body > .info-panel {
   flex: none;
 }
-.agent-changes__files {
-  margin: 4px 0 0;
-  padding: 0 0 0 22px;
-  list-style: none;
-}
-.agent-changes__files li {
-  overflow: hidden;
-  color: var(--color-muted);
-  text-overflow: ellipsis;
+.agent-changes__lines {
+  flex: none;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 /* Images jointes ou produites : vignettes carrées arrondies, comme les pièces jointes des messages de OneApp. */

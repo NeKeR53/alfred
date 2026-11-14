@@ -74,7 +74,7 @@ fn unavailable() -> AppError {
 
 /// Chemin de recherche des programmes. Une application lancée depuis le Finder ou le menu Démarrer n’hérite pas du
 /// PATH du terminal, où sont installés les CLI : on y ajoute celui du shell de connexion et les dossiers usuels.
-fn search_path() -> &'static str {
+pub(crate) fn search_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
         let separator = if cfg!(windows) { ';' } else { ':' };

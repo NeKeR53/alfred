@@ -7,8 +7,10 @@ import { ConfirmDialog } from "@alfred/ui";
 import { useEffect, useState } from "react";
 import { invoke, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
+import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
 import { callFunction } from "./functionHost";
-import { capturePage, SnapshotFrames } from "./pageSnapshot";
+import { notify } from "./notifications";
+import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
 
 interface PermissionRequest {
@@ -52,6 +54,10 @@ function bind() {
       .map(([page, error]) => ({ page, ...error }));
     void resolve(request.requestId, errors);
   });
+  onNativeEvent("agent:pageLogs", (payload) => {
+    const request = payload as FrameLogQuery & { requestId: string };
+    void resolve(request.requestId, readFrameLogs(request));
+  });
   onNativeEvent("agent:pageSnapshot", async (payload) => {
     const request = payload as { requestId: string; page: string };
     // Une seule interface capture la page, même si plusieurs fenêtres sont ouvertes.
@@ -61,6 +67,20 @@ function bind() {
       (snapshot) => resolve(request.requestId, snapshot),
       (error) => reject(request.requestId, error),
     );
+  });
+  onNativeEvent("agent:pageScreenshot", async (payload) => {
+    const request = payload as { requestId: string; page: string; fullPage?: boolean };
+    const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
+    if (!claimed) return;
+    screenshotPage(request.page, { fullPage: request.fullPage === true }).then(
+      (image) => resolve(request.requestId, image),
+      (error) => reject(request.requestId, error),
+    );
+  });
+  // Réglages faits par l’agent (coffre, validation d’un client, accord d’accès) : l’utilisateur en est informé.
+  onNativeEvent("agent:notice", (payload) => {
+    const notice = payload as { title: string; description?: string };
+    notify({ title: notice.title, description: notice.description, tone: "info", source: "Agent" });
   });
   onNativeEvent("permission:ask", (payload) => {
     const request = payload as PermissionRequest;

@@ -19,7 +19,7 @@ Le cadre d’une page est recréé quand l’utilisateur change d’onglet et ch
 
 ## 2. Contrat d’une page et d’une fonction
 
-Une page (`pages/<id>.tsx`) exporte par défaut un composant sans props, qui rend `Page` à la racine. Une erreur de compilation la remplace par « Cette page ne compile pas », une exception au rendu par « Cette page a rencontré une erreur » ; l’agent les retrouve dans `check`, comme une promesse rejetée que personne n’attrape : erreur de compilation avec son message, erreur d’exécution par son seul emplacement (le texte d’une exception n’est jamais transmis à l’agent).
+Une page (`pages/<id>.tsx`) exporte par défaut un composant sans props, qui rend `Page` à la racine. Une erreur de compilation la remplace par « Cette page ne compile pas », une exception au rendu par « Cette page a rencontré une erreur » ; l’agent les retrouve dans `check`, comme une promesse rejetée que personne n’attrape : erreur de compilation avec son message, erreur d’exécution par son emplacement ; le message, la pile et toute la console de la page (`console.log`…) sont dans l’outil `page_logs`.
 
 Une fonction (`functions/<id>.ts`) exporte par défaut une fonction asynchrone qui reçoit l’entrée et renvoie une valeur sérialisable en JSON (`undefined` devient `null`). Une exception devient une erreur pour l’appelant, avec son message.
 
@@ -236,9 +236,9 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 
 - `baseUrl` : `https://` (`http://` admis vers `localhost` et `127.0.0.1`), sans identifiants, paramètres ni ancre ; son chemin préfixe toutes les requêtes.
 - `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes`.
-- `auth.secret` (entrée du coffre) : ne le passe jamais, l’utilisateur la choisit ; `declare_client` garde celle qu’il a reliée. `headers` : en-têtes fixes, jamais d’authentification.
+- `auth.secret` : l’entrée du coffre renvoyée par `vault_store` ; omis, `declare_client` garde celle déjà reliée. `headers` : en-têtes fixes, jamais d’authentification.
 
-Pour un service à plusieurs instances, `methods` remplace `baseUrl` et `auth` : la liste des façons de s’authentifier, que l’utilisateur choisira pour chaque instance qu’il ajoute dans Réglages, onglet Clients (nom, adresse libre, méthode, entrée du coffre). Tu ne déclares jamais d’instance : `declare_client` garde celles de l’utilisateur.
+Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des façons de s’authentifier, et `instances` les comptes (adresse libre, méthode, entrée du coffre). `declare_client` crée ou met à jour les instances qu’il reçoit et garde les autres ; l’utilisateur peut aussi en ajouter dans Réglages, onglet Clients.
 
 ```json
 {
@@ -249,14 +249,19 @@ Pour un service à plusieurs instances, `methods` remplace `baseUrl` et `auth` :
     { "id": "pat", "label": "Data Center (jeton personnel)", "type": "bearer" },
     { "id": "oauth", "label": "OAuth", "type": "oauth2", "authorizationUrl": "{url}/rest/oauth2/latest/authorize", "tokenUrl": "{url}/rest/oauth2/latest/token", "scopes": ["WRITE"] }
   ],
+  "instances": [
+    { "id": "acme", "label": "Acme", "url": "https://acme.atlassian.net", "method": "cloud", "secret": "jira-acme" },
+    { "id": "interne", "label": "Interne", "url": "https://jira.interne.exemple", "method": "pat", "secret": "jira-interne" }
+  ],
   "headers": { "Accept": "application/json" }
 }
 ```
 
-- `methods[].id` et `label` : identifiant et nom montré à l’utilisateur ; les autres champs sont ceux de `auth`. `{url}` au début de `authorizationUrl` ou `tokenUrl` devient l’adresse de l’instance.
+- `methods[].id` et `label` : identifiant et nom montré à l’utilisateur ; les autres champs sont ceux de `auth`, sans `secret`. `{url}` au début de `authorizationUrl` ou `tokenUrl` devient l’adresse de l’instance.
+- `instances[]` : `id` (celui que les pages passent à `client(id, { instance })`), `label`, `url` (omise : `baseUrl`), `method`, `secret` (omis : l’entrée déjà reliée est gardée). La première est celle par défaut.
 - `baseUrl` (facultatif) : adresse proposée aux instances qui n’ont pas la leur.
 
-Un client déclaré ou modifié par l’agent est « à valider » : l’utilisateur l’ouvre dans Réglages, onglet Clients, et le valide avant qu’il serve ; il saisit le secret dans Réglages, onglet Coffre. Chaque instance se valide séparément : modifier une méthode ne remet « à valider » que les instances qui l’utilisent.
+Un client déclaré ou modifié par l’agent est « à valider » : l’agent range son secret avec `vault_store`, le relie (`auth.secret`, ou le `secret` de chaque instance), le valide avec `validate_client`, puis accorde l’accès à la page avec `grant_access` (voir AGENTS.md). Chaque instance se valide séparément : modifier une méthode ne remet « à valider » que les instances qui l’utilisent.
 
 ## 7. IA
 

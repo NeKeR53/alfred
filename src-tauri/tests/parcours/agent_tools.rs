@@ -78,19 +78,16 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     let overview = agent.ok("space_overview", json!({})).await;
     assert_eq!((overview["space"]["name"].as_str(), overview["sections"].clone()), (Some("Cuisine"), json!([])));
 
-    // Sans emplacement, la carte de placement est montrée à l’utilisateur et l’outil attend sa réponse.
-    desk.ui.answer_question(json!({ "title": "Liste de courses", "target": { "kind": "menu", "label": "Courses", "color": "green" } }));
-    let placed = agent.ok("place_page", json!({ "title": "Courses", "description": "Ce qu’il faut acheter.", "icon": "shopping-cart" })).await;
+    // Sans emplacement, la page devient une entrée du menu à son nom : aucune question à l’utilisateur.
+    let placed = agent.ok("place_page", json!({ "title": "Liste de courses", "description": "Ce qu’il faut acheter.", "icon": "shopping-cart" })).await;
+    assert_eq!(placed["page"], json!("liste-de-courses/liste-de-courses"));
+    agent.ok("delete_page", json!({ "page": placed["page"] })).await;
+    let placed = agent
+        .ok("place_page", json!({ "title": "Liste de courses", "icon": "shopping-cart", "placement": { "kind": "menu", "label": "Courses", "color": "green" } }))
+        .await;
     assert_eq!(placed["page"], json!("courses/liste-de-courses"));
-    let question = desk.ui.questions.lock().unwrap()[0].clone();
-    assert_eq!((question["conversation"].as_str(), question["kind"].as_str()), (Some("conversation-1"), Some("placement")));
-    assert_eq!(question["payload"]["title"], json!("Courses"));
-    // L’utilisateur ferme la carte : l’outil échoue, rien n’est placé.
-    let closed = agent.tool("place_page", json!({ "title": "Autre" })).await.unwrap_err();
-    assert!(closed.contains("Carte fermée"), "{closed}");
-    // Avec un emplacement dit par l’utilisateur, pas de carte.
     let panel = agent.ok("place_page", json!({ "title": "Article", "placement": { "kind": "panel", "page": "courses/liste-de-courses" } })).await;
-    assert_eq!(desk.ui.questions.lock().unwrap().len(), 2);
+    assert!(desk.ui.questions.lock().unwrap().is_empty(), "aucune carte montrée");
 
     // `check` rouge : pages pas écrites.
     let check = agent.ok("check", json!({})).await;
@@ -129,7 +126,7 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
         .await;
     assert_eq!(client["status"], json!("toValidate"));
     let file = desk.read("clients/meteo.json").unwrap();
-    assert!(!file.contains("vole"), "l’agent ne choisit pas l’entrée du coffre : {file}");
+    assert!(file.contains("\"vole\""), "l’agent choisit l’entrée du coffre : {file}");
     let hook = agent.ok("declare_webhook", json!({ "module": "courses", "id": "commande", "description": "Le drive confirme.", "function": "enregistrer" })).await;
     assert_eq!(hook["url"], json!(desk.url("/hooks/courses/commande")));
     let invalid = agent.tool("declare_schedule", json!({ "module": "courses", "id": "matin", "description": "Rappel.", "function": "ajouter", "at": "25:00" })).await.unwrap_err();
@@ -144,12 +141,21 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     assert_eq!(check["webhooks"][0]["hook"], json!("courses/commande"));
     assert!(check["webhooks"][0]["problem"].as_str().unwrap().contains("declare_function"), "{check}");
     assert_eq!(check["runtimeErrors"][0]["page"], json!("courses/article"));
-    assert!(check["userActions"].to_string().contains("meteo"), "le client à valider est signalé à l’utilisateur");
+    assert!(check["clients"].to_string().contains("meteo"), "le client à valider est un problème que l’agent règle");
+    assert_eq!(check["userActions"], json!([]));
 
     // L’agent corrige ; l’utilisateur a rechargé la page : `check` passe au vert.
     agent.ok("declare_webhook", json!({ "module": "courses", "id": "commande", "description": "Le drive confirme.", "function": "ajouter" })).await;
     agent.ok("declare_schedule", json!({ "module": "courses", "id": "matin", "description": "Rappel.", "function": "ajouter", "everyMinutes": 60, "input": { "nom": "pain" } })).await;
     desk.ui.frame_errors.lock().unwrap().clear();
+    // Le secret va au coffre par une commande dont la sortie n’est jamais renvoyée ; le client est relié et validé.
+    let stored = agent.ok("vault_store", json!({ "label": "Jeton météo", "kind": "token", "fromCommand": { "value": "printf jeton-meteo-secret" } })).await;
+    assert!(!stored.to_string().contains("jeton-meteo-secret"), "{stored}");
+    agent
+        .ok("declare_client", json!({ "client": { "id": "meteo", "label": "Météo", "baseUrl": format!("{}/api", remote.origin), "auth": { "type": "bearer", "secret": stored["entry"] } } }))
+        .await;
+    assert_eq!(agent.ok("validate_client", json!({ "client": "meteo" })).await["status"], json!("ready"));
+    agent.ok("grant_access", json!({ "to": "courses/liste-de-courses", "client": "meteo" })).await;
     let check = agent.ok("check", json!({})).await;
     assert_eq!(check["ok"], json!(true), "{check}");
 

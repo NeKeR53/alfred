@@ -66,6 +66,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/__verify/eval", post(eval))
         .route("/__verify/drop", post(drop_files))
         .route("/__verify/snapshot", post(snapshot))
+        .route("/__verify/tool", post(tool))
 }
 
 fn authorized(headers: &HeaderMap) -> bool {
@@ -220,5 +221,24 @@ async fn snapshot(
     match state.ask_ui("agent:pageSnapshot", json!({ "page": page }), Duration::from_secs(20)).await {
         Ok(captured) => reply(StatusCode::OK, captured),
         Err(error) => reply(StatusCode::GATEWAY_TIMEOUT, json!({ "error": error.message })),
+    }
+}
+
+/// Appelle un outil MCP comme un agent d’une conversation ouverte par l’utilisateur (`page_logs`, `check`…).
+async fn tool(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    if !authorized(&headers) {
+        return refused();
+    }
+    let Some(name) = request.get("name").and_then(Value::as_str) else {
+        return reply(StatusCode::BAD_REQUEST, json!({ "error": "Préciser `name`." }));
+    };
+    let arguments = request.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    match crate::mcp::call_tool(&state, "verify-bench", name, &arguments).await {
+        Ok(value) => reply(StatusCode::OK, value),
+        Err(error) => reply(StatusCode::OK, json!({ "error": error.message })),
     }
 }

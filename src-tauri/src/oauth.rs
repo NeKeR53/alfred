@@ -778,7 +778,7 @@ mod tests {
         // Page de connexion détournée : la connexion ne démarre pas.
         rewrite("authorizationUrl", format!("{}/authorize", elsewhere.origin));
         let error = invoke(&state, "clients.connect", json!({ "id": "portail" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("pas validé"), "{}", error.message);
         let list = invoke(&state, "clients.list", json!({})).await.unwrap();
         assert_eq!(status_of(&list, "portail"), json!("toValidate"));
 
@@ -796,7 +796,7 @@ mod tests {
         secret["expiresAt"] = json!(1);
         vault::write_secret(&entry, &secret).unwrap();
         let error = request(&state, &subject, "portail", json!({ "path": "/protected" })).await.unwrap_err();
-        assert!(error.message.contains("hors des Réglages"), "{}", error.message);
+        assert!(error.message.contains("pas validé"), "{}", error.message);
         assert!(elsewhere.state.token_requests.lock().unwrap().is_empty());
         assert!(elsewhere.seen_paths().is_empty() && remote.seen_paths().is_empty());
     }
