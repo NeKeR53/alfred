@@ -105,6 +105,7 @@ pub fn run() {
                 webview::harden(&window);
             }
             let data_dir = app.path().app_data_dir()?;
+            vault::init(&data_dir);
             let state = AppState::new(&data_dir)?;
             app.manage(state.clone());
 
