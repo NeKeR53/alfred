@@ -1,5 +1,5 @@
 import { IconButton, MenuItem, OverflowMenu } from "@alfred/ui";
-import { ArrowUp, FolderOpen, Paperclip, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Clock, FolderOpen, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -12,6 +12,7 @@ import {
 import { inTauri, pickFolder } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { takeComposerDraft } from "./drafts";
 import { attachmentFromPath, isImage, pickAttachments, saveBlob } from "./files";
 import type { Autonomy } from "./harness";
 import {
@@ -111,6 +112,8 @@ export function Composer({
 }) {
   const send = useAgents((state) => state.send);
   const cancel = useAgents((state) => state.cancel);
+  const unqueue = useAgents((state) => state.unqueue);
+  const queued = useAgents((state) => state.runtime[conversation.id]?.queued) ?? [];
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [contexts, setContexts] = useState<PastedContext[]>([]);
@@ -131,9 +134,10 @@ export function Composer({
   // Chaque conversation a son brouillon : en changer vide la saisie.
   // biome-ignore lint/correctness/useExhaustiveDependencies: réinitialisation voulue au changement de conversation.
   useEffect(() => {
-    setText("");
-    setAttachments([]);
-    setContexts([]);
+    const draft = takeComposerDraft(conversationId);
+    setText(draft?.text ?? "");
+    setAttachments(draft?.attachments ?? []);
+    setContexts(draft?.contexts ?? []);
     references.reset();
     field.current?.focus();
   }, [conversationId]);
@@ -230,7 +234,8 @@ export function Composer({
     void addFiles([...event.dataTransfer.files]);
   };
 
-  const canSend = !responding && (text.trim().length > 0 || attachments.length > 0 || contexts.length > 0);
+  // Pendant une réponse, le message rejoint la file et part dès que l’agent a fini.
+  const canSend = text.trim().length > 0 || attachments.length > 0 || contexts.length > 0;
 
   const submit = async () => {
     if (!canSend) return;
@@ -263,6 +268,19 @@ export function Composer({
     }
   };
 
+  /** Reprend un message de la file dans la saisie, pour le corriger avant son départ. */
+  const edit = (queuedId: string) => {
+    const message = unqueue(conversationId, queuedId);
+    if (!message) return;
+    setText((current) => (current.trim() ? `${message.text}\n\n${current}` : message.text));
+    setAttachments((current) => [
+      ...message.attachments,
+      ...current.filter((item) => !message.attachments.some((known) => known.path === item.path)),
+    ]);
+    setContexts((current) => [...message.contexts, ...current]);
+    requestAnimationFrame(() => field.current?.focus());
+  };
+
   const pick = async () => {
     if (!inTauri) {
       fileInput.current?.click();
@@ -277,6 +295,30 @@ export function Composer({
 
   return (
     <div className="agent-composer">
+      {queued.length ? (
+        <ul className="agent-composer__queue" aria-label="Messages en attente">
+          {queued.map((item) => (
+            <li key={item.id} className="agent-composer__queued">
+              <Clock size={13} aria-hidden="true" />
+              <span className="agent-composer__queued-text" title={item.message.text}>
+                {item.message.text ||
+                  `${item.message.attachments.length + item.message.contexts.length} pièce(s) jointe(s)`}
+              </span>
+              <span className="agent-composer__queued-state">Envoyé à la fin de la réponse</span>
+              <IconButton size="small" label="Modifier le message en attente" onClick={() => edit(item.id)}>
+                <Pencil size={12} aria-hidden="true" />
+              </IconButton>
+              <IconButton
+                size="small"
+                label="Retirer le message en attente"
+                onClick={() => unqueue(conversationId, item.id)}
+              >
+                <X size={12} aria-hidden="true" />
+              </IconButton>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <form
         className={`agent-composer__box${dragging ? " is-dragging" : ""}`}
         onSubmit={(event) => {
@@ -376,7 +418,12 @@ export function Composer({
               <Square size={13} aria-hidden="true" />
             </IconButton>
           ) : null}
-          <IconButton type="submit" className="agent-composer__send" label="Envoyer" disabled={!canSend}>
+          <IconButton
+            type="submit"
+            className="agent-composer__send"
+            label={responding ? "Envoyer à la fin de la réponse" : "Envoyer"}
+            disabled={!canSend}
+          >
             <ArrowUp size={15} aria-hidden="true" />
           </IconButton>
         </div>

@@ -1,5 +1,5 @@
 import { EmptyState } from "@alfred/ui";
-import { type AgentPanelRenderer, SectionView } from "./AppShell";
+import { type AgentPanelRenderer, type PageToolsRenderer, SectionView } from "./AppShell";
 import { NotificationToasts } from "./NotificationCenter";
 import { findPage } from "./navigationLayout";
 import { useShell } from "./store";
@@ -13,9 +13,11 @@ export { pageWindowReference } from "./pageWindowMode";
 export function PageWindow({
   reference,
   renderAgentPanel,
+  renderPageTools,
 }: {
   reference: string;
   renderAgentPanel?: AgentPanelRenderer;
+  renderPageTools?: PageToolsRenderer;
 }) {
   const snapshot = useShell((state) => state.snapshot);
   const found = snapshot ? findPage(snapshot, reference) : undefined;
@@ -30,6 +32,7 @@ export function PageWindow({
             waiting={found.section?.waiting}
             detachable={false}
             renderAgentPanel={renderAgentPanel}
+            renderPageTools={renderPageTools}
           />
         ) : (
           <EmptyState

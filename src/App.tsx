@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { AgentPage } from "./features/agent/AgentPage";
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
 import { useAgentSummary } from "./features/agent/summary";
+import { UiFixTool } from "./features/agent/uiFix";
 import { useModuleUpdates } from "./features/modules/useModuleUpdates";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
@@ -39,6 +40,7 @@ export function App() {
         <PageWindow
           reference={windowPage}
           renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}
+          renderPageTools={(page, container) => <UiFixTool key={page.reference} page={page} container={container} />}
         />
         <ShellServices />
       </>
@@ -52,6 +54,7 @@ export function App() {
         agentSummary={agentSummary}
         settingsTabs={tabs}
         renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}
+        renderPageTools={(page, container) => <UiFixTool key={page.reference} page={page} container={container} />}
       />
       <ShellServices />
       <CommandPalette />

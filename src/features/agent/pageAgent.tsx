@@ -19,7 +19,7 @@ import { bindAgentQuestions, useAgents, waitForTurn } from "./store";
 import { Transcript } from "./Transcript";
 import "./agent.css";
 
-const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [] };
+const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
 function pageTitle(reference: string): string {
   const snapshot = useShell.getState().snapshot;

@@ -1,0 +1,7 @@
+# `tauri dev` lance le binaire via `cargo run` : on le signe avec l'identité stable
+# « Alfred Dev » pour que le trousseau macOS reconnaisse Alfred d'un build à l'autre.
+[target.aarch64-apple-darwin]
+runner = "scripts/sign-and-run.sh"
+
+[target.x86_64-apple-darwin]
+runner = "scripts/sign-and-run.sh"

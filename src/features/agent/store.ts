@@ -41,7 +41,7 @@ export interface AgentDefaults {
 }
 
 const DEFAULTS: AgentDefaults = { provider: "claude", autonomy: "ask", models: {} };
-const idleRuntime: ConversationRuntime = { status: "idle", approvals: [], questions: [] };
+const idleRuntime: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
 export interface NewConversation {
   provider?: Provider;
@@ -73,7 +73,10 @@ interface AgentState {
   archive: (id: string) => Promise<void>;
   unarchive: (id: string) => Promise<void>;
   markUnread: (id: string) => Promise<void>;
+  /** Pendant une réponse, le message attend dans la file de la conversation et part à la fin du tour. */
   send: (id: string, message: UserMessage) => Promise<void>;
+  /** Retire un message de la file et le rend, pour le remettre dans la saisie. */
+  unqueue: (id: string, queuedId: string) => UserMessage | undefined;
   cancel: (id: string) => Promise<void>;
   answerApproval: (id: string, approvalId: string, optionId: string) => Promise<void>;
   answerQuestion: (id: string, requestId: string, result: unknown, error?: string) => Promise<void>;
@@ -192,6 +195,7 @@ export const useAgents = create<AgentState>((set, get) => {
     // Ce que l’agent a écrit dans l’espace devient un commit : c’est ce qui rend le tour annulable.
     let commit: string | undefined;
     let changedFiles: string[] | undefined;
+    let changedLines: Turn["changedLines"];
     try {
       const result = await invoke<{ commit: string | null }>("space.commit", {
         message: turnCommitMessage(conversation.title, turn.user.text),
@@ -199,7 +203,15 @@ export const useAgents = create<AgentState>((set, get) => {
       if (result.commit) {
         commit = result.commit;
         const [latest] = await invoke<Commit[]>("space.history", { limit: 1 });
-        changedFiles = latest?.id === commit ? latest.files : undefined;
+        if (latest?.id === commit) {
+          changedFiles = latest.files;
+          changedLines = Object.fromEntries(
+            latest.files.flatMap((file, index) => {
+              const lines = latest.lines?.[index];
+              return lines ? [[file, lines]] : [];
+            }),
+          );
+        }
       }
     } catch {
       // Un espace sans dépôt utilisable n’empêche pas la conversation de se terminer.
@@ -209,7 +221,12 @@ export const useAgents = create<AgentState>((set, get) => {
       const turns = [...current.turns];
       const last = turns.at(-1);
       if (!last) return current;
-      const finished = { ...last, status, endedAt: Date.now(), ...(commit ? { commit, changedFiles } : {}) };
+      const finished = {
+        ...last,
+        status,
+        endedAt: Date.now(),
+        ...(commit ? { commit, changedFiles, changedLines } : {}),
+      };
       turns[turns.length - 1] = finished;
       return {
         ...current,
@@ -221,16 +238,25 @@ export const useAgents = create<AgentState>((set, get) => {
     });
     await save(id);
     const finished = get().loaded[id]?.turns.at(-1);
+    if (finished) {
+      for (const resolve of turnWaiters.get(id) ?? []) resolve(finished);
+      turnWaiters.delete(id);
+    }
+    // Le message suivant de la file part aussitôt : seule la fin du dernier tour est annoncée.
+    const [next, ...rest] = get().runtime[id]?.queued ?? [];
+    if (next && (get().runtime[id]?.status ?? "idle") === "idle") {
+      patchRuntime(id, (runtime) => ({ ...runtime, queued: rest }));
+      void get()
+        .send(id, next.message)
+        .catch(() => undefined);
+      return;
+    }
     if (finished && status !== "cancelled") {
       const title = get().loaded[id]?.title ?? "L’agent";
       void notifySystem(
         status === "error" ? `${title} : l’agent a rencontré une erreur` : `${title} : l’agent a terminé`,
         plainText(lastAssistantText(finished)) || undefined,
       );
-    }
-    if (finished) {
-      for (const resolve of turnWaiters.get(id) ?? []) resolve(finished);
-      turnWaiters.delete(id);
     }
     if (!viewed && finished) {
       notify({
@@ -444,6 +470,7 @@ export const useAgents = create<AgentState>((set, get) => {
 
     async archive(id) {
       await get().ensureLoaded(id);
+      patchRuntime(id, (runtime) => ({ ...runtime, queued: [] }));
       if ((get().runtime[id]?.status ?? "idle") !== "idle") await get().cancel(id);
       patchConversation(id, (conversation) => ({ ...conversation, archived: true }));
       if (get().activeId === id) set({ activeId: null });
@@ -471,7 +498,11 @@ export const useAgents = create<AgentState>((set, get) => {
     async send(id, message) {
       const conversation = get().loaded[id];
       if (!conversation) return;
-      if ((get().runtime[id]?.status ?? "idle") !== "idle") throw new Error("L’agent prépare déjà une réponse.");
+      const busy = (get().runtime[id]?.status ?? "idle") !== "idle" || conversation.turns.at(-1)?.status === "running";
+      if (busy) {
+        patchRuntime(id, (runtime) => ({ ...runtime, queued: [...runtime.queued, { id: newId(), message }] }));
+        return;
+      }
       const first = conversation.turns.length === 0;
       const turn: Turn = { id: newId(), user: message, items: [], status: "running", startedAt: Date.now() };
       patchConversation(id, (current) => ({
@@ -489,6 +520,13 @@ export const useAgents = create<AgentState>((set, get) => {
         patchTurn(id, (current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
         await finishTurn(id, "error");
       }
+    },
+
+    unqueue(id, queuedId) {
+      const found = get().runtime[id]?.queued.find((item) => item.id === queuedId);
+      if (found)
+        patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+      return found?.message;
     },
 
     async cancel(id) {
@@ -518,6 +556,7 @@ export const useAgents = create<AgentState>((set, get) => {
     },
 
     async remove(id) {
+      patchRuntime(id, (runtime) => ({ ...runtime, queued: [] }));
       const live = sessions.get(id);
       sessions.delete(id);
       nextGeneration(id);
@@ -542,7 +581,9 @@ export const useAgents = create<AgentState>((set, get) => {
       patchConversation(id, (conversation) => ({
         ...conversation,
         turns: conversation.turns.map((candidate) =>
-          candidate.id === turnId ? { ...candidate, commit: undefined, changedFiles: undefined } : candidate,
+          candidate.id === turnId
+            ? { ...candidate, commit: undefined, changedFiles: undefined, changedLines: undefined }
+            : candidate,
         ),
       }));
       notify({

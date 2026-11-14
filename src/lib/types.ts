@@ -151,6 +151,13 @@ export interface Commit {
   message: string;
   date: string;
   files: string[];
+  /** Lignes ajoutées et retirées par fichier, dans l’ordre de `files` ; `null` pour un fichier binaire. */
+  lines?: (FileLines | null)[];
+}
+
+export interface FileLines {
+  added: number;
+  removed: number;
 }
 
 export const SECTION_COLORS = ["steel", "blue", "violet", "pink", "red", "orange", "green", "teal"] as const;

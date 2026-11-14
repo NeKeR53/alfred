@@ -21,7 +21,7 @@ import { bindAgentQuestions, useAgents } from "./store";
 import { Transcript } from "./Transcript";
 import "./agent.css";
 
-const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [] };
+const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
