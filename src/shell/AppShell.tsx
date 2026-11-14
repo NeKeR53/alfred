@@ -8,7 +8,16 @@ import {
   PanelLeftOpen,
   SlidersHorizontal,
 } from "lucide-react";
-import { type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type ButtonHTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ResolvedPage } from "../lib/types";
 import { NamedIcon } from "./icons";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
@@ -22,6 +31,12 @@ import "./shell.css";
 
 /** Affiche une conversation d’agent dans le panneau de droite ; `close` rend la place au panneau de la page. */
 export type AgentPanelRenderer = (conversation: string, close: () => void) => ReactNode;
+
+/**
+ * Outils de la barre du haut pour la page affichée (« Corriger un élément ») ; `container` est la zone de la page,
+ * où l’outil peut poser un calque.
+ */
+export type PageToolsRenderer = (page: ResolvedPage, container: RefObject<HTMLDivElement | null>) => ReactNode;
 
 export interface BuiltInTab {
   id: string;
@@ -54,6 +69,7 @@ function SectionView({
   builtIn = [],
   actions,
   renderAgentPanel,
+  renderPageTools,
   onPageMenu,
   variant = "section",
 }: {
@@ -63,6 +79,7 @@ function SectionView({
   builtIn?: BuiltInTab[];
   actions?: ReactNode;
   renderAgentPanel?: AgentPanelRenderer;
+  renderPageTools?: PageToolsRenderer;
   /** Ouvre le menu d’un onglet de page de l’espace. */
   onPageMenu?: (reference: string, anchor: MenuAnchor, returnFocus: HTMLElement | null) => void;
   /** Réglages : les rubriques intégrées prennent la mise en page des Réglages de OneApp. */
@@ -112,6 +129,7 @@ function SectionView({
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);
   const hasPanel = Boolean(panel) || Boolean(agentConversation);
   const panelVisible = hasPanel ? !panelHidden[page?.reference ?? ""] : false;
+  const main = useRef<HTMLDivElement>(null);
 
   return (
     <>
@@ -173,12 +191,13 @@ function SectionView({
           </div>
         ) : null}
         {actions}
+        {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
         <NotificationBell />
       </PageTopBar>
       <div
         className={`workspace-body shell-body${variant === "settings" && builtInTab ? " shell-body--settings" : ""}`}
       >
-        <div className="shell-body__main">
+        <div ref={main} className="shell-body__main">
           {builtInTab ? (
             builtInTab.render()
           ) : page ? (
@@ -325,6 +344,7 @@ export function AppShell({
   agent,
   settingsTabs,
   renderAgentPanel,
+  renderPageTools,
   agentSummary,
 }: {
   /** Contenu de la page Agent. */
@@ -334,6 +354,7 @@ export function AppShell({
   /** Onglets intégrés des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
   settingsTabs: BuiltInTab[];
   renderAgentPanel?: AgentPanelRenderer;
+  renderPageTools?: PageToolsRenderer;
 }) {
   const snapshot = useShell((state) => state.snapshot);
   const view = useShell((state) => state.view);
@@ -483,6 +504,7 @@ export function AppShell({
             sectionId={current.id}
             pages={current.pages}
             renderAgentPanel={renderAgentPanel}
+            renderPageTools={renderPageTools}
             onPageMenu={editor.openPageMenu}
           />
         ) : null}
@@ -492,6 +514,7 @@ export function AppShell({
             sectionId={SETTINGS_SECTION}
             pages={snapshot.settingsPages}
             builtIn={settingsTabs}
+            renderPageTools={renderPageTools}
             onPageMenu={editor.openPageMenu}
             variant="settings"
           />

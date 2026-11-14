@@ -1,0 +1,62 @@
+/* Calque « Corriger un élément » : la capture figée de la page, sur laquelle l’utilisateur trace un cadre. */
+.ui-fix {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  background: var(--color-bg);
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+  outline: none;
+}
+.ui-fix__canvas {
+  position: relative;
+  width: 100%;
+}
+.ui-fix__shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+}
+/* Tout est assombri sauf la zone tracée, cerclée de la couleur de danger. */
+.ui-fix::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: oklch(0 0 0 / 0.12);
+  pointer-events: none;
+}
+.ui-fix:has(.ui-fix__rect)::after {
+  display: none;
+}
+.ui-fix__rect {
+  position: absolute;
+  border: 2px solid var(--color-danger);
+  border-radius: 2px;
+  box-shadow: 0 0 0 9999px oklch(0 0 0 / 0.28);
+  pointer-events: none;
+}
+/* En bas : le haut de la page (barre d’outils) est souvent ce que l’utilisateur veut encadrer. */
+.ui-fix__bar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 1;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-floating);
+  cursor: default;
+  white-space: nowrap;
+}
+.ui-fix__hint {
+  font-size: var(--font-size-body);
+  color: var(--color-ink);
+}
