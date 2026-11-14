@@ -187,11 +187,87 @@ impl<Store: SecretStore> SecretStore for Chunked<Store> {
     }
 }
 
+/// Coffre de développement : un fichier JSON lisible du seul utilisateur, dans le dossier de données d’Alfred.
+///
+/// Sous macOS, le trousseau range chaque entrée dans une partition liée à l’équipe du certificat de signature. Un
+/// certificat local (« Alfred Dev ») n’a pas d’équipe : la partition retombe sur l’empreinte du binaire, qui change à
+/// chaque build, et macOS redemande l’accès à chaque `tauri dev`. Les builds de développement gardent donc leurs
+/// secrets hors du trousseau ; `ALFRED_DEV_KEYCHAIN=1` rétablit le trousseau pour l’éprouver.
+struct FileStore {
+    path: std::path::PathBuf,
+    lock: Mutex<()>,
+}
+
+impl FileStore {
+    fn read_all(&self) -> AppResult<Map<String, Value>> {
+        match std::fs::read_to_string(&self.path) {
+            Ok(text) => serde_json::from_str(&text)
+                .map_err(|_| AppError::new("Le coffre de développement est illisible : supprimer dev-secrets.json.")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Map::new()),
+            Err(error) => Err(AppError::new(format!("Le coffre de développement est inaccessible ({error})."))),
+        }
+    }
+
+    fn write_all(&self, entries: &Map<String, Value>) -> AppResult<()> {
+        use std::io::Write;
+        let fail = |error: std::io::Error| AppError::new(format!("Le coffre de développement n’a pas pu être écrit ({error})."));
+        let temporary = self.path.with_extension("json.tmp");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&temporary).map_err(fail)?;
+        file.write_all(Value::Object(entries.clone()).to_string().as_bytes()).map_err(fail)?;
+        file.sync_all().map_err(fail)?;
+        std::fs::rename(&temporary, &self.path).map_err(fail)
+    }
+
+    fn guard(&self) -> AppResult<std::sync::MutexGuard<'_, ()>> {
+        self.lock.lock().map_err(|_| AppError::new("Le coffre est indisponible."))
+    }
+}
+
+impl SecretStore for FileStore {
+    fn get(&self, account: &str) -> AppResult<Option<String>> {
+        let _guard = self.guard()?;
+        Ok(self.read_all()?.get(account).and_then(Value::as_str).map(str::to_string))
+    }
+
+    fn set(&self, account: &str, value: &str) -> AppResult<()> {
+        let _guard = self.guard()?;
+        let mut entries = self.read_all()?;
+        entries.insert(account.to_string(), Value::String(value.to_string()));
+        self.write_all(&entries)
+    }
+
+    fn delete(&self, account: &str) -> AppResult<()> {
+        let _guard = self.guard()?;
+        let mut entries = self.read_all()?;
+        if entries.remove(account).is_some() {
+            self.write_all(&entries)?;
+        }
+        Ok(())
+    }
+}
+
+static DEV_FILE: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// À appeler au démarrage, avant tout accès au coffre : un build de développement macOS range alors ses secrets
+/// dans `dev-secrets.json` plutôt que dans le trousseau. Sans effet dans un build publié.
+pub fn init(data_dir: &std::path::Path) {
+    let keychain_forced = std::env::var("ALFRED_DEV_KEYCHAIN").is_ok_and(|value| value == "1");
+    if cfg!(all(debug_assertions, target_os = "macos")) && !keychain_forced {
+        let _ = DEV_FILE.set(data_dir.join("dev-secrets.json"));
+    }
+}
+
 fn store() -> &'static dyn SecretStore {
     static STORE: OnceLock<Box<dyn SecretStore>> = OnceLock::new();
     STORE
         .get_or_init(|| {
-            if cfg!(test) {
+            if let (false, Some(path)) = (cfg!(test), DEV_FILE.get()) {
+                Box::new(FileStore { path: path.clone(), lock: Mutex::new(()) })
+            } else if cfg!(test) {
                 // Les tests ne touchent jamais le trousseau du poste ; ils gardent la limite de Windows pour
                 // exercer le découpage.
                 Box::new(Chunked { inner: MemoryStore::default(), limit: WINDOWS_LIMIT })
@@ -528,6 +604,26 @@ fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
 mod tests {
     use super::*;
     use crate::clients::testing::{invoke, test_state, unique};
+
+    #[test]
+    fn dev_file_store_keeps_secrets_private_and_survives_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev-secrets.json");
+        let store = FileStore { path: path.clone(), lock: Mutex::new(()) };
+        assert_eq!(store.get("a").unwrap(), None);
+        store.set("a", "un").unwrap();
+        store.set("b", "deux").unwrap();
+        store.delete("b").unwrap();
+        store.delete("absent").unwrap();
+        let reopened = FileStore { path: path.clone(), lock: Mutex::new(()) };
+        assert_eq!(reopened.get("a").unwrap().as_deref(), Some("un"));
+        assert_eq!(reopened.get("b").unwrap(), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
 
     #[test]
     fn long_values_are_split_and_cleaned_up() {
