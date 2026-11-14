@@ -138,33 +138,66 @@ pub struct Commit {
     pub message: String,
     pub date: String,
     pub files: Vec<String>,
+    /// Lignes ajoutées et retirées par fichier, dans l’ordre de `files` ; `None` pour un fichier binaire.
+    pub lines: Vec<Option<FileLines>>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct FileLines {
+    pub added: u64,
+    pub removed: u64,
 }
 
 pub fn log(dir: &Path, limit: usize, path: Option<&str>) -> AppResult<Vec<Commit>> {
     let limit = format!("-{limit}");
-    let mut args = vec!["log", limit.as_str(), "--name-only", "--format=%x1e%H%x1f%s%x1f%cI"];
+    let mut args = vec!["log", limit.as_str(), "--numstat", "--no-renames", "--format=%x1e%H%x1f%s%x1f%cI"];
     if let Some(path) = path {
         args.extend(["--", path]);
     }
-    let output = match run(dir, &args) {
-        Ok(output) => output,
+    match run(dir, &args) {
+        Ok(output) => Ok(parse_log(&output)),
         // Dépôt sans commit.
-        Err(_) => return Ok(Vec::new()),
-    };
-    Ok(output
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Commits désignés par leur identifiant, dans l’ordre demandé ; un identifiant inconnu ou invalide est ignoré.
+pub fn commits(dir: &Path, ids: &[String]) -> AppResult<Vec<Commit>> {
+    let mut found = Vec::new();
+    for id in ids {
+        // Un identifiant n’est jamais pris pour une option ou une plage de Git.
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let args = ["log", "-1", "--no-walk", "--numstat", "--no-renames", "--format=%x1e%H%x1f%s%x1f%cI", id.as_str()];
+        if let Ok(output) = run(dir, &args) {
+            found.extend(parse_log(&output));
+        }
+    }
+    Ok(found)
+}
+
+fn parse_log(output: &str) -> Vec<Commit> {
+    output
         .split('\u{1e}')
         .filter(|entry| !entry.trim().is_empty())
         .filter_map(|entry| {
             let mut lines = entry.lines();
             let mut header = lines.next()?.split('\u{1f}');
-            Some(Commit {
-                id: header.next()?.to_string(),
-                message: header.next()?.to_string(),
-                date: header.next()?.to_string(),
-                files: lines.map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect(),
-            })
+            let (id, message, date) = (header.next()?, header.next()?, header.next()?);
+            // Chaque ligne de `--numstat` : ajoutées, retirées, chemin ; `-` à la place des nombres pour un binaire.
+            let (files, lines) = lines
+                .filter(|line| !line.trim().is_empty())
+                .filter_map(|line| {
+                    let mut fields = line.splitn(3, '\t');
+                    let (added, removed, path) = (fields.next()?, fields.next()?, fields.next()?);
+                    let counts = added.parse().ok().zip(removed.parse().ok());
+                    Some((path.to_string(), counts.map(|(added, removed)| FileLines { added, removed })))
+                })
+                .unzip();
+            Some(Commit { id: id.to_string(), message: message.to_string(), date: date.to_string(), files, lines })
         })
-        .collect())
+        .collect()
 }
 
 /// Annule un commit par un commit inverse : l’historique reste linéaire et l’annulation est elle-même annulable.
@@ -184,6 +217,31 @@ pub fn revert(dir: &Path, commit: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// L’historique compte, fichier par fichier, les lignes ajoutées et retirées ; un binaire n’a pas de compte.
+    #[test]
+    fn log_counts_added_and_removed_lines_per_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        init(repo).unwrap();
+        std::fs::write(repo.join("page.md"), "un\ndeux\ntrois\n").unwrap();
+        commit_all(repo, "création").unwrap();
+        std::fs::write(repo.join("page.md"), "un\nDEUX\n").unwrap();
+        std::fs::write(repo.join("image.bin"), [0u8, 1, 2, 0]).unwrap();
+        commit_all(repo, "modification").unwrap();
+        let [latest, first] = &log(repo, 2, None).unwrap()[..] else { panic!("deux commits attendus") };
+        let lines = |commit: &Commit, file: &str| {
+            let index = commit.files.iter().position(|path| path == file).unwrap();
+            commit.lines[index].map(|lines| (lines.added, lines.removed))
+        };
+        assert_eq!(lines(first, "page.md"), Some((3, 0)));
+        assert_eq!(lines(latest, "page.md"), Some((1, 2)));
+        assert_eq!(lines(latest, "image.bin"), None);
+        let ids = [first.id.clone(), "--all".to_string(), "abc123".to_string()];
+        let found = commits(repo, &ids).unwrap();
+        assert_eq!(found.len(), 1, "seul le commit existant est trouvé, l’option et l’inconnu sont ignorés");
+        assert_eq!(lines(&found[0], "page.md"), Some((3, 0)));
+    }
 
     /// Ni un crochet ni une configuration locale écrits dans l’espace ne font exécuter de programme à Alfred.
     #[cfg(unix)]

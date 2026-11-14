@@ -1,5 +1,8 @@
 import { IconButton } from "@alfred/ui";
 import { Archive, CircleAlert, CircleCheck, FileDiff, LoaderCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { invoke } from "../../lib/native";
+import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader, ConversationRuntime } from "./model";
 import {
@@ -42,41 +45,100 @@ function relativeTime(at: number, now: number) {
   if (minutes < 60) return `il y a ${minutes} min`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `il y a ${hours} h`;
-  return new Date(at).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  return new Date(at).toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "short",
+  });
 }
 
 /** Pictogramme et ton de l’état, posés dans la marge de la ligne comme dans le suivi des agents de OneApp. */
 function glyphOf(state: State) {
   if (state === "working") return { glyph: <LoaderCircle size={13} className="is-spinning" /> };
   if (state === "attention")
-    return { glyph: <span className="agent-list__question">?</span>, tone: "warning" as const };
+    return {
+      glyph: <span className="agent-list__question">?</span>,
+      tone: "warning" as const,
+    };
   if (state === "error") return { glyph: <CircleAlert size={13} />, tone: "danger" as const };
   if (state === "unread") return { glyph: <CircleCheck size={13} />, tone: "success" as const };
   return { glyph: <span className="agent-list__idle" /> };
 }
 
+type TurnLines = Record<string, FileLines>;
+
+/**
+ * Lignes des tours terminés avant qu’Alfred ne les enregistre : relues dans l’historique de l’espace à partir du
+ * commit de chaque tour.
+ */
+function useMissingLines(conversation?: Conversation) {
+  const missing = (conversation?.turns ?? []).flatMap((turn) =>
+    turn.commit && !turn.changedLines ? [turn.commit] : [],
+  );
+  const key = missing.join(",");
+  const [found, setFound] = useState<Record<string, TurnLines>>({});
+  useEffect(() => {
+    if (!key) return;
+    let cancelled = false;
+    invoke<Commit[]>("space.commits", { ids: key.split(",") })
+      .then((commits) => {
+        if (cancelled) return;
+        const entries = commits.map((commit): [string, TurnLines] => [
+          commit.id,
+          Object.fromEntries(
+            commit.files.flatMap((file, index) => {
+              const lines = commit.lines?.[index];
+              return lines ? [[file, lines]] : [];
+            }),
+          ),
+        ]);
+        setFound((current) => ({ ...current, ...Object.fromEntries(entries) }));
+      })
+      .catch(() => {
+        // Sans historique lisible, ces tours gardent le seul nombre de fichiers.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+  return found;
+}
+
 /** Fichiers de l’espace modifiés par la conversation ouverte, tour après tour. */
 function ChangedFiles({ conversation }: { conversation?: Conversation }) {
+  const recovered = useMissingLines(conversation);
   if (!conversation) return <InfoPanelNote>Ouvrez une conversation.</InfoPanelNote>;
   const files = [...new Set(conversation.turns.flatMap((turn) => turn.changedFiles ?? []))];
   if (!files.length) return <InfoPanelNote>Aucune modification de l’espace.</InfoPanelNote>;
+  // Lignes cumulées sur tous les tours ; sans aucun compte (binaires, historique illisible), le nombre de fichiers.
+  const counted = conversation.turns.flatMap((turn) =>
+    Object.values(turn.changedLines ?? (turn.commit ? recovered[turn.commit] : undefined) ?? {}),
+  );
+  const totals = counted.reduce(
+    (sum, counts) => ({ added: sum.added + counts.added, removed: sum.removed + counts.removed }),
+    { added: 0, removed: 0 },
+  );
   return (
     <div className="agent-changes">
       <div className="agent-changes__summary">
         <FileDiff size={14} aria-hidden="true" />
         <span className="agent-changes__name">Modifications</span>
         <span className="agent-changes__totals">
-          {files.length} fichier{files.length > 1 ? "s" : ""}
+          {counted.length ? <LineCounts {...totals} /> : `${files.length} fichier${files.length > 1 ? "s" : ""}`}
         </span>
       </div>
-      <ul className="agent-changes__files">
-        {files.map((file) => (
-          <li key={file} title={file}>
-            {file}
-          </li>
-        ))}
-      </ul>
     </div>
+  );
+}
+
+/** Lignes ajoutées en vert et retirées en rouge, comme un bilan de diff. */
+function LineCounts({ added, removed }: FileLines) {
+  return (
+    <span
+      className="agent-changes__lines"
+      title={`${added} ligne${added > 1 ? "s" : ""} ajoutée${added > 1 ? "s" : ""}, ${removed} retirée${removed > 1 ? "s" : ""}`}
+    >
+      <span className="agent-changes__added">+{added}</span> <span className="agent-changes__removed">−{removed}</span>
+    </span>
   );
 }
 
@@ -166,7 +228,11 @@ export function ConversationList({
       summary: done.length ? String(done.length) : undefined,
       content: rows(done, "Aucune conversation terminée.", true),
     },
-    { id: "changes", title: "Modifications", content: <ChangedFiles conversation={active} /> },
+    {
+      id: "changes",
+      title: "Modifications",
+      content: <ChangedFiles conversation={active} />,
+    },
   ];
   return <InfoPanel label="Suivi des conversations" cards={cards} panel={panel} />;
 }

@@ -140,6 +140,11 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             let path: Option<String> = opt_arg(&args, "path")?;
             Ok(serde_json::to_value(git::log(&space.root, limit.unwrap_or(50), path.as_deref())?)?)
         }
+        "space.commits" => {
+            let space = state.space()?;
+            let ids: Vec<String> = arg(&args, "ids")?;
+            Ok(serde_json::to_value(git::commits(&space.root, &ids)?)?)
+        }
         "space.undo" => {
             let space = state.space()?;
             let id: String = arg(&args, "commit")?;

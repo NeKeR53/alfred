@@ -167,10 +167,33 @@ describe("conversation d’agent · un tour", () => {
     expect(conversation(id).turns.map((turn) => turn.status)).toEqual(["done", "done"]);
   });
 
-  it("refuse un message pendant que l’agent répond", async () => {
+  it("met en file un message écrit pendant que l’agent répond et l’envoie à la fin du tour", async () => {
     const id = start();
     await useAgents.getState().send(id, message("Un"));
-    await expect(useAgents.getState().send(id, message("Deux"))).rejects.toThrow("prépare déjà une réponse");
+    await useAgents.getState().send(id, message("Deux"));
+    expect(conversation(id).turns).toHaveLength(1);
+    expect(runtime(id).queued.map((item) => item.message.text)).toEqual(["Deux"]);
+
+    sessions[0].emit({ type: "message", itemId: "m1", content: "Réponse un.", replace: true });
+    sessions[0].emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(conversation(id).turns).toHaveLength(2));
+    expect(conversation(id).turns[0].status).toBe("done");
+    expect(lastTurn(id)).toMatchObject({ status: "running", user: { text: "Deux" } });
+    expect(runtime(id).queued).toEqual([]);
+    await vi.waitFor(() => expect(sessions[0].session.send).toHaveBeenCalledTimes(2));
+  });
+
+  it("rend un message retiré de la file", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    const [queued] = runtime(id).queued;
+    expect(useAgents.getState().unqueue(id, queued.id)).toMatchObject({ text: "Deux" });
+    expect(runtime(id).queued).toEqual([]);
+
+    sessions[0].emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("done"));
+    expect(conversation(id).turns).toHaveLength(1);
   });
 });
 

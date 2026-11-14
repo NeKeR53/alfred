@@ -1,4 +1,6 @@
 /** Modèle d’une conversation d’agent, tel qu’Alfred l’affiche et l’enregistre. */
+
+import type { FileLines } from "../../lib/types";
 import type { ActivityAction, ActivityKind, ActivityStatus, ApprovalRequest, Autonomy, Provider } from "./harness";
 import { type ComposerReference, referenceInstructions } from "./lib/composerReferences";
 
@@ -50,6 +52,8 @@ export interface Turn {
   commit?: string;
   /** Fichiers de l’espace modifiés par ce tour. */
   changedFiles?: string[];
+  /** Lignes ajoutées et retirées par fichier modifié ; absent pour un fichier binaire ou un tour plus ancien. */
+  changedLines?: Record<string, FileLines>;
 }
 
 export interface Conversation {
@@ -91,6 +95,13 @@ export interface ConversationRuntime {
   status: "idle" | "connecting" | "responding";
   approvals: ApprovalRequest[];
   questions: AgentQuestion[];
+  /** Messages écrits pendant une réponse : envoyés l’un après l’autre dès que l’agent a fini. Non enregistrés. */
+  queued: QueuedMessage[];
+}
+
+export interface QueuedMessage {
+  id: string;
+  message: UserMessage;
 }
 
 export const LONG_PASTE_CHARACTERS = 2000;
