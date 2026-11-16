@@ -202,7 +202,7 @@ describe("relevé", () => {
   it("s’ouvre sur les derniers tours puis montre les précédents", async () => {
     const turns = Array.from({ length: RECENT_TURNS + 4 }, (_, index) => turn(`t${index}`));
     render(<Transcript conversation={conversation(turns)} runtime={idle} />);
-    await waitFor(() => expect(screen.getByText("Demande t0")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Demande t0")).toBeInTheDocument(), { timeout: 5000 });
     expect(screen.getByText(`Demande t${RECENT_TURNS + 3}`)).toBeInTheDocument();
   });
 

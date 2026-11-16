@@ -64,14 +64,14 @@ type TurnActions = {
   follow?: Record<string, number>;
 };
 
-type Block = { key: string; message?: string; activities?: Activity[] };
+type Block = { key: string; message?: string; occurredAt?: number; activities?: Activity[] };
 
 /** Suite des éléments d’un tour : messages et séries d’activités consécutives. */
 function blocksOf(items: readonly TurnItem[]): Block[] {
   const result: Block[] = [];
   for (const item of items) {
     if (item.kind === "message") {
-      if (item.content.trim()) result.push({ key: item.id, message: item.content });
+      if (item.content.trim()) result.push({ key: item.id, message: item.content, occurredAt: item.occurredAt });
       continue;
     }
     // Une réflexion terminée sans contenu n’apporte rien au relevé.
@@ -221,7 +221,8 @@ const Entries = memo(function Entries({
         key={block.key}
         content={block.message}
         cwd={cwd}
-        timestamp={index === blocks.length - 1 ? timestamp : undefined}
+        // Comme OneApp : chaque message de l’agent porte son heure ; un message plus ancien, sans heure, prend celle du tour.
+        timestamp={block.occurredAt ?? (index === blocks.length - 1 ? timestamp : undefined)}
         onQuote={onQuote}
         onFork={onFork}
       />
@@ -460,7 +461,10 @@ const TurnView = memo(function TurnView({
     () => blocksOf(final ? turn.items.filter((item) => item !== final) : turn.items),
     [turn.items, final],
   );
-  const finalBlocks = useMemo<Block[]>(() => (final ? [{ key: final.id, message: final.content }] : []), [final]);
+  const finalBlocks = useMemo<Block[]>(
+    () => (final ? [{ key: final.id, message: final.content, occurredAt: final.occurredAt }] : []),
+    [final],
+  );
   const onResend = useMemo(
     () => (resend ? () => void resend(conversationId, turn.id).catch(report("Message non relancé")) : undefined),
     [resend, conversationId, turn.id],

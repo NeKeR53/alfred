@@ -22,7 +22,7 @@ import { PROVIDER_LABEL } from "./harness";
 import { type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
 import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
-import { Transcript } from "./Transcript";
+import { ConversationQuestion, Transcript } from "./Transcript";
 import "./agent.css";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
@@ -259,6 +259,7 @@ export function AgentPage() {
                 <Transcript
                   conversation={conversation}
                   runtime={runtime}
+                  dockQuestion={false}
                   header={
                     <p
                       className="agents-page__context"
@@ -286,6 +287,20 @@ export function AgentPage() {
                     {saveError}
                   </FeedbackBanner>
                 ) : null}
+                {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
+                <div className="agents-page__question">
+                  <ConversationQuestion
+                    conversation={conversation}
+                    runtime={runtime}
+                    onOther={() =>
+                      document
+                        .querySelector<HTMLElement>(
+                          '.agents-page__footer textarea, .agents-page__footer [contenteditable="true"]',
+                        )
+                        ?.focus()
+                    }
+                  />
+                </div>
                 <Composer
                   conversation={conversation}
                   responding={runtime.status !== "idle"}
