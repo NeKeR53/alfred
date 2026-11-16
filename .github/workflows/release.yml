@@ -1,0 +1,63 @@
+# Publie une release d'Alfred pour macOS (Apple Silicon) et Windows quand une étiquette vX.Y.Z est poussée.
+#   git tag v0.1.0 && git push origin v0.1.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            # Signature ad hoc : le certificat local « Alfred Dev » n'existe pas sur les machines de GitHub.
+            args: --target aarch64-apple-darwin --config {"bundle":{"macOS":{"signingIdentity":"-"}}}
+            rust-targets: aarch64-apple-darwin
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Alfred ${{ github.ref_name }}
+          releaseBody: |
+            Alfred pour macOS (Apple Silicon) et Windows.
+
+            **macOS** : ouvrir le fichier `.dmg` et glisser Alfred dans Applications. L'application n'est pas
+            notariée par Apple : au premier lancement, faire un clic droit sur Alfred, puis « Ouvrir ».
+
+            **Windows** : lancer l'installeur `.msi` ou `-setup.exe`. L'application n'est pas signée : si
+            SmartScreen s'affiche, cliquer sur « Informations complémentaires », puis « Exécuter quand même ».
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
