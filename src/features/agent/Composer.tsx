@@ -1,5 +1,5 @@
 import { IconButton, MenuItem, OverflowMenu } from "@alfred/ui";
-import { ArrowUp, Clock, FolderOpen, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Clock, FolderOpen, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
@@ -115,6 +115,9 @@ export function Composer({
   const send = useAgents((state) => state.send);
   const cancel = useAgents((state) => state.cancel);
   const unqueue = useAgents((state) => state.unqueue);
+  const sendQueuedNow = useAgents((state) => state.sendQueuedNow);
+  const retry = useAgents((state) => state.retry);
+  const lastStatus = useAgents((state) => state.loaded[conversation.id]?.turns.at(-1)?.status);
   const queued = useAgents((state) => state.runtime[conversation.id]?.queued) ?? [];
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -238,13 +241,19 @@ export function Composer({
     void addFiles([...event.dataTransfer.files]);
   };
 
-  // Pendant une réponse, le message rejoint la file et part dès que l’agent a fini.
+  // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, Ctrl/⌘+Entrée met le message en file.
+  const queueShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↩" : "Ctrl+↩";
   const canSend = text.trim().length > 0 || attachments.length > 0 || contexts.length > 0;
+  // Comme dans OneApp : après une erreur ou une interruption, envoyer sans rien écrire relance le dernier message.
+  const canResume = !responding && (lastStatus === "error" || lastStatus === "cancelled");
 
   /** Envoie la saisie ; une dictée y ajoute sa transcription et demande que la réponse soit lue. */
-  const submit = async (dictated?: string) => {
+  const submit = async (dictated?: string, queue = false) => {
     const full = dictated ? [text.trim(), dictated].filter(Boolean).join(" ") : text;
-    if (!dictated && !canSend) return;
+    if (!dictated && !canSend) {
+      if (canResume) void retry(conversationId).catch((error) => failure("Message non envoyé", error));
+      return;
+    }
     const chosen = references.take(full);
     const message: UserMessage = {
       text: full.trim(),
@@ -257,7 +266,7 @@ export function Composer({
     setAttachments([]);
     setContexts([]);
     try {
-      await send(conversationId, message);
+      await send(conversationId, message, { now: !queue });
     } catch (error) {
       failure("Message non envoyé", error);
     }
@@ -267,7 +276,7 @@ export function Composer({
     if (references.onKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      void submit();
+      void submit(undefined, event.ctrlKey || event.metaKey);
     }
     if (event.key === "Escape" && dictation === "listening") {
       event.preventDefault();
@@ -316,7 +325,7 @@ export function Composer({
                 {item.message.text ||
                   `${item.message.attachments.length + item.message.contexts.length} pièce(s) jointe(s)`}
               </span>
-              <span className="agent-composer__queued-state">Envoyé à la fin de la réponse</span>
+              <span className="agent-composer__queued-state">Part à la fin de l’étape en cours</span>
               <IconButton size="small" label="Modifier le message en attente" onClick={() => edit(item.id)}>
                 <Pencil size={12} aria-hidden="true" />
               </IconButton>
@@ -326,6 +335,15 @@ export function Composer({
                 onClick={() => unqueue(conversationId, item.id)}
               >
                 <X size={12} aria-hidden="true" />
+              </IconButton>
+              <IconButton
+                size="small"
+                label="Envoyer maintenant"
+                onClick={() =>
+                  void sendQueuedNow(conversationId, item.id).catch((error) => failure("Message non envoyé", error))
+                }
+              >
+                <ArrowUpRight size={12} aria-hidden="true" />
               </IconButton>
             </li>
           ))}
@@ -438,14 +456,18 @@ export function Composer({
           <IconButton
             type="submit"
             className="agent-composer__send"
-            label={responding ? "Envoyer à la fin de la réponse" : "Envoyer"}
-            disabled={!canSend}
+            label={responding ? "Envoyer maintenant" : canResume && !canSend ? "Relancer l’exécution" : "Envoyer"}
+            tooltip={responding ? `Envoyer maintenant · ↩ (${queueShortcut} pour mettre en file)` : undefined}
+            disabled={!canSend && !canResume}
           >
             <ArrowUp size={15} aria-hidden="true" />
           </IconButton>
         </div>
       </form>
       {references.popover}
+      {responding ? (
+        <p className="agent-composer__hint">↩ pour envoyer maintenant, {queueShortcut} pour mettre en file</p>
+      ) : null}
       {compact ? null : <ConversationOptions conversation={conversation} locked={responding} />}
     </div>
   );

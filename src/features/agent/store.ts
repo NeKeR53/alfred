@@ -75,7 +75,15 @@ interface AgentState {
   unarchive: (id: string) => Promise<void>;
   markUnread: (id: string) => Promise<void>;
   /** Pendant une réponse, le message attend dans la file de la conversation et part à la fin du tour. */
-  send: (id: string, message: UserMessage) => Promise<void>;
+  /**
+   * Envoie un message. Pendant une réponse, comme dans OneApp : `now` l’envoie tout de suite (glissé dans la réponse
+   * en cours si l’agent le permet, sinon après l’avoir interrompue) ; sans `now`, il rejoint la file.
+   */
+  send: (id: string, message: UserMessage, options?: { now?: boolean }) => Promise<void>;
+  /** Relance le dernier message après une erreur ou une interruption, comme « Relancer l’exécution » dans OneApp. */
+  retry: (id: string) => Promise<void>;
+  /** Envoie tout de suite un message de la file, comme « Envoyer maintenant » dans OneApp. */
+  sendQueuedNow: (id: string, queuedId: string) => Promise<void>;
   /** Retire un message de la file et le rend, pour le remettre dans la saisie. */
   unqueue: (id: string, queuedId: string) => UserMessage | undefined;
   cancel: (id: string) => Promise<void>;
@@ -359,6 +367,54 @@ export const useAgents = create<AgentState>((set, get) => {
     }
   };
 
+  const deliveries = new Map<string, Promise<void>>();
+
+  /**
+   * « Envoyer maintenant », comme dans OneApp : glissé dans la réponse en cours quand l’agent sait le faire (Codex),
+   * sinon la réponse est interrompue et le message part en tête de file, aussitôt après.
+   */
+  const deliverNow = async (id: string, queuedId: string) => {
+    const queued = get().runtime[id]?.queued.find((item) => item.id === queuedId);
+    if (!queued) return;
+    const running = get().loaded[id]?.turns.at(-1)?.status === "running";
+    const live = sessions.get(id)?.session;
+    if (!running && (get().runtime[id]?.status ?? "idle") === "idle") {
+      patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+      await get().send(id, queued.message);
+      return;
+    }
+    if (running && live?.steer && get().runtime[id]?.status === "responding") {
+      const turn: Turn = { id: newId(), user: queued.message, items: [], status: "running", startedAt: Date.now() };
+      try {
+        await live.steer(outgoingText(queued.message), queued.message.attachments, turn.id);
+        if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
+        // Le tour orienté se termine ici ; la suite de la réponse appartient au nouveau message.
+        patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+        patchConversation(id, (current) => ({
+          ...current,
+          turns: [
+            ...current.turns.map((item, index) =>
+              index === current.turns.length - 1 && item.status === "running"
+                ? { ...item, status: "done" as const, endedAt: Math.max(item.startedAt, Date.now()) }
+                : item,
+            ),
+            turn,
+          ],
+          updatedAt: Date.now(),
+        }));
+        return;
+      } catch {
+        // L’agent refuse d’orienter sa réponse : elle est interrompue, puis le message part.
+      }
+    }
+    if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
+    patchRuntime(id, (runtime) => ({
+      ...runtime,
+      queued: [queued, ...runtime.queued.filter((item) => item.id !== queuedId)],
+    }));
+    await get().cancel(id);
+  };
+
   const ensureSession = async (conversation: Conversation): Promise<HarnessSession> => {
     const live = sessions.get(conversation.id);
     const wanted = signature(conversation);
@@ -503,12 +559,14 @@ export const useAgents = create<AgentState>((set, get) => {
       }
     },
 
-    async send(id, message) {
+    async send(id, message, options) {
       const conversation = get().loaded[id];
       if (!conversation) return;
       const busy = (get().runtime[id]?.status ?? "idle") !== "idle" || conversation.turns.at(-1)?.status === "running";
       if (busy) {
-        patchRuntime(id, (runtime) => ({ ...runtime, queued: [...runtime.queued, { id: newId(), message }] }));
+        const queuedId = newId();
+        patchRuntime(id, (runtime) => ({ ...runtime, queued: [...runtime.queued, { id: queuedId, message }] }));
+        if (options?.now) await get().sendQueuedNow(id, queuedId);
         return;
       }
       const first = conversation.turns.length === 0;
@@ -528,6 +586,23 @@ export const useAgents = create<AgentState>((set, get) => {
         patchTurn(id, (current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
         await finishTurn(id, "error");
       }
+    },
+
+    async retry(id) {
+      const last = get().loaded[id]?.turns.at(-1);
+      if (!last || (last.status !== "error" && last.status !== "cancelled")) return;
+      await get().send(id, last.user);
+    },
+
+    sendQueuedNow(id, queuedId) {
+      // Un envoi immédiat à la fois par conversation : deux envois rapides partent dans l’ordre.
+      const previous = deliveries.get(id) ?? Promise.resolve();
+      const delivery = previous.catch(() => undefined).then(() => deliverNow(id, queuedId));
+      deliveries.set(id, delivery);
+      void delivery.finally(() => {
+        if (deliveries.get(id) === delivery) deliveries.delete(id);
+      });
+      return delivery;
     },
 
     unqueue(id, queuedId) {

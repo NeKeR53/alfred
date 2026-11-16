@@ -183,6 +183,31 @@ describe("conversation d’agent · un tour", () => {
     await vi.waitFor(() => expect(sessions[0].session.send).toHaveBeenCalledTimes(2));
   });
 
+  it("glisse tout de suite un message dans la réponse en cours, comme OneApp avec Codex", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    await useAgents.getState().send(id, message("Plutôt ceci"), { now: true });
+    expect(sessions[0].session.steer).toHaveBeenCalledWith("Plutôt ceci", [], expect.any(String));
+    expect(runtime(id).queued).toEqual([]);
+    expect(conversation(id).turns.map((turn) => turn.status)).toEqual(["done", "running"]);
+    expect(lastTurn(id).user.text).toBe("Plutôt ceci");
+    expect(sessions[0].session.cancel).not.toHaveBeenCalled();
+  });
+
+  it("interrompt la réponse puis envoie le message quand l’agent ne sait pas l’orienter", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    sessions[0].session.steer.mockRejectedValueOnce(new Error("non"));
+    await useAgents.getState().send(id, message("Autre chose"), { now: true });
+    expect(sessions[0].session.cancel).toHaveBeenCalled();
+    sessions[0].emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id)).toMatchObject({ status: "running", user: { text: "Autre chose" } }));
+    expect(conversation(id).turns[0].status).toBe("cancelled");
+    expect(runtime(id).queued).toEqual([]);
+  });
+
   it("rend un message retiré de la file", async () => {
     const id = start();
     await useAgents.getState().send(id, message("Un"));
