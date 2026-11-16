@@ -19,7 +19,7 @@ import type {
   SessionOptions,
   SessionStatus,
 } from "./types";
-import { isInputImage } from "./types";
+import { isInputImage, messageText } from "./types";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -32,6 +32,13 @@ type JsonRpcMessage = {
 };
 
 const CLIENT = { name: "alfred", title: "Alfred", version: "0.1.0" };
+
+/**
+ * Consigne de OneApp pour Codex : des lectures simples et séparées portent les métadonnées read, search et listFiles
+ * (affichées « Lu », « Recherché »), et `apply_patch` celles des fichiers modifiés.
+ */
+export const CODEX_FILE_TOOLS =
+  "Pour lire des fichiers, faites des appels de lecture simples et distincts (par exemple cat ou sed selon le shell disponible). Séparez les lectures des recherches, listes de dossiers, commandes Git et tests : ne les réunissez pas dans un même appel avec &&, ; ou un script. Cela permet à Codex de fournir les métadonnées read, search et listFiles à Alfred. Vous pouvez effectuer plusieurs appels de lecture indépendants en parallèle. Pour modifier des fichiers texte existants ou en créer, privilégiez l’outil natif apply_patch lorsqu’il est disponible. Réservez les commandes shell aux lectures, recherches, tests et opérations qui nécessitent réellement le shell. Évitez de réécrire un fichier texte avec cat, echo ou un script lorsque apply_patch convient : ses événements permettent à Alfred d’afficher précisément les fichiers modifiés.";
 
 /**
  * Lignes ajoutées et retirées d’un changement de fichier. Pour une modification, `diff` est un diff unifié ; pour
@@ -435,13 +442,18 @@ class CodexSession implements HarnessSession {
     }
     const { approvalPolicy, sandbox } = this.policy();
     const resume = this.#options.resumeSessionId;
+    // Un appel unique n’a pas d’outil : la consigne sur les fichiers n’y a pas de sens.
+    const instructions = [this.#options.instructions, this.#options.readOnly ? undefined : CODEX_FILE_TOOLS]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join("\n\n");
     const common = {
       cwd: this.#options.cwd,
       approvalPolicy,
       sandbox,
       ...(this.#options.model ? { model: this.#options.model } : {}),
       ...(Object.keys(config).length ? { config } : {}),
-      ...(this.#options.instructions ? { developerInstructions: this.#options.instructions } : {}),
+      ...(instructions ? { developerInstructions: instructions } : {}),
     };
     // Reprise : Codex garde l’historique du fil, Alfred ne le renvoie pas.
     const thread = resume
@@ -459,7 +471,7 @@ class CodexSession implements HarnessSession {
   }
 
   async send(message: string, files?: readonly InputFile[], clientId?: string) {
-    const text = message.trim();
+    const text = messageText(message, files);
     if (!text) return;
     if (this.#closed || !this.#threadId) throw new Error("La discussion Codex est fermée.");
     if (this.#turnId) throw new Error("Codex prépare déjà une réponse.");
@@ -488,7 +500,7 @@ class CodexSession implements HarnessSession {
   }
 
   async steer(message: string, files?: readonly InputFile[], clientId?: string) {
-    const text = message.trim();
+    const text = messageText(message, files);
     if (!text) return;
     if (this.#closed || !this.#threadId || !this.#turnId)
       throw new Error("Codex ne prépare plus de réponse à orienter.");
@@ -693,6 +705,11 @@ class CodexSession implements HarnessSession {
         `${JSON.stringify({ id: message.id, error: { code: -32601, message: "Cette interaction n’est pas prise en charge par Alfred." } })}\n`,
       )
       .catch(() => undefined);
+    // Comme dans OneApp : sans quoi le CLI attend une réponse que personne ne voit venir.
+    this.#emit({
+      type: "error",
+      message: "Le CLI demande une interaction non prise en charge. Reprenez la tâche dans le CLI.",
+    });
   }
 
   private handleClosed() {

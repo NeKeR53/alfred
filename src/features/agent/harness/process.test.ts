@@ -37,3 +37,10 @@ it("oublie une session qu’elle arrête elle-même", async () => {
   await process.kill();
   expect(sessionStorage.getItem(OWNED_KEY)).toBeNull();
 });
+
+it("demande à Rust la configuration OpenCode du dossier de travail, sans programme ni argument", async () => {
+  const { checkOpenCodeConfig } = await import("./process");
+  native.invoke.mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
+  await expect(checkOpenCodeConfig("/espace")).resolves.toEqual({ code: 0, stdout: "[]", stderr: "" });
+  expect(native.invoke).toHaveBeenCalledWith("agents.opencodeConfig", { cwd: "/espace" });
+});

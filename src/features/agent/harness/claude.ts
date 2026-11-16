@@ -14,6 +14,7 @@ import type {
   InputFile,
   SessionOptions,
 } from "./types";
+import { messageText } from "./types";
 
 type Json = Record<string, unknown>;
 type Activity = Extract<HarnessEvent, { type: "activity" }>;
@@ -164,7 +165,7 @@ class ClaudeSession implements HarnessSession {
   }
 
   async send(message: string, files: readonly InputFile[] = []) {
-    const body = message.trim();
+    const body = messageText(message, files);
     if (!body) return;
     if (this.#closed) throw new Error("La conversation Claude Code est fermée.");
     if (this.#responding) throw new Error("Claude Code prépare déjà une réponse.");
@@ -342,13 +343,13 @@ class ClaudeSession implements HarnessSession {
 
   /**
    * Fin de tour (résultat, interruption, arrêt) : une réflexion ou un outil resté sans suite ne doit pas rester
-   * affiché en cours. Un outil sans résultat a été interrompu.
+   * affiché en cours. Un outil sans résultat a été interrompu : il est « Arrêté », comme dans OneApp, et non en échec.
    */
   private settleActivities() {
     for (const itemId of this.#thinking)
       this.#emit({ type: "activity", itemId, kind: "analysis", title: "Analyse", status: "completed" });
     this.#thinking.clear();
-    for (const activity of this.#activities.values()) this.#emit({ ...activity, status: "failed" });
+    for (const activity of this.#activities.values()) this.#emit({ ...activity, status: "cancelled" });
     this.#activities.clear();
   }
 

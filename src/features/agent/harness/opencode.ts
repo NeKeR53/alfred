@@ -3,7 +3,7 @@
  * remontent à l’utilisateur, sauf en autonomie totale où la première option d’accord est choisie.
  */
 import { contentFiles } from "../lib/contentFiles";
-import { probe, spawnProcess } from "./process";
+import { checkOpenCodeConfig, probe, spawnProcess } from "./process";
 import { AgentProtocol, object, type RpcMessage } from "./rpc";
 import type {
   ActivityAction,
@@ -16,6 +16,7 @@ import type {
   InputFile,
   SessionOptions,
 } from "./types";
+import { messageText } from "./types";
 
 const CLIENT = { name: "alfred", version: "0.1.0" };
 const TOKEN = "__ALFRED_MCP_TOKEN__";
@@ -34,7 +35,7 @@ export function localFileUri(path: string): string {
 /** Bloc ACP de chaque fichier joint : OpenCode le lit lui-même, image comprise. */
 function acpPrompt(text: string, files: readonly InputFile[] = []) {
   return [
-    { type: "text", text },
+    { type: "text", text: messageText(text, files) },
     ...files.map(({ path, name, mimeType }) => ({
       type: "resource_link",
       uri: localFileUri(path),
@@ -138,6 +139,33 @@ export function openCodeSessionConfig(
   }
   if (instructionsFile) config.instructions = [instructionsFile];
   return JSON.stringify(config);
+}
+
+/**
+ * Vérifie, comme OneApp avant chaque lancement, que la configuration de l’utilisateur se lit : sans quoi une
+ * configuration refusée n’apparaît qu’à l’arrêt d’OpenCode. OpenCode 2 en liste les sources, OpenCode 1 la fusionne.
+ */
+export async function verifyOpenCodeConfig(cwd: string): Promise<void> {
+  const inspected = await checkOpenCodeConfig(cwd);
+  if (inspected.code !== 0) {
+    const detail = inspected.stderr.trim().split("\n").at(-1)?.trim();
+    throw new Error(
+      `Impossible de vérifier la configuration OpenCode avant le lancement${detail ? ` : ${detail}` : ""}.`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(inspected.stdout);
+  } catch {
+    throw new Error("La configuration OpenCode ne peut pas être vérifiée.");
+  }
+  const documents = Array.isArray(parsed) ? parsed.map(object).filter((source) => source.type === "document") : [];
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    documents.some((source) => !source.info || typeof source.info !== "object")
+  )
+    throw new Error("La configuration OpenCode ne peut pas être vérifiée.");
 }
 
 async function initialize(rpc: AgentProtocol, cwd: string, resumeSessionId?: string) {
@@ -464,6 +492,7 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
     updates.map(object(params.update));
   };
 
+  await verifyOpenCodeConfig(options.cwd);
   const process = await spawnProcess("opencode", {
     cwd: options.cwd,
     ...(options.conversation ? { conversation: options.conversation } : {}),
@@ -592,6 +621,8 @@ export async function listOpenCodeModels(cwd: string): Promise<HarnessModel[]> {
         models.push({ ...model, efforts: efforts.filter((id) => id !== "default") });
       }
     }
+    if (!models.length)
+      throw new Error("Cette version d’OpenCode ne fournit pas de catalogue ACP. Mettez le CLI à jour.");
     // La session ouverte pour lire le catalogue n’a pas sa place dans l’historique d’OpenCode.
     if (canDelete && typeof session.sessionId === "string")
       await rpc.request("session/delete", { sessionId: session.sessionId }).catch(() => undefined);

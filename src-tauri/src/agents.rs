@@ -534,9 +534,43 @@ async fn probe(args: &Value) -> AppResult<Value> {
     Ok(json!({ "installed": version.is_some(), "version": version, "loggedIn": logged_in }))
 }
 
+/// Sortie de `opencode debug config` lue au plus : la configuration fusionnée d’un poste tient bien en deçà.
+const MAX_CONFIG_OUTPUT: usize = 4 * 1024 * 1024;
+
+/// Fin d’une sortie d’erreur, sur une limite de caractère : sa dernière ligne dit pourquoi le CLI a refusé.
+fn stderr_tail(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let start = text.char_indices().map(|(index, _)| index).find(|index| text.len() - index <= 2000).unwrap_or(text.len());
+    text[start..].to_string()
+}
+
+/// `opencode debug config` dans le dossier de travail, comme OneApp avant chaque lancement : une configuration que
+/// l’utilisateur a rendue illisible se signale avant la session plutôt qu’à l’arrêt d’OpenCode. Programme et
+/// arguments sont fixés ici ; seul le dossier vient de l’interface.
+async fn opencode_config(args: &Value) -> AppResult<Value> {
+    let cwd: String = arg(args, "cwd")?;
+    checked_dir(&cwd)?;
+    let program = resolve_program(Provider::Opencode.program()).ok_or_else(|| missing(Provider::Opencode))?;
+    let output = tokio::task::spawn_blocking(move || {
+        command(&program, Some(&cwd)).args(["debug", "config"]).stdin(Stdio::null()).output()
+    })
+    .await
+    .map_err(|_| unavailable())?
+    .map_err(|error| AppError::new(format!("Impossible de lancer opencode : {error}")))?;
+    if output.stdout.len() > MAX_CONFIG_OUTPUT {
+        return Err(AppError::new("La configuration OpenCode est trop volumineuse pour être vérifiée."));
+    }
+    Ok(json!({
+        "code": output.status.code(),
+        "stdout": String::from_utf8_lossy(&output.stdout),
+        "stderr": stderr_tail(&output.stderr),
+    }))
+}
+
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     Some(match command {
         "agents.probe" => probe(args).await,
+        "agents.opencodeConfig" => opencode_config(args).await,
         "agents.spawn" => spawn(state, args, Output::Events),
         "agents.write" => write(args),
         "agents.kill" => kill(args).await,
@@ -546,6 +580,21 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stderr_tail_keeps_the_end_on_a_character_boundary() {
+        assert_eq!(super::stderr_tail(b"Erreur : configuration invalide"), "Erreur : configuration invalide");
+        let long = format!("{}\nderni\u{e8}re ligne", "\u{e9}".repeat(3000));
+        let tail = super::stderr_tail(long.as_bytes());
+        assert!(tail.len() <= 2000);
+        assert!(tail.ends_with("dernière ligne"));
+    }
+
+    #[tokio::test]
+    async fn opencode_config_refuses_a_missing_folder() {
+        let error = super::opencode_config(&serde_json::json!({ "cwd": "/dossier/qui/n/existe/pas" })).await.unwrap_err();
+        assert!(error.to_string().contains("introuvable"));
+    }
+
     #[test]
     fn claude_auth_status_gives_login_state() {
         assert_eq!(claude_logged_in(br#"{"loggedIn": false, "authMethod": "none"}"#), Some(false));

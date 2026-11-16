@@ -175,6 +175,16 @@ describe("Claude Code · un tour de conversation", () => {
     });
   });
 
+  it("envoie la demande de OneApp quand le message n’a que des pièces jointes", async () => {
+    const { session, process } = await open();
+    await session.send("", [{ path: "/Users/moi/devis.pdf", name: "devis.pdf" }]);
+    const [message] = writtenOf(process, "user");
+    expect(message.message).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "Analyse les fichiers joints.\n\nFichiers joints :\n- /Users/moi/devis.pdf" }],
+    });
+  });
+
   it("refuse un second message tant que la réponse n’est pas finie", async () => {
     const { session, process } = await open();
     await sendFirst(session, process);
@@ -494,7 +504,8 @@ describe("Claude Code · erreurs et interruptions", () => {
     process.send({ type: "result", subtype: "error_during_execution", is_error: true });
     expect(events.view.activities.map(({ itemId, status }) => ({ itemId, status }))).toEqual([
       { itemId: "msg_30-0", status: "completed" },
-      { itemId: "toolu_build", status: "failed" },
+      // Un outil resté sans résultat est « Arrêté », comme dans OneApp, et non en échec.
+      { itemId: "toolu_build", status: "cancelled" },
       { itemId: "msg_31-0", status: "completed" },
     ]);
   });

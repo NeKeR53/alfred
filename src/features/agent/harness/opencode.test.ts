@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
 import { createOpenCodeSession, listOpenCodeModels, type OpenCodeOptions, openCodeSessionConfig } from "./opencode";
+import { checkOpenCodeConfig } from "./process";
 
-vi.mock("./process", () => ({ spawnProcess: vi.fn(), probe: vi.fn() }));
+vi.mock("./process", () => ({ spawnProcess: vi.fn(), probe: vi.fn(), checkOpenCodeConfig: vi.fn() }));
+
+/** Sortie réelle d’`opencode debug config` sous OpenCode 2.1 : les sources de la configuration. */
+const debugConfig = (stdout: string, code: number | null = 0, stderr = "") =>
+  vi.mocked(checkOpenCodeConfig).mockResolvedValue({ code, stdout, stderr });
 
 const SESSION = "ses_7f3a";
 
@@ -47,6 +52,7 @@ const text = (value: string) => ({ type: "text", text: value });
 let spawned: Spawned[];
 beforeEach(() => {
   spawned = fakeSpawn(acpServer);
+  debugConfig('[{"type":"directory","path":"/Users/moi/.config/opencode"}]');
 });
 
 async function open(options: Partial<OpenCodeOptions> = {}) {
@@ -510,6 +516,54 @@ describe("OpenCode · annulation et fermeture", () => {
   });
 });
 
+describe("OpenCode · configuration vérifiée avant lancement", () => {
+  it("lit `opencode debug config` dans le dossier de travail, puis lance la session", async () => {
+    debugConfig(
+      '[{"type":"directory","path":"/Users/moi/.config/opencode"},{"type":"document","path":"/espace/projet/opencode.json","info":{}}]',
+    );
+    await open();
+    expect(checkOpenCodeConfig).toHaveBeenCalledWith("/espace/projet");
+    expect(spawned).toHaveLength(1);
+  });
+
+  it("ne lance rien quand OpenCode refuse sa configuration", async () => {
+    debugConfig("", 1, "Error: Configuration is invalid\nConfigInvalidError: permission must be an object");
+    await expect(open()).rejects.toThrow(
+      "Impossible de vérifier la configuration OpenCode avant le lancement : ConfigInvalidError: permission must be an object.",
+    );
+    expect(spawned).toEqual([]);
+  });
+
+  it("ne lance rien quand la configuration est illisible", async () => {
+    debugConfig("pas du JSON");
+    await expect(open()).rejects.toThrow("La configuration OpenCode ne peut pas être vérifiée.");
+    debugConfig('[{"type":"document","path":"/espace/projet/opencode.json"}]');
+    await expect(open()).rejects.toThrow("La configuration OpenCode ne peut pas être vérifiée.");
+    debugConfig("null");
+    await expect(open()).rejects.toThrow("La configuration OpenCode ne peut pas être vérifiée.");
+    expect(spawned).toEqual([]);
+  });
+
+  it("accepte la configuration fusionnée d’OpenCode 1", async () => {
+    debugConfig('{"$schema":"https://opencode.ai/config.json","mcp":{}}');
+    await expect(open()).resolves.toBeDefined();
+  });
+});
+
+describe("OpenCode · pièces jointes seules", () => {
+  it("envoie la demande de OneApp avec le lien du fichier", async () => {
+    const opened = await open();
+    const sending = opened.session.send("", [{ path: "/tmp/devis.pdf", name: "devis.pdf" }]);
+    await flush(1);
+    expect(opened.process.call("session/prompt").params.prompt).toEqual([
+      { type: "text", text: "Analyse les fichiers joints." },
+      { type: "resource_link", uri: "file:///tmp/devis.pdf", name: "devis.pdf" },
+    ]);
+    opened.process.reply(opened.process.call("session/prompt").id, { stopReason: "end_turn" });
+    await sending;
+  });
+});
+
 describe("OpenCode · catalogue", () => {
   it("lit les modèles et leurs efforts, puis supprime la session de lecture", async () => {
     await expect(listOpenCodeModels("/espace")).resolves.toEqual([
@@ -519,6 +573,17 @@ describe("OpenCode · catalogue", () => {
     const { process } = spawned[0];
     expect(process.call("session/delete").params).toEqual({ sessionId: SESSION });
     expect(process.killed).toBe(true);
+  });
+
+  it("dit de mettre le CLI à jour quand il ne fournit pas de catalogue ACP", async () => {
+    spawned = fakeSpawn((process) => {
+      acpServer(process);
+      process.respond("session/new", { result: { sessionId: SESSION, configOptions: [] } });
+    });
+    await expect(listOpenCodeModels("/espace")).rejects.toThrow(
+      "Cette version d’OpenCode ne fournit pas de catalogue ACP. Mettez le CLI à jour.",
+    );
+    expect(spawned[0].process.killed).toBe(true);
   });
 });
 

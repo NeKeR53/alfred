@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CodexOptions, codexPolicy, createCodexSession, listCodexModels } from "./codex";
+import { CODEX_FILE_TOOLS, type CodexOptions, codexPolicy, createCodexSession, listCodexModels } from "./codex";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
 import type { Autonomy } from "./types";
 
@@ -66,7 +66,8 @@ describe("Codex · ouverture de la discussion", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
       model: "gpt-5-codex",
-      developerInstructions: "Réponds en français.",
+      // La consigne de OneApp sur les lectures et `apply_patch` suit celles d’Alfred.
+      developerInstructions: `Réponds en français.\n\n${CODEX_FILE_TOOLS}`,
       ephemeral: false,
       config: {
         "mcp_servers.alfred": {
@@ -317,8 +318,8 @@ describe("Codex · demandes d’approbation", () => {
     expect(events.view.approvals).toEqual([]);
   });
 
-  it("répond en erreur aux requêtes que le CLI envoie et qu’Alfred ne connaît pas", async () => {
-    const { session, process } = await open();
+  it("répond en erreur aux requêtes que le CLI envoie et qu’Alfred ne connaît pas, et le dit", async () => {
+    const { session, process, events } = await open();
     await session.send("Bonjour");
     process.send({ id: 43, method: "item/tool/requestUserInput", params: {} });
     await flush();
@@ -326,6 +327,10 @@ describe("Codex · demandes d’approbation", () => {
       id: 43,
       error: { code: -32601, message: "Cette interaction n’est pas prise en charge par Alfred." },
     });
+    // Comme dans OneApp : l’utilisateur sait pourquoi la réponse n’avance plus.
+    expect(events.view.errors).toEqual([
+      "Le CLI demande une interaction non prise en charge. Reprenez la tâche dans le CLI.",
+    ]);
   });
 });
 
@@ -442,6 +447,8 @@ describe("Codex · catalogue et appel unique", () => {
       project_doc_max_bytes: 0,
     });
     expect(start.config).not.toHaveProperty("mcp_servers.alfred");
+    // Sans outil, la consigne sur les fichiers n’a pas lieu d’être.
+    expect(start).not.toHaveProperty("developerInstructions");
 
     await session.send("Donne un titre");
     expect(process.call("turn/start").params).toMatchObject({
@@ -475,5 +482,22 @@ describe("Codex · Windows", () => {
       sandbox: "read-only",
     });
     expect(codexPolicy("ask", ["/espace"], false)).toMatchObject({ sandbox: "workspace-write" });
+  });
+});
+
+describe("Codex · pièces jointes seules", () => {
+  it("envoie la demande de OneApp au lieu d’un texte vide, que Codex ignorait", async () => {
+    const { session, process } = await open();
+    await session.send("  ", [{ path: "/tmp/maquette.png", name: "maquette.png" }]);
+    expect(process.call("turn/start").params.input).toEqual([
+      { type: "text", text: "Analyse les fichiers joints.", text_elements: [] },
+      { type: "localImage", path: "/tmp/maquette.png" },
+    ]);
+  });
+
+  it("n’envoie rien sans texte ni fichier", async () => {
+    const { session, process } = await open();
+    await session.send("  ");
+    expect(process.calls("turn/start")).toEqual([]);
   });
 });
