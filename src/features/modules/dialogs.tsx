@@ -109,7 +109,7 @@ const SHOWN_FACTS = 6;
 function Facts({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
   const row = (item: string) => (
-    <li key={item} title={item}>
+    <li key={item} className="modules-facts__item" title={item}>
       {item}
     </li>
   );
