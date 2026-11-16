@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `jobs`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -656,4 +656,44 @@ useEffect(() => {
   const minuterie = setInterval(suivi.reload, 1000);
   return () => clearInterval(minuterie);
 }, [suivi.reload]);
+```
+
+## 12. Recherche plein texte : `search`
+
+Déclare l’index dans `module.json`, sur une table du module : Alfred crée l’index, le tient à jour à chaque écriture (pages, fonctions, migrations) et le reconstruit quand la déclaration ou la table change. Pas de table FTS ni de déclencheur à écrire dans une migration.
+
+```json
+"search": [{ "id": "notes", "table": "carnet_notes", "key": "id", "columns": ["titre", "texte"] }]
+```
+
+```ts
+search.query(index: string, text: string, options?: { limit?: number; offset?: number; prefix?: boolean; raw?: boolean }):
+  Promise<{ total: number; results: { key: string | number; score: number; snippet: string; parts: { text: string; match: boolean }[] }[] }>;
+```
+
+- `key` (`id` par défaut) : colonne rendue avec chaque résultat, pour relire la ligne avec `db.query`. `columns` : colonnes de texte cherchées. La table ne doit pas être `WITHOUT ROWID`.
+- Sans accents ni casse (« ete » trouve « Été ») ; chaque mot doit apparaître, dans n’importe quel ordre, et peut n’être qu’un début de mot (« budg ete » trouve « budget de l’été » ; `prefix: false` pour exiger des mots entiers). La ponctuation saisie est ignorée.
+- `raw: true` : le texte est une requête FTS5 (`"expression exacte"`, `OR`, `NOT`, `NEAR(a b)`, `titre: mot`) ; une erreur de syntaxe rejette la promesse (« Recherche mal formée… »).
+- Résultats du plus pertinent au moins pertinent (`score`, plus grand = meilleur), `total` pour paginer avec `offset`. `parts` découpe l’extrait pour mettre les mots trouvés en gras.
+- Une déclaration fausse (table ou colonne absente) apparaît dans `check` (`migrations`, fichier « module.json (search …) »).
+
+```tsx
+import { db, search, useAsync } from "@alfred/sdk";
+import { SearchField, Stack, Text } from "@alfred/ui";
+import { useState } from "react";
+
+export function Recherche() {
+  const [texte, setTexte] = useState("");
+  const trouves = useAsync(() => search.query<number>("notes", texte, { limit: 20 }), [texte]);
+  return (
+    <Stack gap="sm">
+      <SearchField label="Chercher dans les notes" value={texte} onChange={(event) => setTexte(event.target.value)} />
+      {trouves.data?.results.map((resultat) => (
+        <Text key={resultat.key}>
+          {resultat.parts.map((part, i) => (part.match ? <strong key={i}>{part.text}</strong> : part.text))}
+        </Text>
+      ))}
+    </Stack>
+  );
+}
 ```

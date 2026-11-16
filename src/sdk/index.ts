@@ -142,6 +142,40 @@ export const files = {
   },
 };
 
+// --- Recherche plein texte ------------------------------------------------------------------------------------
+
+export interface SearchResult<Key = string | number> {
+  /** Valeur de la colonne `key` de l’index : l’identifiant de la ligne trouvée. */
+  key: Key;
+  /** Pertinence : plus grand = meilleur. */
+  score: number;
+  /** Extrait du texte autour des mots trouvés. */
+  snippet: string;
+  /** Le même extrait en morceaux, `match` pour les mots trouvés (à mettre en gras). */
+  parts: { text: string; match: boolean }[];
+}
+
+export interface SearchOptions {
+  /** 20 par défaut, 200 au plus. */
+  limit?: number;
+  offset?: number;
+  /** Chaque mot peut n’être qu’un début de mot (vrai par défaut : recherche pendant la frappe). */
+  prefix?: boolean;
+  /** Le texte est une requête FTS5 (`"mot exact"`, `OR`, `NOT`, `NEAR`, `colonne:mot`) au lieu de mots libres. */
+  raw?: boolean;
+}
+
+/** Recherche plein texte dans un index déclaré par le module (`search` de `module.json`). */
+export const search = {
+  query<Key = string | number>(
+    index: string,
+    text: string,
+    options: SearchOptions = {},
+  ): Promise<{ total: number; results: SearchResult<Key>[] }> {
+    return request("search.query", { index, text, ...options });
+  },
+};
+
 // --- Tâches de fond -------------------------------------------------------------------------------------------
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";

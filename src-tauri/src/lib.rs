@@ -18,6 +18,7 @@ mod jobs;
 mod libraries;
 mod marketplace;
 mod module_files;
+mod module_search;
 mod mcp;
 mod oauth;
 mod page_windows;

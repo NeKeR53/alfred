@@ -90,6 +90,29 @@ pub struct ModuleManifest {
     /// Parcours de configuration proposé après l’installation (texte d’accueil).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup: Option<SetupDecl>,
+    /// Index de recherche plein texte, tenus à jour par Alfred.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub search: Vec<IndexDecl>,
+}
+
+/// Index déclaré sur une table du module : Alfred le crée, le tient à jour à chaque écriture et le reconstruit
+/// quand la déclaration ou la table change.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct IndexDecl {
+    pub id: String,
+    pub table: String,
+    /// Colonne qui identifie la ligne, rendue avec chaque résultat (`id` par défaut).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// Colonnes de texte indexées.
+    pub columns: Vec<String>,
+}
+
+impl IndexDecl {
+    pub fn key(&self) -> &str {
+        if self.key.is_empty() { "id" } else { &self.key }
+    }
 }
 
 /// Ce que le module dit à l’utilisateur au début du parcours de configuration. Les étapes suivent l’ordre de

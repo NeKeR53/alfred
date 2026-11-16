@@ -156,9 +156,11 @@ describe("documents", () => {
   it("transmet les seuls champs de chaque document, pour le module du cadre", async () => {
     await handleFrameRequest(page, "documents.pdf", { subject: forged, name: "r", title: "T", blocks: [], path: "/x" });
     await handleFrameRequest(page, "documents.extractText", { id: "abc", module: "banque" });
+    await handleFrameRequest(page, "search.query", { index: "notes", text: "été", limit: 5, sql: "DROP" });
     expect(native.invoke.mock.calls).toEqual([
       ["frame.documents.pdf", { subject: own, name: "r", title: "T", blocks: [] }],
       ["frame.documents.extractText", { subject: own, id: "abc" }],
+      ["frame.search.query", { subject: own, index: "notes", text: "été", limit: 5 }],
     ]);
   });
 });

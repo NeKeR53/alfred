@@ -15,6 +15,8 @@ use crate::space::{valid_id, Space, LOCAL_DIR};
 use crate::state::AppState;
 
 const MAX_ROWS: usize = 5_000;
+/// Préfixe des tables et des déclencheurs qu’Alfred gère lui-même dans la base de l’espace.
+pub const ALFRED_PREFIX: &str = "_alfred_";
 
 /// Préfixe des tables d’un module : son identifiant, tirets remplacés (un nom SQL n’en accepte pas sans guillemets).
 pub fn table_prefix(module: &str) -> String {
@@ -73,28 +75,47 @@ fn restrict(db: &Connection, space: &Space, module: &str, scope: Scope) {
         // Le module complété, et lui seul : pas les tables d’un autre module dont le nom prolonge le sien
         // (« suivi-prive » pour « suivi-ajouts »).
         let readable = |table: &str| owned(table) || base.as_deref().is_some_and(|prefix| claimed(table, prefix));
-        let catalog = |table: &str| table == "sqlite_master" || table == "sqlite_schema";
+        let catalog = |table: &str| {
+            matches!(table, "sqlite_master" | "sqlite_schema" | "sqlite_temp_master" | "sqlite_temp_schema")
+        };
+        // Index de recherche d’une table du module : FTS5 lit et écrit ses tables internes par des requêtes
+        // compilées sur cette connexion. Ils ne contiennent que les données du module.
+        let own_index = |table: &str| table.strip_prefix("_alfred_fts_").is_some_and(|rest| owned(rest));
         let schema = scope == Scope::Schema;
+        // Les déclencheurs posés par Alfred (index de recherche, historique) écrivent dans ses propres tables :
+        // ils agissent pour Alfred, pas pour le module, qui ne peut ni en créer ni en supprimer (plus bas).
+        if context.accessor.is_some_and(|trigger| trigger.starts_with(ALFRED_PREFIX)) {
+            return Authorization::Allow;
+        }
         let allowed = match context.action {
             AuthAction::Select | AuthAction::Recursive | AuthAction::Function { .. } => true,
             AuthAction::Transaction { .. } => !schema,
             AuthAction::Savepoint { .. } => true,
             // Le catalogue décrit les tables de tous les modules : seule une migration le lit.
-            AuthAction::Read { table_name, .. } => readable(table_name) || (schema && catalog(table_name)),
-            AuthAction::Insert { table_name } | AuthAction::Delete { table_name } => {
-                owned(table_name) || (schema && catalog(table_name))
+            AuthAction::Read { table_name, .. } => {
+                readable(table_name) || own_index(table_name) || (schema && catalog(table_name))
             }
-            AuthAction::Update { table_name, .. } => owned(table_name) || (schema && catalog(table_name)),
+            AuthAction::Insert { table_name } | AuthAction::Delete { table_name } => {
+                owned(table_name) || own_index(table_name) || (schema && catalog(table_name))
+            }
+            AuthAction::Update { table_name, .. } => {
+                owned(table_name) || own_index(table_name) || (schema && catalog(table_name))
+            }
             AuthAction::CreateTable { table_name }
             | AuthAction::DropTable { table_name }
             | AuthAction::AlterTable { table_name, .. } => schema && owned(table_name),
             AuthAction::CreateIndex { table_name, .. } | AuthAction::DropIndex { table_name, .. } => {
                 schema && owned(table_name)
             }
-            AuthAction::CreateTrigger { table_name, .. } | AuthAction::DropTrigger { table_name, .. } => {
-                schema && owned(table_name)
+            // Un module ne crée pas de déclencheur au nom d’Alfred : il échapperait à ce contrôle. Il peut en
+            // supprimer un avec sa table (une migration qui recrée la table) : Alfred le repose ensuite.
+            AuthAction::CreateTrigger { trigger_name, table_name } => {
+                schema && owned(table_name) && !trigger_name.starts_with(ALFRED_PREFIX)
             }
+            AuthAction::DropTrigger { table_name, .. } => schema && owned(table_name),
             AuthAction::Reindex { .. } | AuthAction::Analyze { .. } => schema,
+            // FTS5 lit ce compteur pour savoir si la base a changé ; il ne révèle rien d’un autre module.
+            AuthAction::Pragma { pragma_name: "data_version", pragma_value: None } => true,
             // Pas de vue, de table virtuelle, de base attachée ni de PRAGMA : rien qui sorte du module.
             _ => false,
         };
@@ -199,6 +220,10 @@ pub fn apply_migrations(space: &Space) -> AppResult<Vec<MigrationProblem>> {
     let mut problems = Vec::new();
     for module in space.module_ids() {
         apply_module_migrations(space, &module, &mut problems)?;
+        // Les index de recherche suivent la structure : reconstruits si une migration a recréé leur table.
+        if let Err(error) = crate::module_search::sync(space, &module, &mut problems) {
+            problems.push(MigrationProblem { module: module.clone(), file: "module.json (search)".into(), message: error.message });
+        }
     }
     Ok(problems)
 }
@@ -208,16 +233,18 @@ pub fn apply_migrations(space: &Space) -> AppResult<Vec<MigrationProblem>> {
 /// l’interface ni un `check` de l’agent. Une migration en échec reste signalée par `check`.
 fn apply_pending_for(space: &Space, module: &str) -> AppResult<()> {
     for target in std::iter::once(module).chain(module.strip_suffix("-ajouts")) {
-        if space.module_dir(target).is_dir() {
-            apply_module_migrations(space, target, &mut Vec::new())?;
+        if space.module_dir(target).is_dir() && apply_module_migrations(space, target, &mut Vec::new())? {
+            crate::module_search::sync(space, target, &mut Vec::new())?;
         }
     }
     Ok(())
 }
 
-fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<MigrationProblem>) -> AppResult<()> {
+/// Rend `true` si au moins une migration vient de passer.
+fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<MigrationProblem>) -> AppResult<bool> {
     let dir = space.module_dir(module).join("migrations");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(()) };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(false) };
+    let mut applied_any = false;
     let mut files: Vec<String> = entries
         .flatten()
         .filter_map(|entry| entry.file_name().into_string().ok())
@@ -230,7 +257,7 @@ fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<Migra
             Ok(sql) => sql,
             Err(error) => {
                 problems.push(MigrationProblem { module: module.to_string(), file, message: error.to_string() });
-                return Ok(());
+                return Ok(applied_any);
             }
         };
         let digest = checksum(&sql);
@@ -262,7 +289,7 @@ fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<Migra
                               suivante (0002_…), ou lire la structure réelle avec db_schema."
                         .to_string(),
                 });
-                return Ok(());
+                return Ok(applied_any);
             }
             None => crate::backups::before_migration(space, module, &file),
         }
@@ -281,15 +308,18 @@ fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<Migra
             Ok(())
         });
         match result {
-            Ok(()) => db.execute_batch("COMMIT;")?,
+            Ok(()) => {
+                db.execute_batch("COMMIT;")?;
+                applied_any = true;
+            }
             Err(error) => {
                 let _ = db.execute_batch("ROLLBACK;");
                 problems.push(MigrationProblem { module: module.to_string(), file, message: error.message });
-                return Ok(());
+                return Ok(applied_any);
             }
         }
     }
-    Ok(())
+    Ok(applied_any)
 }
 
 /// Tables du module qui ne sont à aucun module plus précis (celles de « suivi-ajouts » ne sont pas à « suivi »).
@@ -373,6 +403,7 @@ pub fn drop_module(space: &Space, module: &str) -> AppResult<()> {
         db.execute_batch(&format!("DROP TABLE IF EXISTS \"{}\";", table.replace('"', "\"\"")))?;
     }
     db.execute("DELETE FROM _alfred_migrations WHERE module = ?1", params![module])?;
+    crate::module_search::drop_module(&db, module)?;
     // Ses fichiers partent avec ses tables ; les sauvegardes les gardent.
     let files = crate::backups::files_root(space).join(module);
     if valid_id(module) && files.is_dir() {
