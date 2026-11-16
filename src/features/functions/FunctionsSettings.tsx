@@ -1,14 +1,16 @@
 import {
   Button,
   Dialog,
+  Disclosure,
   EmptyState,
   FormField,
   Heading,
+  IconButton,
   LoadingSkeleton,
   Markdown,
   Page,
   Row,
-  Section,
+  SearchField,
   Stack,
   StatusBadge,
   SwitchControl,
@@ -16,6 +18,7 @@ import {
   TextArea,
   useConfirm,
 } from "@alfred/ui";
+import { Play, Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "../../lib/native";
 import type { FunctionRuntime, ModuleSummary, ResolvedFunction } from "../../lib/types";
@@ -213,6 +216,10 @@ function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () => void 
   );
 }
 
+/**
+ * Une fonction sur une ligne : nom, langage, description (coupée, en entier au survol), état seulement quand elle
+ * n’est pas prête, interrupteur « outil des agents », essai et suppression. Les erreurs s’ajoutent dessous.
+ */
 function FunctionItem({
   fn,
   readOnly,
@@ -232,7 +239,6 @@ function FunctionItem({
     setTool(fn.tool);
   }
   const ready = stateOf(fn) === "ready";
-
   const toggleTool = async (next: boolean) => {
     setTool(next);
     setSaving(true);
@@ -250,74 +256,75 @@ function FunctionItem({
       setSaving(false);
     }
   };
-
   return (
-    <Stack gap="sm">
-      <Row justify="between" align="start" gap="md">
-        <Stack gap="xs">
-          <Row gap="sm" align="center">
-            <Heading level={3}>{fn.id}</Heading>
-            {isScript(fn) ? (
-              <StatusBadge tone="neutral" size="compact">
-                {RUNTIME_LABELS[fn.runtime]}
-              </StatusBadge>
-            ) : null}
-          </Row>
-          <Text tone={fn.description ? "default" : "muted"}>{fn.description || "Aucune description."}</Text>
-        </Stack>
-        <FunctionStatus fn={fn} />
-      </Row>
+    <li className="function-row">
+      <div className="function-row__line">
+        <span className="function-row__name">{fn.id}</span>
+        {isScript(fn) ? (
+          <StatusBadge tone="neutral" size="compact">
+            {RUNTIME_LABELS[fn.runtime]}
+          </StatusBadge>
+        ) : null}
+        <span
+          className={`function-row__description${fn.description ? "" : " is-empty"}`}
+          title={fn.description || undefined}
+        >
+          {fn.description || "Aucune description."}
+        </span>
+        {ready ? null : <FunctionStatus fn={fn} />}
+        <span
+          className="function-row__tool"
+          title={
+            readOnly
+              ? "Module installé en lecture seule : ce réglage suit sa version d’origine."
+              : "L’agent peut appeler cette fonction pendant une conversation."
+          }
+        >
+          <SwitchControl
+            label="Outil"
+            aria-label={`Proposer la fonction ${fn.id} aux agents comme outil`}
+            checked={tool}
+            disabled={readOnly || saving}
+            onChange={(event) => void toggleTool(event.target.checked)}
+          />
+        </span>
+        <IconButton size="small" label={`Essayer la fonction ${fn.id}`} disabled={!ready} onClick={onTry}>
+          <Play size={13} aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="small"
+          label={`Supprimer la fonction ${fn.id}`}
+          tooltip={readOnly ? "Module en lecture seule" : `Supprimer la fonction ${fn.id}`}
+          disabled={readOnly}
+          onClick={onRemove}
+        >
+          <Trash2 size={13} aria-hidden="true" />
+        </IconButton>
+      </div>
       {fn.missing ? (
-        <Text tone="muted">
+        <Text size="meta" tone="muted">
           Déclarée dans le module, mais son fichier n’existe pas encore : demandez à l’agent de l’écrire.
         </Text>
       ) : null}
-      {fn.errors.length > 0 ? (
-        <Stack gap="xs">
-          {fn.errors.map((error) => (
-            <Text key={`${error.line ?? ""}:${error.column ?? ""}:${error.message}`} tone="danger">
-              {error.line ? `Ligne ${error.line}${error.column ? `, colonne ${error.column}` : ""} : ` : ""}
-              {error.message}
-            </Text>
-          ))}
-        </Stack>
-      ) : null}
-      <Stack gap="none">
-        <SwitchControl
-          label="Proposer aux agents comme outil"
-          checked={tool}
-          disabled={readOnly || saving}
-          onChange={(event) => void toggleTool(event.target.checked)}
-        />
-        <Text size="meta" tone="muted">
-          {readOnly
-            ? "Module installé en lecture seule : ce réglage suit sa version d’origine."
-            : "L’agent peut alors appeler cette fonction pendant une conversation."}
+      {fn.errors.map((error) => (
+        <Text key={`${error.line ?? ""}:${error.column ?? ""}:${error.message}`} size="meta" tone="danger">
+          {error.line ? `Ligne ${error.line}${error.column ? `, colonne ${error.column}` : ""} : ` : ""}
+          {error.message}
         </Text>
-      </Stack>
-      <Row gap="sm">
-        <Button disabled={!ready} aria-label={`Essayer la fonction ${fn.id}`} onClick={onTry}>
-          Essayer
-        </Button>
-        <Button
-          variant="danger"
-          disabled={readOnly}
-          aria-label={`Supprimer la fonction ${fn.id}`}
-          title={readOnly ? "Module en lecture seule" : undefined}
-          onClick={onRemove}
-        >
-          Supprimer
-        </Button>
-      </Row>
-    </Stack>
+      ))}
+    </li>
   );
 }
+
+/** Au-delà, la page propose une recherche et replie les modules qui n’ont rien à signaler. */
+const MANY_FUNCTIONS = 8;
 
 /** Onglet « Fonctions » des Réglages : les fonctions de l’espace, leur état, leur exposition aux agents, un essai. */
 export function FunctionsSettings() {
   const snapshot = useShell((state) => state.snapshot);
   const setView = useShell((state) => state.setView);
   const [trying, setTrying] = useState<ResolvedFunction>();
+  const [query, setQuery] = useState("");
   const { confirm, confirmDialog } = useConfirm();
 
   if (snapshot === undefined) {
@@ -379,6 +386,11 @@ export function FunctionsSettings() {
     }
   };
 
+  const needle = query.trim().toLocaleLowerCase("fr");
+  const matches = (fn: ResolvedFunction) =>
+    !needle || `${fn.id} ${fn.description ?? ""} ${fn.module}`.toLocaleLowerCase("fr").includes(needle);
+  const many = functions.length > MANY_FUNCTIONS;
+
   return (
     <Page width="text">
       {broken > 0 ? (
@@ -387,31 +399,60 @@ export function FunctionsSettings() {
           corriger les erreurs indiquées.
         </Text>
       ) : null}
-      {[...modules.entries()].map(([id, module]) => (
-        <Section
-          key={id}
-          title={module?.name ?? id}
-          description={
-            module?.readOnly
-              ? `${module.description ? `${module.description} ` : ""}Module en lecture seule.`
-              : module?.description || undefined
-          }
-        >
-          <Stack gap="lg">
-            {functions
-              .filter((fn) => fn.module === id)
-              .map((fn) => (
-                <FunctionItem
-                  key={fn.reference}
-                  fn={fn}
-                  readOnly={Boolean(module?.readOnly)}
-                  onTry={() => setTrying(fn)}
-                  onRemove={() => void remove(fn)}
-                />
-              ))}
-          </Stack>
-        </Section>
-      ))}
+      {many ? (
+        <SearchField
+          label="Rechercher une fonction"
+          placeholder="Rechercher une fonction"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onClear={() => setQuery("")}
+        />
+      ) : null}
+      {[...modules.entries()].map(([id, module]) => {
+        const items = functions.filter((fn) => fn.module === id && matches(fn));
+        if (items.length === 0) return null;
+        const total = functions.filter((fn) => fn.module === id).length;
+        const issues = items.filter((fn) => stateOf(fn) !== "ready").length;
+        return (
+          <section key={id} className="function-group">
+            <Disclosure
+              // Ouvert par défaut tant que la liste reste courte, ou s’il y a quelque chose à corriger.
+              open={Boolean(needle) || !many || issues > 0}
+              summaryClassName="function-group__summary"
+              label={
+                <span className="function-group__title">
+                  <Heading level={3}>{module?.name ?? id}</Heading>
+                  <span className="function-group__count">
+                    {total} fonction{total > 1 ? "s" : ""}
+                  </span>
+                  {issues > 0 ? (
+                    <StatusBadge tone="warning" size="compact">
+                      {issues} à corriger
+                    </StatusBadge>
+                  ) : null}
+                </span>
+              }
+            >
+              {module?.readOnly ? (
+                <Text size="meta" tone="muted">
+                  Module installé en lecture seule : ses fonctions suivent sa version d’origine.
+                </Text>
+              ) : null}
+              <ul className="function-list">
+                {items.map((fn) => (
+                  <FunctionItem
+                    key={fn.reference}
+                    fn={fn}
+                    readOnly={Boolean(module?.readOnly)}
+                    onTry={() => setTrying(fn)}
+                    onRemove={() => void remove(fn)}
+                  />
+                ))}
+              </ul>
+            </Disclosure>
+          </section>
+        );
+      })}
       {trying ? <TryDialog key={trying.reference} fn={trying} onClose={() => setTrying(undefined)} /> : null}
       {confirmDialog}
     </Page>

@@ -133,9 +133,10 @@ it("montre l’état de chaque fonction, l’expose aux agents, l’essaie et la
   const user = userEvent.setup();
   render(<FunctionsSettings />);
 
-  // Groupées par module, avec leur état en toutes lettres.
+  // Groupées par module, une ligne chacune ; l’état n’est écrit que s’il y a quelque chose à corriger.
   const ventes = screen.getByRole("heading", { name: "Ventes" }).closest("section") ?? document.body;
-  expect(within(ventes).getByText("Prête")).toBeInTheDocument();
+  expect(within(ventes).queryByText("Prête")).not.toBeInTheDocument();
+  expect(within(ventes).getByText("2 à corriger")).toBeInTheDocument();
   expect(within(ventes).getByText("Pas encore écrite")).toBeInTheDocument();
   expect(within(ventes).getByText("Ne compile pas")).toBeInTheDocument();
   expect(screen.getByText("Ligne 12, colonne 3 : Cannot find name 'rows'.")).toBeInTheDocument();
@@ -143,7 +144,7 @@ it("montre l’état de chaque fonction, l’expose aux agents, l’essaie et la
   expect(screen.getByRole("button", { name: "Essayer la fonction relance" })).toBeDisabled();
 
   // Module en lecture seule : interrupteur désactivé, avec l’explication.
-  const switches = screen.getAllByRole("switch", { name: "Proposer aux agents comme outil" });
+  const switches = screen.getAllByRole("switch", { name: /^Proposer la fonction .* aux agents comme outil$/ });
   expect(switches.at(-1)).toBeDisabled();
   expect(screen.getByText(/Module installé en lecture seule/)).toBeInTheDocument();
 
@@ -212,4 +213,24 @@ it("indique le langage d’un script et l’absence de son interpréteur", () =>
   expect(screen.getByText("Interpréteur absent")).toBeInTheDocument();
   expect(screen.getByText("Interpréteur PowerShell introuvable : installer PowerShell 7.")).toBeInTheDocument();
   expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
+});
+
+it("replie les modules sans problème et cherche parmi beaucoup de fonctions", async () => {
+  const user = userEvent.setup();
+  snapshot = {
+    ...snapshot,
+    functions: Array.from({ length: 12 }, (_, index) =>
+      fn(`ventes/fonction${index}`, { description: index === 7 ? "Calcule la marge" : "" }),
+    ),
+  };
+  useShell.setState({ snapshot });
+  render(<FunctionsSettings />);
+  const group = screen.getByRole("heading", { name: "Ventes" }).closest("details");
+  expect(group).not.toHaveAttribute("open");
+  expect(screen.getByText("12 fonctions")).toBeInTheDocument();
+
+  await user.type(screen.getByRole("searchbox", { name: "Rechercher une fonction" }), "marge");
+  expect(group).toHaveAttribute("open");
+  expect(screen.getByText("fonction7")).toBeInTheDocument();
+  expect(screen.queryByText("fonction3")).not.toBeInTheDocument();
 });

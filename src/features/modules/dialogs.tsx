@@ -1,6 +1,7 @@
 import {
   Button,
   Dialog,
+  Disclosure,
   FeedbackBanner,
   FormActions,
   FormField,
@@ -98,16 +99,33 @@ function DependencySteps({ steps }: { steps: DependencyStep[] }) {
   );
 }
 
+/** Éléments montrés d’emblée dans une liste de la fiche ; les suivants se déplient. */
+const SHOWN_FACTS = 6;
+
+/**
+ * Liste de la fiche d’un module (pages, fonctions…) : un élément par ligne, coupé au besoin (en entier au survol), et
+ * au-delà de quelques-uns un repli « … et N autres » : un module peut avoir beaucoup de fonctions.
+ */
 function Facts({ title, items }: { title: string; items: string[] }) {
   if (items.length === 0) return null;
+  const row = (item: string) => (
+    <li key={item} title={item}>
+      {item}
+    </li>
+  );
+  const shown = items.length > SHOWN_FACTS + 1 ? items.slice(0, SHOWN_FACTS) : items;
+  const rest = items.slice(shown.length);
   return (
     <section>
-      <h3>{title}</h3>
-      <ul className="modules-facts">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+      <h3>
+        {title} <span className="modules-facts__count">· {items.length}</span>
+      </h3>
+      <ul className="modules-facts modules-facts--compact">{shown.map(row)}</ul>
+      {rest.length > 0 ? (
+        <Disclosure appearance="subtle" label={`… et ${rest.length} autres`} lazy>
+          <ul className="modules-facts modules-facts--compact">{rest.map(row)}</ul>
+        </Disclosure>
+      ) : null}
     </section>
   );
 }

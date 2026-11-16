@@ -104,6 +104,16 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
+/* Une ligne par élément, coupée au besoin : une longue liste de fonctions reste lisible. */
+.modules-facts--compact li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modules-facts__count {
+  color: var(--color-muted);
+  font-weight: normal;
+}
 .modules-facts--plain {
   padding: 0;
   list-style: none;
