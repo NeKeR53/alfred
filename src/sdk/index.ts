@@ -142,6 +142,38 @@ export const files = {
   },
 };
 
+// --- Historique des données ----------------------------------------------------------------------------------
+
+/** Un changement d’une ligne, gardé pour une table nommée dans `history` du module. */
+export interface Change<Row = Record<string, unknown>> {
+  id: number;
+  table: string;
+  /** Clé de la ligne (sa clé primaire, en texte), ou son rowid si la clé n’est pas une seule colonne. */
+  key: string | null;
+  op: "insert" | "update" | "delete";
+  /** La ligne avant le changement (`null` pour une insertion) ; un BLOB s’écrit `{ $blob: "<hex>" }`. */
+  before: Row | null;
+  /** La ligne après le changement (`null` pour une suppression). */
+  after: Row | null;
+  /** Qui : « page:module/page », « function:module/fonction », « agent », « alfred », suivi de « (annulation) ». */
+  actor: string;
+  at: string;
+}
+
+/** Historique des tables déclarées dans `history` de `module.json` : qui a changé quoi, et retour en arrière. */
+export const history = {
+  /** Changements, les plus récents d’abord ; `table` et `key` les limitent à une table et à une ligne. */
+  list<Row = Record<string, unknown>>(
+    options: { table?: string; key?: string | number; limit?: number } = {},
+  ): Promise<Change<Row>[]> {
+    return request("history.list", options);
+  },
+  /** Remet la ligne dans l’état d’avant ce changement ; rend le changement annulé. */
+  revert(id: number): Promise<Change> {
+    return request("history.revert", { id });
+  },
+};
+
 // --- Événements entre modules ---------------------------------------------------------------------------------
 
 /** Ce que reçoit la fonction abonnée à un événement. */

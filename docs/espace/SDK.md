@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `history`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -736,5 +736,33 @@ await events.publish("ticket-cree", { id: lastInsertId, titre });
 import { db, type ModuleEvent } from "@alfred/sdk";
 export default async function ({ payload }: ModuleEvent<{ id: number; titre: string }>) {
   await db.execute("INSERT OR IGNORE INTO taches_taches (ticket, titre) VALUES (?, ?)", [payload.id, payload.titre]);
+}
+```
+
+## 14. Historique des données : `history`
+
+Pour une table dont l’utilisateur doit pouvoir savoir qui a changé quoi, et revenir en arrière (fiches clients, contrats, réglages partagés), nomme-la dans `history` du `module.json` : Alfred garde chaque insertion, modification et suppression, avec la ligne avant et après, l’auteur et l’heure.
+
+```json
+"history": ["crm_contacts", "crm_contrats"]
+```
+
+```ts
+history.list(options?: { table?: string; key?: string | number; limit?: number }): Promise<Change[]>; // plus récents d’abord, 100 par défaut
+history.revert(id: number): Promise<Change>;
+interface Change { id: number; table: string; key: string | null; op: "insert" | "update" | "delete";
+  before: Record<string, unknown> | null; after: Record<string, unknown> | null; actor: string; at: string }
+```
+
+- `key` : la clé primaire de la ligne (en texte : `key: 12` et `key: "12"` se valent), ou son `rowid` si la clé porte sur plusieurs colonnes.
+- `actor` : `page:module/page` (le panneau compte pour sa page), `function:module/fonction`, `agent` (requête de l’agent), `alfred` (import, restauration), suivi de « (annulation) » pour une remise en arrière.
+- `revert` remet **toute la ligne** dans son état d’avant ce changement : une insertion est retirée, une modification annulée, une suppression rétablie. La remise est un changement à son tour, qu’on peut annuler. Des modifications faites après celle qu’on annule sont écrasées : montre la ligne `before` et demande confirmation (`useConfirm`).
+- Alfred garde 90 jours et 10 000 changements par table. Les colonnes ajoutées par une migration sont suivies dès qu’elle passe. Une table absente apparaît dans `check` (`migrations`, « module.json (history …) »).
+
+```tsx
+import { history, useAsync } from "@alfred/sdk";
+
+export function useHistoriqueContact(id: number) {
+  return useAsync(() => history.list<{ nom: string; email: string }>({ table: "crm_contacts", key: id, limit: 50 }), [id]);
 }
 ```

@@ -1095,7 +1095,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                         .collect()
                 })
                 .unwrap_or_default();
-            space_db::run(&space, &module, &sql, &parameters, true)
+            space_db::run_as(&space, &module, "agent", &sql, &parameters, true)
         }
         "call_function" => {
             let reference: String = arg(args, "function")?;

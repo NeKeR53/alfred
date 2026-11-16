@@ -38,6 +38,8 @@ pub(crate) fn open(space: &Space) -> AppResult<Connection> {
     if !has_checksum {
         db.execute_batch("ALTER TABLE _alfred_migrations ADD COLUMN checksum TEXT;")?;
     }
+    // Auteur des écritures, lu par les déclencheurs de l’historique : Alfred lui-même, sauf si l’appel le précise.
+    set_actor(&db, "alfred")?;
     Ok(db)
 }
 
@@ -76,7 +78,8 @@ fn restrict(db: &Connection, space: &Space, module: &str, scope: Scope) {
         // (« suivi-prive » pour « suivi-ajouts »).
         let readable = |table: &str| owned(table) || base.as_deref().is_some_and(|prefix| claimed(table, prefix));
         let catalog = |table: &str| {
-            matches!(table, "sqlite_master" | "sqlite_schema" | "sqlite_temp_master" | "sqlite_temp_schema")
+            // `sqlite_sequence` : renommer une table à AUTOINCREMENT y renomme son compteur.
+            matches!(table, "sqlite_master" | "sqlite_schema" | "sqlite_temp_master" | "sqlite_temp_schema" | "sqlite_sequence")
         };
         // Index de recherche d’une table du module : FTS5 lit et écrit ses tables internes par des requêtes
         // compilées sur cette connexion. Ils ne contiennent que les données du module.
@@ -166,13 +169,28 @@ fn bind(args: &Value) -> Vec<SqlValue> {
     args.get("params").and_then(Value::as_array).map(|values| values.iter().map(to_sql).collect()).unwrap_or_default()
 }
 
+/// Fixe l’auteur rendu par `alfred_actor()` sur cette connexion.
+pub(crate) fn set_actor(db: &Connection, actor: &str) -> AppResult<()> {
+    use rusqlite::functions::FunctionFlags;
+    let actor = actor.to_string();
+    db.create_scalar_function("alfred_actor", 0, FunctionFlags::SQLITE_UTF8, move |_| Ok(actor.clone()))?;
+    Ok(())
+}
+
 /// Exécute une requête pour un module ; renvoie les lignes (lecture) ou le nombre de lignes touchées (écriture).
+#[cfg(test)]
 pub fn run(space: &Space, module: &str, sql: &str, parameters: &[SqlValue], write: bool) -> AppResult<Value> {
+    run_as(space, module, &format!("module:{module}"), sql, parameters, write)
+}
+
+/// Comme `run`, en nommant l’auteur des écritures pour l’historique (« page:module/page », « agent »…).
+pub fn run_as(space: &Space, module: &str, actor: &str, sql: &str, parameters: &[SqlValue], write: bool) -> AppResult<Value> {
     if !valid_id(module) {
         return Err(AppError::new("Module inconnu."));
     }
     apply_pending_for(space, module)?;
     let db = open(space)?;
+    set_actor(&db, actor)?;
     restrict(&db, space, module, Scope::Data);
     let mut statement = db.prepare(sql).map_err(|error| sql_error(error, module))?;
     if statement.readonly() || statement.column_count() > 0 {
@@ -221,9 +239,7 @@ pub fn apply_migrations(space: &Space) -> AppResult<Vec<MigrationProblem>> {
     for module in space.module_ids() {
         apply_module_migrations(space, &module, &mut problems)?;
         // Les index de recherche suivent la structure : reconstruits si une migration a recréé leur table.
-        if let Err(error) = crate::module_search::sync(space, &module, &mut problems) {
-            problems.push(MigrationProblem { module: module.clone(), file: "module.json (search)".into(), message: error.message });
-        }
+        sync_managed(space, &module, &mut problems);
     }
     Ok(problems)
 }
@@ -234,10 +250,21 @@ pub fn apply_migrations(space: &Space) -> AppResult<Vec<MigrationProblem>> {
 fn apply_pending_for(space: &Space, module: &str) -> AppResult<()> {
     for target in std::iter::once(module).chain(module.strip_suffix("-ajouts")) {
         if space.module_dir(target).is_dir() && apply_module_migrations(space, target, &mut Vec::new())? {
-            crate::module_search::sync(space, target, &mut Vec::new())?;
+            sync_managed(space, target, &mut Vec::new());
         }
     }
     Ok(())
+}
+
+/// Index de recherche et historique : ce qu’Alfred pose sur les tables d’un module suit leur structure (reconstruit
+/// si une migration a recréé une table).
+pub(crate) fn sync_managed(space: &Space, module: &str, problems: &mut Vec<MigrationProblem>) {
+    if let Err(error) = crate::module_search::sync(space, module, problems) {
+        problems.push(MigrationProblem { module: module.to_string(), file: "module.json (search)".into(), message: error.message });
+    }
+    if let Err(error) = crate::module_history::sync(space, module, problems) {
+        problems.push(MigrationProblem { module: module.to_string(), file: "module.json (history)".into(), message: error.message });
+    }
 }
 
 /// Rend `true` si au moins une migration vient de passer.
@@ -404,6 +431,7 @@ pub fn drop_module(space: &Space, module: &str) -> AppResult<()> {
     }
     db.execute("DELETE FROM _alfred_migrations WHERE module = ?1", params![module])?;
     crate::module_search::drop_module(&db, module)?;
+    crate::module_history::drop_module(&db, module)?;
     // Ses fichiers partent avec ses tables ; les sauvegardes les gardent.
     let files = crate::backups::files_root(space).join(module);
     if valid_id(module) && files.is_dir() {
@@ -417,7 +445,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         "frame.db.query" | "frame.db.execute" => (|| {
             let subject: Subject = arg(args, "subject")?;
             let sql: String = arg(args, "sql")?;
-            run(&state.space()?, &subject.module, &sql, &bind(args), command == "frame.db.execute")
+            run_as(&state.space()?, &subject.module, &subject.key(), &sql, &bind(args), command == "frame.db.execute")
         })(),
         "db.schema" => (|| {
             let module: Option<String> = opt_arg(args, "module")?;

@@ -93,6 +93,9 @@ pub struct ModuleManifest {
     /// Index de recherche plein texte, tenus à jour par Alfred.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub search: Vec<IndexDecl>,
+    /// Tables dont Alfred garde l’historique des modifications (qui, quand, avant et après).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<String>,
     /// Événements que le module publie, et ceux d’autres modules auxquels ses fonctions s’abonnent.
     #[serde(skip_serializing_if = "EventsDecl::is_empty")]
     pub events: EventsDecl,

@@ -20,6 +20,7 @@ mod libraries;
 mod marketplace;
 mod module_events;
 mod module_files;
+mod module_history;
 mod module_search;
 mod mcp;
 mod oauth;

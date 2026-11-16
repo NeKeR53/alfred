@@ -240,6 +240,10 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "files.open":
     case "files.dataUrl":
       return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "history.list":
+      return invoke("frame.history.list", { ...pick(params, ["table", "key", "limit"]), subject });
+    case "history.revert":
+      return invoke("frame.history.revert", { ...pick(params, ["id"]), subject });
     case "events.publish":
       return invoke("frame.events.publish", { ...pick(params, ["event", "payload"]), subject });
     case "search.query":

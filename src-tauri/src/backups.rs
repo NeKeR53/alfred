@@ -450,7 +450,7 @@ pub fn restore_module(space: &Space, id: &str, module: &str) -> AppResult<Backup
         copy_dir(&saved, &files)?;
     }
     // Les index de recherche du module ont perdu leurs déclencheurs avec les tables : ils se reconstruisent.
-    crate::module_search::sync(space, module, &mut Vec::new())?;
+    crate::space_db::sync_managed(space, module, &mut Vec::new());
     Ok(safety)
 }
 
