@@ -1,12 +1,13 @@
 /**
- * Références de la saisie, reprises de OneApp (`composerReferences.ts`) : `/` appelle une commande ou un skill du
- * harnais de la conversation, `@` cite un fichier ou un dossier du dossier de travail. La référence choisie reste
- * visible dans le texte (`/publier`, `@src/page.tsx`) ; le chemin exact part avec le message, en consigne pour
- * l’agent, tant que sa mention est toujours dans le texte.
+ * Références de la saisie, reprises de OneApp (`composerReferences.ts`, `composerReferenceCatalog.ts`) : `/` appelle
+ * une commande ou un skill du harnais de la conversation, `$` un skill seul, `@` cite un fichier ou un dossier du
+ * dossier de travail. La référence choisie devient une pastille à sa position dans le texte (`offset`) ; le chemin
+ * exact part avec le message, en consigne pour l’agent, l’interface n’affichant que le nom.
  */
 
 import { invoke } from "../../../lib/native";
 import type { Provider } from "../harness";
+import { spawnProcess } from "../harness/process";
 
 export type ReferenceKind = "file" | "skill" | "command";
 export interface ComposerReference {
@@ -15,9 +16,11 @@ export interface ComposerReference {
   kind: ReferenceKind;
   description?: string;
 }
+/** Référence placée dans le texte : `offset` est sa position, en caractères, dans le texte sans les pastilles. */
+export type ComposerReferenceMention = ComposerReference & { id: string; offset: number };
 export interface ReferenceQuery {
-  /** `file` pour `@`, `command` pour `/` (commandes et skills). */
-  kind: "file" | "command";
+  /** `file` pour `@`, `skill` pour `$`, `command` pour `/` (commandes et skills). */
+  kind: ReferenceKind;
   query: string;
   start: number;
   end: number;
@@ -67,103 +70,223 @@ export function filterComposerReferences(items: ComposerReference[], query: stri
     .map(({ item }) => item);
 }
 
-/** Mot en cours de frappe juste avant le curseur, s’il commence par `@` ou `/` (en début de mot). */
+/** Mot en cours de frappe juste avant le curseur, s’il commence par `@`, `$` ou `/` (en début de mot). */
 export function referenceQuery(text: string, cursor: number): ReferenceQuery | undefined {
-  const match = /(?:^|\s)([@/])([^\s]*)$/.exec(text.slice(0, cursor));
+  const match = /(?:^|\s)([@$/])([^\s]*)$/.exec(text.slice(0, cursor));
   if (!match) return undefined;
   return {
-    kind: match[1] === "@" ? "file" : "command",
+    kind: match[1] === "@" ? "file" : match[1] === "$" ? "skill" : "command",
     query: match[2],
     start: cursor - match[2].length - 1,
     end: cursor,
   };
 }
 
-/** Ce que la saisie affiche pour la référence : `/nom` ou `@chemin/relatif`. */
-export function mentionOf(item: ComposerReference): string {
-  return item.kind === "file" ? `@${item.name.replace(/\/$/, "")}` : `/${item.name}`;
+/** Nom affiché dans la pastille : le dernier segment d’un chemin, le nom d’une commande ou d’un skill. */
+export function referenceDisplayName(item: ComposerReference): string {
+  return item.kind === "file" ? item.name.replace(/\/$/, "").split(/[\\/]/).at(-1) || item.name : item.name;
 }
 
-/** Remplace le mot en cours par la mention, suivie d’une espace ; renvoie le texte et la position du curseur. */
-export function insertReference(text: string, query: ReferenceQuery, item: ComposerReference) {
-  const mention = `${mentionOf(item)} `;
-  const next = text.slice(0, query.start) + mention + text.slice(query.end).replace(/^ /, "");
-  return { text: next, cursor: query.start + mention.length };
+/** Retire le mot en cours (`@not`, `/pub`) : la pastille prend sa place. */
+export function removeReferenceQuery(text: string, query: ReferenceQuery) {
+  return { text: text.slice(0, query.start) + text.slice(query.end), cursor: query.start };
 }
 
-function mentioned(text: string, mention: string): boolean {
-  let index = text.indexOf(mention);
-  while (index !== -1) {
-    const before = index === 0 || /\s/.test(text[index - 1] ?? "");
-    const after = text[index + mention.length];
-    if (before && (after === undefined || /\s|[.,;:!?)]/.test(after))) return true;
-    index = text.indexOf(mention, index + 1);
-  }
-  return false;
+/**
+ * Décale les pastilles après le remplacement de `start`–`end` par `replacementLength` caractères : celles d’avant ne
+ * bougent pas, celles d’après suivent, celles du passage remplacé se posent à sa fin.
+ */
+export function replaceComposerRange(
+  references: readonly ComposerReferenceMention[],
+  start: number,
+  end: number,
+  replacementLength = 0,
+): ComposerReferenceMention[] {
+  const delta = replacementLength - (end - start);
+  return references.map((reference) => ({
+    ...reference,
+    offset:
+      reference.offset <= start
+        ? reference.offset
+        : reference.offset >= end
+          ? reference.offset + delta
+          : start + replacementLength,
+  }));
 }
 
-/** Références dont la mention est encore dans le texte : effacer `@fichier` retire la référence. */
-export function keptReferences(text: string, references: readonly ComposerReference[]): ComposerReference[] {
-  const seen = new Set<string>();
-  return references.filter((item) => {
-    const key = `${item.kind}:${item.path}`;
-    if (seen.has(key) || !mentioned(text, mentionOf(item))) return false;
-    seen.add(key);
-    return true;
-  });
+/** Positions des pastilles dans le texte rogné (`text.trim()`) qui part avec le message. */
+export function trimComposerReferences(
+  text: string,
+  references: readonly ComposerReferenceMention[],
+): ComposerReferenceMention[] {
+  const leading = text.length - text.trimStart().length;
+  const length = text.trim().length;
+  return references.map((reference) => ({
+    ...reference,
+    offset: Math.max(0, Math.min(length, reference.offset - leading)),
+  }));
 }
 
-/** Consignes ajoutées au message pour l’agent ; l’interface n’affiche que la mention. */
+/** Consignes réservées à l’agent : l’interface n’affiche que le nom de la référence. */
 export function referenceInstructions(items: readonly ComposerReference[]): string {
   return items
     .map((item) =>
       item.kind === "file"
-        ? `Fichier ou dossier cité (${mentionOf(item)}) : ${JSON.stringify(item.path)}`
+        ? `Fichier ou dossier référencé : @${JSON.stringify(item.path)}`
         : item.kind === "skill"
-          ? `Utilise le skill « ${item.name} » (${JSON.stringify(item.path)}).`
+          ? `Utilise le skill $${item.name}.`
           : `Applique la commande /${item.name} définie dans ${JSON.stringify(item.path)}.`,
     )
     .join("\n");
 }
 
+function validReference(raw: unknown): raw is ComposerReference {
+  if (!raw || typeof raw !== "object") return false;
+  const item = raw as Partial<ComposerReference>;
+  return (
+    typeof item.name === "string" &&
+    Boolean(item.name.trim()) &&
+    typeof item.path === "string" &&
+    Boolean(item.path.trim()) &&
+    ["file", "skill", "command"].includes(String(item.kind)) &&
+    (item.description === undefined || typeof item.description === "string")
+  );
+}
+
 /** Relit des références venues d’un message enregistré : champs connus, chemins non vides, 50 au plus. */
 export function validReferences(value: unknown): ComposerReference[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .slice(0, 50)
-    .filter(
-      (raw): raw is ComposerReference =>
-        typeof raw === "object" &&
-        raw !== null &&
-        typeof (raw as ComposerReference).name === "string" &&
-        typeof (raw as ComposerReference).path === "string" &&
-        Boolean((raw as ComposerReference).path.trim()) &&
-        ["file", "skill", "command"].includes(String((raw as ComposerReference).kind)),
-    );
+  return value.slice(0, 50).filter(validReference);
 }
 
-/** Catalogue des commandes et skills, gardé 30 s par harnais et dossier : `/` ne relit pas le disque à chaque lettre. */
+/** Références placées d’un brouillon enregistré : 50 au plus, chacune avec son identifiant et sa position. */
+export function validComposerReferenceMentions(value: unknown): value is ComposerReferenceMention[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 50 &&
+    value.every((raw) => {
+      if (!validReference(raw)) return false;
+      const item = raw as Partial<ComposerReferenceMention>;
+      return (
+        typeof item.id === "string" && Boolean(item.id) && Number.isInteger(item.offset) && Number(item.offset) >= 0
+      );
+    })
+  );
+}
+
+/** Catalogues gardés 30 s par harnais et dossier : `/` et `$` ne relisent pas le disque à chaque lettre. */
 const catalogs = new Map<string, { expires: number; result: Promise<ComposerReference[]> }>();
 
-export async function loadComposerReferences(
-  cwd: string,
-  provider: Provider,
-  kind: "file" | "command",
-  query: string,
-): Promise<ComposerReference[]> {
-  if (kind === "file") return invoke<ComposerReference[]>("composer.references", { cwd, provider, kind, query });
-  const key = `${provider}\n${cwd}`;
-  let cached = catalogs.get(key);
-  if (!cached || cached.expires < Date.now()) {
-    const result = invoke<ComposerReference[]>("composer.references", { cwd, provider, kind, query: "" });
-    cached = { result, expires: Date.now() + 30_000 };
+function cached(key: string, load: () => Promise<ComposerReference[]>): Promise<ComposerReference[]> {
+  let entry = catalogs.get(key);
+  if (!entry || entry.expires < Date.now()) {
+    const result = load();
+    entry = { result, expires: Date.now() + 30_000 };
     if (catalogs.size >= 20) catalogs.clear();
-    catalogs.set(key, cached);
+    catalogs.set(key, entry);
     void result.catch(() => {
       if (catalogs.get(key)?.result === result) catalogs.delete(key);
     });
   }
-  return filterComposerReferences(await cached.result, query, query ? 50 : 200);
+  return entry.result;
+}
+
+const CODEX_CLIENT = { name: "alfred", title: "Alfred", version: "0.1.0" };
+
+/**
+ * Skills que Codex propose vraiment, comme OneApp : `codex app-server` répond à `skills/list` avec les skills de son
+ * dossier et de son compte. Les skills désactivés sont écartés.
+ */
+export async function codexSkills(cwd: string): Promise<ComposerReference[]> {
+  const process = await spawnProcess("codex", { cwd });
+  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  let buffer = "";
+  let next = 0;
+  const stopOutput = process.onStdout((chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      let message: { id?: number; result?: unknown; error?: { message?: string } };
+      try {
+        message = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const waiting = typeof message.id === "number" ? pending.get(message.id) : undefined;
+      if (!waiting || message.id === undefined) continue;
+      pending.delete(message.id);
+      if (message.error) waiting.reject(new Error(message.error.message ?? "Codex a refusé la demande."));
+      else waiting.resolve(message.result);
+    }
+  });
+  const stopClose = process.onClose(() => {
+    for (const waiting of pending.values()) waiting.reject(new Error("Codex s’est arrêté."));
+    pending.clear();
+  });
+  const request = (method: string, params: unknown) => {
+    const id = ++next;
+    const answer = new Promise<unknown>((resolve, reject) => pending.set(id, { resolve, reject }));
+    void process.write(`${JSON.stringify({ id, method, params })}\n`).catch((error: unknown) => {
+      pending.get(id)?.reject(error instanceof Error ? error : new Error(String(error)));
+      pending.delete(id);
+    });
+    return answer;
+  };
+  const record = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  try {
+    await request("initialize", { clientInfo: CODEX_CLIENT, capabilities: null });
+    await process.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+    const result = record(await request("skills/list", { cwds: [cwd], forceReload: true }));
+    return (Array.isArray(result.data) ? result.data : []).flatMap((entry) => {
+      const skills = record(entry).skills;
+      return (Array.isArray(skills) ? skills : []).flatMap((raw): ComposerReference[] => {
+        const skill = record(raw);
+        return skill.enabled !== false && typeof skill.name === "string" && typeof skill.path === "string"
+          ? [
+              {
+                kind: "skill",
+                name: skill.name,
+                path: skill.path,
+                ...(typeof skill.description === "string" ? { description: skill.description } : {}),
+              },
+            ]
+          : [];
+      });
+    });
+  } finally {
+    stopOutput();
+    stopClose();
+    await process.kill().catch(() => undefined);
+  }
+}
+
+function skillCatalog(cwd: string, provider: Provider): Promise<ComposerReference[]> {
+  return cached(`skill\n${provider}\n${cwd}`, () =>
+    provider === "codex"
+      ? codexSkills(cwd)
+      : invoke<ComposerReference[]>("composer.references", { cwd, provider, kind: "skill", query: "" }),
+  );
+}
+
+function commandCatalog(cwd: string, provider: Provider): Promise<ComposerReference[]> {
+  return cached(`command\n${provider}\n${cwd}`, () =>
+    invoke<ComposerReference[]>("composer.references", { cwd, provider, kind: "command", query: "" }),
+  );
+}
+
+export async function loadComposerReferences(
+  cwd: string,
+  provider: Provider,
+  kind: ReferenceKind,
+  query: string,
+): Promise<ComposerReference[]> {
+  if (kind === "file") return invoke<ComposerReference[]>("composer.references", { cwd, provider, kind, query });
+  const limit = query ? 50 : Number.POSITIVE_INFINITY;
+  if (kind === "skill") return filterComposerReferences(await skillCatalog(cwd, provider), query, limit);
+  const [commands, skills] = await Promise.all([commandCatalog(cwd, provider), skillCatalog(cwd, provider)]);
+  return filterComposerReferences([...commands, ...skills], query, limit);
 }
 
 /** Pour les tests : oublie les catalogues gardés. */

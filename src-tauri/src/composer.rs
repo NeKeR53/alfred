@@ -1,5 +1,6 @@
 //! Références de la saisie, reprises de OneApp (`composer_references.rs`) : `@` cherche un fichier du dossier de
-//! travail de la conversation, `/` liste les commandes et les skills que le harnais de la conversation sait lire.
+//! travail de la conversation, `command` et `skill` listent les commandes et les skills que le harnais de la
+//! conversation sait lire (l’interface les réunit pour `/`, n’affiche que les skills pour `$`).
 //! La recherche est bornée (profondeur, nombre d’entrées visitées, nombre de résultats) et ne sort jamais du dossier.
 
 use std::collections::HashSet;
@@ -59,7 +60,7 @@ pub async fn handle(
             let kind: String = arg(args, "kind")?;
             let query: String = arg(args, "query")?;
             if !["claude", "codex", "opencode"].contains(&provider.as_str())
-                || !["file", "command"].contains(&kind.as_str())
+                || !["file", "command", "skill"].contains(&kind.as_str())
                 || query.len() > 500
                 || query.chars().any(char::is_control)
                 || cwd.len() > 32_000
@@ -76,9 +77,7 @@ pub async fn handle(
                 if kind == "file" {
                     search_files(&cwd, &query)
                 } else {
-                    let mut items = catalog(&cwd, &provider, "command", &home_dir());
-                    items.extend(catalog(&cwd, &provider, "skill", &home_dir()));
-                    Ok(items)
+                    Ok(catalog(&cwd, &provider, &kind, &home_dir()))
                 }
             })
             .await
@@ -340,7 +339,7 @@ mod tests {
         assert_eq!(search_files(root, "src").unwrap()[0].name, "src/");
     }
 
-    /// Le parcours complet de la saisie : `/` propose les commandes et les skills du harnais de la conversation,
+    /// Le parcours complet de la saisie : `command` et `skill` rendent les commandes et les skills du harnais de la conversation,
     /// `@` les fichiers du dossier de travail ; une demande malformée est refusée.
     #[tokio::test]
     async fn the_composer_lists_the_harness_commands_skills_and_files() {
@@ -371,10 +370,18 @@ mod tests {
         )
         .await
         .unwrap();
+        let skills = crate::dispatch::dispatch(
+            state.clone(),
+            "composer.references",
+            json!({ "cwd": cwd, "provider": "claude", "kind": "skill", "query": "" }),
+        )
+        .await
+        .unwrap();
         let names: Vec<(String, String)> = commands
             .as_array()
             .unwrap()
             .iter()
+            .chain(skills.as_array().unwrap().iter())
             .map(|item| {
                 (
                     item["kind"].as_str().unwrap().to_string(),
@@ -394,7 +401,12 @@ mod tests {
             !names.iter().any(|(_, name)| name == "deployer"),
             "les commandes d’OpenCode ne sont pas celles de Claude"
         );
-        let skill = commands
+        assert!(
+            commands.as_array().unwrap().iter().all(|item| item["kind"] == "command"),
+            "`command` ne rend que les commandes : les skills ont leur propre catalogue"
+        );
+        assert!(skills.as_array().unwrap().iter().all(|item| item["kind"] == "skill"));
+        let skill = skills
             .as_array()
             .unwrap()
             .iter()
