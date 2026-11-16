@@ -14,12 +14,13 @@ import {
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { Activities, type Activity, hasActivityOutput } from "./Activities";
+import { restoreMessageDraft } from "./Composer";
 import { effortLabel } from "./effort";
 import { followLink } from "./files";
 import type { ApprovalRequest } from "./harness";
 import { activityImageOutput, loadConversationImage, referencedLocalImages } from "./lib/chatImages";
 import { referencedLocalFiles } from "./lib/conversationFileKinds";
-import type { AgentQuestion, Conversation, ConversationRuntime, Turn, TurnItem } from "./model";
+import type { AgentQuestion, Conversation, ConversationRuntime, Turn, TurnItem, UserMessage } from "./model";
 import { PlacementCard } from "./PlacementCard";
 import { useAgents } from "./store";
 import { TextPreview } from "./TextPreview";
@@ -440,7 +441,14 @@ const TurnView = memo(function TurnView({
     [resend, conversationId, turn.id],
   );
   const forkFrom = useCallback(
-    (from: "user" | "reply") => fork && void fork(conversationId, turn.id, from).catch(report("Reprise impossible")),
+    (from: "user" | "reply") =>
+      fork &&
+      void fork(conversationId, turn.id, from)
+        .then((result) => {
+          const forked = result as { id?: string; draft?: UserMessage } | undefined;
+          if (forked?.id && forked.draft) return restoreMessageDraft(forked.id, forked.draft);
+        })
+        .catch(report("Reprise impossible")),
     [fork, conversationId, turn.id],
   );
   const onForkUser = useMemo(() => (fork ? () => forkFrom("user") : undefined), [fork, forkFrom]);
@@ -568,7 +576,6 @@ export function Transcript({
   const growth = `${visibleTurns.length}:${lastTurn?.items.length}:${lastItem?.kind === "message" ? lastItem.content.length : 0}:${runtime.approvals.length}:${runtime.questions.length}:${question ? 1 : 0}`;
 
   // Après un envoi de l’utilisateur, le relevé se recolle en bas, même s’il était remonté.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `sent` change à chaque envoi.
   useLayoutEffect(() => {
     if (!sent) return;
     pinned.current = true;

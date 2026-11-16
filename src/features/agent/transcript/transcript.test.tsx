@@ -35,7 +35,7 @@ import {
 } from "../Transcript";
 import { agentQuestion, withoutAgentQuestion } from "./agentQuestions";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { referenceMentions } from "./ReferencePills";
+import { ReferencePills } from "./ReferencePills";
 
 installDialogPolyfill();
 
@@ -170,17 +170,20 @@ describe("présentation d’un tour", () => {
     expect(images).toHaveLength(8);
   });
 
-  it("place les références en pastilles sur leurs mentions", () => {
-    const references = [
-      { name: "publier", path: "/c/publier.md", kind: "command" as const },
-      { name: "src/page.tsx", path: "/e/src/page.tsx", kind: "file" as const },
-    ];
-    expect(
-      referenceMentions("/publier puis @src/page.tsx, pas x/publier", references).map(({ start, end }) => [start, end]),
-    ).toEqual([
-      [0, 8],
-      [14, 27],
-    ]);
+  it("place les références en pastilles à leur position, comme OneApp", () => {
+    render(
+      <ReferencePills
+        text=" puis  à relire"
+        references={[
+          { id: "r2", name: "src/page.tsx", path: "/e/src/page.tsx", kind: "file", offset: 6 },
+          { id: "r1", name: "publier", path: "/c/publier.md", kind: "command", offset: 0 },
+          { name: "ancienne", path: "/c/ancienne.md", kind: "command" },
+        ]}
+      />,
+    );
+    const pills = [...document.querySelectorAll(".agent-chat__reference-pill")].map((pill) => pill.textContent);
+    expect(pills).toEqual(["publier", "page.tsx"]);
+    expect(document.querySelector(".reference-text")?.textContent).toBe("publier puis page.tsx à relire");
   });
 });
 
@@ -209,10 +212,10 @@ describe("relevé", () => {
             turn("t1", { user: { text: long, attachments: [], contexts: [] } }),
             turn("t2", {
               user: {
-                text: "/publier maintenant",
+                text: " maintenant",
                 attachments: [],
                 contexts: [],
-                references: [{ name: "publier", path: "/c/publier.md", kind: "command" }],
+                references: [{ id: "r1", name: "publier", path: "/c/publier.md", kind: "command", offset: 0 }],
               },
             }),
           ],
@@ -240,10 +243,7 @@ describe("relevé", () => {
     expect(useAgents.getState().retry).toHaveBeenCalledWith("c1");
   });
 
-  it("n’affiche Relancer et Repartir d’ici que si le moteur les fournit", () => {
-    const { unmount } = render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
-    expect(screen.queryByRole("button", { name: "Relancer le message" })).not.toBeInTheDocument();
-    unmount();
+  it("relance un message et repart d’ici depuis le message ou la réponse", () => {
     const resend = vi.fn(async () => undefined);
     const fork = vi.fn(async () => undefined);
     useAgents.setState({ resend, fork } as never);

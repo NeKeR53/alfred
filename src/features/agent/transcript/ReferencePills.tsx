@@ -1,50 +1,31 @@
 import type { ReactNode } from "react";
-import { type ComposerReference, mentionOf } from "../lib/composerReferences";
+import { type ComposerReference, type ComposerReferenceMention, referenceDisplayName } from "../lib/composerReferences";
 
-/** Nom court d’une référence : le nom du fichier, ou celui de la commande ou du skill. Repris de OneApp. */
-export function referenceDisplayName(item: ComposerReference): string {
-  return item.kind === "file" ? item.name.replace(/\/$/, "").split(/[\\/]/).at(-1) || item.name : item.name;
-}
-
-type Piece = { start: number; end: number; reference: ComposerReference };
-
-/** Mentions des références dans le texte, dans l’ordre, en début de mot et sans chevauchement. */
-export function referenceMentions(text: string, references: readonly ComposerReference[]): Piece[] {
-  const pieces: Piece[] = [];
-  for (const reference of references) {
-    const mention = mentionOf(reference);
-    let index = text.indexOf(mention);
-    while (index !== -1) {
-      const before = index === 0 || /\s/.test(text[index - 1] ?? "");
-      const after = text[index + mention.length];
-      if (before && (after === undefined || /\s|[.,;:!?)]/.test(after)))
-        pieces.push({ start: index, end: index + mention.length, reference });
-      index = text.indexOf(mention, index + 1);
-    }
-  }
-  pieces.sort((left, right) => left.start - right.start || right.end - left.end);
-  const kept: Piece[] = [];
-  for (const piece of pieces) if (!kept.length || piece.start >= (kept.at(-1)?.end ?? 0)) kept.push(piece);
-  return kept;
-}
+const isMention = (reference: ComposerReference): reference is ComposerReferenceMention =>
+  typeof (reference as Partial<ComposerReferenceMention>).offset === "number";
 
 /**
- * Texte d’un message envoyé dont les commandes, skills et fichiers cités s’affichent en pastilles, repris de
- * `ReferencePills` de OneApp.
+ * Texte d’un message envoyé dont les commandes, skills et fichiers cités s’affichent en pastilles, à leur position
+ * (`offset`, dans le texte sans les pastilles), repris de `ReferencePills` de OneApp. Une référence sans position,
+ * d’un message plus ancien, n’a pas de pastille.
  */
 export function ReferencePills({ text, references }: { text: string; references: readonly ComposerReference[] }) {
-  const pieces = referenceMentions(text, references);
-  if (!pieces.length) return <span className="reference-text">{text}</span>;
+  const mentions = references.filter(isMention);
+  if (!mentions.length) return <span className="reference-text">{text}</span>;
+  const ordered = mentions
+    .map((reference, index) => ({ reference, index }))
+    .sort((left, right) => left.reference.offset - right.reference.offset || left.index - right.index);
   const content: ReactNode[] = [];
   let cursor = 0;
-  for (const { start, end, reference } of pieces) {
-    if (start > cursor) content.push(text.slice(cursor, start));
+  for (const { reference } of ordered) {
+    const offset = Math.max(cursor, Math.min(text.length, reference.offset));
+    if (offset > cursor) content.push(text.slice(cursor, offset));
     content.push(
-      <span className="agent-chat__reference-pill" key={`${start}:${reference.path}`} title={reference.path}>
+      <span className="agent-chat__reference-pill" key={reference.id} title={reference.description ?? reference.path}>
         {referenceDisplayName(reference)}
       </span>,
     );
-    cursor = end;
+    cursor = offset;
   }
   if (cursor < text.length) content.push(text.slice(cursor));
   return <span className="reference-text">{content}</span>;

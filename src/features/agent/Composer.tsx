@@ -128,6 +128,16 @@ function isMention(reference: ComposerReference): reference is ComposerReference
 }
 
 /**
+ * Remet un message dans la saisie d’une autre conversation, même pas encore affichée : « Repartir d’ici » depuis un
+ * message de l’utilisateur, comme dans OneApp, ouvre la reprise avec ce message prêt à être corrigé et renvoyé.
+ */
+export async function restoreMessageDraft(conversation: string, message: UserMessage): Promise<void> {
+  const drafts = useComposerDrafts.getState();
+  if (!drafts.ready) await drafts.load();
+  useComposerDrafts.getState().update(conversation, (current) => mergeIntoDraft(message, current));
+}
+
+/**
  * Remet un message (de la file, ou dont l’envoi a échoué) dans la saisie : seul s’il n’y a rien d’autre, sinon
  * devant ce qui est déjà écrit, ses pastilles à leur place et celles du brouillon décalées d’autant.
  */
