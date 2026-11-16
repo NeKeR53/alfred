@@ -1,6 +1,6 @@
 [package]
 name = "alfred"
-version = "0.1.0"
+version = "0.1.1"
 description = "Coquille de bureau que l’utilisateur construit avec un agent"
 authors = ["Alfred"]
 edition = "2021"
