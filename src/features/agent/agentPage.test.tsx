@@ -155,6 +155,57 @@ describe("page Agent", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("comme OneApp : pas de suppression dans la barre, origine et date au-dessus du relevé, pastille Git sur la ligne du modèle", async () => {
+    database = {
+      c1: stored("c1", "Factures", 2_000, { origin: { reference: "compta/factures", title: "Factures du mois" } }),
+    };
+    git = {
+      root: "/espace",
+      files: [{ path: "a.txt", state: "modifié" }],
+      additions: 1,
+      deletions: 0,
+      truncated: false,
+    };
+    render(<AgentPage />);
+    await screen.findByRole("heading", { name: "Factures" });
+    expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
+    expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
+    const pill = await screen.findByRole("status");
+    expect(pill.closest(".agent-composer__options")).not.toBeNull();
+  });
+
+  it("le suivi reprend les états de OneApp et range chaque carte par création", async () => {
+    database = {
+      c1: stored("c1", "Ancienne", 1_000, { updatedAt: 9_000, unread: true, lastStatus: "done" }),
+      c2: stored("c2", "Récente", 5_000, { unread: true, lastStatus: "error" }),
+      c3: stored("c3", "Lue", 3_000, { lastStatus: "cancelled" }),
+      c4: stored("c4", "Plus récente", 6_000, { unread: true, lastStatus: "done" }),
+    };
+    render(<AgentPage />);
+    const panel = await screen.findByLabelText("Suivi des conversations");
+    const attention = await within(panel).findByRole("region", { name: "À traiter" });
+    // Un tour en erreur non lu : « En échec », à traiter.
+    await waitFor(() => expect(attention).toHaveTextContent("Claude Code · En échec"));
+    const done = within(panel).getByRole("region", { name: "Terminées" });
+    const titles = within(done)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent ?? "");
+    // La plus récemment créée d’abord ; une conversation lue est en veille, sans libellé d’état.
+    expect(titles[0]).toContain("Plus récente");
+    expect(titles[0]).toContain("À consulter");
+    expect(titles.at(-1)).toContain("Ancienne");
+    expect(titles.find((title) => title.includes("Lue"))).not.toContain("En échec");
+  });
+
+  it("archiver notifie aussitôt, avec « Annuler »", async () => {
+    render(<AgentPage />);
+    await screen.findByRole("heading", { name: "Factures" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Archiver Factures" })[0]);
+    const item = useNotifications.getState().items[0];
+    expect(item?.title).toBe("Conversation archivée");
+    expect(item?.action?.label).toBe("Annuler");
+  });
+
   it("affiche le bandeau d’échec de chargement avec « Réessayer » quand le magasin l’expose", async () => {
     const load = vi.fn(async () => undefined);
     render(<AgentPage />);
@@ -189,17 +240,11 @@ describe("tri du suivi", () => {
     return rest;
   };
 
-  it("classe par état, les conversations au travail par création, les autres par mise à jour", () => {
+  it("classe chaque carte par création, la plus récente d’abord, comme la liste des agents de OneApp", () => {
     const old = header("ancienne", 1, 50);
     const recent = header("récente", 10, 20);
-    // Au travail : la plus récemment créée d’abord, même si l’autre vient d’écrire.
-    expect(compareConversations(old, "working", recent, "working")).toBeGreaterThan(0);
-    // Terminées : la plus récemment mise à jour d’abord.
-    expect(compareConversations(old, "idle", recent, "idle")).toBeLessThan(0);
-    // Une réponse attendue passe devant tout, une erreur devant le travail, le travail devant le reste.
-    expect(compareConversations(recent, "attention", old, "error")).toBeLessThan(0);
-    expect(compareConversations(recent, "error", old, "working")).toBeLessThan(0);
-    expect(compareConversations(recent, "working", old, "unread")).toBeLessThan(0);
-    expect(compareConversations(recent, "unread", old, "idle")).toBeLessThan(0);
+    // La plus récemment créée d’abord, même si l’autre vient d’écrire : une ligne ne saute pas à chaque message.
+    expect(compareConversations(old, recent)).toBeGreaterThan(0);
+    expect(compareConversations(recent, old)).toBeLessThan(0);
   });
 });

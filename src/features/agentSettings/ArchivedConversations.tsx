@@ -1,19 +1,34 @@
 /**
  * Conversations archivées : masquées de la page Agent, rien n’est effacé. On les retrouve ici, comme les agents
  * archivés de OneApp dans Réglages › Agents (`ArchivedAgentsSettings`) : les plus récemment archivées d’abord, pour
- * les restaurer, les rouvrir ou les supprimer définitivement.
+ * les restaurer ou les supprimer définitivement, avec leur brouillon.
  */
 
 import { Button, EmptyState, IconButton, List, ListItem, Row, Section, useConfirm } from "@alfred/ui";
 import { ArchiveRestore, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { notify } from "../../shell/notifications";
-import { useShell } from "../../shell/store";
+import { useComposerDrafts } from "../agent/drafts";
 import { PROVIDER_LABEL } from "../agent/harness";
 import type { ConversationHeader } from "../agent/model";
 import { useAgents } from "../agent/store";
 
-const dateTime = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
+/** « 4 nov. 2026, 09:12 », comme `formatDateTime` de OneApp. */
+const dateTime = new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** Supprime la conversation puis son brouillon, comme OneApp (`deleteChatDraft`) ; un brouillon illisible part sans bruit. */
+async function removeWithDraft(remove: (id: string) => Promise<void>, id: string) {
+  await remove(id);
+  const drafts = useComposerDrafts.getState();
+  drafts.clear(id);
+  await drafts.discardUnreadable(id).catch(() => undefined);
+}
 
 /** Date d’archivage, posée par le moteur des conversations ; les conversations archivées avant elle n’en ont pas. */
 const archivedAt = (header: ConversationHeader) =>
@@ -31,9 +46,7 @@ export function ArchivedConversations() {
   const ready = useAgents((state) => state.ready);
   const load = useAgents((state) => state.load);
   const unarchive = useAgents((state) => state.unarchive);
-  const open = useAgents((state) => state.open);
   const remove = useAgents((state) => state.remove);
-  const setView = useShell((state) => state.setView);
   const { confirm, confirmDialog } = useConfirm();
   const [busy, setBusy] = useState(false);
 
@@ -73,7 +86,7 @@ export function ArchivedConversations() {
     if (!accepted) return;
     setBusy(true);
     try {
-      await remove(header.id);
+      await removeWithDraft(remove, header.id);
       notify({ title: "Conversation supprimée", description: header.title, tone: "success" });
     } catch (error) {
       report(error);
@@ -94,7 +107,7 @@ export function ArchivedConversations() {
     if (!accepted) return;
     setBusy(true);
     try {
-      for (const header of targets) await remove(header.id);
+      for (const header of targets) await removeWithDraft(remove, header.id);
       notify({
         title: "Conversations supprimées",
         description: `${targets.length} conversation${targets.length > 1 ? "s" : ""} effacée${targets.length > 1 ? "s" : ""}.`,
@@ -131,45 +144,25 @@ export function ArchivedConversations() {
             <ListItem
               key={header.id}
               title={header.title}
-              description={[
-                PROVIDER_LABEL[header.provider],
-                header.origin ? `depuis ${header.origin.title}` : "",
-                `archivée le ${dateTime.format(archivedAt(header))}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              description={`${PROVIDER_LABEL[header.provider]} · archivée le ${dateTime.format(archivedAt(header))}`}
               trailing={
                 <Row gap="xs">
                   <IconButton
-                    size="small"
                     label={`Restaurer ${header.title}`}
                     tooltip="Restaurer"
-                    disabled={!ready || busy}
+                    disabled={!ready}
                     onClick={() => void restore(header)}
                   >
                     <ArchiveRestore size={15} aria-hidden="true" />
                   </IconButton>
                   <IconButton
-                    size="small"
                     label={`Supprimer définitivement ${header.title}`}
                     tooltip="Supprimer définitivement"
-                    disabled={!ready || busy}
+                    disabled={!ready}
                     onClick={() => void removeOne(header)}
                   >
                     <Trash2 size={15} aria-hidden="true" />
                   </IconButton>
-                  <Button
-                    variant="primary"
-                    aria-label={`Ouvrir ${header.title}`}
-                    disabled={busy}
-                    onClick={async () => {
-                      await unarchive(header.id);
-                      await open(header.id);
-                      setView({ kind: "agent" });
-                    }}
-                  >
-                    Ouvrir
-                  </Button>
                 </Row>
               }
             />

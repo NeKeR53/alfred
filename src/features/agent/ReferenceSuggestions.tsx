@@ -7,6 +7,7 @@
 import { BookMarked, File, Folder, Terminal } from "lucide-react";
 import { type CSSProperties, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { notify } from "../../shell/notifications";
 import { ListboxOption } from "../../ui/components/ChoiceButton";
 import type { Provider } from "./harness";
 import {
@@ -22,10 +23,10 @@ function iconOf(item: ComposerReference) {
   return item.name.endsWith("/") ? <Folder size={14} aria-hidden="true" /> : <File size={14} aria-hidden="true" />;
 }
 
+/** Détail à droite de la suggestion, comme dans OneApp : le dossier du fichier, sinon « Skill » ou « Commande ». */
 function detailOf(item: ComposerReference) {
-  if (item.kind === "file") return item.name.replace(/\/$/, "").split("/").slice(0, -1).join("/") || ".";
-  const kind = item.kind === "skill" ? "Skill" : "Commande";
-  return item.description ? `${kind} · ${item.description}` : kind;
+  if (item.kind === "file") return item.name.replace(/\/$/, "").split(/[\\/]/).slice(0, -1).join("/") || ".";
+  return item.kind === "skill" ? "Skill" : "Commande";
 }
 
 /**
@@ -54,7 +55,11 @@ export function useReferenceCatalog(
             if (!stopped) setItems(found);
           })
           .catch((error: unknown) => {
-            if (!stopped) setFailed(error instanceof Error ? error.message : String(error));
+            if (stopped) return;
+            const message = error instanceof Error ? error.message : String(error);
+            setFailed(message);
+            // Comme dans OneApp, la cause de l’échec part en notification ; la liste dit seulement de réessayer.
+            notify({ title: "Recherche de ressources", description: message, tone: "error" });
           })
           .finally(() => {
             if (!stopped) setLoading(false);
@@ -75,11 +80,6 @@ const LIST_LABEL: Record<ReferenceKind, string> = {
   file: "Fichiers du dossier de travail",
   command: "Commandes et skills",
   skill: "Skills",
-};
-const EMPTY: Record<ReferenceKind, string> = {
-  file: "Aucun fichier trouvé.",
-  command: "Aucune commande ni aucun skill pour ce harnais.",
-  skill: "Aucun skill pour ce harnais.",
 };
 
 export function SuggestionList({
@@ -108,7 +108,8 @@ export function SuggestionList({
 
   useLayoutEffect(() => {
     const place = () => {
-      const rect = anchor.current?.closest(".agent-composer__box")?.getBoundingClientRect();
+      // Comme dans OneApp, la liste s’aligne sur le champ lui-même, au-dessus de lui.
+      const rect = anchor.current?.getBoundingClientRect();
       if (!rect) return;
       const width = Math.min(Math.max(rect.width, 280), 560, window.innerWidth - 16);
       setPosition({
@@ -116,13 +117,16 @@ export function SuggestionList({
         left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
         bottom: window.innerHeight - rect.top + 6,
         width,
-        maxHeight: Math.min(260, Math.max(64, rect.top - 14)),
+        maxHeight: Math.min(224, Math.max(64, rect.top - 14)),
       });
     };
     place();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(place);
+    if (anchor.current) observer?.observe(anchor.current);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
@@ -137,7 +141,7 @@ export function SuggestionList({
       <div id={id} role="listbox" aria-label={LIST_LABEL[kind]} aria-busy={loading}>
         {loading || failed || !items.length ? (
           <ListboxOption selected={false} disabled className="reference-composer__status">
-            {loading ? "Recherche…" : failed ? `Recherche indisponible : ${failed}` : EMPTY[kind]}
+            {loading ? "Recherche…" : failed ? "Recherche indisponible. Fermez puis réessayez." : "Aucun résultat."}
           </ListboxOption>
         ) : (
           items.map((item, index) => (

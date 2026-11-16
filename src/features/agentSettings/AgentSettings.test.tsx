@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -92,17 +92,20 @@ it("montre l’état des harnais et enregistre harnais, modèle, effort et auton
   await waitFor(() => expect(lastDefaults()).toMatchObject({ provider: "codex" }));
   expect(screen.getByRole("radio", { name: "Codex" })).toHaveAttribute("aria-checked", "true");
 
-  // Modèle puis effort ; l’effort suit les niveaux du modèle choisi.
+  // Modèle puis raisonnement en curseur, comme dans OneApp : sur les seuls niveaux du modèle choisi.
   const model = await screen.findByLabelText("Modèle de Claude Code");
   await waitFor(() => expect(model).toBeEnabled());
-  expect(screen.getByLabelText("Effort de Claude Code")).toBeDisabled();
+  expect(screen.queryByRole("slider", { name: "Raisonnement de Claude Code" })).toBeNull();
   await user.selectOptions(model, "opus");
-  await user.selectOptions(screen.getByLabelText("Effort de Claude Code"), "high");
+  const slider = await screen.findByRole("slider", { name: "Raisonnement de Claude Code" });
+  expect(slider).toHaveAttribute("max", "3");
+  fireEvent.change(slider, { target: { value: "3" } });
   await waitFor(() => expect(lastDefaults()).toMatchObject({ models: { claude: { model: "opus", effort: "high" } } }));
+  // Un autre modèle repart de son raisonnement par défaut.
   await user.selectOptions(model, "haiku");
   await waitFor(() => expect(lastDefaults()).toMatchObject({ models: { claude: { model: "haiku" } } }));
   expect((lastDefaults() as { models: { claude: { effort?: string } } }).models.claude.effort).toBeUndefined();
-  expect(screen.getByText("Ce modèle ne propose pas de niveau d’effort.")).toBeInTheDocument();
+  expect(screen.getAllByText("Par défaut du modèle").length).toBeGreaterThan(0);
 
   // Réessayer le catalogue de Codex une fois connecté.
   codexModelsFail = false;
@@ -130,10 +133,15 @@ it("montre l’état des harnais et enregistre harnais, modèle, effort et auton
 
 const lastSetting = (key: string) => settings.filter((item) => item.key === key).at(-1)?.value;
 
-it("choisit les modèles affichés d’un harnais, qui filtrent les choix du modèle", async () => {
+it("choisit les modèles affichés d’un harnais, depuis sa ligne d’état comme dans OneApp", async () => {
   const user = userEvent.setup();
   render(<AgentSettings />);
   expect(await screen.findByText("2 / 2 modèles affichés")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Modèles affichés" })).toBeNull();
+  // Vérifier les harnais relit aussi leurs modèles.
+  vi.mocked(listModels).mockClear();
+  await user.click(screen.getByRole("button", { name: "Vérifier de nouveau les harnais" }));
+  await waitFor(() => expect(listModels).toHaveBeenCalledWith("claude", "/tmp/espace"));
   await user.click(screen.getByRole("button", { name: "Choisir les modèles de Claude Code" }));
   const dialog = await screen.findByRole("dialog", { name: "Modèles Claude Code" });
   expect(within(dialog).getByText("2 affichés sur 2")).toBeInTheDocument();
@@ -165,7 +173,7 @@ it("enregistre le modèle de nommage, « Comme les conversations » par défaut"
   await waitFor(() => expect(screen.getByLabelText("Modèle de Claude Code")).toBeEnabled());
   await user.selectOptions(provider, "claude");
   await waitFor(() => expect(lastSetting("agents.titling")).toEqual({ provider: "claude", model: "opus" }));
-  await user.selectOptions(screen.getByLabelText("Effort du nommage"), "low");
+  fireEvent.change(await screen.findByRole("slider", { name: "Raisonnement du nommage" }), { target: { value: "1" } });
   await waitFor(() =>
     expect(lastSetting("agents.titling")).toEqual({ provider: "claude", model: "opus", effort: "low" }),
   );

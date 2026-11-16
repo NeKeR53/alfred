@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
-import { Composer, isLongChatText, mergeIntoDraft } from "./Composer";
+import { Composer, clipboardImages, isLongChatText, mergeIntoDraft, numberPastes } from "./Composer";
 import {
   blankDraft,
   DRAFTS_KEY,
@@ -92,7 +92,7 @@ afterEach(() => {
 });
 
 async function editor() {
-  const input = screen.getByRole("textbox", { name: "Message à l’agent" });
+  const input = screen.getByRole("textbox", { name: /^Message à / });
   await waitFor(() => expect(input).toHaveAttribute("contenteditable", "true"));
   return input;
 }
@@ -118,7 +118,7 @@ describe("brouillons", () => {
 
     rerender(<Composer conversation={conversation("a")} responding={false} />);
     await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveTextContent("Brouillon de A"),
+      expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveTextContent("Brouillon de A"),
     );
 
     await act(() => flushComposerDrafts());
@@ -130,7 +130,7 @@ describe("brouillons", () => {
     unmount();
     resetComposerDrafts();
     render(<Composer conversation={conversation("b")} responding={false} />);
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveTextContent("Autre"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveTextContent("Autre"));
   });
 
   it("un brouillon illisible verrouille la saisie, avec « Réessayer » et « Supprimer le brouillon »", async () => {
@@ -138,7 +138,7 @@ describe("brouillons", () => {
     const user = userEvent.setup();
     render(<Composer conversation={conversation("a")} responding={false} />);
     expect(await screen.findByText("Le brouillon enregistré de cette conversation est illisible.")).toBeVisible();
-    const input = screen.getByRole("textbox", { name: "Message à l’agent" });
+    const input = screen.getByRole("textbox", { name: /^Message à / });
     expect(input).toHaveAttribute("aria-disabled", "true");
     expect(input).toHaveAttribute("contenteditable", "false");
 
@@ -161,7 +161,7 @@ describe("brouillons", () => {
     expect(
       await screen.findByText("Les brouillons n’ont pas pu être chargés. Réessayez avant de saisir un message."),
     ).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveAttribute("aria-disabled", "true");
     failing = false;
     await user.click(screen.getByRole("button", { name: "Réessayer" }));
     await editor();
@@ -172,7 +172,7 @@ describe("brouillons", () => {
     useAgents.setState({ ready: false });
     render(<Composer conversation={conversation("a")} responding={false} />);
     await act(() => useComposerDrafts.getState().load());
-    expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Envoyer" })).toBeDisabled();
     act(() => useAgents.setState({ ready: true }));
     await editor();
@@ -182,9 +182,7 @@ describe("brouillons", () => {
     native.settings.set(DRAFTS_KEY, { a: serializeDraft({ ...blankDraft, text: "Déjà là" }) });
     setComposerDraft("a", { contexts: [{ id: "x", title: "Élément à corriger", text: "contexte" }] });
     render(<Composer conversation={conversation("a")} responding={false} />);
-    await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveTextContent("Déjà là"),
-    );
+    await waitFor(() => expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveTextContent("Déjà là"));
     expect(screen.getByRole("button", { name: "Retirer Élément à corriger" })).toBeInTheDocument();
   });
 
@@ -365,7 +363,7 @@ describe("file d’attente", () => {
     // Sans action de réordonnancement dans le store, pas de poignée.
     expect(within(queue).queryByRole("button", { name: /Déplacer le message/ })).toBeNull();
     expect(queuedPreview(item("q3", { attachments: [{ path: "/a", name: "a" }] }).message)).toBe(
-      "1 pièce(s) jointe(s)",
+      "Analyse les fichiers joints.",
     );
   });
 
@@ -400,5 +398,90 @@ describe("file d’attente", () => {
     const rows = within(screen.getByRole("region", { name: /en file/ })).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("Second");
     useAgents.setState({ reorderQueued: undefined } as never);
+  });
+
+  it("comme dans OneApp : la file est en tête du cadre de la saisie, avec le même bouton d’envoi rond", async () => {
+    useAgents.setState({
+      runtime: {
+        a: {
+          status: "responding",
+          approvals: [],
+          questions: [],
+          queued: [item("q1", { text: "Faire le point" })],
+        },
+      },
+    });
+    render(<Composer conversation={conversation("a")} responding />);
+    const queue = screen.getByRole("region", { name: /en file/ });
+    expect(queue.closest("form")).toHaveClass("agent-composer__box");
+    expect(queue).toHaveClass("agent-queue");
+    const sendNow = within(queue).getByRole("button", { name: "Envoyer le message 1 maintenant" });
+    expect(sendNow).toHaveClass("agent-send-button", "agent-send-button--up-right");
+    const send = screen.getByRole("button", { name: "Envoyer maintenant" });
+    expect(send).toHaveClass("agent-send-button");
+    expect(sendNow.querySelector("svg")?.outerHTML).toBe(send.querySelector("svg")?.outerHTML);
+  });
+
+  it("modifier reprend le texte et les pastilles à la place de la saisie ; pas pour un message avec pièces jointes", async () => {
+    const unqueue = vi.fn((id: string, queuedId: string) => {
+      const runtime = useAgents.getState().runtime[id];
+      const found = runtime.queued.find((entry) => entry.id === queuedId);
+      useAgents.setState({
+        runtime: { [id]: { ...runtime, queued: runtime.queued.filter((entry) => entry.id !== queuedId) } },
+      });
+      return found?.message;
+    });
+    useAgents.setState({
+      unqueue,
+      runtime: {
+        a: {
+          status: "responding",
+          approvals: [],
+          questions: [],
+          queued: [
+            item("q1", { text: "Corriger ceci" }),
+            item("q2", { text: "Avec fichier", attachments: [{ path: "/a", name: "a" }] }),
+          ],
+        },
+      },
+    } as never);
+    await useComposerDrafts.getState().load();
+    useComposerDrafts.getState().patch("a", { text: "Déjà tapé" });
+    render(<Composer conversation={conversation("a")} responding />);
+    expect(screen.getByRole("button", { name: "Modifier le message 2" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Modifier le message 1" }));
+    expect(unqueue).toHaveBeenCalledWith("a", "q1");
+    await waitFor(() => expect(useComposerDrafts.getState().read("a").text).toBe("Corriger ceci"));
+  });
+
+  it("pendant une réponse : « Arrêter l’agent », le rappel des raccourcis sur la ligne du modèle, modèle modifiable", async () => {
+    render(<Composer conversation={conversation("a")} responding status={<span>3 fichiers modifiés</span>} />);
+    expect(screen.getByRole("button", { name: "Arrêter l’agent" })).toBeInTheDocument();
+    const hint = screen.getByText(/pour envoyer, .* pour mettre en file/);
+    const options = hint.closest(".agent-composer__options");
+    expect(options).not.toBeNull();
+    expect(options).toHaveTextContent("3 fichiers modifiés");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Modèle de l’agent/ })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Message à Nouvelle conversation" })).toBeInTheDocument();
+  });
+});
+
+describe("collages et presse-papiers", () => {
+  it("retirer un collage renumérote les suivants, comme les cartes de OneApp", () => {
+    expect(
+      numberPastes([
+        { id: "b", title: "Texte collé 2", text: "deux" },
+        { id: "c", title: "Citation", text: "autre" },
+        { id: "d", title: "Texte collé 3", text: "trois" },
+      ]).map((paste) => paste.title),
+    ).toEqual(["Texte collé 1", "Citation", "Texte collé 2"]);
+  });
+
+  it("seules les images du presse-papiers deviennent des pièces jointes", () => {
+    const image = new File(["i"], "capture.png", { type: "image/png" });
+    const text = new File(["t"], "notes.txt", { type: "text/plain" });
+    expect(clipboardImages({ items: [] as unknown as DataTransferItemList, files: [image, text] as never })).toEqual([
+      image,
+    ]);
   });
 });

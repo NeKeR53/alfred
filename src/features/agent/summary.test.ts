@@ -5,8 +5,9 @@ vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({ matches: false, media: query })) as unknown as typeof window.matchMedia;
 });
 
+import { agentEntryLabel } from "../../shell/AppShell";
 import type { ConversationRuntime } from "./model";
-import { conversationState } from "./summary";
+import { agentSummary, conversationState } from "./summary";
 
 const runtime = (patch: Partial<ConversationRuntime> = {}): ConversationRuntime => ({
   status: "idle",
@@ -47,5 +48,16 @@ describe("état visible d’une conversation", () => {
     expect(conversationState({ unread: true, lastStatus: "cancelled" }, undefined)).toBe("error");
     expect(conversationState({ unread: true, lastStatus: "error" }, undefined)).toBe("error");
     expect(conversationState({ unread: false, lastStatus: "cancelled" }, undefined)).toBe("idle");
+  });
+});
+
+describe("entrée Agent du menu", () => {
+  it("la pastille montre l’état prioritaire, le libellé cite tous les compteurs comme dans OneApp", () => {
+    const summary = agentSummary(["attention", "working", "waiting", "done", "error", "idle"]);
+    expect(summary).toMatchObject({ state: "attention", count: 1 });
+    expect(agentEntryLabel(summary)).toBe("Agent · 1 réponse attendue · Activité en cours · 2 à consulter");
+    expect(agentEntryLabel(agentSummary(["working"]))).toBe("Agent · Activité en cours");
+    expect(agentEntryLabel(agentSummary(["done", "done"]))).toBe("Agent · 2 à consulter");
+    expect(agentEntryLabel(agentSummary(["idle"]))).toBe("Agent");
   });
 });

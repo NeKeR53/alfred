@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../../lib/native";
 import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
-import type { Conversation, ConversationHeader, ConversationRuntime } from "./model";
+import type { Conversation, ConversationHeader } from "./model";
 import {
   InfoPanel,
   type InfoPanelCard,
@@ -14,6 +14,7 @@ import {
   useInfoPanelLayout,
 } from "./panel/InfoPanel";
 import { useAgents } from "./store";
+import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
 
 const cardIds = ["attention", "working", "done", "changes"] as const;
 
@@ -22,41 +23,18 @@ export function useConversationListPanel() {
   return useInfoPanelLayout("agent", cardIds);
 }
 
-type State = "attention" | "working" | "error" | "unread" | "idle";
-
-// Rang de chaque état dans le suivi, repris de `agentMonitor` de OneApp.
-const PRIORITY: Record<State, number> = { attention: 0, error: 1, working: 2, unread: 4, idle: 5 };
-
 /**
- * Ordre du suivi, repris de `compareAgents` de OneApp : par état, puis le plus récent d’abord. Une conversation au
- * travail se met à jour à chaque fragment : elle est classée par sa création, pour que deux conversations en cours ne
- * permutent pas sans cesse dans la liste.
+ * Ordre du suivi, comme la liste des agents de OneApp (`useAgents`) : la plus récemment créée d’abord, dans chaque
+ * carte. Une conversation garde sa place pendant qu’elle travaille.
  */
-export function compareConversations(
-  left: ConversationHeader,
-  leftState: State,
-  right: ConversationHeader,
-  rightState: State,
-) {
-  const byState = PRIORITY[leftState] - PRIORITY[rightState];
-  if (byState) return byState;
-  return leftState === "working" ? right.createdAt - left.createdAt : right.updatedAt - left.updatedAt;
+export function compareConversations(left: ConversationHeader, right: ConversationHeader) {
+  return right.createdAt - left.createdAt;
 }
 
-export function stateOf(header: ConversationHeader, runtime: ConversationRuntime | undefined, failed: boolean): State {
-  if (runtime && (runtime.approvals.length || runtime.questions.length)) return "attention";
-  if (runtime && runtime.status !== "idle") return "working";
-  if (failed) return "error";
-  return header.unread ? "unread" : "idle";
+/** État de la ligne, comme `panelAgentState` de OneApp : une conversation en attente compte comme au travail. */
+function rowState(state: ConversationState): ConversationState {
+  return state === "waiting" ? "working" : state;
 }
-
-const STATE_LABEL: Record<State, string> = {
-  attention: "Attend votre réponse",
-  working: "En cours",
-  error: "En erreur",
-  unread: "À consulter",
-  idle: "",
-};
 
 function relativeTime(at: number, now: number) {
   const minutes = Math.round((now - at) / 60_000);
@@ -71,15 +49,15 @@ function relativeTime(at: number, now: number) {
 }
 
 /** Pictogramme et ton de l’état, posés dans la marge de la ligne comme dans le suivi des agents de OneApp. */
-function glyphOf(state: State) {
-  if (state === "working") return { glyph: <LoaderCircle size={13} className="is-spinning" /> };
+function glyphOf(state: ConversationState) {
+  if (state === "working") return { glyph: <LoaderCircle size={13} /> };
   if (state === "attention")
     return {
       glyph: <span className="agent-list__question">?</span>,
       tone: "warning" as const,
     };
   if (state === "error") return { glyph: <CircleAlert size={13} />, tone: "danger" as const };
-  if (state === "unread") return { glyph: <CircleCheck size={13} />, tone: "success" as const };
+  if (state === "done") return { glyph: <CircleCheck size={13} />, tone: "success" as const };
   return { glyph: <span className="agent-list__idle" /> };
 }
 
@@ -329,32 +307,19 @@ export function ConversationList({
 }) {
   const open = useAgents((state) => state.open);
   const runtime = useAgents((state) => state.runtime);
-  const loaded = useAgents((state) => state.loaded);
   const now = Date.now();
-  const states = new Map(
-    conversations.map((header) => [
-      header.id,
-      stateOf(header, runtime[header.id], loaded[header.id]?.turns.at(-1)?.status === "error"),
-    ]),
-  );
-  const sorted = [...conversations].sort((left, right) =>
-    compareConversations(left, states.get(left.id) ?? "idle", right, states.get(right.id) ?? "idle"),
-  );
+  const states = new Map(conversations.map((header) => [header.id, conversationState(header, runtime[header.id])]));
+  const sorted = [...conversations].sort(compareConversations);
   const attention = sorted.filter(({ id }) => ["attention", "error"].includes(states.get(id) ?? ""));
-  const working = sorted.filter(({ id }) => states.get(id) === "working");
+  const working = sorted.filter(({ id }) => rowState(states.get(id) ?? "idle") === "working");
   const done = sorted.filter((header) => !attention.includes(header) && !working.includes(header));
   const rows = (list: readonly ConversationHeader[], empty: string, archivable = false) => (
     <InfoPanelRows
       empty={empty}
       rows={list.map((header) => {
-        const state = states.get(header.id) ?? "idle";
-        const details = [
-          PROVIDER_LABEL[header.provider],
-          header.origin ? `depuis ${header.origin.title}` : "",
-          STATE_LABEL[state] || relativeTime(header.updatedAt, now),
-        ]
-          .filter(Boolean)
-          .join(" · ");
+        const state = rowState(states.get(header.id) ?? "idle");
+        // Comme dans OneApp : la portée (ici le harnais), puis l’état, ou l’heure de la dernière activité en veille.
+        const details = `${PROVIDER_LABEL[header.provider]} · ${state === "idle" ? relativeTime(header.updatedAt, now) : CONVERSATION_STATE_LABEL[state]}`;
         return {
           key: header.id,
           ...glyphOf(state),
@@ -365,12 +330,7 @@ export function ConversationList({
           onSelect: () => void open(header.id),
           action:
             archivable && onArchive ? (
-              <IconButton
-                size="small"
-                label={`Archiver ${header.title}`}
-                tooltip="Archiver"
-                onClick={() => onArchive(header)}
-              >
+              <IconButton label={`Archiver ${header.title}`} tooltip="Archiver" onClick={() => onArchive(header)}>
                 <Archive size={14} aria-hidden="true" />
               </IconButton>
             ) : undefined,
@@ -404,5 +364,6 @@ export function ConversationList({
       content: <ChangedFiles conversation={active} git={git} />,
     },
   ];
-  return <InfoPanel label="Suivi des conversations" cards={cards} panel={panel} />;
+  // Sans conversation, chaque carte n’afficherait qu’une phrase « Aucune… » : le suivi reste vide, comme dans OneApp.
+  return <InfoPanel label="Suivi des conversations" cards={conversations.length ? cards : []} panel={panel} />;
 }

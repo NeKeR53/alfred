@@ -3,11 +3,13 @@
 .agent-composer {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 8px;
 }
 .agent-composer__box {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 4px;
   padding: 6px;
   border: 1px solid var(--line);
@@ -26,6 +28,7 @@
 /* Une ligne : « + » à gauche, le texte qui grandit jusqu’à sa hauteur maximale puis défile, l’envoi à droite. */
 .agent-composer__row {
   display: flex;
+  min-width: 0;
   align-items: flex-end;
   gap: 4px;
 }
@@ -104,21 +107,12 @@
 }
 .agent-composer__box .agent-composer__send {
   margin-left: 2px;
-  border-radius: 50%;
-  background: var(--color-ink);
-  color: var(--color-bg);
-}
-.agent-composer__box .agent-composer__send:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--color-ink) 85%, var(--color-bg));
-  color: var(--color-bg);
-}
-.agent-composer__box .agent-composer__send:disabled {
-  background: var(--color-surface-strong);
-  color: var(--color-muted);
 }
 /* Sous la saisie, à droite et hors du cadre : modèle et raisonnement, puis le cadenas des demandes secrètes. */
 .agent-composer__options {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
@@ -287,64 +281,105 @@
   color: var(--color-muted);
   text-align: left;
 }
-/* Messages écrits pendant une réponse, en attente de la fin du tour : une ligne chacun, réordonnable. */
-.agent-composer__queue ol {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+/* Messages en file, repris de OneApp (pages/agents/agents.css) : en tête du cadre de la saisie, une ligne de 20 px
+   chacun, séparés du champ par un filet. */
+.agent-queue {
+  margin: -2px 0 2px;
+  padding: 0 4px 3px 0;
+  border-bottom: 1px solid var(--line);
+}
+.agent-queue ol {
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.agent-composer__queued {
-  min-height: 30px;
+.agent-queue__item {
+  min-height: 20px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 2px 0 10px;
-  border: 1px dashed var(--line);
+  gap: 4px;
+  padding: 0 0 0 4px;
   border-radius: var(--radius-control);
-  background: var(--color-surface);
-  font-size: var(--font-size-secondary);
-}
-/* Même largeur que la poignée (20 px) : le texte ne bouge pas quand la file passe à plusieurs messages. */
-.agent-composer__queued-mark {
-  flex: none;
-  margin: 0 4px;
   color: var(--color-muted);
 }
-.agent-composer__queue .agent-composer__handle {
-  width: 20px;
-  min-height: 20px;
-  flex: 0 0 20px;
-  margin-left: -6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+.agent-queue__item:hover {
+  background: var(--color-surface);
 }
-.agent-composer__queue .agent-composer__handle:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+/* Même largeur que la poignée (20 px) : le texte ne bouge pas quand la file passe à plusieurs messages. */
+.agent-queue__mark {
+  flex: none;
+  margin: 0 4px;
 }
-.agent-composer__queued-text {
-  flex: 1;
+.agent-queue__text {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-composer__queued-text .reference-pill {
+.agent-queue__text .reference-pill {
   min-height: 18px;
   line-height: 18px;
 }
-.agent-composer__queued-actions {
+/* Actions toujours visibles, en gris : modifier et retirer ; l’envoi reste dans le bouton rond. */
+.agent-queue__actions {
   display: flex;
   flex: none;
   color: var(--color-muted);
 }
-
-.agent-composer__hint {
-  margin: 4px 2px 0;
-  font-size: 11px;
+/* Boutons de 20 px, pictogramme de 12 px (taille « micro » des boutons de OneApp). */
+.agent-queue .icon-button.agent-queue__action,
+.agent-queue .icon-button.agent-send-button--micro {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+}
+.agent-queue .icon-button.agent-queue__action > svg,
+.agent-queue .icon-button.agent-send-button--micro > svg {
+  width: 12px;
+  height: 12px;
+}
+/* Poignée de réordonnancement, reprise de `ReorderHandle` (taille « micro ») de OneApp. */
+.agent-queue .reorder-handle {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--color-muted);
+}
+.agent-queue .reorder-handle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+/* Bouton d’envoi, repris de OneApp (agent-send-button.css) : le même dans la saisie et dans la file. */
+.icon-button.agent-send-button {
+  padding: 0;
+  border-radius: 50%;
+  background: var(--color-ink);
+  color: var(--color-bg);
+}
+.icon-button.agent-send-button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-ink) 85%, var(--color-bg));
+  color: var(--color-bg);
+}
+.icon-button.agent-send-button:disabled {
+  background: var(--color-surface-strong);
+  color: var(--color-muted);
+}
+.agent-send-button--up-right > .lucide-arrow-up {
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+@media (forced-colors: active) {
+  .icon-button.agent-send-button {
+    border: 1px solid ButtonText;
+  }
+  .icon-button.agent-send-button:disabled {
+    border-color: GrayText;
+  }
 }

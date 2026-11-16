@@ -1,9 +1,10 @@
 import { Button, FeedbackBanner, IconButton, MenuItem, OverflowMenu } from "@alfred/ui";
-import { ArrowUp, AtSign, FolderOpen, Paperclip, Plus, Slash, Square, X } from "lucide-react";
+import { AtSign, FolderOpen, Paperclip, Plus, Slash, Square, X } from "lucide-react";
 import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
   startTransition,
   useCallback,
   useEffect,
@@ -16,6 +17,7 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { DictationButton } from "../voice/DictationButton";
 import { useVoice } from "../voice/store";
+import { AgentSendButton } from "./AgentSendButton";
 import { ComposerEditor, composerSelectionRange, setComposerSelection } from "./ComposerEditor";
 import { blankDraft, type ComposerDraft, hasDraft, useComposerDrafts } from "./drafts";
 import {
@@ -37,7 +39,7 @@ import {
 import type { Conversation, QueuedMessage, UserMessage } from "./model";
 import { ChoicePicker } from "./panel/ChoicePicker";
 import { ModelPicker } from "./panel/ModelPicker";
-import { QueueList } from "./QueueList";
+import { QueueList, queuedEditable } from "./QueueList";
 import { useAgents } from "./store";
 import { TextPreview } from "./TextPreview";
 import { QUOTE_EVENT } from "./Transcript";
@@ -54,10 +56,23 @@ function failure(title: string, error: unknown) {
 }
 
 /**
- * Réglages de la conversation sous la saisie, à droite et hors du cadre comme dans OneApp : modèle et raisonnement,
- * autonomie, puis dossier de travail. Mêmes déclencheurs discrets (texte et chevron) que le choix du modèle.
+ * Ligne sous la saisie, hors du cadre comme dans OneApp : à gauche l’état (résumé Git) et le rappel des raccourcis
+ * pendant une réponse ; à droite le modèle et le raisonnement (modifiables pendant la réponse, comme dans OneApp, pour
+ * le message suivant), l’autonomie, puis le dossier de travail.
  */
-function ConversationOptions({ conversation, locked }: { conversation: Conversation; locked: boolean }) {
+function ConversationOptions({
+  conversation,
+  locked,
+  responding,
+  status,
+  hint,
+}: {
+  conversation: Conversation;
+  locked: boolean;
+  responding: boolean;
+  status?: ReactNode;
+  hint?: ReactNode;
+}) {
   const update = useAgents((state) => state.update);
   const spaceDir = useShell((state) => state.snapshot?.path ?? "");
   const started = conversation.turns.length > 0;
@@ -65,6 +80,8 @@ function ConversationOptions({ conversation, locked }: { conversation: Conversat
     conversation.cwd === spaceDir ? "Dossier de l’espace" : (conversation.cwd.split(/[\\/]/).pop() ?? conversation.cwd);
   return (
     <div className="agent-composer__options">
+      {status}
+      {hint}
       <span className="agent-composer__options-spacer" />
       <ModelPicker
         value={{ provider: conversation.provider, model: conversation.model, effort: conversation.effort }}
@@ -85,7 +102,7 @@ function ConversationOptions({ conversation, locked }: { conversation: Conversat
         value={conversation.autonomy}
         choices={(Object.keys(AUTONOMY_LABEL) as Autonomy[]).map((value) => ({ value, label: AUTONOMY_LABEL[value] }))}
         placeholder="Autonomie"
-        disabled={locked}
+        disabled={locked || responding}
         align="end"
         onChange={(value) => update(conversation.id, { autonomy: value as Autonomy })}
       />
@@ -94,7 +111,7 @@ function ConversationOptions({ conversation, locked }: { conversation: Conversat
         className="choice-picker__trigger agent-composer__folder"
         title={conversation.cwd}
         aria-label={`Dossier de travail : ${folder}`}
-        disabled={locked || !inTauri || started}
+        disabled={locked || responding || !inTauri || started}
         onClick={async () => {
           const selected = await pickFolder("Dossier de travail de la conversation");
           if (selected) update(conversation.id, { cwd: selected });
@@ -112,13 +129,21 @@ export function isLongChatText(text: string): boolean {
   return text.length >= 2000 || text.split(/\r\n|\r|\n/, 20).length >= 20;
 }
 
-/** Certains presse-papiers n’exposent les images que par `items`. */
-function clipboardFiles(data: DataTransfer): File[] {
+/** Images du presse-papiers, comme `clipboardImages` de OneApp : certains presse-papiers ne les exposent que par `items`. */
+export function clipboardImages(data: Pick<DataTransfer, "items" | "files">): File[] {
   const images = [...data.items]
     .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
     .map((item) => item.getAsFile())
     .filter((file): file is File => file !== null);
-  return images.length ? images : [...data.files];
+  return images.length ? images : [...data.files].filter((file) => file.type.startsWith("image/"));
+}
+
+/** Les collages se numérotent dans l’ordre, comme les cartes « Texte collé N » de OneApp : en retirer un renumérote les suivants. */
+export function numberPastes(pastes: ComposerDraft["pastes"]): ComposerDraft["pastes"] {
+  let index = 0;
+  return pastes.map((paste) =>
+    paste.title.startsWith("Texte collé") ? { ...paste, title: `Texte collé ${++index}` } : paste,
+  );
 }
 
 function isMention(reference: ComposerReference): reference is ComposerReferenceMention {
@@ -154,7 +179,7 @@ export function mergeIntoDraft(message: UserMessage | ComposerDraft, current: Co
       ...message.attachments,
       ...current.attachments.filter((item) => !message.attachments.some((known) => known.path === item.path)),
     ].slice(0, MAX_ATTACHMENTS),
-    pastes: [...pastes, ...current.pastes],
+    pastes: numberPastes([...pastes, ...current.pastes]),
   };
 }
 
@@ -167,11 +192,17 @@ export function Composer({
   conversation,
   responding,
   compact = false,
+  status,
+  onDraggingChange,
 }: {
   conversation: Conversation;
   responding: boolean;
   /** Panneau de droite : la saisie seule, sans les réglages de la conversation. */
   compact?: boolean;
+  /** État affiché à gauche, sur la ligne du choix du modèle (résumé des fichiers modifiés), comme dans OneApp. */
+  status?: ReactNode;
+  /** Fichiers survolés : la page couvre sa zone de dépôt, comme celle de OneApp. */
+  onDraggingChange?: (dragging: boolean) => void;
 }) {
   const send = useAgents((state) => state.send);
   const cancel = useAgents((state) => state.cancel);
@@ -193,7 +224,13 @@ export function Composer({
   const { update, patch, clear, read, retry: retryDrafts, discardUnreadable } = useComposerDrafts.getState();
   // Comme OneApp : rien ne se saisit tant que les conversations et les brouillons ne sont pas prêts.
   const locked = !agentsReady || !draftsReady || draftUnreadable;
-  const [dragging, setDragging] = useState(false);
+  const [dragging, setDraggingState] = useState(false);
+  const draggingChange = useRef(onDraggingChange);
+  draggingChange.current = onDraggingChange;
+  const setDragging = useCallback((next: boolean) => {
+    setDraggingState(next);
+    draggingChange.current?.(next);
+  }, []);
   const [pendingAttachments, setPendingAttachments] = useState(0);
   const attaching = pendingAttachments > 0;
   const dictation = useVoice((state) => state.dictation);
@@ -329,10 +366,10 @@ export function Composer({
       cancelled = true;
       stop?.();
     };
-  }, [attach]);
+  }, [attach, setDragging]);
 
   const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
-    const files = clipboardFiles(event.clipboardData);
+    const files = clipboardImages(event.clipboardData);
     if (files.length) {
       event.preventDefault();
       attach(() => saveBlobs(conversationId, files));
@@ -447,11 +484,15 @@ export function Composer({
     }
   };
 
-  /** Reprend un message de la file dans la saisie, pour le corriger avant son départ. */
+  /**
+   * Reprend un message de la file dans la saisie, pour le corriger avant son départ. Comme dans OneApp, son texte et
+   * ses pastilles remplacent ceux de la saisie ; un message avec pièces jointes ou texte collé ne se reprend pas.
+   */
   const edit = (item: QueuedMessage) => {
+    if (!queuedEditable(item.message)) return;
     const message = unqueue(conversationId, item.id);
     if (!message) return;
-    update(conversationId, (current) => mergeIntoDraft(message, current));
+    patch(conversationId, { text: message.text, references: (message.references ?? []).filter(isMention) });
     requestAnimationFrame(() => editor.current?.focus());
   };
 
@@ -464,6 +505,9 @@ export function Composer({
   };
 
   const sendLabel = canResume && !filled ? "Relancer l’exécution" : responding ? "Envoyer maintenant" : "Envoyer";
+  const hint = responding ? (
+    <span className="agent-composer__hint">↩︎ pour envoyer, {queueShortcut} pour mettre en file</span>
+  ) : null;
   return (
     <div className="agent-composer">
       {draftsLoadError ? (
@@ -488,16 +532,6 @@ export function Composer({
           Le brouillon enregistré de cette conversation est illisible.
         </FeedbackBanner>
       ) : null}
-      <QueueList
-        queue={queued}
-        disabled={locked}
-        onEdit={edit}
-        onRemove={(item) => unqueue(conversationId, item.id)}
-        onSendNow={(item) =>
-          void sendQueuedNow(conversationId, item.id).catch((error) => failure("Message non envoyé", error))
-        }
-        onReorder={reorderQueued ? (ids) => reorderQueued(conversationId, ids) : undefined}
-      />
       <form
         className={`agent-composer__box${dragging ? " is-dragging" : ""}`}
         onSubmit={(event) => {
@@ -512,6 +546,16 @@ export function Composer({
         onDragLeave={() => !inTauri && setDragging(false)}
         onDrop={onDrop}
       >
+        <QueueList
+          queue={queued}
+          disabled={locked}
+          onEdit={edit}
+          onRemove={(item) => unqueue(conversationId, item.id)}
+          onSendNow={(item) =>
+            void sendQueuedNow(conversationId, item.id).catch((error) => failure("Message non envoyé", error))
+          }
+          onReorder={reorderQueued ? (ids) => reorderQueued(conversationId, ids) : undefined}
+        />
         {draft.attachments.length || draft.pastes.length ? (
           <ul className="agent-composer__attachments">
             {draft.pastes.map((context) => (
@@ -520,7 +564,9 @@ export function Composer({
                   text={context.text}
                   label={context.title}
                   onRemove={() =>
-                    patch(conversationId, { pastes: draft.pastes.filter((item) => item.id !== context.id) })
+                    patch(conversationId, {
+                      pastes: numberPastes(draft.pastes.filter((item) => item.id !== context.id)),
+                    })
                   }
                 />
               </li>
@@ -594,7 +640,7 @@ export function Composer({
             className="agent-composer__input"
             // Exclu du soulignement des champs nus (styles.css) : le cadre du compositeur porte bordure et focus.
             data-slot="composer-input"
-            aria-label="Message à l’agent"
+            aria-label={`Message à ${conversation.title}`}
             cwd={conversation.cwd || spaceDir}
             provider={conversation.provider}
             disabled={locked}
@@ -623,30 +669,36 @@ export function Composer({
           />
           <DictationButton onTranscript={(dictated) => void submit(dictated)} />
           {responding ? (
-            <IconButton
-              label="Interrompre la réponse"
-              tooltip="Interrompre · Échap"
-              onClick={() => void cancel(conversationId)}
-            >
+            <IconButton label="Arrêter l’agent" tooltip="Arrêter · Échap" onClick={() => void cancel(conversationId)}>
               <Square size={13} aria-hidden="true" />
             </IconButton>
           ) : null}
-          <IconButton
+          <AgentSendButton
             type="submit"
             className="agent-composer__send"
             label={sendLabel}
             tooltip={responding ? `Envoyer maintenant · ↩︎ (${queueShortcut} pour mettre en file)` : sendLabel}
             disabled={locked || attaching || (!filled && !canResume)}
             loading={attaching}
-          >
-            <ArrowUp size={15} aria-hidden="true" />
-          </IconButton>
+          />
         </div>
       </form>
-      {responding ? (
-        <p className="agent-composer__hint">↩︎ pour envoyer maintenant, {queueShortcut} pour mettre en file</p>
-      ) : null}
-      {compact ? null : <ConversationOptions conversation={conversation} locked={responding || locked} />}
+      {compact ? (
+        hint || status ? (
+          <div className="agent-composer__options">
+            {status}
+            {hint}
+          </div>
+        ) : null
+      ) : (
+        <ConversationOptions
+          conversation={conversation}
+          locked={locked}
+          responding={responding}
+          status={status}
+          hint={hint}
+        />
+      )}
     </div>
   );
 }

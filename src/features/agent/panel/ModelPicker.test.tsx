@@ -41,7 +41,7 @@ it("explique pourquoi les autres harnais sont grisés une fois la conversation c
   render(<ModelPicker value={{ provider: "opencode" }} cwd="/tmp" providerLocked onChange={() => {}} />);
   await userEvent.click(screen.getByRole("button", { name: /Modèle de l’agent/ }));
   expect(screen.getByText(/Harnais fixé : cette conversation a commencé avec OpenCode/)).toHaveTextContent(
-    "Pour Claude Code ou Codex, ouvre une nouvelle conversation.",
+    "Pour Claude Code ou Codex, ouvrez une nouvelle conversation.",
   );
   expect(screen.getByRole("radio", { name: "Codex" })).toBeDisabled();
 });

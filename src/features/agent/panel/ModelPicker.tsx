@@ -217,7 +217,7 @@ export function ModelPicker({
                   .filter((provider) => provider !== value.provider)
                   .map((provider) => PROVIDER_LABEL[provider])
                   .join(" ou ")}
-                , ouvre une nouvelle conversation.
+                , ouvrez une nouvelle conversation.
               </span>
             </p>
           ) : null}

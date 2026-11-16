@@ -4,13 +4,13 @@ import {
   FeedbackBanner,
   IconButton,
   InlineEdit,
+  LoadingSkeleton,
   MenuItem,
   OverflowMenu,
   PageTopBar,
   TextInput,
-  useConfirm,
 } from "@alfred/ui";
-import { Archive, Bot, Code2, FolderOpen, Trash2 } from "lucide-react";
+import { Archive, Bot, Code2, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "../../lib/native";
 import { NotificationBell } from "../../shell/NotificationCenter";
@@ -19,8 +19,8 @@ import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
 import { PROVIDER_LABEL } from "./harness";
-import type { ConversationRuntime } from "./model";
-import { usePreferences } from "./panel/ModelPicker";
+import { type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
+import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
 import { Transcript } from "./Transcript";
 import "./agent.css";
@@ -50,7 +50,6 @@ export function AgentPage() {
   const load = useAgents((state) => state.load);
   const open = useAgents((state) => state.open);
   const create = useAgents((state) => state.create);
-  const remove = useAgents((state) => state.remove);
   const rename = useAgents((state) => state.rename);
   const archive = useAgents((state) => state.archive);
   const unarchive = useAgents((state) => state.unarchive);
@@ -59,7 +58,7 @@ export function AgentPage() {
   const saveError = useAgents((state) => (state as Persistence).saveError);
   const retrySave = useAgents((state) => (state as Persistence).retrySave);
   const [renaming, setRenaming] = useState(false);
-  const { confirm, confirmDialog } = useConfirm();
+  const [dragging, setDragging] = useState(false);
   const git = useWorkspaceGit(conversation);
   const { textEditor } = usePreferences();
 
@@ -107,9 +106,14 @@ export function AgentPage() {
 
   const visible = useMemo(() => headers.filter((header) => !header.archived && header.started), [headers]);
 
-  /** Archive, puis propose de revenir en arrière ; les conversations archivées se retrouvent dans Réglages › Agents. */
-  const archiveConversation = async (id: string, title: string) => {
-    await archive(id);
+  /**
+   * Archive, puis propose de revenir en arrière ; les conversations archivées se retrouvent dans Réglages › Agents.
+   * Comme dans OneApp, l’affichage n’attend ni l’arrêt du travail en cours ni l’enregistrement.
+   */
+  const archiveConversation = (id: string, title: string) => {
+    void archive(id).catch((error) =>
+      notify({ title: "Conversation non archivée", description: errorText(error), tone: "error" }),
+    );
     notify({
       title: "Conversation archivée",
       description: `${title} · retrouvez-la dans Réglages, onglet Agent.`,
@@ -126,11 +130,9 @@ export function AgentPage() {
   // Un brouillon abandonné ne s’accumule pas : « Nouvelle conversation » réutilise celui qui est ouvert.
   const draft = conversation && !conversation.started ? conversation : undefined;
   const panel = useConversationListPanel();
-  const context = conversation
-    ? [PROVIDER_LABEL[conversation.provider], conversation.origin ? `depuis ${conversation.origin.title}` : ""]
-        .filter(Boolean)
-        .join(" · ")
-    : undefined;
+  // Comme la portée de l’agent dans OneApp : le harnais en contexte du titre ; l’origine va au-dessus du relevé.
+  const context = conversation ? PROVIDER_LABEL[conversation.provider] : undefined;
+  const models = useHarnessModels(conversation?.provider ?? "claude", conversation?.cwd || spacePath || "");
 
   return (
     <section className="agents-page" aria-label="Agent">
@@ -155,7 +157,7 @@ export function AgentPage() {
                 className="agents-page__title-input"
                 aria-label={editor.label}
                 value={editor.value}
-                maxLength={120}
+                maxLength={MAX_TITLE_LENGTH}
                 autoFocus
                 onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) => editor.setValue(event.target.value)}
@@ -210,7 +212,7 @@ export function AgentPage() {
           <IconButton
             label={`Archiver ${conversation.title}`}
             tooltip="Archiver la conversation"
-            onClick={() => void archiveConversation(conversation.id, conversation.title)}
+            onClick={() => archiveConversation(conversation.id, conversation.title)}
           >
             <Archive size={16} aria-hidden="true" />
           </IconButton>
@@ -227,30 +229,18 @@ export function AgentPage() {
             <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
           </OverflowMenu>
         ) : null}
-        {conversation && conversation.turns.length > 0 ? (
-          <IconButton
-            label="Supprimer la conversation"
-            tooltip="Supprimer la conversation"
-            onClick={async () => {
-              const accepted = await confirm({
-                title: "Supprimer cette conversation ?",
-                message:
-                  "Son relevé et ses fichiers d’échange sont supprimés d’Alfred. Ce que l’agent a créé dans l’espace reste en place.",
-                confirmLabel: "Supprimer",
-                tone: "danger",
-              });
-              if (accepted) await remove(conversation.id);
-            }}
-          >
-            <Trash2 size={16} aria-hidden="true" />
-          </IconButton>
-        ) : null}
         <NotificationBell />
       </PageTopBar>
-      {confirmDialog}
       <div className="agents-page__body">
-        <section className="agents-page__main" aria-label="Conversation et saisie">
-          {loadError ? (
+        <section
+          className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
+          aria-label="Conversation et saisie"
+        >
+          {!ready && !loadError ? (
+            <div className="agents-page__state" aria-busy="true">
+              <LoadingSkeleton variant="page" rows={4} label="Chargement des conversations…" />
+            </div>
+          ) : loadError ? (
             <div className="agents-page__state">
               <FeedbackBanner action={<Button onClick={() => void load().catch(reportLoad)}>Réessayer</Button>}>
                 L’historique des agents n’a pas pu être chargé.
@@ -269,7 +259,18 @@ export function AgentPage() {
                 <Transcript
                   conversation={conversation}
                   runtime={runtime}
-                  header={<p className="agents-page__context">{startedAt.format(conversation.createdAt)}</p>}
+                  header={
+                    <p
+                      className="agents-page__context"
+                      title={modelChoiceLabel(
+                        { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
+                        models,
+                      )}
+                    >
+                      {conversation.origin ? `Depuis ${conversation.origin.title} · ` : ""}
+                      {startedAt.format(conversation.createdAt)}
+                    </p>
+                  }
                 />
               )}
               <div className="agents-page__footer">
@@ -285,8 +286,12 @@ export function AgentPage() {
                     {saveError}
                   </FeedbackBanner>
                 ) : null}
-                <Composer conversation={conversation} responding={runtime.status !== "idle"} />
-                <GitSummaryPill git={git} />
+                <Composer
+                  conversation={conversation}
+                  responding={runtime.status !== "idle"}
+                  status={<GitSummaryPill git={git} />}
+                  onDraggingChange={setDragging}
+                />
               </div>
             </>
           ) : null}
@@ -298,7 +303,7 @@ export function AgentPage() {
             active={conversation}
             panel={panel}
             git={git}
-            onArchive={(header) => void archiveConversation(header.id, header.title)}
+            onArchive={(header) => archiveConversation(header.id, header.title)}
           />
         )}
       </div>
