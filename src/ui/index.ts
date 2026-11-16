@@ -29,6 +29,7 @@ export {
   TextArea,
   TextInput,
 } from "./components/FormControls";
+export { HtmlContent, type HtmlContentProps } from "./components/HtmlContent";
 export { InlineEdit } from "./components/InlineEdit";
 export { Link } from "./components/Link";
 export { List, ListItem } from "./components/List";

@@ -146,7 +146,8 @@ function cloneTree(node: Node, parent: CSSStyleDeclaration | null, state: CloneS
   }
 
   if (!(element instanceof HTMLTextAreaElement) && !(copy instanceof HTMLImageElement)) {
-    for (const child of element.childNodes) {
+    // Une racine fantôme (le corps d’un courriel dans `HtmlContent`) se dessine à la place des enfants de son hôte.
+    for (const child of (element.shadowRoot ?? element).childNodes) {
       const cloned = cloneTree(child, computed, state);
       if (!cloned) continue;
       // Un conteneur défilé garde sa position : ses enfants sont décalés d’autant.

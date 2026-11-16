@@ -179,7 +179,7 @@ function textOf(element: Element): string {
       parts.push(child.alt);
       return;
     }
-    for (const next of child.childNodes) walk(next);
+    for (const next of (child.shadowRoot ?? child).childNodes) walk(next);
     // Les blocs séparent les mots : « Titre » et « Sous-titre » ne se collent pas.
     parts.push(" ");
   };
@@ -338,7 +338,7 @@ function walk(element: Element, depth: number, out: string[]) {
     if (text) out.push(`${"  ".repeat(depth)}text ${quote(text)}`);
     return;
   }
-  for (const child of element.childNodes) {
+  for (const child of (element.shadowRoot ?? element).childNodes) {
     if (child.nodeType === Node.TEXT_NODE) {
       const text = clean(child.textContent);
       if (text) out.push(`${"  ".repeat(childDepth)}text ${quote(text)}`);

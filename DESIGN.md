@@ -127,6 +127,7 @@ Tout s’importe de `@alfred/ui`. Les composants qui prolongent un élément nat
 | `Link` | Lien texte souligné dans une phrase ou une cellule | Avec `href: string` et `onNavigate: (href) => void` : un lien, dont l’adresse web ou `mailto:` porte l’icône « hors d’Alfred ». Sans `href` : `onClick`, bouton d’apparence lien |
 | `Image` | Image venue des données (`data:` ou `blob:` ; une adresse distante affiche son texte de remplacement) | `src`, `alt: string` (obligatoire ; `""` si décorative), `size`: `"sm" \| "md" \| "lg" \| "full"` (`"md"` : 120, 240, 480 px, toute la largeur), `fit`: `"contain" \| "cover"` (`"contain"` ; `cover` : vignette carrée) |
 | `Markdown` | Affiche un texte Markdown venu des données (note, réponse d’un agent) : titres, listes, tableaux, code. Pas pour composer la page elle-même | `children: string`, `onLink?: (href: string) => void` |
+| `HtmlContent` | Affiche un HTML venu de l’extérieur, le corps d’un courriel (Outlook, Gmail…) : nettoyé par liste blanche (ni script, ni gestionnaire `on…`, ni formulaire, ni cadre) et isolé dans une racine fantôme, ses styles ne débordent pas. Le seul moyen d’afficher du HTML : jamais `dangerouslySetInnerHTML` ni `innerHTML` | `html: string`, `onLink?: (url) => void`, `resolveImage?: (source) => Promise<string \| null>` (image jointe `cid:` ou distante → adresse `data:`/`blob:` ; sans, elle reste masquée), `label?: string` |
 
 Utiliser `as="span"` quand le texte est dans une `Row`, à côté d’une icône ou d’une pastille. Dans `Markdown` comme dans `Link`, un lien ne navigue jamais seul : `onLink` ou `onNavigate` reçoit l’adresse et décide quoi en faire.
 
@@ -141,6 +142,22 @@ Utiliser `as="span"` quand le texte est dans une `Row`, à côté d’une icône
 <Link href="https://exemple.fr/aide" onNavigate={(href) => void shell.openExternal(href)}>
   Lire l’aide
 </Link>
+```
+
+Corps HTML d’un courriel Outlook (Microsoft Graph : `body.contentType === "html"`) ; les images jointes `cid:` se
+chargent par la pièce jointe du message, les images distantes restent masquées :
+
+```tsx
+<HtmlContent
+  label={`Message de ${message.from.emailAddress.name}`}
+  html={message.body.content}
+  onLink={(url) => void shell.openExternal(url)}
+  resolveImage={async (source) => {
+    if (!source.startsWith("cid:")) return null;
+    const attachment = message.attachments?.find((item) => item.contentId === source.slice(4));
+    return attachment ? `data:${attachment.contentType};base64,${attachment.contentBytes}` : null;
+  }}
+/>
 ```
 
 ### 5.3 Actions
