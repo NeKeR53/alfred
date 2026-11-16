@@ -8,6 +8,7 @@ mod clients;
 mod composer;
 mod conversations;
 mod dispatch;
+mod documents;
 mod docs;
 mod error;
 mod events;

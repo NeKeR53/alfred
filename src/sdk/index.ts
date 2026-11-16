@@ -142,6 +142,41 @@ export const files = {
   },
 };
 
+// --- Documents ------------------------------------------------------------------------------------------------
+
+type CellValue = string | number | boolean | null;
+
+/** Bloc d’un PDF produit par `documents.pdf`. */
+export type DocumentBlock =
+  | { type: "heading"; text: string; level?: 1 | 2 | 3 }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[]; ordered?: boolean }
+  | { type: "table"; columns: string[]; rows: CellValue[][]; widths?: number[] }
+  | { type: "pageBreak" };
+
+/** Produit des documents (rangés comme fichiers du module) et lit le texte de ceux qu’on reçoit. */
+export const documents = {
+  /** PDF A4 : titre facultatif, puis les blocs dans l’ordre ; pages numérotées. */
+  pdf(options: { name: string; title?: string; blocks: DocumentBlock[] }): Promise<FileInfo> {
+    return request("documents.pdf", options);
+  },
+  /** CSV en UTF-8, séparé par `;` par défaut (Excel en français l’ouvre tel quel). */
+  csv(options: { name: string; columns?: string[]; rows: CellValue[][]; separator?: string }): Promise<FileInfo> {
+    return request("documents.csv", options);
+  },
+  /** Classeur Excel (.xlsx) : une feuille par entrée, en-têtes en gras. */
+  xlsx(options: {
+    name: string;
+    sheets: { name?: string; columns?: string[]; rows: CellValue[][] }[];
+  }): Promise<FileInfo> {
+    return request("documents.xlsx", options);
+  },
+  /** Texte d’un fichier du module : PDF (pages séparées par un saut de page `\f`), Word (.docx) ou texte. */
+  extractText(id: string): Promise<{ text: string; pages: number | null; truncated: boolean }> {
+    return request("documents.extractText", { id });
+  },
+};
+
 // --- Clients déclarés ------------------------------------------------------------------------------------------
 
 export interface ClientRequest {

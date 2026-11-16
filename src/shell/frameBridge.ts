@@ -240,6 +240,14 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "files.open":
     case "files.dataUrl":
       return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "documents.pdf":
+      return invoke("frame.documents.pdf", { ...pick(params, ["name", "title", "blocks"]), subject });
+    case "documents.csv":
+      return invoke("frame.documents.csv", { ...pick(params, ["name", "columns", "rows", "separator"]), subject });
+    case "documents.xlsx":
+      return invoke("frame.documents.xlsx", { ...pick(params, ["name", "sheets"]), subject });
+    case "documents.extractText":
+      return invoke("frame.documents.extractText", { ...pick(params, ["id"]), subject });
     case "files.pick": {
       // Le sélecteur est montré par la coquille : la page ne nomme jamais un chemin du disque.
       if (identity.kind === "function")

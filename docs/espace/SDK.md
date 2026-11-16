@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -563,5 +563,49 @@ export async function joindreFacture(ticket: number) {
   if (!fichier) return;
   await db.execute("INSERT INTO support_pieces (ticket, fichier, nom) VALUES (?, ?, ?)", [ticket, fichier.id, fichier.name]);
   void shell.notify({ title: "Facture jointe", description: fichier.name, tone: "success" });
+}
+```
+
+## 10. Documents : `documents`
+
+```ts
+type CellValue = string | number | boolean | null;
+type DocumentBlock =
+  | { type: "heading"; text: string; level?: 1 | 2 | 3 }
+  | { type: "paragraph"; text: string }           // "\n" force un retour à la ligne
+  | { type: "list"; items: string[]; ordered?: boolean }
+  | { type: "table"; columns: string[]; rows: CellValue[][]; widths?: number[] } // widths : relatives
+  | { type: "pageBreak" };
+documents.pdf(options: { name: string; title?: string; blocks: DocumentBlock[] }): Promise<FileInfo>;
+documents.csv(options: { name: string; columns?: string[]; rows: CellValue[][]; separator?: string }): Promise<FileInfo>;
+documents.xlsx(options: { name: string; sheets: { name?: string; columns?: string[]; rows: CellValue[][] }[] }): Promise<FileInfo>;
+documents.extractText(id: string): Promise<{ text: string; pages: number | null; truncated: boolean }>;
+```
+
+- Chaque document produit devient un fichier du module (section 9) : propose ensuite `files.open(id)` ou `files.export(id)` à l’utilisateur. L’extension est ajoutée au nom si elle manque.
+- PDF : A4, police Helvetica, pages numérotées dès la deuxième, en-tête d’un tableau répété sur chaque page. Pas d’image ni de couleur. Les caractères hors de l’alphabet latin (emoji, idéogrammes) deviennent « ? ». Formate toi-même les nombres et les dates (`toLocaleString("fr-FR")`) : une cellule s’imprime telle qu’elle est donnée.
+- CSV : UTF-8 avec BOM, `;` par défaut (Excel en français) ; `separator: ","` pour un autre outil.
+- Excel : un nombre ou un booléen reste une valeur de cellule, le reste est du texte ; en-têtes en gras et figés, colonnes ajustées.
+- `extractText` lit un PDF (pages séparées par `\f`, `pages` leur nombre ; un PDF scanné, fait d’images, rend un texte vide), un Word `.docx` (pas l’ancien `.doc`) ou un fichier texte. Au-delà de 2 millions de caractères, le texte est coupé (`truncated`). Pour un résumé ou une extraction de champs, passe ce texte à `ai.oneShot`.
+
+```ts
+import { db, documents, files } from "@alfred/sdk";
+
+export async function exporterFactures() {
+  const lignes = await db.query<{ client: string; montant: number }>("SELECT client, montant FROM compta_factures");
+  const pdf = await documents.pdf({
+    name: "Factures",
+    title: "Factures de novembre",
+    blocks: [
+      { type: "paragraph", text: `${lignes.length} factures.` },
+      {
+        type: "table",
+        columns: ["Client", "Montant"],
+        rows: lignes.map((l) => [l.client, l.montant.toLocaleString("fr-FR", { style: "currency", currency: "EUR" })]),
+        widths: [3, 1],
+      },
+    ],
+  });
+  await files.export(pdf.id);
 }
 ```
