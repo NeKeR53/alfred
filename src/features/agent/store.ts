@@ -199,7 +199,7 @@ const LOAD_ERROR =
 const INTERRUPTED_AT_CLOSE =
   "Cette tâche a été interrompue à la fermeture d’Alfred. Reprenez-la explicitement pour continuer.";
 
-const newId = () => crypto.randomUUID();
+const newId = (): string => crypto.randomUUID();
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function signature(conversation: Conversation) {

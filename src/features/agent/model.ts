@@ -2,7 +2,7 @@
 
 import type { FileLines } from "../../lib/types";
 import type { ActivityAction, ActivityKind, ActivityStatus, ApprovalRequest, Autonomy, Provider } from "./harness";
-import { type ComposerReference, referenceInstructions } from "./lib/composerReferences";
+import { type ComposerReference, type ComposerReferenceMention, referenceInstructions } from "./lib/composerReferences";
 
 export interface Attachment {
   path: string;
@@ -22,7 +22,8 @@ export interface UserMessage {
   attachments: Attachment[];
   contexts: PastedContext[];
   /** Commandes, skills et fichiers choisis par `/` et `@` ; leur mention reste dans `text`. */
-  references?: ComposerReference[];
+  /** Références citées ; celles d’un message récent gardent leur position dans le texte (`id`, `offset`). */
+  references?: (ComposerReference | ComposerReferenceMention)[];
   /** Demande dictée : la réponse de l’agent est lue à voix haute (Réglages › Voix). */
   spoken?: boolean;
 }

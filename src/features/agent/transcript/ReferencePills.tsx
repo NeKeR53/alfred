@@ -9,7 +9,13 @@ const isMention = (reference: ComposerReference): reference is ComposerReference
  * (`offset`, dans le texte sans les pastilles), repris de `ReferencePills` de OneApp. Une référence sans position,
  * d’un message plus ancien, n’a pas de pastille.
  */
-export function ReferencePills({ text, references }: { text: string; references: readonly ComposerReference[] }) {
+export function ReferencePills({
+  text,
+  references,
+}: {
+  text: string;
+  references: readonly (ComposerReference | ComposerReferenceMention)[];
+}) {
   const mentions = references.filter(isMention);
   if (!mentions.length) return <span className="reference-text">{text}</span>;
   const ordered = mentions
