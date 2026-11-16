@@ -1,13 +1,25 @@
 import { Button, Dialog, IconButton, PanelHeader } from "@alfred/ui";
 import { FileText, X } from "lucide-react";
-import { useId, useRef } from "react";
+import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "./text-preview.css";
 
-/** Bloc de contexte replié (collage long) : une pastille qui ouvre le texte complet en lecture seule. */
-export function TextPreview({ text, label, onRemove }: { text: string; label: string; onRemove?: () => void }) {
+/**
+ * Texte replié (collage long, long message envoyé) : une carte « {libellé} · N caractères » qui ouvre le texte complet
+ * en lecture seule, reprise de `TextPreview` de OneApp. Le texte n’est mis dans la boîte qu’à son ouverture.
+ */
+export function TextPreview({
+  text,
+  label = "Texte",
+  onRemove,
+}: {
+  text: string;
+  label?: string;
+  onRemove?: () => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const [expanded, setExpanded] = useState(false);
   const summary = `${label} · ${text.length.toLocaleString("fr-FR")} caractères`;
   return (
     <span className="chat-text-preview">
@@ -15,7 +27,10 @@ export function TextPreview({ text, label, onRemove }: { text: string; label: st
         className="chat-text-preview__chip"
         aria-label={`Voir ${summary}`}
         aria-haspopup="dialog"
-        onClick={() => dialog.current?.showModal()}
+        onClick={() => {
+          setExpanded(true);
+          dialog.current?.showModal();
+        }}
       >
         <FileText size={15} aria-hidden="true" />
         <span>{summary}</span>
@@ -26,7 +41,12 @@ export function TextPreview({ text, label, onRemove }: { text: string; label: st
         </IconButton>
       ) : null}
       {createPortal(
-        <Dialog ref={dialog} className="chat-text-preview__dialog" aria-labelledby={titleId}>
+        <Dialog
+          ref={dialog}
+          className="chat-text-preview__dialog"
+          aria-labelledby={titleId}
+          onClose={() => setExpanded(false)}
+        >
           <PanelHeader
             compact
             level={2}
@@ -38,7 +58,7 @@ export function TextPreview({ text, label, onRemove }: { text: string; label: st
               </IconButton>
             }
           />
-          <textarea readOnly aria-label={`Contenu de ${label}`} value={text} />
+          {expanded ? <textarea readOnly aria-label={`Contenu de ${label}`} value={text} /> : null}
         </Dialog>,
         document.body,
       )}

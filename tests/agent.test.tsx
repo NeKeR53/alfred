@@ -40,7 +40,7 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
 
   // Le message et les activités défilent ; une commande attend l’accord de l’utilisateur.
   expect(await screen.findByText("Je regarde ce que contient l’espace.")).toBeVisible();
-  const approval = await screen.findByRole("region", { name: "Accord demandé : Exécuter une commande" });
+  const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
   expect(within(approval).getByText("ls modules")).toBeVisible();
   expect(screen.getByText("Accord requis")).toBeVisible();
   await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
@@ -49,7 +49,7 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
     response: { request_id: string; response: { behavior: string } };
   };
   expect(response.response).toMatchObject({ request_id: "controle-1", response: { behavior: "allow" } });
-  await waitFor(() => expect(screen.queryByRole("region", { name: /Accord demandé/ })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Autorisation demandée" })).not.toBeInTheDocument());
 
   // `place_page` sans emplacement : la carte demande où mettre la page. L’utilisateur choisit le menu.
   const card = await screen.findByRole("form", { name: "Emplacement de la nouvelle page" });

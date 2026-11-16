@@ -1,7 +1,13 @@
 import { Disclosure } from "@alfred/ui";
 import { BookOpen, Bot, Brain, FolderOpen, LoaderCircle, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
-import type { ReactNode } from "react";
+import { useMemo } from "react";
+import type { ActivityAction } from "./harness";
+import { isAgentFileReference } from "./lib/agentFileLinks";
+import { activityImageOutput } from "./lib/chatImages";
 import type { TurnItem } from "./model";
+import { ConversationFiles } from "./transcript/ConversationFiles";
+import { ConversationImages } from "./transcript/ConversationImages";
+import { ImagePreview } from "./transcript/ImagePreview";
 
 /**
  * Activités de l’agent, reprises de `ChatActivities` de OneApp : une activité seule s’affiche sur sa ligne, une suite
@@ -28,6 +34,7 @@ function activityIcon(activity: Activity) {
   if (/^(read|lire|lecture)\b/i.test(title)) return BookOpen;
   if (/^(edited|edit|modified|modifier|modifié|écrit|write)\b/i.test(title)) return Pencil;
   if (/^(searched|search|recherché|recherche|chercher)\b/i.test(title)) return Search;
+  if (/^(ran|run|exécuté|execute|commande|command)(?:\s|$)/i.test(title)) return TerminalSquare;
   return Wrench;
 }
 
@@ -40,8 +47,23 @@ export function hasActivityOutput(activity: Activity): boolean {
   );
 }
 
+/** Statut lu d’une activité ; « Arrêté » pour une activité interrompue (`cancelled` ou `stopped`, selon le harnais). */
+export function activityStatusLabel(status: string): string {
+  return status === "failed"
+    ? "Échec"
+    : status === "completed"
+      ? "Terminé"
+      : status === "cancelled" || status === "stopped"
+        ? "Arrêté"
+        : "En cours";
+}
+
+function isRunning(activity: Activity): boolean {
+  return !["completed", "failed", "cancelled", "stopped"].includes(activity.status);
+}
+
 function ActivityLabel({ activity }: { activity: Activity }) {
-  const running = activity.status === "running";
+  const running = isRunning(activity);
   const Icon = running ? LoaderCircle : activityIcon(activity);
   const title = activityTitle(activity).replace(/\s*\n\s*/g, " ");
   return (
@@ -51,48 +73,75 @@ function ActivityLabel({ activity }: { activity: Activity }) {
         {title}
       </span>
       <span className={activity.status === "failed" ? "agent-chat__tool-status is-failed" : "sr-only"}>
-        {activity.status === "failed" ? "Échec" : activity.status === "completed" ? "Terminé" : "En cours"}
+        {activityStatusLabel(activity.status)}
       </span>
     </>
   );
 }
 
-function ActivityOutput({ activity, extras }: { activity: Activity; extras?: ReactNode }) {
-  const text = [activity.activityKind === "tool" ? activity.detail : undefined, activity.content]
+function contentKey(content: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < content.length; index += 1) hash = Math.imul(hash ^ content.charCodeAt(index), 16777619);
+  return `${content.length}:${hash >>> 0}`;
+}
+
+/** Détail d’une activité : sa sortie en lecture seule, puis ses images et fichiers, comme dans OneApp. */
+function ActivityOutput({ activity }: { activity: Activity }) {
+  const output = useMemo(() => activityImageOutput(activity.content ?? ""), [activity.content]);
+  const images = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    return output.images.map((src) => {
+      const occurrence = occurrences.get(src) ?? 0;
+      occurrences.set(src, occurrence + 1);
+      return { src, key: `${activity.id}:${contentKey(src)}:${occurrence}` };
+    });
+  }, [activity.id, output.images]);
+  const text = [activity.activityKind === "tool" ? activity.detail : undefined, output.text]
     .filter((value) => value?.trim())
     .join("\n");
+  const title = activity.title || "l’outil";
   return (
     <>
       {text ? (
         <textarea
           className="agent-chat__tool-output"
-          aria-label={`Détail de ${activity.title || "l’outil"}`}
+          aria-label={`Détail de ${title}`}
           readOnly
           rows={Math.min(12, Math.max(2, text.split("\n").length))}
           value={text}
         />
       ) : null}
-      {extras}
+      {activity.images?.length ? (
+        <ConversationImages images={activity.images} label={activity.title || "Image"} />
+      ) : null}
+      {activity.files?.length ? <ConversationFiles files={activity.files} label={`Fichiers de ${title}`} /> : null}
+      {images.length ? (
+        <div className="agent-chat__message-attachments">
+          {images.map(({ src, key }, index) => (
+            <ImagePreview key={key} src={src} alt={`Image ${index + 1} de ${title}`} />
+          ))}
+        </div>
+      ) : null}
     </>
   );
 }
 
-function ActivityLine({
-  activity,
-  renderExtras,
-}: {
-  activity: Activity;
-  renderExtras: (activity: Activity) => ReactNode;
-}) {
-  const edits = activity.actions?.length ? activity.actions : [];
-  if (edits.length && !hasActivityOutput(activity))
+function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile?: (path: string) => void }) {
+  const edits: ActivityAction[] = activity.actions?.length
+    ? activity.actions
+    : activity.activityKind === "file" && activity.detail
+      ? activity.detail
+          .split("\n")
+          .filter(Boolean)
+          .map((path) => ({ type: "edit" as const, path }))
+      : [];
+  if (edits.length)
     return (
       <>
         {Array.from(new Map(edits.map((action) => [JSON.stringify(action), action])).values()).map((action) => {
+          const path = action.path;
           const fileLabel =
-            action.type === "read" || action.type === "edit"
-              ? action.path?.split(/[\\/]/).pop() || action.path
-              : action.path;
+            action.type === "read" || action.type === "edit" ? path?.split(/[\\/]/).pop() || path : path;
           const Icon =
             action.type === "read"
               ? BookOpen
@@ -117,12 +166,18 @@ function ActivityLine({
                 title={[label, action.query, action.path].filter(Boolean).join(" ")}
               >
                 {label} {action.query ? `${action.query} ` : ""}
-                {fileLabel}
-                {action.added !== undefined || action.removed !== undefined ? (
+                {path && onOpenFile && (action.type === "read" || action.type === "edit") ? (
+                  <button type="button" className="agent-chat__activity-file" onClick={() => onOpenFile(path)}>
+                    {fileLabel}
+                  </button>
+                ) : (
+                  fileLabel
+                )}
+                {action.added !== undefined && action.removed !== undefined ? (
                   <>
                     {" "}
-                    <span className="agent-chat__change-added">+{action.added ?? 0}</span>{" "}
-                    <span className="agent-chat__change-removed">−{action.removed ?? 0}</span>
+                    <span className="agent-chat__change-added">+{action.added}</span>{" "}
+                    <span className="agent-chat__change-removed">−{action.removed}</span>
                   </>
                 ) : null}
               </span>
@@ -130,6 +185,22 @@ function ActivityLine({
           );
         })}
       </>
+    );
+  // « Read src/page.tsx », « Modifié notes.md » : le chemin du titre s’ouvre d’un clic.
+  const fileAction = /^(Read|Lire|Lecture de|Edited|Modified|Modifié)\s+(\S+)(.*)$/i.exec(activity.title ?? "");
+  const FileIcon = activityIcon(activity);
+  if (fileAction && onOpenFile && isAgentFileReference(fileAction[2]))
+    return (
+      <div className="agent-chat__activity-status">
+        <FileIcon size={15} aria-hidden="true" />
+        <span>
+          {fileAction[1]}{" "}
+          <button type="button" className="agent-chat__activity-file" onClick={() => onOpenFile(fileAction[2])}>
+            {fileAction[2]}
+          </button>
+          {fileAction[3]}
+        </span>
+      </div>
     );
   if (!hasActivityOutput(activity))
     return (
@@ -139,14 +210,14 @@ function ActivityLine({
     );
   return (
     <Disclosure appearance="subtle" label={<ActivityLabel activity={activity} />} lazy>
-      <ActivityOutput activity={activity} extras={renderExtras(activity)} />
+      <ActivityOutput activity={activity} />
     </Disclosure>
   );
 }
 
 export function activitySummary(activities: readonly Activity[]): string {
   const failed = activities.filter((activity) => activity.status === "failed").length;
-  const running = activities.filter((activity) => activity.status === "running").length;
+  const running = activities.filter(isRunning).length;
   const hasAnalysis = activities.some((activity) => activity.activityKind === "analysis");
   const count = `${activities.length} ${hasAnalysis ? "activité" : "outil"}${activities.length > 1 ? "s" : ""}`;
   return [
@@ -160,16 +231,16 @@ export function activitySummary(activities: readonly Activity[]): string {
 
 export function Activities({
   activities,
-  renderExtras,
+  onOpenFile,
 }: {
   activities: readonly Activity[];
-  /** Images et fichiers produits par une activité, affichés sous son détail. */
-  renderExtras: (activity: Activity) => ReactNode;
+  /** Ouvre un fichier lu ou modifié par l’agent ; sans lui, les chemins restent du texte. */
+  onOpenFile?: (path: string) => void;
 }) {
   if (activities.length === 1)
     return (
       <div className="agent-chat__activity-group">
-        <ActivityLine activity={activities[0]} renderExtras={renderExtras} />
+        <ActivityLine activity={activities[0]} onOpenFile={onOpenFile} />
       </div>
     );
   const failed = activities.some((activity) => activity.status === "failed");
@@ -187,7 +258,7 @@ export function Activities({
       <ol className="agent-chat__tool-list">
         {activities.map((activity) => (
           <li key={activity.id}>
-            <ActivityLine activity={activity} renderExtras={renderExtras} />
+            <ActivityLine activity={activity} onOpenFile={onOpenFile} />
           </li>
         ))}
       </ol>

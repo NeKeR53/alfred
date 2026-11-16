@@ -159,3 +159,10 @@
 .markdown-text--pending {
   white-space: pre-wrap;
 }
+
+/* Image locale en cours de lecture ou indisponible (relevé d’un agent). */
+.markdown-text__image-status {
+  display: inline-block;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}

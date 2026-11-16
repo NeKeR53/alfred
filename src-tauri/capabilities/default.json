@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Fenêtre principale d’Alfred et fenêtres de page (une page de l’espace ouverte seule, `page_windows.rs`) : IPC du cœur et événements (core:default), liens web vers le navigateur du système, sélecteur de fichiers et de dossiers, boîte de question et fermeture de la fenêtre principale (enregistrer les conversations avant de fermer, `src/shell/windowClose.ts`), et notifications (le script que le module de notifications injecte dans la page interroge la permission au démarrage). Une permission ne s’ajoute ici que pour un appel que la fenêtre fait réellement.",
+  "description": "Fenêtre principale d’Alfred et fenêtres de page (une page de l’espace ouverte seule, `page_windows.rs`) : IPC du cœur et événements (core:default), liens web vers le navigateur du système, sélecteur de fichiers et de dossiers, boîte « Enregistrer une copie » des fichiers d’une conversation, boîte de question et fermeture de la fenêtre principale (enregistrer les conversations avant de fermer, `src/shell/windowClose.ts`), et notifications (le script que le module de notifications injecte dans la page interroge la permission au démarrage). Une permission ne s’ajoute ici que pour un appel que la fenêtre fait réellement.",
   "windows": ["main", "page-*"],
   "permissions": [
     "core:default",
@@ -9,6 +9,7 @@
     "dialog:allow-open",
     "dialog:allow-message",
     "core:window:allow-destroy",
+    "dialog:allow-save",
     "notification:default"
   ]
 }

@@ -1,3 +1,5 @@
+import { invoke } from "../../../lib/native";
+import { citedLocalPaths, isAgentFileReference, normalizeAgentFileReference } from "./agentFileLinks";
 import { markdownUrl } from "./markdown";
 
 export const maxImagePreviewLength = 2 * 1024 * 1024;
@@ -64,4 +66,59 @@ export function activityImageOutput(content: string): { text: string; images: st
   } catch {
     return { text: content, images };
   }
+}
+
+/** Image rangée sur le disque : un chemin de l’espace de travail ou une image générée par le CLI. */
+export function isLocalImageReference(value: string): boolean {
+  const reference = value.trim();
+  if (!reference || /^data:/i.test(reference) || !isAgentFileReference(reference)) return false;
+  const path = normalizeAgentFileReference(reference).replace(/(?::\d+){1,2}$/, "");
+  return Boolean(imageFileType(path.split(/[\\/]/).at(-1) ?? ""));
+}
+
+/** Image affichable d’une entrée : une adresse `data:` déjà bornée ou une image locale. */
+export function isConversationImage(value: string): boolean {
+  return Boolean(imageDataUrl(value)) || isLocalImageReference(value);
+}
+
+const markdownImage = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+const codeFence = /```[\s\S]*?```/g;
+
+/**
+ * Images locales citées par leur chemin dans le texte d’un agent sans être insérées en Markdown : elles sont montrées
+ * sous le message, une seule fois chacune.
+ */
+export function referencedLocalImages(content: string): string[] {
+  const text = content.replace(codeFence, "");
+  const inserted = new Set([...text.matchAll(markdownImage)].map((match) => match[1]));
+  return citedLocalPaths(text.replace(markdownImage, ""), "png|jpe?g|gif|webp|avif")
+    .filter((reference) => !inserted.has(reference) && isLocalImageReference(reference))
+    .slice(0, 8);
+}
+
+const cache = new Map<string, Promise<string>>();
+const maxCachedImages = 48;
+
+/**
+ * Adresse `data:` d’une image citée par un agent, lue par Rust, au format et à la taille bornés. Les 48 dernières
+ * restent en mémoire : revenir sur une conversation ne relit pas le disque.
+ */
+export function loadConversationImage(cwd: string, reference: string): Promise<string> {
+  const inline = imageDataUrl(reference);
+  if (inline) return Promise.resolve(inline);
+  const key = `${cwd}\n${reference}`;
+  const known = cache.get(key);
+  if (known) {
+    cache.delete(key);
+    cache.set(key, known);
+    return known;
+  }
+  const loading = invoke<{ dataUrl: string }>("files.readImage", {
+    path: normalizeAgentFileReference(reference.trim()),
+    base: cwd || undefined,
+  }).then((result) => result.dataUrl);
+  loading.catch(() => cache.delete(key));
+  cache.set(key, loading);
+  while (cache.size > maxCachedImages) cache.delete(cache.keys().next().value as string);
+  return loading;
 }
