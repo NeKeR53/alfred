@@ -230,3 +230,17 @@
   align-items: center;
   margin-left: auto;
 }
+
+/* Échec d’enregistrement des conversations, au-dessus de la saisie tant qu’il dure. */
+.agents-page__save-error {
+  margin-bottom: 8px;
+}
+/* Pastille Git sous la saisie, alignée sur son bord gauche. */
+.agents-page__footer > .agents-page__git-summary {
+  margin-top: 4px;
+  padding-left: 0;
+}
+.agent-changes + .agent-changes,
+.info-panel__note + .agent-changes {
+  margin-top: 6px;
+}
