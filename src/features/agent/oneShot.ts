@@ -40,15 +40,19 @@ function prompt(request: OneShotRequest, correction?: string): string {
     .join("\n\n");
 }
 
-/** Un tour dans une session sans outil ; renvoie le résultat structuré du harnais, sinon le texte de la réponse. */
-async function ask(
+/**
+ * Un tour dans une session sans outil ; renvoie le texte de la réponse et, avec un schéma, le résultat structuré du
+ * harnais.
+ */
+async function turn(
   provider: Provider,
   model: string | undefined,
   effort: string | undefined,
   cwd: string,
-  request: OneShotRequest,
+  schema: Record<string, unknown> | undefined,
   text: string,
-) {
+  timeoutMs = TIMEOUT_MS,
+): Promise<{ answer: string; structured: unknown }> {
   let answer = "";
   let structured: unknown;
   let failure: string | undefined;
@@ -73,22 +77,24 @@ async function ask(
         ? await createClaudeSession({
             ...common,
             oneShot: true,
-            outputSchema: request.schema,
+            ...(schema ? { outputSchema: schema } : {}),
             onStructuredResult: (value) => {
               structured = value;
             },
           })
         : provider === "codex"
-          ? await createCodexSession({ ...common, readOnly: true, ephemeral: true, outputSchema: request.schema })
+          ? await createCodexSession({
+              ...common,
+              readOnly: true,
+              ephemeral: true,
+              ...(schema ? { outputSchema: schema } : {}),
+            })
           : await createOpenCodeSession({ ...common, ephemeral: true, withoutTools: true });
     await session.send(text);
     await Promise.race([
       done,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new AlfredError({ message: "Le modèle n’a pas répondu à temps." })),
-          TIMEOUT_MS,
-        );
+        timer = setTimeout(() => reject(new AlfredError({ message: "Le modèle n’a pas répondu à temps." })), timeoutMs);
       }),
     ]);
   } finally {
@@ -96,7 +102,41 @@ async function ask(
     await session?.close().catch(() => undefined);
   }
   if (failure) throw new AlfredError({ message: failure });
+  return { answer, structured };
+}
+
+async function ask(
+  provider: Provider,
+  model: string | undefined,
+  effort: string | undefined,
+  cwd: string,
+  request: OneShotRequest,
+  text: string,
+) {
+  const { answer, structured } = await turn(provider, model, effort, cwd, request.schema, text);
   return structured !== undefined ? structured : extractJson(answer);
+}
+
+/**
+ * Appel texte au modèle donné, sans outil ni historique : une consigne entre, la réponse sort telle quelle. Sert au
+ * nommage des conversations.
+ */
+export async function complete(
+  prompt: string,
+  selection: { provider: Provider; model?: string; effort?: string },
+  timeoutMs = TIMEOUT_MS,
+): Promise<string> {
+  const cwd = useShell.getState().snapshot?.path ?? "";
+  const { answer } = await turn(
+    selection.provider,
+    selection.model,
+    selection.effort,
+    cwd,
+    undefined,
+    prompt,
+    timeoutMs,
+  );
+  return answer;
 }
 
 export async function oneShot(request: OneShotRequest, caller: string): Promise<unknown> {

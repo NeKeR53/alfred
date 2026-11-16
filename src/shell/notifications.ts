@@ -30,6 +30,8 @@ interface NotificationState {
     tone?: NotificationTone;
     source?: string;
     action?: NotificationAction;
+    /** Reste affichée jusqu’à ce qu’on la ferme, comme une erreur (un agent qui attend une réponse). */
+    persistent?: boolean;
   }) => void;
   dismissToast: (id: number) => void;
   markAllRead: () => void;
@@ -41,7 +43,7 @@ let nextId = 1;
 export const useNotifications = create<NotificationState>((set) => ({
   items: [],
   toasts: [],
-  notify({ title, description, tone = "info", source, action }) {
+  notify({ title, description, tone = "info", source, action, persistent }) {
     const id = nextId++;
     set((state) => ({
       items: [{ id, title, description, tone, source, action, at: Date.now(), read: false }, ...state.items].slice(
@@ -51,7 +53,7 @@ export const useNotifications = create<NotificationState>((set) => ({
       toasts: [...state.toasts, id],
     }));
     // Une erreur reste affichée jusqu’à ce qu’on la ferme ; le reste s’efface seul.
-    if (tone !== "error") {
+    if (tone !== "error" && !persistent) {
       setTimeout(() => set((state) => ({ toasts: state.toasts.filter((toast) => toast !== id) })), 5000);
     }
   },

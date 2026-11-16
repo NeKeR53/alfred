@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
 import { type FakeProcess, fakeSpawn, type Spawned } from "./harness/fakeProcess.test-helper";
-import { oneShot } from "./oneShot";
+import { complete, oneShot } from "./oneShot";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -180,5 +180,17 @@ describe("appel unique · réponse sans JSON", () => {
     );
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual({ titre: "Portail", priorite: "haute" });
     expect(spawned).toHaveLength(2);
+  });
+});
+
+describe("appel texte (nommage des conversations)", () => {
+  it("rend le texte de la réponse du modèle choisi, sans schéma", async () => {
+    const spawned = fakeSpawn(claudeAnswering([{ text: "Page des factures clients" }]));
+    await expect(complete("Donne un titre", { provider: "claude", model: "haiku" })).resolves.toBe(
+      "Page des factures clients",
+    );
+    expect(spawned[0].options).toEqual({ cwd: "/espace", claude: { model: "haiku", oneShot: true } });
+    expect(sentText(spawned[0])).toBe("Donne un titre");
+    expect(spawned[0].process.killed).toBe(true);
   });
 });
