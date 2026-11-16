@@ -162,6 +162,8 @@ db.execute(sql: string, params?: SqlValue[]): Promise<{ changes: number; lastIns
 - Seules les tables du module sont accessibles (sinon « Requête refusée… ») : leur nom commence par l’identifiant du module, tirets remplacés par des soulignés, suivi de `_`. Un module `x-ajouts` lit aussi celles de `x` (et pas celles d’un autre module `x-…`), sans y écrire ; l’écran d’installation l’annonce comme un accès. Les clés étrangères sont actives, et ne visent que des tables du module. Le catalogue (`sqlite_master`) n’est pas lisible : la structure se lit avec `db_schema`.
 - Ni `CREATE`, `ALTER`, `DROP`, `PRAGMA`, `ATTACH` ni vue hors migration. Chaque appel est indépendant : aucune transaction ne couvre deux appels.
 
+Sauvegardes : la base et les fichiers des modules sont hors de l’historique git. Alfred les copie chaque jour et juste avant d’appliquer une migration d’un module qui a déjà des tables ; l’utilisateur restaure tout l’espace ou un seul module, et exporte ou importe les données d’un module (JSON), dans Réglages → Espace. Une migration qui transforme des données n’a donc pas besoin de garder elle-même une copie des anciennes tables.
+
 Migrations (`modules/<module>/migrations/NNNN_nom.sql`) : appliquées dans l’ordre des noms, dès qu’elles apparaissent et à chaque `check`. Un fichier est une transaction ouverte et close par Alfred : `BEGIN`, `COMMIT` ou `ROLLBACK` y sont refusés. Une clé étrangère vers la table d’un autre module est refusée. Une erreur annule le fichier et bloque les suivants du module. Un fichier appliqué ne repasse jamais.
 
 ```sql

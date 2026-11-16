@@ -522,6 +522,8 @@ export class FakeBackend {
       return null;
     },
     "grants.list": () => clone(this.grants),
+    "backups.list": () => [],
+    "backups.settings": () => ({ keep: 14 }),
     "grants.revoke": (args) => {
       this.grants = this.grants.filter(
         (grant) => !(grant.subject === args.subject && grant.resource === args.resource),

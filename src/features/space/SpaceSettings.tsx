@@ -24,6 +24,7 @@ import { inTauri, invoke, onNativeEvent, pickFolder } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { BackupsSection } from "./BackupsSection";
 
 export interface Grant {
   /** `page:module/page`, `function:module/fonction` ou `function:module/*`. */
@@ -673,6 +674,7 @@ export function SpaceSettings() {
       <SpaceSection snapshot={snapshot} />
       <SwitchSpaceSection snapshot={snapshot} confirm={confirm} />
       <HistorySection confirm={confirm} />
+      <BackupsSection snapshot={snapshot} confirm={confirm} />
       <GrantsSection snapshot={snapshot} confirm={confirm} />
       {confirmDialog}
     </Page>

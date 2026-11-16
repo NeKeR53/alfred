@@ -2,6 +2,7 @@ mod agent_setup;
 mod agent_workspace;
 mod agents;
 mod app_db;
+mod backups;
 mod badges;
 mod clients;
 mod composer;
@@ -161,6 +162,7 @@ pub fn run() {
             #[cfg(feature = "verify")]
             verify::attach(app.handle(), &data_dir, state.server()?.port)?;
             let _runtime = tauri::async_runtime::handle().inner().enter();
+            backups::start(state.clone());
             schedules::start(state);
             Ok(())
         })

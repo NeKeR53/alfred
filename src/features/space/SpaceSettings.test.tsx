@@ -134,6 +134,10 @@ beforeEach(() => {
           ...history,
         ];
         return { commit: "c3" };
+      case "backups.list":
+        return [];
+      case "backups.settings":
+        return { keep: 14 };
       case "files.reveal":
       case "settings.set":
       case "space.close":

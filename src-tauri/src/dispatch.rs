@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
+    delegate!(vault, agent_workspace, clients, space_db, backups, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -182,6 +182,10 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
 
     let space = Space::open_or_create(path, name)?;
     crate::docs::materialize(&space)?;
+    // La copie du jour passe avant les migrations en attente, qui feraient sinon la leur.
+    if let Err(error) = crate::backups::ensure_daily(&space) {
+        log::error!("sauvegarde quotidienne impossible : {}", error.message);
+    }
     // Les migrations écrites pendant qu’Alfred était fermé passent dès l’ouverture : les pages trouvent leurs tables.
     // Une migration en échec n’empêche pas d’ouvrir l’espace ; `check` la signale.
     if let Err(error) = crate::space_db::apply_migrations(&space) {

@@ -264,7 +264,7 @@ fn apply_module_migrations(space: &Space, module: &str, problems: &mut Vec<Migra
                 });
                 return Ok(());
             }
-            None => {}
+            None => crate::backups::before_migration(space, module, &file),
         }
         // La transaction est ouverte et close par Alfred : la migration ne peut pas la terminer elle-même (son
         // autoriseur refuse `BEGIN`/`COMMIT`), si bien qu’un refus l’annule toujours en entier.
