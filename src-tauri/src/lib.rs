@@ -17,6 +17,7 @@ mod git;
 mod jobs;
 mod libraries;
 mod marketplace;
+mod module_events;
 mod module_files;
 mod module_search;
 mod mcp;
@@ -168,6 +169,7 @@ pub fn run() {
             let _runtime = tauri::async_runtime::handle().inner().enter();
             backups::start(state.clone());
             jobs::start(state.clone());
+            module_events::start(state.clone());
             schedules::start(state);
             Ok(())
         })

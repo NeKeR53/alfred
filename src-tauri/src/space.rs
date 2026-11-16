@@ -93,6 +93,46 @@ pub struct ModuleManifest {
     /// Index de recherche plein texte, tenus à jour par Alfred.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub search: Vec<IndexDecl>,
+    /// Événements que le module publie, et ceux d’autres modules auxquels ses fonctions s’abonnent.
+    #[serde(skip_serializing_if = "EventsDecl::is_empty")]
+    pub events: EventsDecl,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EventsDecl {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub publishes: Vec<EventDecl>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subscribes: Vec<SubscriptionDecl>,
+}
+
+impl EventsDecl {
+    pub fn is_empty(&self) -> bool {
+        self.publishes.is_empty() && self.subscribes.is_empty()
+    }
+}
+
+/// Événement publié par le module (« ticket-cree »), avec la forme de ce qu’il transmet.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EventDecl {
+    pub id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Schéma JSON du contenu, pour les modules qui s’y abonnent.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub schema: Value,
+}
+
+/// Abonnement : la fonction du module appelée à chaque publication de l’événement.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubscriptionDecl {
+    /// « module/événement », ou « événement » pour un événement du module lui-même.
+    pub event: String,
+    /// Fonction du module, sans préfixe.
+    pub function: String,
 }
 
 /// Index déclaré sur une table du module : Alfred le crée, le tient à jour à chaque écriture et le reconstruit

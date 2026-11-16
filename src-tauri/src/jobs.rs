@@ -325,7 +325,7 @@ async fn run_steps(state: &Arc<AppState>, space: &Space, id: &str) -> AppResult<
         let saved_state = parse(open(space)?.query_row("SELECT state FROM _alfred_jobs WHERE id = ?1", [id], |row| row.get(0))?);
         let input = json!({ "input": job["input"], "state": saved_state, "step": step, "job": { "id": id, "title": title } });
         let started = std::time::Instant::now();
-        match crate::functions::call(state, &reference, input, "job").await {
+        match crate::functions::call(state, &reference, input, "tâche de fond").await {
             Ok(output) => {
                 let outcome = outcome(output);
                 let db = open(space)?;

@@ -347,13 +347,14 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "grant_access",
-            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent) ou `host` (ouvrir des liens vers cet hôte). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
+            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) ou `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* »). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
             json!({
                 "to": { "type": "string" },
                 "client": { "type": "string" },
                 "function": { "type": "string" },
                 "agent": { "type": "boolean" },
                 "host": { "type": "string" },
+                "event": { "type": "string" },
             }),
             &["to"],
         ),
@@ -962,6 +963,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 .collect();
             let files = module_files(&space, &snapshot, &keep);
             let (webhooks, schedules) = trigger_problems(&snapshot, &keep);
+            let events = crate::module_events::problems(&space, module.as_deref());
             // Les clients appartiennent à l’espace, pas à un module : ils ne sont vérifiés qu’à la vérification
             // complète.
             let (clients, user_actions) = if module.is_none() {
@@ -979,6 +981,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 && files.is_empty()
                 && webhooks.is_empty()
                 && schedules.is_empty()
+                && events.is_empty()
                 && clients.is_empty()
                 && migrations.is_empty()
                 && snapshot.problems.is_empty()
@@ -990,6 +993,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "files": files,
                 "webhooks": webhooks,
                 "schedules": schedules,
+                "events": events,
                 "clients": clients,
                 "migrations": migrations,
                 "structure": snapshot.problems,

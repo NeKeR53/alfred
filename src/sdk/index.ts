@@ -142,6 +142,29 @@ export const files = {
   },
 };
 
+// --- Événements entre modules ---------------------------------------------------------------------------------
+
+/** Ce que reçoit la fonction abonnée à un événement. */
+export interface ModuleEvent<Payload = unknown> {
+  /** « module/événement ». */
+  event: string;
+  /** Module qui l’a publié. */
+  from: string;
+  payload: Payload;
+  publishedAt: string;
+}
+
+/**
+ * Événements du module : il publie ceux qu’il déclare dans `events.publishes` ; les fonctions des modules abonnés
+ * (`events.subscribes`) les reçoivent, sans que le module qui publie les connaisse.
+ */
+export const events = {
+  /** Publie l’événement `event` (identifiant local) ; rend le nombre d’abonnés qui le recevront. */
+  publish(event: string, payload: unknown = null): Promise<{ event: string; subscribers: number }> {
+    return request("events.publish", { event, payload });
+  },
+};
+
 // --- Recherche plein texte ------------------------------------------------------------------------------------
 
 export interface SearchResult<Key = string | number> {

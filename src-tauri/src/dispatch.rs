@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, backups, module_files, documents, jobs, module_search, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
+    delegate!(vault, agent_workspace, clients, space_db, backups, module_files, documents, jobs, module_search, module_events, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -194,6 +194,7 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     git::commit_all(&space.root, "Ouverture de l’espace")?;
     // Les tâches de fond interrompues à la fermeture reprennent.
     crate::jobs::kick();
+    crate::module_events::kick();
     let root = space.root.clone();
     state.set_space(Some(space));
     {

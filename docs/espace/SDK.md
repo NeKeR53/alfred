@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -695,5 +695,42 @@ export function Recherche() {
       ))}
     </Stack>
   );
+}
+```
+
+## 13. Événements entre modules : `events`
+
+Un module signale ce qui lui arrive (« un ticket est créé ») ; d’autres modules y réagissent avec une de leurs fonctions. Celui qui publie ne connaît pas ses abonnés : préfère un événement à l’appel direct de la fonction d’un autre module dès que plusieurs modules peuvent être intéressés, ou que le module qui publie ne doit pas dépendre d’eux.
+
+```json
+// modules/support/module.json
+"events": { "publishes": [{ "id": "ticket-cree", "description": "Un ticket vient d’être créé.",
+  "schema": { "type": "object", "properties": { "id": { "type": "integer" }, "titre": { "type": "string" } } } }] }
+
+// modules/taches/module.json
+"requires": [{ "module": "support" }],
+"events": { "subscribes": [{ "event": "support/ticket-cree", "function": "creer-tache" }] }
+```
+
+```ts
+events.publish(event: string, payload?: unknown): Promise<{ event: string; subscribers: number }>;
+// La fonction abonnée reçoit :
+interface ModuleEvent<Payload> { event: string; from: string; payload: Payload; publishedAt: string }
+```
+
+- `publish` n’accepte que les événements déclarés dans `events.publishes` du module ; `id` en minuscules et tirets ; `schema` (facultatif) décrit le contenu pour les abonnés. Le contenu fait 256 Ko au plus : envoie un identifiant et l’essentiel, pas un fichier.
+- `subscribes[].event` : « module/événement » (« événement » seul pour un événement du module lui-même) ; `function` : fonction du module abonné, sans préfixe.
+- Livraison après coup, dans l’ordre de publication pour chaque abonné, même si Alfred a été fermé entre-temps ; `publish` n’attend pas les abonnés. Une fonction qui échoue est rappelée deux fois, puis la livraison reste en échec (journal, `kind: "event"`).
+- Un module abonné à un module dont il ne dépend pas (`requires`) doit en avoir l’accord : l’utilisateur le donne à la première livraison, ou toi d’avance avec `grant_access` (`to` : « taches/* », `event` : « support/ticket-cree »).
+- `check` signale (`events`) un abonnement à un événement que personne ne déclare et une fonction abonnée absente.
+
+```ts
+// modules/support : après l’insertion du ticket.
+await events.publish("ticket-cree", { id: lastInsertId, titre });
+
+// modules/taches/functions/creer-tache.ts
+import { db, type ModuleEvent } from "@alfred/sdk";
+export default async function ({ payload }: ModuleEvent<{ id: number; titre: string }>) {
+  await db.execute("INSERT OR IGNORE INTO taches_taches (ticket, titre) VALUES (?, ?)", [payload.id, payload.titre]);
 }
 ```

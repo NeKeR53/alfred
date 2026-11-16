@@ -167,6 +167,7 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let function: Option<String> = opt_arg(args, "function")?;
     let agent = opt_arg::<bool>(args, "agent")?.unwrap_or(false);
     let host: Option<String> = opt_arg::<String>(args, "host")?.map(|host| host.trim().to_ascii_lowercase());
+    let event: Option<String> = opt_arg(args, "event")?;
     let space = state.space()?;
     let snapshot = space.snapshot()?;
     let Some((module, name)) = to.split_once('/') else {
@@ -186,12 +187,26 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let given = usize::from(client.is_some())
         + usize::from(function.is_some())
         + usize::from(agent)
-        + usize::from(host.is_some());
+        + usize::from(host.is_some())
+        + usize::from(event.is_some());
     if given != 1 {
-        return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent` ou `host`."));
+        return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent`, `host` ou `event`."));
     }
     let (resource, label) = match (client, function) {
         _ if agent => ("agent".to_string(), "un agent".to_string()),
+        _ if event.is_some() => {
+            let event = event.unwrap_or_default();
+            if name != "*" {
+                return Err(AppError::new("Un événement s’accorde aux fonctions d’un module : `to` vaut « module/* »."));
+            }
+            let declared = event.split_once('/').is_some_and(|(publisher, id)| {
+                space.module(publisher).is_ok_and(|manifest| manifest.events.publishes.iter().any(|published| published.id == id))
+            });
+            if !declared {
+                return Err(AppError::new(format!("L’événement « {event} » n’est déclaré par aucun module (« module/événement »).")));
+            }
+            (format!("event:{event}"), format!("l’événement {event}"))
+        }
         _ if host.is_some() => {
             let host = host.unwrap_or_default();
             if host.is_empty() || host.contains(['/', ':', '@', ' ']) {
@@ -212,7 +227,7 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             }
             (format!("function:{function}"), format!("la fonction {function}"))
         }
-        _ => return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent` ou `host`.")),
+        _ => return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent`, `host` ou `event`.")),
     };
     {
         let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
