@@ -219,10 +219,26 @@ describe("conversation d’agent · un tour", () => {
     expect(sessions[0].session.close).toHaveBeenCalled();
     expect(conversation(id).turns[0].status).toBe("cancelled");
     expect(runtime(id).queued).toEqual([]);
-    await vi.waitFor(() => expect(sessions[1]?.session.send).toHaveBeenCalledWith("Autre chose", [], expect.any(String)));
+    await vi.waitFor(() =>
+      expect(sessions[1]?.session.send).toHaveBeenCalledWith("Autre chose", [], expect.any(String)),
+    );
     // Les derniers événements de la session fermée ne touchent plus la conversation.
     sessions[0].emit({ type: "status", status: "idle" });
     expect(lastTurn(id).status).toBe("running");
+  });
+
+  it("après une erreur, ferme la session et garde la file, comme OneApp", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    sessions[0].emit({ type: "error", message: "Le modèle a échoué." });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("error"));
+    expect(sessions[0].session.close).toHaveBeenCalled();
+    expect(runtime(id).queued.map((item) => item.message.text)).toEqual(["Deux"]);
+    expect(conversation(id).turns).toHaveLength(1);
+    // Le message suivant part dans une session neuve.
+    await useAgents.getState().send(id, message("Trois"));
+    await vi.waitFor(() => expect(sessions[1]?.session.send).toHaveBeenCalled());
   });
 
   it("rend un message retiré de la file", async () => {

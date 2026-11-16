@@ -460,9 +460,10 @@ export const useAgents = create<AgentState>((set, get) => {
       for (const resolve of turnWaiters.get(id) ?? []) resolve(finished);
       turnWaiters.delete(id);
     }
-    // Le message suivant de la file part aussitôt : seule la fin du dernier tour est annoncée.
+    // Le message suivant de la file part aussitôt : seule la fin du dernier tour est annoncée. Comme OneApp, la file
+    // n’enchaîne qu’après un tour mené à son terme : après une erreur ou un arrêt, elle attend l’utilisateur.
     const [next, ...rest] = get().runtime[id]?.queued ?? [];
-    if (next && (get().runtime[id]?.status ?? "idle") === "idle") {
+    if (next && status === "done" && (get().runtime[id]?.status ?? "idle") === "idle") {
       patchRuntime(id, (runtime) => ({ ...runtime, queued: rest }));
       void startTurn(id, next.message, next.id).catch(() => undefined);
       return;
@@ -688,6 +689,12 @@ export const useAgents = create<AgentState>((set, get) => {
         return;
       case "error":
         patchTurn(id, (turn) => ({ ...turn, error: event.message }));
+        // Comme OneApp (`fail`) : le tour finit en erreur et la session est fermée ; le message suivant repart dans
+        // une session neuve qui reprend la conversation, au lieu de buter sur un CLI resté occupé.
+        if (current(id)?.turns.at(-1)?.status === "running") {
+          stopSession(id);
+          void finishTurn(id, "error");
+        }
         return;
     }
   };
@@ -734,11 +741,11 @@ export const useAgents = create<AgentState>((set, get) => {
       }
     }
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
-    patchRuntime(id, (runtime) => ({
-      ...runtime,
-      queued: [queued, ...runtime.queued.filter((item) => item.id !== queuedId)],
-    }));
+    // Comme OneApp : la réponse est arrêtée, puis ce message part aussitôt, dans une session neuve.
     await get().cancel(id);
+    if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
+    patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+    await startTurn(id, queued.message, queued.id);
   };
 
   /** Consignes de la session : celles d’Alfred, la question bloquante, et l’historique quand la session est neuve. */
