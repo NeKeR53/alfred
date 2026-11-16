@@ -9,7 +9,11 @@ export const PROVIDER_LABEL: Record<Provider, string> = {
 };
 
 export type SessionStatus = "connecting" | "ready" | "responding" | "idle" | "closed";
-export type ActivityStatus = "running" | "completed" | "failed";
+/**
+ * État d’une activité. `cancelled` (« Arrêté »), comme dans OneApp : l’activité restée ouverte quand le tour s’est
+ * terminé ou a été interrompu, sans résultat ni échec du CLI.
+ */
+export type ActivityStatus = "running" | "completed" | "failed" | "cancelled";
 export type ActivityKind = "analysis" | "command" | "file" | "tool" | "search" | "agent";
 export type ActivityAction = {
   type: "read" | "search" | "listFiles" | "edit";
@@ -59,6 +63,17 @@ export type HarnessEvent =
 
 /** Fichier joint remis au CLI avec le message. */
 export type InputFile = { path: string; name: string; mimeType?: string };
+
+/**
+ * Texte remis au CLI : un message qui n’a que des pièces jointes part avec la demande de OneApp, faute de quoi
+ * Claude Code et Codex ignoraient un texte vide.
+ */
+export const ATTACHMENTS_ONLY_TEXT = "Analyse les fichiers joints.";
+
+export function messageText(message: string, files: readonly InputFile[] = []): string {
+  const text = message.trim();
+  return text || (files.length ? ATTACHMENTS_ONLY_TEXT : "");
+}
 
 export function isInputImage(file: InputFile): boolean {
   return (file.mimeType ?? "").startsWith("image/") || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(file.path);

@@ -167,3 +167,14 @@ export interface ProbeResult {
 export function probe(provider: Provider): Promise<ProbeResult> {
   return invoke<ProbeResult>("agents.probe", { provider });
 }
+
+export interface CommandOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** `opencode debug config` dans le dossier de travail : la configuration qu’OpenCode lirait au lancement. */
+export function checkOpenCodeConfig(cwd: string): Promise<CommandOutput> {
+  return invoke<CommandOutput>("agents.opencodeConfig", { cwd });
+}
