@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `history`, `jobs`, `search`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `history`, `jobs`, `search`, `semantic`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -764,5 +764,42 @@ import { history, useAsync } from "@alfred/sdk";
 
 export function useHistoriqueContact(id: number) {
   return useAsync(() => history.list<{ nom: string; email: string }>({ table: "crm_contacts", key: id, limit: 50 }), [id]);
+}
+```
+
+## 15. Recherche par le sens : `semantic`
+
+Pour retrouver des lignes par leur sens et non par leurs mots (« dépenses d’énergie » trouve « Facture EDF de mars »), déclare un index sémantique. Alfred calcule pour chaque ligne un vecteur avec un modèle de langue local (multilingual-e5-small, français compris) : rien ne quitte l’ordinateur. Le modèle (470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Espace → Recherche par le sens.
+
+```json
+"semantic": [{ "id": "notes", "table": "carnet_notes", "key": "id", "columns": ["titre", "texte"] }]
+```
+
+```ts
+semantic.search(index: string, text: string, options?: { limit?: number }): // 10 par défaut, 100 au plus
+  Promise<{ pending: number; results: { key: string | number; score: number }[] }>;
+semantic.status(index: string): Promise<{ indexed: number; pending: number; model: "ready" | "missing" | "downloading" }>;
+```
+
+- Même déclaration que `search` (section 12) : `key` (`id` par défaut) revient avec chaque résultat, `columns` sont réunies en un texte (4 000 caractères au plus par ligne). Chaque écriture met la ligne en file ; Alfred calcule les vecteurs en arrière-plan (quelques dizaines de lignes par seconde). `pending` dit combien attendent encore.
+- `score` : similarité de -1 à 1, résultats du plus proche au moins proche. Il y a toujours des résultats, même lointains, et ce modèle donne des scores serrés (souvent entre 0,75 et 0,9) : montre les premiers, compare les scores entre eux plutôt qu’à un seuil fixe. Pour des mots précis (un nom, une référence), préfère `search.query` ; les deux se combinent.
+- Sans modèle installé, `search` rejette la promesse (« La recherche par le sens n’est pas encore installée… ») : vérifie d’abord `semantic.status(index).model` et, s’il vaut `missing`, dis à l’utilisateur où l’installer au lieu d’afficher une erreur. Les lignes écrites avant restent en file et sont calculées dès l’installation.
+- Recherche exhaustive sur les vecteurs du module : rapide jusqu’à quelques dizaines de milliers de lignes par index.
+
+```tsx
+import { db, semantic, useAsync } from "@alfred/sdk";
+
+export function useNotesProches(question: string) {
+  return useAsync(async () => {
+    if (!question.trim()) return [];
+    const { results } = await semantic.search<number>("notes", question, { limit: 5 });
+    if (results.length === 0) return [];
+    const ids = results.map((resultat) => resultat.key);
+    const lignes = await db.query<{ id: number; titre: string }>(
+      `SELECT id, titre FROM carnet_notes WHERE id IN (${ids.map(() => "?").join(", ")})`,
+      ids,
+    );
+    return results.map((resultat) => ({ ...lignes.find((ligne) => ligne.id === resultat.key), score: resultat.score }));
+  }, [question]);
 }
 ```

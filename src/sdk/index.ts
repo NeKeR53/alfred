@@ -231,6 +231,27 @@ export const search = {
   },
 };
 
+// --- Recherche par le sens ------------------------------------------------------------------------------------
+
+/**
+ * Recherche sémantique dans un index déclaré par le module (`semantic` de `module.json`) : les lignes dont le sens
+ * est le plus proche de la question, même sans mot en commun. Le modèle tourne sur l’ordinateur.
+ */
+export const semantic = {
+  /** `score` : similarité de -1 à 1, plus grand = plus proche. `pending` : lignes pas encore calculées. */
+  search<Key = string | number>(
+    index: string,
+    text: string,
+    options: { limit?: number } = {},
+  ): Promise<{ pending: number; results: { key: Key; score: number }[] }> {
+    return request("semantic.search", { index, text, ...options });
+  },
+  /** Lignes calculées et en attente ; `model` : « ready », « missing » (pas téléchargé) ou « downloading ». */
+  status(index: string): Promise<{ indexed: number; pending: number; model: "ready" | "missing" | "downloading" }> {
+    return request("semantic.status", { index });
+  },
+};
+
 // --- Tâches de fond -------------------------------------------------------------------------------------------
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";

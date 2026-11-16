@@ -93,6 +93,9 @@ pub struct ModuleManifest {
     /// Index de recherche plein texte, tenus à jour par Alfred.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub search: Vec<IndexDecl>,
+    /// Index de recherche par le sens (vecteurs calculés par un modèle local).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub semantic: Vec<IndexDecl>,
     /// Tables dont Alfred garde l’historique des modifications (qui, quand, avant et après).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<String>,

@@ -246,6 +246,10 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.history.revert", { ...pick(params, ["id"]), subject });
     case "events.publish":
       return invoke("frame.events.publish", { ...pick(params, ["event", "payload"]), subject });
+    case "semantic.search":
+      return invoke("frame.semantic.search", { ...pick(params, ["index", "text", "limit"]), subject });
+    case "semantic.status":
+      return invoke("frame.semantic.status", { ...pick(params, ["index"]), subject });
     case "search.query":
       return invoke("frame.search.query", {
         ...pick(params, ["index", "text", "limit", "offset", "raw", "prefix"]),

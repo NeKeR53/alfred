@@ -22,6 +22,7 @@ mod module_events;
 mod module_files;
 mod module_history;
 mod module_search;
+mod module_semantic;
 mod mcp;
 mod oauth;
 mod page_windows;
@@ -172,6 +173,7 @@ pub fn run() {
             backups::start(state.clone());
             jobs::start(state.clone());
             module_events::start(state.clone());
+            module_semantic::start(state.clone());
             schedules::start(state);
             Ok(())
         })

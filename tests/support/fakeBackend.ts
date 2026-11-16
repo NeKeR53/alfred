@@ -524,6 +524,7 @@ export class FakeBackend {
     "grants.list": () => clone(this.grants),
     "backups.list": () => [],
     "jobs.list": () => [],
+    "semantic.model": () => ({ model: "e5", sizeMb: 470, status: "missing", received: null, total: null, error: null }),
     "backups.settings": () => ({ keep: 14 }),
     "grants.revoke": (args) => {
       this.grants = this.grants.filter(

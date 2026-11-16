@@ -262,6 +262,9 @@ pub(crate) fn sync_managed(space: &Space, module: &str, problems: &mut Vec<Migra
     if let Err(error) = crate::module_search::sync(space, module, problems) {
         problems.push(MigrationProblem { module: module.to_string(), file: "module.json (search)".into(), message: error.message });
     }
+    if let Err(error) = crate::module_semantic::sync(space, module, problems) {
+        problems.push(MigrationProblem { module: module.to_string(), file: "module.json (semantic)".into(), message: error.message });
+    }
     if let Err(error) = crate::module_history::sync(space, module, problems) {
         problems.push(MigrationProblem { module: module.to_string(), file: "module.json (history)".into(), message: error.message });
     }
@@ -432,6 +435,7 @@ pub fn drop_module(space: &Space, module: &str) -> AppResult<()> {
     db.execute("DELETE FROM _alfred_migrations WHERE module = ?1", params![module])?;
     crate::module_search::drop_module(&db, module)?;
     crate::module_history::drop_module(&db, module)?;
+    crate::module_semantic::drop_module(&db, module)?;
     // Ses fichiers partent avec ses tables ; les sauvegardes les gardent.
     let files = crate::backups::files_root(space).join(module);
     if valid_id(module) && files.is_dir() {
