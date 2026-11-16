@@ -23,8 +23,11 @@ import { referencedLocalImages } from "../lib/chatImages";
 import type { Conversation, ConversationRuntime, Turn } from "../model";
 import { useAgents } from "../store";
 import {
+  ConversationQuestion,
   changedFilesOf,
   conversationModelLabel,
+  elapsedWorkTime,
+  finalMessage,
   isLongChatText,
   producedFiles,
   producedImages,
@@ -308,7 +311,7 @@ describe("relevé", () => {
   it("présente l’autorisation dans la même carte, options numérotées", () => {
     render(
       <Transcript
-        conversation={conversation([turn("t1", { status: "running", items: [] })])}
+        conversation={conversation([turn("t1", { status: "running", endedAt: undefined, items: [] })])}
         runtime={{
           ...idle,
           status: "responding",
@@ -329,7 +332,7 @@ describe("relevé", () => {
     const card = screen.getByRole("region", { name: "Autorisation demandée" });
     fireEvent.keyDown(card, { key: "1" });
     expect(useAgents.getState().answerApproval).toHaveBeenCalledWith("c1", "a1", "allow");
-    expect(screen.getByText("Accord requis")).toBeInTheDocument();
+    expect(screen.getByText("Autorisation requise")).toBeInTheDocument();
   });
 
   it("montre les images citées et les fichiers cités avec leurs actions", async () => {
@@ -436,6 +439,166 @@ describe("Markdown", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copier le bloc" })));
     expect(writeText).toHaveBeenCalledWith("const a = 1;");
     expect(screen.getByText("Schéma : graph TD")).toBeInTheDocument();
+  });
+});
+
+describe("parité avec OneApp", () => {
+  beforeEach(() => {
+    useAgents.setState({
+      retry: vi.fn(async () => undefined),
+      send: vi.fn(async () => undefined),
+      answerApproval: vi.fn(async () => undefined),
+    });
+  });
+
+  const activity = (id: string, patch: Record<string, unknown> = {}) =>
+    ({ kind: "activity", id, activityKind: "tool", title: `Outil ${id}`, status: "completed", ...patch }) as never;
+
+  it("lit la commande dans le titre et montre son détail, quel que soit le genre de l’activité", () => {
+    render(
+      <Activities
+        activities={[
+          activity("a", { activityKind: "command", title: "Commande", detail: "git status --short" }),
+          activity("b", { activityKind: "command", title: "Commande", detail: '{"command":"ls -la"}' }),
+          activity("c", { activityKind: "search", title: "Recherche web", detail: "météo Lyon" }),
+          activity("d", {
+            activityKind: "file",
+            title: "Fichiers",
+            actions: [{ type: "edit", path: "a.ts", added: 2, removed: 1 }],
+          }),
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByText("4 outils exécutés"));
+    expect(screen.getByText("Exécuté git status --short")).toBeInTheDocument();
+    expect(screen.getByText("Exécuté ls -la")).toBeInTheDocument();
+    // Le détail d’une recherche web s’ouvre comme celui d’un outil.
+    fireEvent.click(screen.getByText("Recherche web"));
+    expect(screen.getByRole("textbox", { name: "Détail de Recherche web" })).toHaveValue("météo Lyon");
+    // Les lignes d’une modification restent du texte, sans couleur.
+    expect(screen.getByText(/Modifié/)).toHaveTextContent("Modifié a.ts +2 −1");
+    expect(document.querySelector(".agent-chat__tool-list .agent-chat__change-added")).toBeNull();
+  });
+
+  it("résume un tour sans outil par « 0 outils appelés » et mesure le temps écoulé à la seconde", () => {
+    render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
+    expect(screen.getByText("A travaillé pendant 4 s · 0 outils appelés")).toBeInTheDocument();
+    expect(elapsedWorkTime(0, 3_723_900)).toBe("1 h 2 min 3 s");
+    expect(elapsedWorkTime(0, 59_900)).toBe("59 s");
+  });
+
+  it("garde visible la dernière réponse d’un tour terminé, même suivie d’activités", () => {
+    const done = turn("t1", {
+      items: [
+        { kind: "message", id: "m1", content: "Je regarde." },
+        activity("a1"),
+        { kind: "message", id: "m2", content: "C’est corrigé." },
+        activity("a2"),
+      ],
+    });
+    expect(finalMessage(done)?.id).toBe("m2");
+    render(<Transcript conversation={conversation([done])} runtime={idle} />);
+    const final = screen.getByText("C’est corrigé.");
+    expect(final.closest("details")).toBeNull();
+    // Le reste du tour, activités d’avant et d’après réunies, se replie derrière le résumé.
+    expect(screen.getByText("A travaillé pendant 4 s · 2 outils appelés").closest("summary")).not.toBeNull();
+  });
+
+  it("montre tout le travail d’un tour arrêté ou en erreur, sans le replier ni le résumer", () => {
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t1", {
+            status: "error",
+            error: "Session perdue",
+            items: [
+              activity("a1", { title: "Image de l’agent", images: ["data:image/png;base64,iVBORw0KGgo="] }),
+              { kind: "message", id: "m", content: "Presque fini." },
+            ],
+          }),
+        ])}
+        runtime={idle}
+      />,
+    );
+    expect(screen.queryByText(/A travaillé pendant/)).not.toBeInTheDocument();
+    expect(screen.getByText("Presque fini.").closest("details")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Images du tour" })).not.toBeInTheDocument();
+    expect(screen.getByText("Session perdue")).toBeInTheDocument();
+  });
+
+  it("nomme la conversation comme OneApp et suit le bas à chaque changement, puis à l’ouverture d’une autre", () => {
+    const running = turn("t1", { status: "running", items: [activity("a1", { status: "running" })] });
+    const { rerender } = render(
+      <Transcript conversation={conversation([running])} runtime={{ ...idle, status: "responding" }} />,
+    );
+    const scroller = screen.getByRole("region", { name: "Conversation de Factures" });
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 100 });
+    // Une activité qui change sans s’ajouter fait suivre le relevé resté en bas.
+    rerender(
+      <Transcript
+        conversation={conversation([{ ...running, items: [activity("a1", { status: "running", content: "sortie" })] }])}
+        runtime={{ ...idle, status: "responding" }}
+      />,
+    );
+    expect(scroller.scrollTop).toBe(1000);
+    // Remonté, l’utilisateur n’est pas ramené en bas…
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    rerender(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
+    expect(scroller.scrollTop).toBe(0);
+    // … jusqu’à l’ouverture d’une autre conversation, qui part du bas.
+    rerender(<Transcript conversation={conversation([turn("t1")], { id: "c2" })} runtime={idle} />);
+    expect(scroller.scrollTop).toBe(1000);
+  });
+
+  it("laisse la page poser la question dans son pied, au-dessus de la saisie", () => {
+    const content = question('{"question":"Quel format ?","options":["PDF"]}');
+    const value = conversation([turn("t1", { items: [{ kind: "message", id: "m", content }] })]);
+    const onOther = vi.fn();
+    render(
+      <>
+        <Transcript conversation={value} runtime={idle} dockQuestion={false} />
+        <ConversationQuestion conversation={value} runtime={idle} onOther={onOther} />
+      </>,
+    );
+    expect(document.querySelector(".agent-chat__question-dock")).toBeNull();
+    const card = screen.getByRole("region", { name: "Question de l’agent" });
+    fireEvent.click(within(card).getByRole("button", { name: "Autre réponse…" }));
+    expect(onOther).toHaveBeenCalledOnce();
+  });
+
+  it("rend le Markdown d’un agent comme OneApp : intertitres, fichiers, liens web seuls, sans HTML", async () => {
+    native.invoke.mockResolvedValue(undefined);
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t1", {
+            items: [
+              {
+                kind: "message",
+                id: "m",
+                content:
+                  "# Bilan\n\nVoir [le plan](notes/plan.md), [le site](https://exemple.fr) et [ceci](javascript:alert(1)).\n\n<b>gras</b>\n\n| a | b |\n| - | - |\n| 1 | 2 |",
+              },
+            ],
+          }),
+        ])}
+        runtime={idle}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 3, name: "Bilan" })).toBeInTheDocument();
+    const file = screen.getByRole("button", { name: "le plan" });
+    expect(file).toHaveClass("markdown-text__file-link");
+    fireEvent.click(file);
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith("files.open", { path: "notes/plan.md", base: "/espace" }),
+    );
+    expect(screen.getByRole("link", { name: "le site" })).toHaveAttribute("target", "_blank");
+    expect(screen.queryByRole("link", { name: "ceci" })).not.toBeInTheDocument();
+    expect(screen.getByText("ceci")).toBeInTheDocument();
+    expect(screen.queryByText(/<b>/)).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Tableau" })).toHaveAttribute("tabindex", "0");
   });
 });
 

@@ -335,7 +335,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: min(70vh, 640px);
+  max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -355,13 +355,10 @@
   font-size: var(--font-size-secondary);
 }
 .agent-chat__tool-output {
-  display: block;
+  /* Style en ligne du champ dans OneApp. */
   box-sizing: border-box;
   width: 100%;
-  min-height: 120px;
-  resize: vertical;
-  border: 0;
-  font-family: inherit;
+  resize: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 320px;
@@ -657,19 +654,12 @@ button.agent-chat__attachment-file {
 button.agent-chat__attachment-file:hover {
   background: var(--color-surface);
 }
-.agent-chat__entry--assistant .markdown-text {
-  white-space: normal;
-}
 .agent-chat__change-title {
   flex: 1;
   min-width: 0;
 }
 .agent-chat__change-undo {
   flex: none;
-}
-.agent-chat__recovery p {
-  margin: 0;
-  color: var(--color-danger-ink);
 }
 /* Cartes d’accord et de placement : habillage des décisions de OneApp (`agent-chat__permission`). */
 .agent-card {

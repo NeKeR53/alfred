@@ -1,5 +1,5 @@
 import { Disclosure } from "@alfred/ui";
-import { BookOpen, Bot, Brain, FolderOpen, LoaderCircle, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
+import { BookOpen, Brain, FolderOpen, LoaderCircle, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
 import { useMemo } from "react";
 import type { ActivityAction } from "./harness";
 import { isAgentFileReference } from "./lib/agentFileLinks";
@@ -15,21 +15,33 @@ import { ImagePreview } from "./transcript/ImagePreview";
  */
 export type Activity = Extract<TurnItem, { kind: "activity" }>;
 
+/**
+ * Titre d’une activité, comme `activityTitle` de OneApp : une commande se lit « Exécuté {commande} », que le détail
+ * soit le texte de la commande (Codex) ou ses paramètres JSON.
+ */
 function activityTitle(activity: Activity): string {
   const title = activity.title || "Outil";
-  if (activity.activityKind === "command" && activity.detail?.trim()) {
-    const command = activity.detail.split("\n")[0];
-    return /^(?:commande|command)$/i.test(title.trim()) ? `Exécuté ${command}` : `${title} · ${command}`;
+  if (!/^(?:command|commande|exec_command|terminal|shell|run command)$/i.test(title.trim()) || !activity.detail)
+    return title;
+  try {
+    const input: unknown = JSON.parse(activity.detail);
+    if (typeof input === "string") return `Exécuté ${input}`;
+    if (input && typeof input === "object") {
+      const object = input as Record<string, unknown>;
+      const command = object.command ?? object.cmd;
+      if (typeof command === "string" && command.trim()) return `Exécuté ${command}`;
+    }
+  } catch {
+    // Le détail est directement le texte de la commande.
+    if (activity.detail.trim()) return `Exécuté ${activity.detail}`;
   }
   return title;
 }
 
 function activityIcon(activity: Activity) {
-  if (activity.activityKind === "analysis") return Brain;
   if (activity.activityKind === "command") return TerminalSquare;
   if (activity.activityKind === "file") return Pencil;
   if (activity.activityKind === "search") return Search;
-  if (activity.activityKind === "agent") return Bot;
   const title = activityTitle(activity);
   if (/^(read|lire|lecture)\b/i.test(title)) return BookOpen;
   if (/^(edited|edit|modified|modifier|modifié|écrit|write)\b/i.test(title)) return Pencil;
@@ -40,10 +52,7 @@ function activityIcon(activity: Activity) {
 
 export function hasActivityOutput(activity: Activity): boolean {
   return Boolean(
-    (activity.activityKind === "tool" && activity.detail?.trim()) ||
-      activity.content?.trim() ||
-      activity.images?.length ||
-      activity.files?.length,
+    activity.detail?.trim() || activity.content?.trim() || activity.images?.length || activity.files?.length,
   );
 }
 
@@ -64,13 +73,13 @@ function isRunning(activity: Activity): boolean {
 
 function ActivityLabel({ activity }: { activity: Activity }) {
   const running = isRunning(activity);
-  const Icon = running ? LoaderCircle : activityIcon(activity);
-  const title = activityTitle(activity).replace(/\s*\n\s*/g, " ");
+  const Icon = running ? LoaderCircle : activity.activityKind === "analysis" ? Brain : activityIcon(activity);
+  const title = activityTitle(activity);
   return (
     <>
       <Icon size={15} className={running ? "is-spinning" : undefined} aria-hidden="true" />
       <span className="agent-chat__tool-title" title={title}>
-        {title}
+        {title.replace(/\s*\n\s*/g, " ")}
       </span>
       <span className={activity.status === "failed" ? "agent-chat__tool-status is-failed" : "sr-only"}>
         {activityStatusLabel(activity.status)}
@@ -96,9 +105,7 @@ function ActivityOutput({ activity }: { activity: Activity }) {
       return { src, key: `${activity.id}:${contentKey(src)}:${occurrence}` };
     });
   }, [activity.id, output.images]);
-  const text = [activity.activityKind === "tool" ? activity.detail : undefined, output.text]
-    .filter((value) => value?.trim())
-    .join("\n");
+  const text = [activity.detail, output.text].filter((value) => value?.trim()).join("\n");
   const title = activity.title || "l’outil";
   return (
     <>
@@ -173,13 +180,9 @@ function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile
                 ) : (
                   fileLabel
                 )}
-                {action.added !== undefined && action.removed !== undefined ? (
-                  <>
-                    {" "}
-                    <span className="agent-chat__change-added">+{action.added}</span>{" "}
-                    <span className="agent-chat__change-removed">−{action.removed}</span>
-                  </>
-                ) : null}
+                {action.added !== undefined && action.removed !== undefined
+                  ? ` +${action.added} −${action.removed}`
+                  : ""}
               </span>
             </div>
           );
@@ -209,7 +212,7 @@ function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile
       </div>
     );
   return (
-    <Disclosure appearance="subtle" label={<ActivityLabel activity={activity} />} lazy>
+    <Disclosure appearance="subtle" label={<ActivityLabel activity={activity} />}>
       <ActivityOutput activity={activity} />
     </Disclosure>
   );

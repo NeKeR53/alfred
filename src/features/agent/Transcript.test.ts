@@ -36,7 +36,7 @@ test("le résumé d’un tour compte les outils, sans la réflexion, et sa duré
       ),
     ),
   ).toBe("A travaillé pendant 1 min 20 s · 1 outil appelé");
-  expect(turnSummary(turn([]))).toBe("Travail terminé · aucun outil appelé");
+  expect(turnSummary(turn([]))).toBe("Travail terminé · 0 outils appelés");
 });
 
 test("une suite d’activités se résume comme dans OneApp", () => {
