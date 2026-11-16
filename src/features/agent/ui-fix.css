@@ -1,8 +1,8 @@
-/* Calque « Corriger un élément » : la capture figée de la page, sur laquelle l’utilisateur trace un cadre. */
+/* Calque « Corriger un élément » : la capture figée de toute la fenêtre, sur laquelle l’utilisateur trace un cadre. */
 .ui-fix {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 5;
+  z-index: var(--z-popover);
   overflow: hidden;
   background: var(--color-bg);
   cursor: crosshair;

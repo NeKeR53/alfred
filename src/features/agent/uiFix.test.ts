@@ -31,6 +31,6 @@ describe("fixContext", () => {
   });
 
   it("décrit la page entière sans cadre", () => {
-    expect(fixContext(page, { width: 800, height: 600 }, null, null, "/tmp/c.png")).toContain("partie visible");
+    expect(fixContext(page, { width: 800, height: 600 }, null, null, "/tmp/c.png")).toContain("toute la fenêtre");
   });
 });

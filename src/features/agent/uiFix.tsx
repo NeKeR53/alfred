@@ -1,5 +1,6 @@
 /**
- * « Corriger un élément » : l’utilisateur capture la page affichée, encadre l’élément qui ne va pas, et une
+ * « Corriger un élément » : l’utilisateur capture toute la fenêtre d’Alfred (barre de gauche, page, panneau de
+ * droite), encadre l’élément qui ne va pas, et une
  * conversation d’agent s’ouvre dans le panneau de droite avec la capture annotée et la description de l’élément
  * déjà jointes. Il n’a plus qu’à écrire ce qu’il veut changer.
  */
@@ -16,8 +17,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ResolvedPage } from "../../lib/types";
+import { type AppScreenshot, inspectApp, screenshotApp } from "../../shell/appScreenshot";
 import { notify } from "../../shell/notifications";
-import { inspectRegion, type PageScreenshotResult, screenshotPage } from "../../shell/pageSnapshot";
 import { useShell } from "../../shell/store";
 import { setComposerDraft } from "./drafts";
 import { saveBlob } from "./files";
@@ -31,7 +32,7 @@ const MIN_SIZE = 6;
 type Phase =
   | { kind: "idle" }
   | { kind: "capturing" }
-  | { kind: "selecting"; shot: PageScreenshotResult; url: string }
+  | { kind: "selecting"; shot: AppScreenshot; url: string }
   | { kind: "preparing" };
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -72,7 +73,7 @@ function failure(title: string, error: unknown) {
 }
 
 /** Bouton de la barre du haut et calque de sélection posé sur la page. */
-export function UiFixTool({ page, container }: { page: ResolvedPage; container: RefObject<HTMLElement | null> }) {
+export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<HTMLElement | null> }) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const showAgentPanel = useShell((state) => state.showAgentPanel);
 
@@ -93,7 +94,7 @@ export function UiFixTool({ page, container }: { page: ResolvedPage; container: 
     if (phase.kind !== "idle") return;
     setPhase({ kind: "capturing" });
     try {
-      const shot = await screenshotPage(page.reference);
+      const shot = await screenshotApp();
       const bytes = Uint8Array.from(atob(shot.data), (character) => character.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
       imageUrl.current = url;
@@ -109,7 +110,7 @@ export function UiFixTool({ page, container }: { page: ResolvedPage; container: 
     const { shot, url: keep } = phase;
     setPhase({ kind: "preparing" });
     try {
-      const region = rect ? await inspectRegion(page.reference, rect).catch(() => null) : null;
+      const region = rect ? await inspectApp(rect, document.querySelector(".ui-fix")).catch(() => null) : null;
       const blob = await annotate(keep, rect);
       const agents = useAgents.getState();
       if (!agents.ready) await agents.load();
@@ -141,7 +142,6 @@ export function UiFixTool({ page, container }: { page: ResolvedPage; container: 
   };
 
   const busy = phase.kind === "capturing" || phase.kind === "preparing";
-  const target = container.current;
   return (
     <>
       <IconButton
@@ -156,7 +156,7 @@ export function UiFixTool({ page, container }: { page: ResolvedPage; container: 
           <Crosshair size={15} aria-hidden="true" />
         )}
       </IconButton>
-      {phase.kind === "selecting" && target
+      {phase.kind === "selecting"
         ? createPortal(
             <RegionPicker
               url={phase.url}
@@ -168,7 +168,8 @@ export function UiFixTool({ page, container }: { page: ResolvedPage; container: 
                 setPhase({ kind: "idle" });
               }}
             />,
-            target,
+            // Le calque couvre toute la fenêtre : la barre de gauche et le panneau de droite se corrigent aussi.
+            document.body,
           )
         : null}
     </>
@@ -269,7 +270,7 @@ function RegionPicker({
       </div>
       <div className="ui-fix__bar" role="toolbar" aria-label="Correction d’un élément">
         <span className="ui-fix__hint">Encadrez l’élément à corriger</span>
-        <Button onClick={() => onConfirm(null)}>Toute la page</Button>
+        <Button onClick={() => onConfirm(null)}>Toute la fenêtre</Button>
         <Button onClick={onCancel}>Annuler</Button>
       </div>
     </div>

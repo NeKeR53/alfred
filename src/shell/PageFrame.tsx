@@ -72,7 +72,7 @@ export function PageFrame({
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
-    const snapshot = registerSnapshotTarget(identity.reference, post, capture);
+    const snapshot = registerSnapshotTarget(identity.reference, post, capture, () => frame.current);
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
       const message = event.data;

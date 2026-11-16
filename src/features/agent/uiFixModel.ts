@@ -2,6 +2,9 @@
 import type { ResolvedPage } from "../../lib/types";
 import type { PageRegion } from "../../shell/pageSnapshot";
 
+/** Élément encadré : `page` dit dans quelle page il se trouve, `null` pour l’interface d’Alfred elle-même. */
+export type FixRegion = PageRegion & { page?: string | null };
+
 export interface Rect {
   x: number;
   y: number;
@@ -28,25 +31,32 @@ export function fixContext(
   page: Pick<ResolvedPage, "reference" | "module" | "id" | "title">,
   shot: { width: number; height: number },
   rect: Rect | null,
-  region: PageRegion | null,
+  region: FixRegion | null,
   capture: string,
 ): string {
   // Claude Code et OpenCode ne reçoivent que le chemin de l’image : sans consigne, ils ne l’ouvrent pas.
   const lines = rect
     ? [
-        "La demande de l’utilisateur porte sur un élément précis de la page, qu’il a encadré en rouge sur une capture.",
+        "La demande de l’utilisateur porte sur un élément précis, qu’il a encadré en rouge sur une capture de la fenêtre d’Alfred.",
         `Avant toute chose, ouvre et regarde cette capture : ${capture}`,
         "Repère l’élément dans le cadre rouge et dans le code avant de modifier quoi que ce soit ; ne touche pas au reste de la page sans nécessité.",
         "",
         `Page : ${page.reference} (« ${page.title} »), fichier modules/${page.module}/pages/${page.id}.tsx (et les fichiers qu’il importe)`,
-        `Cadre : x=${rect.x}, y=${rect.y}, ${rect.width} × ${rect.height} px, sur une vue de ${shot.width} × ${shot.height} px.`,
+        `Cadre : x=${rect.x}, y=${rect.y}, ${rect.width} × ${rect.height} px, sur une fenêtre de ${shot.width} × ${shot.height} px.`,
+        ...(region?.page === null
+          ? [
+              "L’élément encadré fait partie de l’interface d’Alfred (barre de gauche, en-tête ou panneau de droite), hors des pages.",
+            ]
+          : region?.page && region.page !== page.reference
+            ? [`L’élément encadré se trouve dans la page ${region.page}.`]
+            : []),
       ]
     : [
-        "La demande de l’utilisateur porte sur la page telle qu’elle est affichée sur la capture jointe.",
+        "La demande de l’utilisateur porte sur la fenêtre d’Alfred telle qu’elle est affichée sur la capture jointe.",
         `Avant toute chose, ouvre et regarde cette capture : ${capture}`,
         "",
         `Page : ${page.reference} (« ${page.title} »), fichier modules/${page.module}/pages/${page.id}.tsx (et les fichiers qu’il importe)`,
-        `Capture de la partie visible (${shot.width} × ${shot.height} px).`,
+        `Capture de toute la fenêtre (${shot.width} × ${shot.height} px).`,
       ];
   if (region?.path.length)
     lines.push("", "Conteneur des éléments encadrés, du plus large au plus précis :", ...region.path);
