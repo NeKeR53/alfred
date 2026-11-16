@@ -373,6 +373,11 @@ pub fn drop_module(space: &Space, module: &str) -> AppResult<()> {
         db.execute_batch(&format!("DROP TABLE IF EXISTS \"{}\";", table.replace('"', "\"\"")))?;
     }
     db.execute("DELETE FROM _alfred_migrations WHERE module = ?1", params![module])?;
+    // Ses fichiers partent avec ses tables ; les sauvegardes les gardent.
+    let files = crate::backups::files_root(space).join(module);
+    if valid_id(module) && files.is_dir() {
+        std::fs::remove_dir_all(files)?;
+    }
     Ok(())
 }
 

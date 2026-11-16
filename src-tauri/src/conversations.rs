@@ -34,7 +34,7 @@ fn exchange_dir(state: &AppState, conversation: &str) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
-fn safe_name(name: &str) -> String {
+pub(crate) fn safe_name(name: &str) -> String {
     let cleaned: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') { c } else { '_' })
@@ -72,7 +72,7 @@ const RUNNABLE: [&str; 44] = [
 ];
 
 /// Ouvrir ce chemin lancerait du code : un lien cité par un agent ne doit pas pouvoir le faire d’un clic.
-fn runs_when_opened(path: &Path) -> bool {
+pub(crate) fn runs_when_opened(path: &Path) -> bool {
     let extension = path.extension().and_then(|extension| extension.to_str()).map(str::to_ascii_lowercase);
     if extension.as_deref().is_some_and(|extension| {
         RUNNABLE.contains(&extension)
@@ -90,7 +90,7 @@ fn runs_when_opened(path: &Path) -> bool {
     false
 }
 
-fn open_with_system(path: &Path, reveal: bool) -> AppResult<()> {
+pub(crate) fn open_with_system(path: &Path, reveal: bool) -> AppResult<()> {
     if !path.exists() {
         return Err(AppError::new(format!("Fichier introuvable : {}", path.display())));
     }

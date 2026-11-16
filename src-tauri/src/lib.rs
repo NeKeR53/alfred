@@ -15,6 +15,7 @@ mod functions;
 mod git;
 mod libraries;
 mod marketplace;
+mod module_files;
 mod mcp;
 mod oauth;
 mod page_windows;

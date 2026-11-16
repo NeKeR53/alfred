@@ -152,8 +152,23 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Fichiers d’un module : un dossier par fichier (`<id>/<nom>` et `meta.json`).
 fn count_files(dir: &Path) -> usize {
-    std::fs::read_dir(dir).map(|entries| entries.flatten().filter(|entry| entry.path().is_file()).count()).unwrap_or(0)
+    std::fs::read_dir(dir).map(|entries| entries.flatten().filter(|entry| entry.path().is_dir()).count()).unwrap_or(0)
+}
+
+/// Chemins relatifs (avec `/`) de tous les fichiers sous `dir`.
+fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let relative = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+        if entry.path().is_dir() {
+            walk(&entry.path(), &relative, out);
+        } else {
+            out.push((relative, entry.path()));
+        }
+    }
 }
 
 fn quoted(name: &str) -> String {
@@ -491,15 +506,12 @@ pub fn export_module(space: &Space, module: &str) -> AppResult<Value> {
         }
         tables.insert(table, json!({ "columns": columns, "rows": rows }));
     }
+    let mut found = Vec::new();
+    walk(&files_root(space).join(module), "", &mut found);
+    found.sort();
     let mut files = Vec::new();
-    let file_dir = files_root(space).join(module);
-    if let Ok(entries) = std::fs::read_dir(&file_dir) {
-        for entry in entries.flatten().filter(|entry| entry.path().is_file()) {
-            files.push(json!({
-                "name": entry.file_name().to_string_lossy(),
-                "data": base64::engine::general_purpose::STANDARD.encode(std::fs::read(entry.path())?),
-            }));
-        }
+    for (name, path) in found {
+        files.push(json!({ "name": name, "data": base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?) }));
     }
     let migrations: Vec<Value> = applied_migrations(&db, module)?
         .into_iter()
@@ -602,14 +614,18 @@ pub fn import_module(space: &Space, module: &str, data: &Value) -> AppResult<Bac
         }
         for file in files {
             let name = file.get("name").and_then(Value::as_str).unwrap_or_default();
-            if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+            let parts: Vec<&str> = name.split('/').collect();
+            if parts.iter().any(|part| part.is_empty() || part.starts_with('.') || part.contains('\\')) || parts.len() > 2 {
                 continue;
             }
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(file.get("data").and_then(Value::as_str).unwrap_or_default())
                 .map_err(|_| AppError::new(format!("Fichier « {name} » illisible dans l’export.")))?;
-            std::fs::create_dir_all(&file_dir)?;
-            std::fs::write(file_dir.join(name), bytes)?;
+            let target = file_dir.join(name);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(target, bytes)?;
         }
     }
     Ok(safety)
@@ -752,8 +768,7 @@ mod tests {
         ]);
         write(&space, "notes", "INSERT INTO notes_n (texte) VALUES ('avant')");
         write(&space, "suivi", "INSERT INTO suivi_t (titre) VALUES ('avant')");
-        std::fs::create_dir_all(files_root(&space).join("notes")).unwrap();
-        std::fs::write(files_root(&space).join("notes/a.txt"), "piece").unwrap();
+        let piece = crate::module_files::save(&space, "notes", "a.txt", None, b"piece").unwrap();
 
         let backup = create(&space, Reason::Manuelle, None).unwrap();
         let notes = backup.modules.iter().find(|module| module.id == "notes").unwrap();
@@ -762,13 +777,13 @@ mod tests {
 
         write(&space, "notes", "UPDATE notes_n SET texte = 'apres'");
         write(&space, "suivi", "UPDATE suivi_t SET titre = 'apres'");
-        std::fs::remove_file(files_root(&space).join("notes/a.txt")).unwrap();
+        crate::module_files::remove(&space, "notes", &piece.id).unwrap();
 
         // Un seul module : l’autre garde ses changements.
         restore_module(&space, &backup.id, "notes").unwrap();
         assert_eq!(rows(&space, "notes", "SELECT texte FROM notes_n"), json!([{ "texte": "avant" }]));
         assert_eq!(rows(&space, "suivi", "SELECT titre FROM suivi_t"), json!([{ "titre": "apres" }]));
-        assert!(files_root(&space).join("notes/a.txt").is_file());
+        assert_eq!(crate::module_files::read(&space, "notes", &piece.id).unwrap().1, b"piece");
         let schema = space_db::schema(&space, Some("notes")).unwrap();
         assert!(schema[0]["sql"].as_str().unwrap().contains("notes_n"));
         let db = space_db::open(&space).unwrap();

@@ -3,7 +3,15 @@
  * du cadre qui a émis le message, jamais par le contenu du message : une page ne peut pas se faire passer pour une
  * autre.
  */
-import { AlfredError, invoke, notifySystem, openExternal, openPageWindow } from "../lib/native";
+import {
+  AlfredError,
+  invoke,
+  notifySystem,
+  openExternal,
+  openPageWindow,
+  pickFiles,
+  pickSaveFile,
+} from "../lib/native";
 import { isKnownPage } from "./badges";
 import { notify } from "./notifications";
 import { useShell } from "./store";
@@ -221,6 +229,37 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
         ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body"]),
         subject,
       });
+    case "files.save":
+      return invoke("frame.files.save", { ...pick(params, ["name", "data", "text", "mime"]), subject });
+    case "files.list":
+      return invoke("frame.files.list", { ...pick(params, ["prefix", "limit"]), subject });
+    case "files.get":
+    case "files.read":
+    case "files.readText":
+    case "files.remove":
+    case "files.open":
+    case "files.dataUrl":
+      return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "files.pick": {
+      // Le sélecteur est montré par la coquille : la page ne nomme jamais un chemin du disque.
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction ne peut pas ouvrir de fenêtre : faites-le depuis une page." });
+      const extensions = Array.isArray(params.accept)
+        ? params.accept.map((item) => String(item).replace(/^\./, "")).filter(Boolean)
+        : undefined;
+      const paths = await pickFiles("Choisir un fichier", { multiple: Boolean(params.multiple), extensions });
+      if (paths.length === 0) return [];
+      return invoke("frame.files.importPaths", { paths, subject });
+    }
+    case "files.export": {
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction ne peut pas ouvrir de fenêtre : faites-le depuis une page." });
+      const info = await invoke<{ name: string }>("frame.files.get", { ...pick(params, ["id"]), subject });
+      const path = await pickSaveFile("Enregistrer le fichier", info.name);
+      if (!path) return false;
+      await invoke("frame.files.exportTo", { ...pick(params, ["id"]), path, subject });
+      return true;
+    }
     case "clients.instances":
       return invoke("frame.clients.instances", { ...pick(params, ["client"]), subject });
     default:

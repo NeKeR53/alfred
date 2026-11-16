@@ -84,6 +84,64 @@ export const db = {
   },
 };
 
+// --- Fichiers du module ---------------------------------------------------------------------------------------
+
+/** Fichier rangé par Alfred pour le module (pièce jointe, PDF, image, document généré). */
+export interface FileInfo {
+  id: string;
+  name: string;
+  mime: string;
+  /** Taille en octets. */
+  size: number;
+  sha256: string;
+  createdAt: string;
+}
+
+/**
+ * Fichiers du module, rangés par Alfred hors de l’espace versionné et copiés avec les sauvegardes. Chaque module
+ * ne voit que les siens ; 50 Mo par fichier.
+ */
+export const files = {
+  /** Range un contenu : `data` en base64 (une adresse `data:` est acceptée) ou `text`. */
+  save(options: { name: string; data?: string; text?: string; mime?: string }): Promise<FileInfo> {
+    return request("files.save", options);
+  },
+  /** Fichiers du module, du plus récent au plus ancien ; `prefix` filtre sur le nom. */
+  list(options: { prefix?: string; limit?: number } = {}): Promise<FileInfo[]> {
+    return request("files.list", options);
+  },
+  get(id: string): Promise<FileInfo> {
+    return request("files.get", { id });
+  },
+  /** Contenu en base64. */
+  read(id: string): Promise<{ info: FileInfo; data: string }> {
+    return request("files.read", { id });
+  },
+  /** Contenu lu comme du texte UTF-8. */
+  readText(id: string): Promise<string> {
+    return request("files.readText", { id });
+  },
+  remove(id: string): Promise<void> {
+    return request<void>("files.remove", { id });
+  },
+  /** Ouvre le fichier avec l’application du système (page ou panneau seulement). */
+  open(id: string): Promise<void> {
+    return request<void>("files.open", { id });
+  },
+  /** Fait choisir des fichiers à l’utilisateur sur son disque et les copie dans le module ; `[]` s’il annule. */
+  pick(options: { accept?: string[]; multiple?: boolean } = {}): Promise<FileInfo[]> {
+    return request("files.pick", options);
+  },
+  /** « Enregistrer sous… » : l’utilisateur choisit où copier le fichier ; `false` s’il annule. */
+  export(id: string): Promise<boolean> {
+    return request("files.export", { id });
+  },
+  /** Adresse `data:` d’une image du module (5 Mo au plus), pour `<Image src>`. */
+  dataUrl(id: string): Promise<string> {
+    return request("files.dataUrl", { id });
+  },
+};
+
 // --- Clients déclarés ------------------------------------------------------------------------------------------
 
 export interface ClientRequest {

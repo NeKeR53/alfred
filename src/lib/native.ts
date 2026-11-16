@@ -139,6 +139,21 @@ export async function pickFile(title: string): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/** Fait choisir un ou plusieurs fichiers ; liste vide s’il annule. `extensions` filtre (« pdf », « png »…). */
+export async function pickFiles(
+  title: string,
+  options: { multiple?: boolean; extensions?: string[] } = {},
+): Promise<string[]> {
+  if (!inTauri) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const filters = options.extensions?.length
+    ? [{ name: "Fichiers acceptés", extensions: options.extensions }]
+    : undefined;
+  const selected = await open({ directory: false, multiple: Boolean(options.multiple), title, filters });
+  if (Array.isArray(selected)) return selected;
+  return typeof selected === "string" ? [selected] : [];
+}
+
 /** Fait choisir où enregistrer un fichier ; `null` s’il annule. Hors de la fenêtre Tauri, aucun sélecteur natif. */
 export async function pickSaveFile(title: string, defaultPath?: string): Promise<string | null> {
   if (!inTauri) return null;

@@ -3,13 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => {
   // jsdom n’a pas `matchMedia`, que le magasin de la coque lit à sa création.
   window.matchMedia ??= ((query: string) => ({ matches: false, media: query })) as unknown as typeof window.matchMedia;
-  return { invoke: vi.fn(), openExternal: vi.fn(), openPageWindow: vi.fn() };
+  return { invoke: vi.fn(), openExternal: vi.fn(), openPageWindow: vi.fn(), pickFiles: vi.fn(), pickSaveFile: vi.fn() };
 });
 vi.mock("../lib/native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/native")>()),
   invoke: native.invoke,
   openExternal: native.openExternal,
   openPageWindow: native.openPageWindow,
+  pickFiles: native.pickFiles,
+  pickSaveFile: native.pickSaveFile,
 }));
 
 import { type FrameIdentity, handleFrameRequest } from "./frameBridge";
@@ -109,5 +111,43 @@ describe("fenêtres de page", () => {
     const panel: FrameIdentity = { kind: "panel", module: "notes", reference: "notes/detail", host: "notes/liste" };
     await handleFrameRequest(panel, "shell.openWindow", {});
     expect(native.openPageWindow.mock.calls).toEqual([["jira/tickets@acme"], ["notes/liste"], ["notes/liste"]]);
+  });
+});
+
+describe("fichiers du module", () => {
+  const fn: FrameIdentity = { kind: "function", module: "notes", reference: "notes/importer" };
+
+  it("range et lit pour le module du cadre, sans champ de trop", async () => {
+    await handleFrameRequest(page, "files.save", { subject: forged, name: "a.txt", text: "x", chemin: "/etc" });
+    await handleFrameRequest(page, "files.read", { subject: forged, id: "abc", path: "/etc/passwd" });
+    expect(native.invoke.mock.calls).toEqual([
+      ["frame.files.save", { subject: own, name: "a.txt", text: "x" }],
+      ["frame.files.read", { subject: own, id: "abc" }],
+    ]);
+  });
+
+  it("montre le sélecteur dans la coquille : la page ne nomme jamais un chemin", async () => {
+    native.pickFiles.mockResolvedValue(["/Users/x/facture.pdf"]);
+    await handleFrameRequest(page, "files.pick", { accept: [".pdf"], multiple: true, paths: ["/etc/passwd"] });
+    expect(native.pickFiles).toHaveBeenCalledWith("Choisir un fichier", { multiple: true, extensions: ["pdf"] });
+    expect(native.invoke).toHaveBeenCalledWith("frame.files.importPaths", {
+      paths: ["/Users/x/facture.pdf"],
+      subject: own,
+    });
+
+    native.invoke.mockReset().mockResolvedValue({ name: "facture.pdf" });
+    native.pickSaveFile.mockResolvedValue("/Users/x/Bureau/facture.pdf");
+    expect(await handleFrameRequest(page, "files.export", { id: "abc", path: "/etc/x" })).toBe(true);
+    expect(native.invoke).toHaveBeenLastCalledWith("frame.files.exportTo", {
+      id: "abc",
+      path: "/Users/x/Bureau/facture.pdf",
+      subject: own,
+    });
+  });
+
+  it("refuse les gestes de l’utilisateur à une fonction en arrière-plan", async () => {
+    await expect(handleFrameRequest(fn, "files.pick", {})).rejects.toThrow(/fonction/);
+    await expect(handleFrameRequest(fn, "files.export", { id: "abc" })).rejects.toThrow(/fonction/);
+    expect(native.pickFiles).not.toHaveBeenCalled();
   });
 });

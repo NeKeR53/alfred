@@ -1,6 +1,6 @@
 # Référence du pont `@alfred/sdk`
 
-Une page, un panneau ou une fonction n’a ni réseau ni disque. Tout ce qui sort du cadre passe par `@alfred/sdk` : la base du module, les clients, les fonctions, l’IA et la coquille. L’apparence relève de `DESIGN.md`, la marche à suivre de `AGENTS.md`.
+Une page, un panneau ou une fonction n’a ni réseau ni disque. Tout ce qui sort du cadre passe par `@alfred/sdk` : la base du module, ses fichiers, les clients, les fonctions, l’IA et la coquille. L’apparence relève de `DESIGN.md`, la marche à suivre de `AGENTS.md`.
 
 Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkError` (`message` en français, `detail` facultatif) : montre `error.message` à l’utilisateur.
 
@@ -12,7 +12,8 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
 | `alert`, `confirm`, `prompt` | bloqués | `useConfirm`, `Dialog` de `@alfred/ui` |
-| `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` |
+| `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
+| `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, 5.2) |
 | un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |
 
@@ -32,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -532,5 +533,35 @@ export async function marquerLu(id: string) {
   await db.execute("UPDATE courrier_messages SET lu = 1 WHERE id = ?", [id]);
   const [{ total }] = await db.query<{ total: number }>("SELECT COUNT(*) AS total FROM courrier_messages WHERE lu = 0");
   await badge.set(total);
+}
+```
+
+## 9. Fichiers : `files`
+
+```ts
+interface FileInfo { id: string; name: string; mime: string; size: number; sha256: string; createdAt: string }
+files.save(options: { name: string; data?: string; text?: string; mime?: string }): Promise<FileInfo>; // data : base64
+files.list(options?: { prefix?: string; limit?: number }): Promise<FileInfo[]>; // plus récent d’abord, 500 par défaut
+files.get(id: string): Promise<FileInfo>;
+files.read(id: string): Promise<{ info: FileInfo; data: string }>; // data : base64
+files.readText(id: string): Promise<string>;
+files.remove(id: string): Promise<void>;
+files.dataUrl(id: string): Promise<string>;  // image de 5 Mo au plus, pour <Image src>
+// Page ou panneau seulement (un geste de l’utilisateur) :
+files.pick(options?: { accept?: string[]; multiple?: boolean }): Promise<FileInfo[]>; // accept : ["pdf", "png"] ; [] s’il annule
+files.export(id: string): Promise<boolean>; // « Enregistrer sous… » ; false s’il annule
+files.open(id: string): Promise<void>;      // application du système
+```
+
+Alfred range les fichiers du module hors de l’espace versionné (`.alfred/files/<module>/`), les copie avec les sauvegardes et les supprime avec le module. Chaque module ne voit que les siens. 50 Mo par fichier ; `mime` se déduit de l’extension du nom. Garde l’`id` dans une table du module pour relier le fichier à une ligne (une facture, un ticket). `files.open` montre dans le Finder, au lieu de l’ouvrir, un fichier qui s’exécuterait (script, application).
+
+```tsx
+import { db, files, shell } from "@alfred/sdk";
+
+export async function joindreFacture(ticket: number) {
+  const [fichier] = await files.pick({ accept: ["pdf"] });
+  if (!fichier) return;
+  await db.execute("INSERT INTO support_pieces (ticket, fichier, nom) VALUES (?, ?, ?)", [ticket, fichier.id, fichier.name]);
+  void shell.notify({ title: "Facture jointe", description: fichier.name, tone: "success" });
 }
 ```
