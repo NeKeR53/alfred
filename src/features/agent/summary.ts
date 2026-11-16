@@ -5,7 +5,8 @@ import { useAgents } from "./store";
 
 /**
  * État visible d’une conversation, repris de OneApp : réponse attendue, en échec, au travail, en attente (messages en
- * file), à consulter. Un tour arrêté resté non lu compte comme un échec ; une conversation lue est en veille.
+ * file), à consulter. Une question bloquante en fin de réponse attend l’utilisateur ; un tour arrêté resté non lu
+ * compte comme un échec ; une conversation lue est en veille.
  */
 export type ConversationState = "attention" | "error" | "working" | "waiting" | "done" | "idle";
 
@@ -20,11 +21,18 @@ export const CONVERSATION_STATE_LABEL: Record<ConversationState, string> = {
 
 /** État d’une conversation d’après son en-tête (statut du dernier tour compris) et sa session vivante. */
 export function conversationState(
-  header: Pick<ConversationHeader, "unread" | "lastStatus">,
+  header: Pick<ConversationHeader, "unread" | "lastStatus" | "pendingQuestion">,
   runtime: ConversationRuntime | undefined,
 ): ConversationState {
   const lastTurn = header.lastStatus;
   if (runtime && (runtime.approvals.length || runtime.questions.length)) return "attention";
+  // Une réponse terminée par une question bloquante attend l’utilisateur, lue ou non, tant que la file est vide.
+  if (
+    header.pendingQuestion &&
+    lastTurn === "done" &&
+    (!runtime || (runtime.status === "idle" && !runtime.queued.length))
+  )
+    return "attention";
   if (runtime && runtime.status !== "idle") return "working";
   if (lastTurn === "running") return "working";
   if (runtime?.queued.length) return "waiting";

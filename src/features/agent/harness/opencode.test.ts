@@ -153,9 +153,28 @@ describe("OpenCode · ouverture", () => {
     expect(events.view.statuses).toEqual(["connecting", "ready"]);
   });
 
-  it("ignore un effort que le modèle ne propose pas", async () => {
-    const { process } = await open({ model: "openai/gpt-5", effort: "max" });
-    expect(process.calls("session/set_config_option")).toHaveLength(1);
+  it("refuse un effort que le modèle ne propose plus, comme OneApp", async () => {
+    await expect(open({ model: "openai/gpt-5", effort: "max" })).rejects.toThrow(
+      "Ce niveau de raisonnement n’est plus disponible pour le modèle OpenCode.",
+    );
+    expect(spawned[0].process.killed).toBe(true);
+  });
+
+  it("refuse un modèle choisi qu’OpenCode ne permet pas de régler, comme OneApp", async () => {
+    spawned = fakeSpawn((process) => {
+      acpServer(process);
+      process.respond("session/new", { result: { sessionId: "ses_1", configOptions: [] } });
+    });
+    await expect(open({ model: "openai/gpt-5" })).rejects.toThrow(
+      "Mettez OpenCode à jour pour sélectionner le modèle via ACP.",
+    );
+  });
+
+  it("transmet les consignes d’Alfred, que Rust écrit dans un fichier d’instructions, comme OneApp", async () => {
+    const { launch } = await open({ instructions: "Tu es Alfred.\nHistorique de reprise …" });
+    expect(launch.options.opencodeInstructions).toBe("Tu es Alfred.\nHistorique de reprise …");
+    const { launch: bare } = await open();
+    expect(bare.options).not.toHaveProperty("opencodeInstructions");
   });
 
   it("reprend une session existante", async () => {

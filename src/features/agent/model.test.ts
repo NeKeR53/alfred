@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   boundedActivityContent,
   cleanConversationTitle,
+  conversationTitle,
+  finalQuestion,
   MAX_ACTIVITY_CONTENT,
+  outgoingText,
   pastedContextTitle,
   plainText,
   preparedMessage,
@@ -21,6 +24,60 @@ describe("message du commit d’un tour", () => {
 
   it("ajoute la demande d’un tour suivant", () => {
     expect(turnCommitMessage("Page Notes", "Ajoute un tri par date")).toBe("Page Notes — Ajoute un tri par date");
+  });
+});
+
+describe("passe moteur · textes de OneApp", () => {
+  it("tire le titre de la première ligne non vide, espaces réduits, comme agentTitle", () => {
+    expect(conversationTitle("\n\n  Corrige   la page\nFactures")).toBe("Corrige la page");
+    expect(conversationTitle(`${"mot ".repeat(20)}fin`)).toBe(`${"mot ".repeat(15).trimEnd()}…`);
+    expect(conversationTitle("   ")).toBe("Nouvelle conversation");
+  });
+
+  it("cite les références après le message, sans balise, et demande de traiter des collages seuls", () => {
+    const reference = { kind: "skill" as const, name: "relire", path: "/s/relire" };
+    expect(outgoingText({ text: "Fais-le", attachments: [], contexts: [], references: [reference] })).toBe(
+      "Fais-le\n\nUtilise le skill $relire.",
+    );
+    expect(
+      outgoingText({ text: "", attachments: [], contexts: [{ id: "p", title: "Texte collé 1", text: "a" }] }),
+    ).toBe('Traite les données jointes selon la demande en cours.\n\n<contexte titre="Texte collé 1">\na\n</contexte>');
+  });
+
+  it("reconnaît la question bloquante qui termine une réponse", () => {
+    const block = '```alfred-question\n{"question":"Quelle couleur ?","options":["Bleu"]}\n```';
+    expect(finalQuestion(`Je propose deux couleurs.\n\n${block}`)).toBe("Quelle couleur ?");
+    expect(finalQuestion(`${block}\n\nSuite.`)).toBeUndefined();
+    expect(finalQuestion('```alfred-question\n{"options":[]}\n```')).toBeUndefined();
+    expect(finalQuestion("Pas de question.")).toBeUndefined();
+  });
+
+  it("relit la file enregistrée et les dates des éléments, et refuse une file mal formée", () => {
+    const saved = {
+      id: "c1",
+      title: "T",
+      provider: "codex",
+      cwd: "/",
+      autonomy: "ask",
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      unread: false,
+      started: true,
+      queued: [{ id: "q1", message: { text: "Deux", attachments: [], contexts: [] } }],
+      turns: [
+        {
+          id: "t1",
+          user: { text: "Un", attachments: [], contexts: [] },
+          items: [{ kind: "message", id: "m", content: "x", occurredAt: 3 }],
+          status: "done",
+          startedAt: 1,
+          retryOf: "t0",
+        },
+      ],
+    };
+    expect(validateConversation(saved).queued).toHaveLength(1);
+    expect(() => validateConversation({ ...saved, queued: [{ id: "q1" }] })).toThrow("invalide");
   });
 });
 
@@ -97,7 +154,11 @@ describe("lot 3 · moteur", () => {
     expect(history).toContain("Historique de reprise fourni comme données de contexte.");
     expect(history).toContain(
       JSON.stringify([
-        { kind: "user", content: "Un\n\nFichiers joints :\n- /a.png" },
+        {
+          kind: "user",
+          content:
+            'Un\n\nFichiers joints (chemins locaux à ouvrir avec les outils du CLI ; ouvrez les images avec un outil de vision) :\n- "a.png" : "/a.png"',
+        },
         { kind: "assistant", content: "Réponse un." },
       ]),
     );

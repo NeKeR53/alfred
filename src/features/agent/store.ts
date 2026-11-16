@@ -20,6 +20,7 @@ import {
   PROVIDER_LABEL,
   type Provider,
 } from "./harness";
+import { CODEX_FILE_TOOLS } from "./harness/codex";
 import {
   type AgentQuestion,
   boundedActivityContent,
@@ -29,12 +30,14 @@ import {
   cleanConversationTitle,
   compactForStorage,
   conversationTitle,
+  finalQuestion,
   lastAssistantText,
   MAX_QUEUED_MESSAGES,
   outgoingText,
   plainText,
   preparedMessage,
   QUESTION_INSTRUCTIONS,
+  type QueuedMessage,
   replayedHistory,
   type Turn,
   type TurnItem,
@@ -186,6 +189,13 @@ const lastEventAt = new Map<string, number>();
 const resuming = new Map<string, { errors: string[] }>();
 /** Notifications déjà montrées, une par tour et par sorte, comme dans OneApp. */
 const announced = new Set<string>();
+/**
+ * Tour de chaque élément reçu depuis le dernier envoi, comme `itemTurnIds` de OneApp : après une orientation, la
+ * suite d’une activité commencée avant elle reste dans son tour au lieu d’apparaître en double dans le suivant.
+ */
+const itemTurns = new Map<string, Map<string, string>>();
+/** Conversations dont un message est en train d’être glissé dans la réponse : la surveillance du silence attend. */
+const steering = new Set<string>();
 
 /** Durée de repos après laquelle la session CLI d’une conversation est fermée pour libérer son processus. */
 export const IDLE_SESSION_MS = 10 * 60_000;
@@ -196,6 +206,9 @@ const LOAD_ERROR =
   "Impossible de charger les conversations enregistrées. Vos données sont conservées ; réessayez le chargement.";
 const INTERRUPTED_AT_CLOSE =
   "Cette tâche a été interrompue à la fermeture d’Alfred. Reprenez-la explicitement pour continuer.";
+
+/** États d’une activité close : une autre reste ouverte jusqu’à la fin du tour. */
+const SETTLED_ACTIVITY = new Set<string>(["completed", "failed", "cancelled", "stopped"]);
 
 const newId = (): string => crypto.randomUUID();
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -327,6 +340,12 @@ export const useAgents = create<AgentState>((set, get) => {
   const patchRuntime = (id: string, change: (runtime: ConversationRuntime) => ConversationRuntime) =>
     set((state) => ({ runtime: { ...state.runtime, [id]: change(state.runtime[id] ?? idleRuntime) } }));
 
+  /** Change la file d’une conversation ; elle est enregistrée avec la conversation, comme dans OneApp. */
+  const setQueue = (id: string, change: (queued: QueuedMessage[]) => QueuedMessage[]) => {
+    patchRuntime(id, (runtime) => ({ ...runtime, queued: change(runtime.queued) }));
+    if (get().loaded[id]) scheduleSave(id);
+  };
+
   /** Enregistre une conversation ; rien tant que le chargement a échoué, pour ne pas écrire par-dessus l’historique. */
   const save = async (id: string): Promise<boolean> => {
     clearTimeout(saveTimers.get(id));
@@ -338,8 +357,11 @@ export const useAgents = create<AgentState>((set, get) => {
       failedSaves.delete(id);
       return true;
     }
+    const queued = get().runtime[id]?.queued ?? [];
     try {
-      await invoke("conversations.save", { conversation: compactForStorage(conversation) });
+      await invoke("conversations.save", {
+        conversation: { ...compactForStorage(conversation), ...(queued.length ? { queued } : {}) },
+      });
       failedSaves.delete(id);
       if (!failedSaves.size && get().saveError) set({ saveError: undefined });
       return true;
@@ -415,6 +437,16 @@ export const useAgents = create<AgentState>((set, get) => {
     resuming.delete(id);
     lastEventAt.delete(id);
     patchRuntime(id, (runtime) => ({ ...runtime, status: "idle", approvals: [], questions: [] }));
+    // Comme `finishTurn` de OneApp : une activité restée ouverte est close, terminée pour une réflexion d’un tour
+    // mené à son terme, arrêtée sinon. Les CLI n’annoncent pas toujours cette fin eux-mêmes.
+    patchTurn(id, (latest) => ({
+      ...latest,
+      items: latest.items.map((item) =>
+        item.kind === "activity" && !SETTLED_ACTIVITY.has(item.status)
+          ? { ...item, status: status === "done" && item.activityKind === "analysis" ? "completed" : "cancelled" }
+          : item,
+      ),
+    }));
     // Ce que l’agent a écrit dans l’espace devient un commit : c’est ce qui rend le tour annulable.
     let commitId: string | undefined;
     let changedFiles: string[] | undefined;
@@ -440,10 +472,13 @@ export const useAgents = create<AgentState>((set, get) => {
       // Un espace sans dépôt utilisable n’empêche pas la conversation de se terminer.
     }
     const viewed = isViewed(id);
+    let question: string | undefined;
     patchConversation(id, (latest) => {
       const turns = [...latest.turns];
       const last = turns.at(-1);
       if (!last) return latest;
+      // Une réponse qui se termine par une question bloquante attend l’utilisateur, comme dans OneApp.
+      question = status === "done" ? finalQuestion(lastAssistantText(last)) : undefined;
       const finished = {
         ...last,
         status,
@@ -457,6 +492,7 @@ export const useAgents = create<AgentState>((set, get) => {
         updatedAt: Date.now(),
         unread: !viewed,
         preview: plainText(lastAssistantText(finished)).slice(0, 200) || latest.preview,
+        pendingQuestion: question,
       };
     });
     await save(id);
@@ -467,9 +503,9 @@ export const useAgents = create<AgentState>((set, get) => {
     }
     // Le message suivant de la file part aussitôt : seule la fin du dernier tour est annoncée. Comme OneApp, la file
     // n’enchaîne qu’après un tour mené à son terme : après une erreur ou un arrêt, elle attend l’utilisateur.
-    const [next, ...rest] = get().runtime[id]?.queued ?? [];
+    const [next] = get().runtime[id]?.queued ?? [];
     if (next && status === "done" && (get().runtime[id]?.status ?? "idle") === "idle") {
-      patchRuntime(id, (runtime) => ({ ...runtime, queued: rest }));
+      setQueue(id, (queued) => queued.filter((item) => item.id !== next.id));
       void startTurn(id, next.message, next.id).catch(() => undefined);
       return;
     }
@@ -480,7 +516,8 @@ export const useAgents = create<AgentState>((set, get) => {
       if (reply && voice?.enabled !== false && voice?.readReplies !== false) void useVoice.getState().read(reply);
     }
     const title = get().loaded[id]?.title ?? conversation.title;
-    if (finished && status !== "cancelled") {
+    if (finished && question) announceSystem("attention", id, `${title} : j’attends votre réponse`, question);
+    else if (finished && status !== "cancelled") {
       announceSystem(
         status === "error" ? "error" : "done",
         id,
@@ -489,9 +526,11 @@ export const useAgents = create<AgentState>((set, get) => {
       );
     }
     if (!viewed && finished) {
-      // Un tour arrêté que l’utilisateur n’a pas vu compte comme un échec, comme dans OneApp.
+      // Un tour arrêté que l’utilisateur n’a pas vu compte comme un échec, comme dans OneApp ; une question
+      // bloquante attend sa réponse.
       const failed = status === "error" || status === "cancelled";
-      announce(failed ? "error" : "done", id, finished.error);
+      if (question) announce("attention", id, question);
+      else announce(failed ? "error" : "done", id, finished.error);
     }
   };
 
@@ -547,7 +586,14 @@ export const useAgents = create<AgentState>((set, get) => {
             id: latest.id,
             turn,
             lastEventAt: lastEventAt.get(latest.id) ?? turn.startedAt,
-            waitingForUser: Boolean(runtime?.approvals.length || runtime?.questions.length),
+            // Comme OneApp, seul un tour qui répond est surveillé : ni le lancement du CLI, ni une demande d’accord,
+            // ni un message en train d’être glissé dans la réponse.
+            waitingForUser: Boolean(
+              runtime?.approvals.length ||
+                runtime?.questions.length ||
+                runtime?.status === "connecting" ||
+                steering.has(latest.id),
+            ),
           },
         ];
       }),
@@ -565,9 +611,31 @@ export const useAgents = create<AgentState>((set, get) => {
       const session = await ensureSession(conversation, turn.id);
       await session.send(outgoingText(turn.user), turn.user.attachments, turn.id);
     } catch (error) {
+      stopSession(id);
       patchTurn(id, (latest) => ({ ...latest, error: message(error) }));
       await finishTurn(id, "error");
     }
+  };
+
+  /**
+   * Change un élément du tour qui l’a commencé. Comme OneApp, rien n’est retenu hors d’un tour en cours : la fin
+   * d’une réponse déjà terminée ou interrompue n’a plus de place dans le fil.
+   */
+  const patchItem = (id: string, itemId: string, change: (turn: Turn) => Turn) => {
+    const last = current(id)?.turns.at(-1);
+    if (last?.status !== "running" || finishing.has(last.id)) return;
+    const turns = itemTurns.get(id) ?? new Map<string, string>();
+    itemTurns.set(id, turns);
+    const turnId = turns.get(itemId) ?? last.id;
+    turns.set(itemId, turnId);
+    patchConversation(
+      id,
+      (conversation) => ({
+        ...conversation,
+        turns: conversation.turns.map((turn) => (turn.id === turnId ? change(turn) : turn)),
+      }),
+      { stream: true },
+    );
   };
 
   const onEvent = (id: string, generation: number) => (event: HarnessEvent) => {
@@ -617,57 +685,57 @@ export const useAgents = create<AgentState>((set, get) => {
         }
         return;
       case "message":
-        patchTurn(
-          id,
-          (turn) => {
-            const existing = turn.items.find((item) => item.kind === "message" && item.id === event.itemId);
-            const content =
-              event.replace || !existing ? event.content : (existing as { content: string }).content + event.content;
-            return { ...turn, items: upsertItem(turn.items, { kind: "message", id: event.itemId, content }) };
-          },
-          { stream: true },
-        );
+        patchItem(id, event.itemId, (turn) => {
+          const existing = turn.items.find((item) => item.kind === "message" && item.id === event.itemId);
+          const content =
+            event.replace || !existing ? event.content : (existing as { content: string }).content + event.content;
+          return {
+            ...turn,
+            items: upsertItem(turn.items, { kind: "message", id: event.itemId, content, occurredAt: Date.now() }),
+          };
+        });
         return;
       case "activity":
-        patchTurn(
-          id,
-          (turn) => {
-            const previous = turn.items.find((item) => item.kind === "activity" && item.id === event.itemId);
-            const kept = previous?.kind === "activity" ? previous : undefined;
-            const content = event.content ?? kept?.content;
-            return {
-              ...turn,
-              items: upsertItem(turn.items, {
-                kind: "activity",
-                id: event.itemId,
-                activityKind: event.kind,
-                title: event.title,
-                detail: event.detail ?? kept?.detail,
-                actions: event.actions ?? kept?.actions,
-                content: content === undefined ? undefined : boundedActivityContent(content, event.kind),
-                images: event.images ?? kept?.images,
-                files: event.files ?? kept?.files,
-                status: event.status,
-              }),
-            };
-          },
-          { stream: true },
-        );
+        patchItem(id, event.itemId, (turn) => {
+          const previous = turn.items.find((item) => item.kind === "activity" && item.id === event.itemId);
+          const kept = previous?.kind === "activity" ? previous : undefined;
+          // Comme OneApp : certains CLI terminent la réflexion par un résumé vide après ses fragments.
+          const received = event.kind === "analysis" && !event.content?.trim() ? undefined : event.content;
+          const content = received ?? kept?.content;
+          return {
+            ...turn,
+            items: upsertItem(turn.items, {
+              kind: "activity",
+              id: event.itemId,
+              activityKind: event.kind,
+              title: event.title,
+              detail: event.detail ?? kept?.detail,
+              actions: event.actions ?? kept?.actions,
+              content: content === undefined ? undefined : boundedActivityContent(content, event.kind),
+              images: event.images?.length ? event.images : kept?.images,
+              files: event.files?.length ? event.files : kept?.files,
+              status: event.status,
+              occurredAt: Date.now(),
+            }),
+          };
+        });
         return;
       case "activityDelta":
-        patchTurn(
-          id,
-          (turn) => {
-            const previous = turn.items.find((item) => item.kind === "activity" && item.id === event.itemId);
-            const base: Extract<TurnItem, { kind: "activity" }> =
-              previous?.kind === "activity"
-                ? previous
-                : { kind: "activity", id: event.itemId, activityKind: "analysis", title: "Analyse", status: "running" };
-            const content = boundedActivityContent((base.content ?? "") + event.content, base.activityKind);
-            return { ...turn, items: upsertItem(turn.items, { ...base, content }) };
-          },
-          { stream: true },
-        );
+        patchItem(id, event.itemId, (turn) => {
+          const previous = turn.items.find((item) => item.kind === "activity" && item.id === event.itemId);
+          const base: Extract<TurnItem, { kind: "activity" }> =
+            previous?.kind === "activity"
+              ? previous
+              : {
+                  kind: "activity",
+                  id: event.itemId,
+                  activityKind: "analysis",
+                  title: "Analyse / sortie d’outil",
+                  status: "running",
+                };
+          const content = boundedActivityContent((base.content ?? "") + event.content, base.activityKind);
+          return { ...turn, items: upsertItem(turn.items, { ...base, content, occurredAt: Date.now() }) };
+        });
         return;
       case "approval": {
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));
@@ -684,12 +752,10 @@ export const useAgents = create<AgentState>((set, get) => {
         return;
       case "error":
         patchTurn(id, (turn) => ({ ...turn, error: event.message }));
-        // Comme OneApp (`fail`) : le tour finit en erreur et la session est fermée ; le message suivant repart dans
-        // une session neuve qui reprend la conversation, au lieu de buter sur un CLI resté occupé.
-        if (current(id)?.turns.at(-1)?.status === "running") {
-          stopSession(id);
-          void finishTurn(id, "error");
-        }
+        // Comme OneApp (`fail`) : le tour finit en erreur et la session est fermée, même au repos ; le message suivant
+        // repart dans une session neuve qui reprend la conversation, au lieu de buter sur un CLI resté occupé.
+        stopSession(id);
+        if (current(id)?.turns.at(-1)?.status === "running") void finishTurn(id, "error");
         return;
     }
   };
@@ -706,17 +772,32 @@ export const useAgents = create<AgentState>((set, get) => {
     const running = current(id)?.turns.at(-1)?.status === "running";
     const live = sessions.get(id)?.session;
     if (!running && (get().runtime[id]?.status ?? "idle") === "idle") {
-      patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+      setQueue(id, (items) => items.filter((item) => item.id !== queuedId));
       await startTurn(id, queued.message, queued.id);
       return;
     }
-    if (running && live?.steer && get().runtime[id]?.status === "responding") {
+    const state = get().runtime[id];
+    // Comme OneApp : seul un message de texte se glisse dans une réponse qui s’écrit ; des pièces jointes, des
+    // collages ou des références (contexte de session dans OneApp) font interrompre la réponse.
+    const plain =
+      !queued.message.attachments.length && !queued.message.contexts.length && !queued.message.references?.length;
+    if (
+      running &&
+      live?.steer &&
+      plain &&
+      state?.status === "responding" &&
+      !state.approvals.length &&
+      !state.questions.length &&
+      !steering.has(id)
+    ) {
       const turn: Turn = { id: queued.id, user: queued.message, items: [], status: "running", startedAt: Date.now() };
+      steering.add(id);
       try {
         await live.steer(outgoingText(queued.message), queued.message.attachments, turn.id);
-        if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
+        if (sessions.get(id)?.session !== live || !get().runtime[id]?.queued.some((item) => item.id === queuedId))
+          return;
         // Le tour orienté se termine ici ; la suite de la réponse appartient au nouveau message.
-        patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+        setQueue(id, (items) => items.filter((item) => item.id !== queuedId));
         patchConversation(id, (latest) => ({
           ...latest,
           turns: [
@@ -729,17 +810,19 @@ export const useAgents = create<AgentState>((set, get) => {
           ],
           updatedAt: Date.now(),
         }));
-        lastEventAt.set(id, Date.now());
         return;
       } catch {
         // L’agent refuse d’orienter sa réponse : elle est interrompue, puis le message part.
+        if (sessions.get(id)?.session !== live) return;
+      } finally {
+        steering.delete(id);
       }
     }
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
     // Comme OneApp : la réponse est arrêtée, puis ce message part aussitôt, dans une session neuve.
     await get().cancel(id);
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
-    patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+    setQueue(id, (items) => items.filter((item) => item.id !== queuedId));
     await startTurn(id, queued.message, queued.id);
   };
 
@@ -750,6 +833,8 @@ export const useAgents = create<AgentState>((set, get) => {
       [
         spaceDir ? instructions(spaceDir) : "",
         QUESTION_INSTRUCTIONS,
+        // Comme OneApp : la consigne des outils de fichiers de Codex précède l’historique rejoué.
+        conversation.provider === "codex" ? CODEX_FILE_TOOLS : "",
         replay ? replayedHistory(conversation.turns, currentTurnId) : "",
       ]
         .filter(Boolean)
@@ -804,11 +889,19 @@ export const useAgents = create<AgentState>((set, get) => {
   };
 
   /** Commence un tour : le message rejoint le fil et part dans la session de la conversation. */
-  const startTurn = async (id: string, userMessage: UserMessage, turnId = newId()) => {
+  const startTurn = async (id: string, userMessage: UserMessage, turnId = newId(), retryOf?: string) => {
     const conversation = current(id);
     if (!conversation) return;
     const first = conversation.turns.length === 0;
-    const turn: Turn = { id: turnId, user: userMessage, items: [], status: "running", startedAt: Date.now() };
+    const turn: Turn = {
+      id: turnId,
+      user: userMessage,
+      items: [],
+      status: "running",
+      startedAt: Date.now(),
+      ...(retryOf ? { retryOf } : {}),
+    };
+    itemTurns.set(id, new Map());
     patchConversation(id, (latest) => {
       const title =
         first && latest.title === "Nouvelle conversation" ? conversationTitle(userMessage.text) : latest.title;
@@ -823,6 +916,7 @@ export const useAgents = create<AgentState>((set, get) => {
         turns: [...latest.turns, turn],
         started: true,
         updatedAt: Date.now(),
+        pendingQuestion: undefined,
       };
     });
     patchRuntime(id, (runtime) => ({ ...runtime, status: "connecting" }));
@@ -832,6 +926,9 @@ export const useAgents = create<AgentState>((set, get) => {
       const session = await ensureSession(current(id) ?? conversation, turn.id);
       await session.send(outgoingText(userMessage), userMessage.attachments, turn.id);
     } catch (error) {
+      // Comme `fail` de OneApp : le CLI qui n’a pas pu démarrer ou recevoir le message est fermé.
+      if (current(id)?.turns.at(-1)?.id !== turn.id) return;
+      stopSession(id);
       patchTurn(id, (latest) => ({ ...latest, error: message(error) }));
       await finishTurn(id, "error");
     }
@@ -850,7 +947,7 @@ export const useAgents = create<AgentState>((set, get) => {
       {
         candidates: () =>
           Object.values(get().loaded)
-            .filter((conversation) => conversation.autoTitle && !conversation.archived)
+            .filter((conversation) => conversation.autoTitle)
             .map((conversation) => ({ id: conversation.id, firstMessage: conversation.turns[0]?.user.text })),
         stillWanted: (id) => Boolean(current(id)?.autoTitle),
         setTitle: async (id, title) => {
@@ -895,6 +992,8 @@ export const useAgents = create<AgentState>((set, get) => {
     checkSilence: () => silenceWatch.check(),
     announce,
     reset: () => {
+      itemTurns.clear();
+      steering.clear();
       pendingStream.clear();
       clearTimeout(streamTimer);
       streamTimer = undefined;
@@ -921,7 +1020,10 @@ export const useAgents = create<AgentState>((set, get) => {
           invoke<AgentDefaults | null>("settings.get", { key: "agents.defaults" }),
           invoke<TitlingModel | null>("settings.get", { key: "agents.titling" }),
         ]);
-        headers = validateHeaders(list);
+        // La file enregistrée revient à la session vivante à l’ouverture de la conversation, pas dans la liste.
+        headers = validateHeaders(list).map(
+          ({ queued: _queued, ...header }: ConversationHeader & { queued?: unknown }) => header,
+        );
         defaults = saved;
         titling = savedTitling ?? null;
       } catch {
@@ -1024,11 +1126,19 @@ export const useAgents = create<AgentState>((set, get) => {
             }
           : turn,
       );
-      const restored = { ...conversation, turns, lastStatus: turns.at(-1)?.status };
-      set((state) => ({
-        loaded: { ...state.loaded, [id]: restored },
-        headers: state.headers.map((header) => (header.id === id ? withoutTurns(restored) : header)),
-      }));
+      const { queued, ...saved } = conversation;
+      const restored = { ...saved, turns, lastStatus: turns.at(-1)?.status };
+      set((state) => {
+        const runtime = state.runtime[id] ?? idleRuntime;
+        return {
+          loaded: { ...state.loaded, [id]: restored },
+          headers: state.headers.map((header) => (header.id === id ? withoutTurns(restored) : header)),
+          // La file d’avant la fermeture est rendue, comme dans OneApp ; elle attend l’utilisateur.
+          ...(queued?.length && !runtime.queued.length
+            ? { runtime: { ...state.runtime, [id]: { ...runtime, queued } } }
+            : {}),
+        };
+      });
     },
 
     create(options = {}) {
@@ -1060,7 +1170,12 @@ export const useAgents = create<AgentState>((set, get) => {
     },
 
     update(id, patch) {
-      patchConversation(id, (conversation) => ({ ...conversation, ...patch }));
+      // Comme OneApp, seule une session du même harnais se reprend : un autre harnais repart de l’historique.
+      patchConversation(id, (conversation) => ({
+        ...conversation,
+        ...patch,
+        ...(patch.provider && patch.provider !== conversation.provider ? { sessionId: undefined } : {}),
+      }));
     },
 
     async rename(id, title) {
@@ -1074,17 +1189,17 @@ export const useAgents = create<AgentState>((set, get) => {
 
     async archive(id) {
       await get().ensureLoaded(id);
-      patchRuntime(id, (runtime) => ({ ...runtime, queued: [] }));
       const busy = (get().runtime[id]?.status ?? "idle") !== "idle" || current(id)?.turns.at(-1)?.status === "running";
-      if (busy) await get().cancel(id);
-      // Archivée, elle n’est plus « à consulter » ; une session au repos libère son CLI, comme dans OneApp.
+      // Comme OneApp, elle est masquée avant l’arrêt : un tour arrêté par l’archivage n’est pas annoncé. Archivée,
+      // elle n’est plus « à consulter » ; sa file reste, figée, et une session au repos libère son CLI.
       patchConversation(id, (conversation) => ({
         ...conversation,
         archived: true,
         archivedAt: Date.now(),
         unread: false,
       }));
-      if (!busy) void dropSession(id);
+      if (busy) await get().cancel(id);
+      else void dropSession(id);
       if (get().activeId === id) {
         set({ activeId: null });
         rememberSelected(null);
@@ -1126,24 +1241,37 @@ export const useAgents = create<AgentState>((set, get) => {
           runtime.queued.some((item) => item.id === messageId))
       )
         return;
-      const busy = runtime.status !== "idle" || conversation.turns.at(-1)?.status === "running";
-      if (busy && runtime.queued.length >= MAX_QUEUED_MESSAGES)
+      if (runtime.queued.length >= MAX_QUEUED_MESSAGES)
         throw new Error(`La file contient déjà ${MAX_QUEUED_MESSAGES} messages.`);
+      const busy = runtime.status !== "idle" || conversation.turns.at(-1)?.status === "running";
       // Le relevé se recolle en bas pour montrer le message envoyé.
       set((state) => ({ follow: { ...state.follow, [id]: (state.follow[id] ?? 0) + 1 } }));
+      if (!busy && !runtime.queued.length) {
+        await startTurn(id, prepared, messageId);
+        return;
+      }
+      const queuedId = messageId ?? newId();
+      setQueue(id, (queued) => [...queued, { id: queuedId, message: prepared }]);
       if (busy) {
-        const queuedId = messageId ?? newId();
-        patchRuntime(id, (latest) => ({ ...latest, queued: [...latest.queued, { id: queuedId, message: prepared }] }));
         if (options?.now) await get().sendQueuedNow(id, queuedId);
         return;
       }
-      await startTurn(id, prepared, messageId);
+      // Comme OneApp, une file restée en attente (après une erreur ou un arrêt) part dans l’ordre : le message le plus
+      // ancien d’abord, celui-ci à son tour.
+      const [next] = get().runtime[id]?.queued ?? [];
+      if (!next) return;
+      setQueue(id, (queued) => queued.filter((item) => item.id !== next.id));
+      await startTurn(id, next.message, next.id);
     },
 
     async retry(id) {
-      const last = current(id)?.turns.at(-1);
+      const conversation = current(id);
+      const last = conversation?.turns.at(-1);
       if (!last || (last.status !== "error" && last.status !== "cancelled")) return;
-      await get().send(id, last.user);
+      if ((get().runtime[id]?.status ?? "idle") !== "idle") return;
+      // Comme OneApp : le message du tour repart en tête, avant la file, dans un nouveau tour qui lui est rattaché.
+      set((state) => ({ follow: { ...state.follow, [id]: (state.follow[id] ?? 0) + 1 } }));
+      await startTurn(id, structuredClone(last.user), newId(), last.retryOf ?? last.id);
     },
 
     async resend(id, turnId) {
@@ -1169,12 +1297,17 @@ export const useAgents = create<AgentState>((set, get) => {
         title: `${source.title} · reprise`,
         ...(source.origin ? { origin: source.origin } : {}),
       });
+      // Comme OneApp, un titre déjà porté (deuxième reprise du même fil) est confié au modèle de nommage.
+      const siblings = get()
+        .headers.filter((header) => header.id !== created.id && header.started)
+        .map((header) => header.title);
       // La session du harnais d’origine n’est pas copiée : la première session reçoit cet historique.
       patchConversation(created.id, (conversation) => ({
         ...conversation,
         turns: history,
         started: true,
         forkedFrom: { id: source.id, title: source.title },
+        ...(needsAutoTitle(conversation.title, siblings) ? { autoTitle: true } : {}),
       }));
       await save(created.id);
       await get().open(created.id);
@@ -1191,7 +1324,7 @@ export const useAgents = create<AgentState>((set, get) => {
       const byId = new Map(queue.map((item) => [item.id, item]));
       const ordered = queuedIds.flatMap((queuedId) => byId.get(queuedId) ?? []);
       if (ordered.length !== queue.length || new Set(ordered).size !== queue.length) return;
-      patchRuntime(id, (runtime) => ({ ...runtime, queued: ordered }));
+      setQueue(id, () => ordered);
     },
 
     moveQueued(id, queuedId, offset) {
@@ -1199,7 +1332,7 @@ export const useAgents = create<AgentState>((set, get) => {
       const index = queue.findIndex((item) => item.id === queuedId);
       if (index < 0 || index + offset < 0 || index + offset >= queue.length) return;
       [queue[index], queue[index + offset]] = [queue[index + offset], queue[index]];
-      patchRuntime(id, (runtime) => ({ ...runtime, queued: queue }));
+      setQueue(id, () => queue);
     },
 
     sendQueuedNow(id, queuedId) {
@@ -1215,8 +1348,7 @@ export const useAgents = create<AgentState>((set, get) => {
 
     unqueue(id, queuedId) {
       const found = get().runtime[id]?.queued.find((item) => item.id === queuedId);
-      if (found)
-        patchRuntime(id, (runtime) => ({ ...runtime, queued: runtime.queued.filter((item) => item.id !== queuedId) }));
+      if (found) setQueue(id, (queued) => queued.filter((item) => item.id !== queuedId));
       return found?.message;
     },
 

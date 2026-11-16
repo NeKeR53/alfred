@@ -442,11 +442,8 @@ class CodexSession implements HarnessSession {
     }
     const { approvalPolicy, sandbox } = this.policy();
     const resume = this.#options.resumeSessionId;
-    // Un appel unique n’a pas d’outil : la consigne sur les fichiers n’y a pas de sens.
-    const instructions = [this.#options.instructions, this.#options.readOnly ? undefined : CODEX_FILE_TOOLS]
-      .map((part) => part?.trim())
-      .filter(Boolean)
-      .join("\n\n");
+    // La consigne des outils de fichiers (`CODEX_FILE_TOOLS`) est placée par le moteur, avant l’historique rejoué.
+    const instructions = this.#options.instructions?.trim();
     const common = {
       cwd: this.#options.cwd,
       approvalPolicy,
@@ -492,9 +489,9 @@ class CodexSession implements HarnessSession {
       this.#turnId = responseTurnId(turn);
       if (!this.#turnId) throw new Error(protocolError("démarrer la réponse"));
     } catch (cause) {
+      // Comme OneApp : l’échec remonte à l’appelant, qui termine le tour en erreur ; aucune fin de tour n’est
+      // annoncée, sans quoi le tour passait pour terminé avant que l’erreur n’arrive.
       this.#turnId = undefined;
-      // Un processus arrêté a déjà fermé la discussion : le tour n’a pas à se terminer une seconde fois.
-      if (!this.#closed) this.status("idle");
       throw cause;
     }
   }
@@ -665,7 +662,7 @@ class CodexSession implements HarnessSession {
       if (turnFailed(message.params)) {
         this.#emit({
           type: "error",
-          message: withReason("Codex n’a pas pu terminer sa réponse", this.#lastError),
+          message: `${withReason("Codex n’a pas pu terminer sa réponse", this.#lastError)} Réessayez ou ouvrez une nouvelle discussion.`,
         });
       }
       this.#lastError = undefined;

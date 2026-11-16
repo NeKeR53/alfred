@@ -180,8 +180,9 @@ class ClaudeSession implements HarnessSession {
         parent_tool_use_id: null,
       });
     } catch (cause) {
+      // L’échec remonte à l’appelant, qui termine le tour en erreur, comme OneApp : annoncer une fin de tour ici le
+      // faisait passer pour terminé.
       this.#responding = false;
-      this.#emit({ type: "status", status: "idle" });
       throw cause;
     }
   }

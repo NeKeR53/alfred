@@ -121,6 +121,15 @@ describe("Claude Code · lancement", () => {
 });
 
 describe("Claude Code · un tour de conversation", () => {
+  it("un message que le CLI ne reçoit pas rejette l’envoi sans annoncer de fin de tour", async () => {
+    const { session, process, events } = await open();
+    process.write = async () => {
+      throw new Error("Le processus de l’agent n’est plus disponible.");
+    };
+    await expect(session.send("Bonjour")).rejects.toThrow("plus disponible");
+    expect(events.view.statuses.at(-1)).toBe("responding");
+  });
+
   it("envoie le message, diffuse la réponse puis ne la double pas à l’arrivée du message complet", async () => {
     const { session, process, events } = await open();
     await sendFirst(session, process, "  Ajoute une page Factures  ");

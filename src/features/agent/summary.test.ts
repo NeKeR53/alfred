@@ -17,6 +17,15 @@ const runtime = (patch: Partial<ConversationRuntime> = {}): ConversationRuntime 
 });
 
 describe("état visible d’une conversation", () => {
+  it("une question bloquante en fin de réponse attend l’utilisateur, lue ou non, tant que la file est vide", () => {
+    const asking = { unread: false, lastStatus: "done" as const, pendingQuestion: "Quelle couleur ?" };
+    expect(conversationState(asking, runtime())).toBe("attention");
+    expect(conversationState(asking, undefined)).toBe("attention");
+    expect(conversationState(asking, runtime({ status: "connecting" }))).toBe("working");
+    const queued = [{ id: "q", message: { text: "x", attachments: [], contexts: [] } }];
+    expect(conversationState(asking, runtime({ queued }))).toBe("waiting");
+  });
+
   it("suit l’ordre de OneApp", () => {
     const approval = { id: "a", title: "x", options: [] };
     expect(conversationState({ unread: false }, runtime({ status: "responding", approvals: [approval] }))).toBe(

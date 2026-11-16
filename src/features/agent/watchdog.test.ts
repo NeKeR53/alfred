@@ -19,6 +19,17 @@ const activity = (id: string, activityKind: "command" | "analysis", status: "run
 });
 
 describe("silence permis", () => {
+  it("comme OneApp, un outil mis à jour après le dernier texte travaille encore", () => {
+    const at = (item: TurnItem, occurredAt: number): TurnItem => ({ ...item, occurredAt });
+    const items = [at(activity("c", "command", "running"), 20), at(text("m"), 10)];
+    expect(silenceLimit(turn(items))).toBeUndefined();
+    const older = [at(activity("c", "command", "running"), 5), at(text("m"), 10)];
+    expect(silenceLimit(turn(older))).toBe(DEFAULT_SILENCE_WATCH.streamMs);
+    // Une activité arrêtée par OneApp est close, comme une activité terminée.
+    const stopped: TurnItem = { kind: "activity", id: "c", activityKind: "command", title: "x", status: "cancelled" };
+    expect(silenceLimit(turn([stopped]))).toBe(DEFAULT_SILENCE_WATCH.thinkingMs);
+  });
+
   it("3 min en pleine réponse, 15 min en réflexion, aucune limite pendant un outil", () => {
     expect(silenceLimit(turn([text("m")]))).toBe(DEFAULT_SILENCE_WATCH.streamMs);
     expect(silenceLimit(turn([]))).toBe(DEFAULT_SILENCE_WATCH.thinkingMs);

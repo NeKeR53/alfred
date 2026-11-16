@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CODEX_FILE_TOOLS, type CodexOptions, codexPolicy, createCodexSession, listCodexModels } from "./codex";
+import { type CodexOptions, codexPolicy, createCodexSession, listCodexModels } from "./codex";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
 import type { Autonomy } from "./types";
 
@@ -66,8 +66,8 @@ describe("Codex · ouverture de la discussion", () => {
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
       model: "gpt-5-codex",
-      // La consigne de OneApp sur les lectures et `apply_patch` suit celles d’Alfred.
-      developerInstructions: `Réponds en français.\n\n${CODEX_FILE_TOOLS}`,
+      // La consigne de OneApp sur les lectures et `apply_patch` est placée par le moteur, avant l’historique.
+      developerInstructions: "Réponds en français.",
       ephemeral: false,
       config: {
         "mcp_servers.alfred": {
@@ -247,7 +247,9 @@ describe("Codex · un tour", () => {
     expect(view.activities).toEqual([
       expect.objectContaining({ title: "Reconnexion au modèle", content: "Reconnecting… 1/5" }),
     ]);
-    expect(view.errors).toEqual(["Codex n’a pas pu terminer sa réponse : You've hit your usage limit."]);
+    expect(view.errors).toEqual([
+      "Codex n’a pas pu terminer sa réponse : You've hit your usage limit. Réessayez ou ouvrez une nouvelle discussion.",
+    ]);
     expect(view.statuses.at(-1)).toBe("idle");
   });
 });
@@ -367,6 +369,16 @@ describe("Codex · annulation et arrêt", () => {
 
     process.send(turnCompleted("turn_2"));
     expect(events.view.statuses.at(-1)).toBe("idle");
+  });
+
+  it("un tour refusé au démarrage rejette l’envoi sans annoncer de fin de tour, comme OneApp", async () => {
+    spawned = fakeSpawn((process) => {
+      codexServer(process);
+      process.respond("turn/start", { error: { message: "thread busy" } });
+    });
+    const { session, events } = await open();
+    await expect(session.send("Bonjour")).rejects.toThrow("Codex CLI n’a pas pu traiter la requête");
+    expect(events.view.statuses.at(-1)).toBe("responding");
   });
 
   it("signale l’arrêt inattendu du processus et rejette la requête en attente", async () => {

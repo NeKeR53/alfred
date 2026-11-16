@@ -25,6 +25,8 @@ export interface SpawnOptions {
     jsonSchema?: unknown;
   };
   opencodeConfig?: string;
+  /** Consignes d’OpenCode : Rust les écrit dans un fichier, qu’il ajoute à `instructions` de la configuration. */
+  opencodeInstructions?: string;
 }
 
 type Output =

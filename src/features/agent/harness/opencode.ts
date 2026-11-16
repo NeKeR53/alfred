@@ -503,6 +503,8 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
       !options.withoutTools,
       await openCodeVersion(),
     ),
+    // Comme OneApp, les consignes passent par un fichier d’instructions : OpenCode lit des chemins, pas du texte.
+    ...(options.instructions?.trim() ? { opencodeInstructions: options.instructions } : {}),
   });
   // Fin de la sortie d’erreur du CLI : sa dernière ligne dit pourquoi il s’est arrêté.
   let stderr = "";
@@ -529,15 +531,20 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
     sessionId = opened.session.sessionId;
     emit({ type: "session", sessionId });
     const modelOption = configOptions(opened.session).find((option) => option.category === "model");
-    if (options.model && modelOption) {
+    if (options.model) {
+      // Comme OneApp : un modèle choisi qu’OpenCode ne permet pas de régler est un échec, pas un repli silencieux.
+      if (!modelOption) throw new Error("Mettez OpenCode à jour pour sélectionner le modèle via ACP.");
       const updated = await rpc.request("session/set_config_option", {
         sessionId,
         configId: modelOption.id,
         value: options.model,
       });
-      const effort = configOptions(updated).find((option) => option.category === "thought_level");
-      if (options.effort && effort && optionValues(effort.options).some(({ id }) => id === options.effort))
+      if (options.effort) {
+        const effort = configOptions(updated).find((option) => option.category === "thought_level");
+        if (!effort || !optionValues(effort.options).some(({ id }) => id === options.effort))
+          throw new Error("Ce niveau de raisonnement n’est plus disponible pour le modèle OpenCode.");
         await rpc.request("session/set_config_option", { sessionId, configId: effort.id, value: options.effort });
+      }
     }
     emit({ type: "status", status: "ready" });
   } catch (cause) {

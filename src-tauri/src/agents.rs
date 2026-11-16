@@ -318,6 +318,34 @@ fn claude_arguments(
     Ok(args)
 }
 
+/// Configuration OpenCode de la session, complétée du fichier de consignes : il s’ajoute aux `instructions` déjà
+/// déclarées. Sans configuration ni consignes, rien n’est passé à OpenCode.
+fn opencode_config_with_instructions(config: Option<String>, instructions: Option<&Path>) -> AppResult<Option<String>> {
+    let invalid = || AppError::new("La configuration OpenCode de la session est invalide.");
+    if config.as_ref().is_some_and(|config| config.len() > 256 * 1024) {
+        return Err(invalid());
+    }
+    let Some(file) = instructions else {
+        if let Some(config) = &config {
+            serde_json::from_str::<Value>(config).map_err(|_| invalid())?;
+        }
+        return Ok(config);
+    };
+    let mut value = match &config {
+        Some(config) => serde_json::from_str::<Value>(config).map_err(|_| invalid())?,
+        None => json!({}),
+    };
+    let object = value.as_object_mut().ok_or_else(invalid)?;
+    let mut files = match object.remove("instructions") {
+        Some(Value::Array(files)) => files,
+        None => Vec::new(),
+        Some(_) => return Err(invalid()),
+    };
+    files.push(Value::String(file.to_string_lossy().to_string()));
+    object.insert("instructions".to_string(), Value::Array(files));
+    Ok(Some(value.to_string()))
+}
+
 /// Destination des sorties d’un agent. Dans la fenêtre, comme dans OneApp, un `Channel` Tauri propre à la session :
 /// rapide et sans perte. Le bus d’événements commun, borné, jette les messages quand la fenêtre prend du retard,
 /// ce qui arrive sous Windows avec un CLI bavard comme Codex ; il ne sert plus qu’au pont de développement.
@@ -409,10 +437,22 @@ pub fn spawn(state: &Arc<AppState>, args: &Value, output: Output) -> AppResult<V
         }
         Provider::Opencode => {
             command.arg("acp");
-            if let Some(config) = opt_arg::<String>(args, "opencodeConfig")? {
-                if config.len() > 256 * 1024 || serde_json::from_str::<Value>(&config).is_err() {
-                    return Err(AppError::new("La configuration OpenCode de la session est invalide."));
+            // Comme OneApp, les consignes d’Alfred passent par un fichier d’instructions : OpenCode lit des chemins.
+            let instructions = match opt_arg::<String>(args, "opencodeInstructions")? {
+                Some(text) if text.len() > 200_000 => {
+                    return Err(AppError::new("Les consignes de l’agent sont trop longues."));
                 }
+                Some(text) if !text.trim().is_empty() => Some(write_prompt(state, &id, &text)?),
+                _ => None,
+            };
+            let config = opencode_config_with_instructions(
+                opt_arg::<String>(args, "opencodeConfig")?,
+                instructions.as_deref(),
+            )
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(prompt_file(state, &id));
+            })?;
+            if let Some(config) = config {
                 let config = match &token {
                     Some(token) => config.replace(TOKEN_PLACEHOLDER, token),
                     None => config,
@@ -420,6 +460,7 @@ pub fn spawn(state: &Arc<AppState>, args: &Value, output: Output) -> AppResult<V
                 // Windows borne une variable d’environnement à 32 767 caractères : mieux vaut le dire que laisser
                 // OpenCode démarrer avec une configuration tronquée ou absente.
                 if !fits_in_environment(&config, cfg!(windows)) {
+                    let _ = std::fs::remove_file(prompt_file(state, &id));
                     return Err(AppError::new("La configuration OpenCode de la session est trop longue pour Windows."));
                 }
                 command.env("OPENCODE_CONFIG_CONTENT", config);
@@ -674,6 +715,29 @@ mod tests {
             PathBuf::from("/usr/bin/codex"),
             PathBuf::from("/opt/bin/codex")
         ]);
+    }
+
+    /// Les consignes d’OpenCode partent par fichier, ajouté aux instructions de la configuration de la session.
+    #[test]
+    fn opencode_instructions_are_added_to_the_session_configuration() {
+        let file = Path::new("/donnees/consignes/session.md");
+        let config = opencode_config_with_instructions(
+            Some(r#"{"instructions":["/espace/a.md"],"permissions":[]}"#.into()),
+            Some(file),
+        )
+        .unwrap()
+        .unwrap();
+        let value: Value = serde_json::from_str(&config).unwrap();
+        assert_eq!(value["instructions"], json!(["/espace/a.md", file.to_string_lossy()]));
+        assert_eq!(value["permissions"], json!([]));
+
+        let alone = opencode_config_with_instructions(None, Some(file)).unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&alone).unwrap()["instructions"], json!([file.to_string_lossy()]));
+
+        assert_eq!(opencode_config_with_instructions(None, None).unwrap(), None);
+        assert_eq!(opencode_config_with_instructions(Some("{}".into()), None).unwrap().as_deref(), Some("{}"));
+        assert!(opencode_config_with_instructions(Some("pas du json".into()), None).is_err());
+        assert!(opencode_config_with_instructions(Some(r#"{"instructions":"a.md"}"#.into()), Some(file)).is_err());
     }
 
     #[test]

@@ -141,7 +141,7 @@ describe("conversation d’agent · un tour", () => {
     expect(runtime(id).status).toBe("responding");
     expect(conversation(id).sessionId).toBe("thr_1");
     expect(lastTurn(id).items).toEqual([
-      { kind: "message", id: "am_1", content: "Je lis les règles." },
+      expect.objectContaining({ kind: "message", id: "am_1", content: "Je lis les règles." }),
       expect.objectContaining({
         kind: "activity",
         id: "cmd_1",
@@ -149,7 +149,7 @@ describe("conversation d’agent · un tour", () => {
         content: "# Règles",
         status: "completed",
       }),
-      { kind: "message", id: "am_2", content: "Page créée." },
+      expect.objectContaining({ kind: "message", id: "am_2", content: "Page créée." }),
     ]);
 
     live.emit({ type: "status", status: "idle" });
@@ -728,13 +728,14 @@ describe("lot 3 · flux d’une réponse", () => {
     try {
       const id = start();
       await useAgents.getState().send(id, message("Bonjour"));
+      const texts = () => lastTurn(id).items.map((item) => (item.kind === "message" ? item.content : ""));
       sessions[0].emit({ type: "message", itemId: "m", content: "Bon" });
-      expect(lastTurn(id).items).toEqual([{ kind: "message", id: "m", content: "Bon" }]);
+      expect(texts()).toEqual(["Bon"]);
       sessions[0].emit({ type: "message", itemId: "m", content: "jour" });
       sessions[0].emit({ type: "message", itemId: "m", content: " !" });
-      expect(lastTurn(id).items).toEqual([{ kind: "message", id: "m", content: "Bon" }]);
+      expect(texts()).toEqual(["Bon"]);
       vi.advanceTimersByTime(120);
-      expect(lastTurn(id).items).toEqual([{ kind: "message", id: "m", content: "Bonjour !" }]);
+      expect(texts()).toEqual(["Bonjour !"]);
     } finally {
       vi.useRealTimers();
     }
@@ -860,5 +861,242 @@ describe("lot 3 · titres, archives, notifications", () => {
       title: "Long travail s’est arrêté",
       dedupeKey: expect.stringMatching(/^agent-error:/),
     });
+  });
+});
+
+describe("passe moteur · comportements de OneApp", () => {
+  it("un envoi refusé par le CLI termine le tour en erreur et ferme la session", async () => {
+    const id = start();
+    vi.mocked(createSession).mockImplementationOnce(async (options) => {
+      const fake = {
+        send: vi.fn(async () => {
+          throw new Error("Codex prépare déjà une réponse.");
+        }),
+        answer: vi.fn(),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+      };
+      sessions.push({ options, emit: options.onEvent, session: fake as unknown as FakeSession["session"] });
+      return fake as unknown as HarnessSession;
+    });
+    await useAgents.getState().send(id, message("Bonjour"));
+    expect(lastTurn(id)).toMatchObject({ status: "error", error: "Codex prépare déjà une réponse." });
+    expect(sessions[0].session.close).toHaveBeenCalled();
+    await useAgents.getState().send(id, message("Encore"));
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("après une erreur, la file part dans l’ordre : l’ancien message d’abord, le nouveau à son tour", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    sessions[0].emit({ type: "error", message: "Le modèle a échoué." });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("error"));
+    await useAgents.getState().send(id, message("Trois"));
+    expect(lastTurn(id).user.text).toBe("Deux");
+    expect(runtime(id).queued.map((item) => item.message.text)).toEqual(["Trois"]);
+    const live = sessions.at(-1)!;
+    live.emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).user.text).toBe("Trois"));
+  });
+
+  it("« Relancer l’exécution » reprend le message du tour, avant la file, dans un tour qui lui est rattaché", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    sessions[0].emit({ type: "error", message: "Le modèle a échoué." });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("error"));
+    const failed = lastTurn(id);
+    await useAgents.getState().retry(id);
+    expect(lastTurn(id)).toMatchObject({ status: "running", retryOf: failed.id, user: { text: "Un" } });
+    expect(runtime(id).queued.map((item) => item.message.text)).toEqual(["Deux"]);
+    // L’historique rejoué ne cite le message qu’une fois.
+    expect(sessions.at(-1)!.options.instructions?.match(/"content":"Un"/g)).toHaveLength(1);
+  });
+
+  it("ne glisse pas dans la réponse un message avec pièces jointes : la réponse est interrompue", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    await useAgents
+      .getState()
+      .send(id, { text: "Regarde", attachments: [{ path: "/a.png", name: "a.png" }], contexts: [] }, { now: true });
+    expect(sessions[0].session.steer).not.toHaveBeenCalled();
+    expect(sessions[0].session.cancel).toHaveBeenCalled();
+    await vi.waitFor(() => expect(lastTurn(id).user.text).toBe("Regarde"));
+  });
+
+  it("ne glisse pas un message pendant une demande d’accord", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    sessions[0].emit({ type: "approval", request: { id: "a1", title: "Commande", options: [] } });
+    await useAgents.getState().send(id, message("Plutôt ceci"), { now: true });
+    expect(sessions[0].session.steer).not.toHaveBeenCalled();
+    expect(sessions[0].session.cancel).toHaveBeenCalled();
+  });
+
+  it("après une orientation, la suite d’une activité commencée reste dans son tour", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    sessions[0].emit({ type: "activity", itemId: "cmd", kind: "command", title: "Commande", status: "running" });
+    await useAgents.getState().send(id, message("Plutôt ceci"), { now: true });
+    sessions[0].emit({ type: "activity", itemId: "cmd", kind: "command", title: "Commande", status: "completed" });
+    sessions[0].emit({ type: "message", itemId: "m2", content: "Entendu.", replace: true });
+    flushAgentUpdates();
+    const [first, second] = conversation(id).turns;
+    expect(first.items).toEqual([expect.objectContaining({ id: "cmd", status: "completed" })]);
+    expect(second.items).toEqual([expect.objectContaining({ id: "m2", content: "Entendu." })]);
+  });
+
+  it("ignore ce qui arrive hors d’un tour en cours", async () => {
+    const id = start();
+    const live = await answeredTurn(id, "Un", "Réponse un.");
+    live.emit({ type: "message", itemId: "tard", content: "En retard." });
+    flushAgentUpdates();
+    expect(lastTurn(id).items.map((item) => item.id)).toEqual(["m-Un"]);
+  });
+
+  it("clôt les activités restées ouvertes à la fin du tour : réflexion terminée, outil arrêté", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    const live = sessions[0];
+    live.emit({ type: "activity", itemId: "r", kind: "analysis", title: "Analyse", status: "running" });
+    live.emit({ type: "activity", itemId: "c", kind: "command", title: "Commande", status: "running" });
+    live.emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("done"));
+    expect(lastTurn(id).items.map((item) => item.kind === "activity" && item.status)).toEqual([
+      "completed",
+      "cancelled",
+    ]);
+
+    await useAgents.getState().send(id, message("Deux"));
+    const next = sessions.at(-1)!;
+    next.emit({ type: "activity", itemId: "r2", kind: "analysis", title: "Analyse", status: "running" });
+    await useAgents.getState().cancel(id);
+    expect(lastTurn(id).items.map((item) => item.kind === "activity" && item.status)).toEqual(["cancelled"]);
+  });
+
+  it("garde la réflexion quand le CLI la termine par un résumé vide", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    sessions[0].emit({ type: "activityDelta", itemId: "r", content: "Je réfléchis." });
+    sessions[0].emit({
+      type: "activity",
+      itemId: "r",
+      kind: "analysis",
+      title: "Analyse",
+      content: "",
+      status: "completed",
+    });
+    flushAgentUpdates();
+    expect(lastTurn(id).items[0]).toMatchObject({ content: "Je réfléchis.", status: "completed" });
+  });
+
+  it("une réponse terminée par une question attend l’utilisateur et l’annonce comme telle", async () => {
+    const { useNotifications } = await import("../../shell/notifications");
+    useNotifications.setState({ items: [], toasts: [] });
+    const id = start();
+    useShell.setState({ view: { kind: "settings" } });
+    await useAgents.getState().send(id, message("Prépare la page"));
+    const reply = 'Deux choix.\n\n```alfred-question\n{"question":"Quelle couleur ?","options":["Bleu","Vert"]}\n```';
+    sessions[0].emit({ type: "message", itemId: "m", content: reply, replace: true });
+    sessions[0].emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("done"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(conversation(id).pendingQuestion).toBe("Quelle couleur ?");
+    expect(useNotifications.getState().items[0]).toMatchObject({
+      tone: "warning",
+      title: "Prépare la page attend votre réponse",
+      description: "Quelle couleur ?",
+      action: { label: "Répondre" },
+    });
+    await useAgents.getState().send(id, message("Bleu"));
+    expect(conversation(id).pendingQuestion).toBeUndefined();
+  });
+
+  it("archiver une conversation au travail l’arrête sans l’annoncer et garde sa file", async () => {
+    const { useNotifications } = await import("../../shell/notifications");
+    useNotifications.setState({ items: [], toasts: [] });
+    const id = start();
+    useShell.setState({ view: { kind: "settings" } });
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    await useAgents.getState().archive(id);
+    expect(lastTurn(id).status).toBe("cancelled");
+    expect(runtime(id).queued.map((item) => item.message.text)).toEqual(["Deux"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useNotifications.getState().items).toEqual([]);
+  });
+
+  it("enregistre la file et la rend à l’ouverture de la conversation", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Un"));
+    await useAgents.getState().send(id, message("Deux"));
+    await useAgents.getState().flush();
+    const saved = called("conversations.save").at(-1)?.conversation as Record<string, unknown>;
+    expect(saved.queued).toEqual([expect.objectContaining({ message: expect.objectContaining({ text: "Deux" }) })]);
+
+    native.invoke.mockImplementation(async (command: string) =>
+      command === "conversations.get" ? { ...saved, id: "relue" } : null,
+    );
+    await useAgents.getState().ensureLoaded("relue");
+    expect(runtime("relue").queued.map((item) => item.message.text)).toEqual(["Deux"]);
+    expect("queued" in conversation("relue")).toBe(false);
+  });
+
+  it("changer de harnais oublie la session de l’ancien : la suivante rejoue l’historique", async () => {
+    const id = start({ provider: "claude" });
+    const first = await answeredTurn(id, "Un", "Réponse un.");
+    first.emit({ type: "session", sessionId: "sess_1" });
+    useAgents.getState().update(id, { provider: "codex" });
+    expect(conversation(id).sessionId).toBeUndefined();
+    useAgents.getState().update(id, { model: "gpt-5" });
+    await useAgents.getState().send(id, message("Deux"));
+    expect(sessions.at(-1)!.options.resumeSessionId).toBeUndefined();
+  });
+
+  it("confie au nommage une deuxième reprise du même fil, dont le titre est déjà porté", async () => {
+    const id = start();
+    await answeredTurn(id, "Un", "Réponse un.");
+    const turnId = lastTurn(id).id;
+    const first = await useAgents.getState().fork(id, turnId);
+    expect(conversation(first.id).autoTitle).toBeUndefined();
+    const second = await useAgents.getState().fork(id, turnId);
+    expect(conversation(second.id).autoTitle).toBe(true);
+  });
+
+  it("Codex reçoit la consigne de ses outils de fichiers avant l’historique rejoué", async () => {
+    const id = start();
+    await answeredTurn(id, "Un", "Réponse un.");
+    useAgents.getState().update(id, { model: "gpt-5-mini" });
+    await useAgents.getState().send(id, message("Deux"));
+    const instructions = sessions.at(-1)!.options.instructions ?? "";
+    expect(instructions.indexOf("apply_patch")).toBeGreaterThan(0);
+    expect(instructions.indexOf("apply_patch")).toBeLessThan(instructions.indexOf("Historique de reprise"));
+  });
+
+  it("une erreur du CLI au repos ferme aussi la session", async () => {
+    const id = start();
+    const live = await answeredTurn(id, "Un", "Réponse un.");
+    live.emit({ type: "error", message: "OpenCode s’est arrêté." });
+    await vi.waitFor(() => expect(live.session.close).toHaveBeenCalled());
+    await useAgents.getState().send(id, message("Deux"));
+    expect(sessions).toHaveLength(2);
+  });
+
+  it("la surveillance du silence attend que le CLI soit lancé", async () => {
+    const id = start();
+    await useAgents.getState().send(id, message("Bonjour"));
+    useAgents.setState((state) => ({ runtime: { ...state.runtime, [id]: { ...runtime(id), status: "connecting" } } }));
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 60 * 60_000);
+      checkAgentSilence();
+      expect(lastTurn(id).status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

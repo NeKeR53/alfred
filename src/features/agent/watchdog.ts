@@ -12,19 +12,25 @@ export interface SilenceWatch {
   thinkingMs: number;
 }
 
+const SETTLED = new Set<string>(["completed", "failed", "cancelled", "stopped"]);
+
 export const DEFAULT_SILENCE_WATCH: SilenceWatch = { checkMs: 30_000, streamMs: 3 * 60_000, thinkingMs: 15 * 60_000 };
 
-/** Silence permis pour ce tour ; `undefined` quand un outil travaille encore après le dernier message. */
+/**
+ * Silence permis pour ce tour, comme `silenceLimit` de OneApp ; `undefined` quand un outil travaille encore après
+ * la dernière réponse : placé après elle, ou mis à jour depuis.
+ */
 export function silenceLimit(turn: Turn, watch: SilenceWatch = DEFAULT_SILENCE_WATCH): number | undefined {
   const { items } = turn;
   let lastMessage = items.length - 1;
   while (lastMessage >= 0 && items[lastMessage]?.kind !== "message") lastMessage -= 1;
+  const lastMessageAt = items[lastMessage]?.occurredAt ?? 0;
   const toolRunning = items.some(
     (item, index) =>
       item.kind === "activity" &&
       item.activityKind !== "analysis" &&
-      item.status === "running" &&
-      (lastMessage < 0 || index > lastMessage),
+      !SETTLED.has(item.status) &&
+      (lastMessage < 0 || index > lastMessage || (item.occurredAt ?? 0) > lastMessageAt),
   );
   if (toolRunning) return undefined;
   return items.at(-1)?.kind === "message" ? watch.streamMs : watch.thinkingMs;
@@ -42,7 +48,10 @@ export interface WatchedTurn {
   turn: Turn;
   /** Dernier signe du CLI pour ce tour. */
   lastEventAt: number;
-  /** Une demande d’accord ou une question attend l’utilisateur : le silence est normal. */
+  /**
+   * Le silence est normal : une demande d’accord ou une question attend l’utilisateur, le CLI se lance, ou un message
+   * est en train d’être glissé dans la réponse.
+   */
   waitingForUser: boolean;
 }
 

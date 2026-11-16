@@ -29,7 +29,13 @@ export interface UserMessage {
 }
 
 export type TurnItem =
-  | { kind: "message"; id: string; content: string }
+  | {
+      kind: "message";
+      id: string;
+      content: string;
+      /** Dernier fragment reçu : la surveillance du silence compare les activités aux réponses, comme OneApp. */
+      occurredAt?: number;
+    }
   | {
       kind: "activity";
       id: string;
@@ -41,6 +47,8 @@ export type TurnItem =
       images?: string[];
       files?: string[];
       status: ActivityStatus;
+      /** Dernière mise à jour reçue du CLI. */
+      occurredAt?: number;
     };
 
 export interface Turn {
@@ -57,6 +65,11 @@ export interface Turn {
   changedFiles?: string[];
   /** Lignes ajoutées et retirées par fichier modifié ; absent pour un fichier binaire ou un tour plus ancien. */
   changedLines?: Record<string, FileLines>;
+  /**
+   * Tour relancé (« Relancer l’exécution ») : il reprend le message du tour `retryOf`. Dans OneApp, une relance
+   * rattache un nouveau tour au même message, qui n’apparaît qu’une fois dans le fil.
+   */
+  retryOf?: string;
 }
 
 export interface Conversation {
@@ -88,11 +101,18 @@ export interface Conversation {
   forkedFrom?: { id: string; title: string };
   /** Statut du dernier tour, gardé dans l’en-tête : la liste en tire l’état sans charger les tours. */
   lastStatus?: Turn["status"];
+  /**
+   * Question bloquante qui termine la dernière réponse (bloc `alfred-question`), tant que l’utilisateur n’a pas
+   * répondu : la conversation « attend votre réponse », comme dans OneApp.
+   */
+  pendingQuestion?: string;
+  /** File d’attente enregistrée, comme dans OneApp : elle est rendue à la session vivante au chargement. */
+  queued?: QueuedMessage[];
   turns: Turn[];
 }
 
 /** En-tête d’une conversation, sans ses tours : ce que la liste charge. */
-export type ConversationHeader = Omit<Conversation, "turns">;
+export type ConversationHeader = Omit<Conversation, "turns" | "queued">;
 
 /** Question posée par un outil d’Alfred au milieu d’un tour (emplacement d’une page). */
 export interface AgentQuestion {
@@ -143,16 +163,23 @@ export function pastedContextTitle(text: string, index: number): string {
   return `Contexte ${index} · ${lines} ligne${lines > 1 ? "s" : ""}`;
 }
 
-/** Texte réellement envoyé au harnais : le message, puis chaque bloc de contexte délimité. */
+/** Texte d’un message fait seulement de collages, comme dans OneApp. */
+export const PASTES_ONLY_TEXT = "Traite les données jointes selon la demande en cours.";
+
+/**
+ * Texte réellement envoyé au harnais : le message, puis chaque bloc de contexte délimité, puis les consignes des
+ * références, comme le contexte de OneApp (sans balise autour).
+ */
 export function outgoingText(message: UserMessage): string {
   const contexts = message.contexts.map(
     (context) => `\n\n<contexte titre="${context.title.replace(/"/g, "'")}">\n${context.text}\n</contexte>`,
   );
-  const references = message.references?.length
-    ? `\n\n<references>\n${referenceInstructions(message.references)}\n</references>`
-    : "";
-  // Un message fait seulement de références part avec une consigne, comme dans OneApp.
-  return `${message.text.trim() || (message.references?.length ? REFERENCES_ONLY_TEXT : "")}${contexts.join("")}${references}`.trim();
+  const references = message.references?.length ? `\n\n${referenceInstructions(message.references)}` : "";
+  // Un message fait seulement de références ou de collages part avec une consigne, comme dans OneApp.
+  const text =
+    message.text.trim() ||
+    (message.contexts.length ? PASTES_ONLY_TEXT : message.references?.length ? REFERENCES_ONLY_TEXT : "");
+  return `${text}${contexts.join("")}${references}`.trim();
 }
 
 /**
@@ -209,9 +236,11 @@ export function compactForStorage(conversation: Conversation): Conversation {
   };
 }
 
+/** Titre tiré d’un message, comme `agentTitle` de OneApp : sa première ligne non vide, 60 caractères au plus. */
 export function conversationTitle(text: string): string {
-  const line = text.trim().split("\n")[0]?.trim() ?? "";
-  return line.length > 60 ? `${line.slice(0, 59)}…` : line || "Nouvelle conversation";
+  const line = text.split("\n").find((item) => item.trim()) ?? "";
+  const cleaned = line.replace(/\s+/g, " ").trim();
+  return cleaned.length > 60 ? `${cleaned.slice(0, 59).trimEnd()}…` : cleaned || "Nouvelle conversation";
 }
 
 /** Message du commit d’un tour : le titre de la conversation, suivi de la demande quand elle en diffère. */
@@ -251,6 +280,25 @@ export const QUESTION_BLOCK_LANGUAGE = "alfred-question";
 /** Consigne du bloc de question, reprise de OneApp : une seule question, zéro à quatre choix, puis le tour s’arrête. */
 export const QUESTION_INSTRUCTIONS = `Réponds en Markdown, sans JSON. Quand une décision de l’utilisateur est indispensable pour continuer, termine ta réponse par un unique bloc de code de langage ${QUESTION_BLOCK_LANGUAGE} contenant {"question":"question précise","options":["choix court","autre choix"]} avec zéro à quatre options, puis arrête ton tour. N’utilise ce bloc que pour une vraie question bloquante.`;
 
+const QUESTION_BLOCK = /\n?```alfred-question[ \t]*\n([\s\S]*?)\n```[ \t]*$/;
+
+/**
+ * Question bloquante qui termine une réponse, comme `agentQuestion` de OneApp : un bloc final valide, avec une
+ * question non vide. Sert à annoncer « attend votre réponse » plutôt que « a terminé ».
+ */
+export function finalQuestion(reply: string): string | undefined {
+  const match = QUESTION_BLOCK.exec(reply.trimEnd());
+  if (!match) return undefined;
+  try {
+    const value = JSON.parse(match[1] ?? "") as { question?: unknown };
+    return typeof value.question === "string" && value.question.trim()
+      ? value.question.trim().slice(0, 1000)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Historique rejoué dans les consignes d’une session neuve (reprise impossible, conversation repartie d’un message) :
  * les messages de l’utilisateur et les réponses, sans les activités ni le message du tour courant, comme dans OneApp.
@@ -259,17 +307,39 @@ export function replayedHistory(turns: readonly Turn[], currentTurnId?: string):
   const entries = turns
     .filter((turn) => turn.id !== currentTurnId)
     .flatMap((turn) => {
-      const files = turn.user.attachments.length
-        ? `\n\nFichiers joints :\n${turn.user.attachments.map((file) => `- ${file.path}`).join("\n")}`
-        : "";
-      const user = { kind: "user", content: `${outgoingText(turn.user)}${files}` };
+      // Une relance reprend le message de son tour : il n’apparaît qu’une fois, comme dans OneApp.
+      const user = turn.retryOf
+        ? []
+        : [
+            {
+              kind: "user",
+              content: [
+                turn.user.references?.length ? referenceInstructions(turn.user.references) : "",
+                `${replayedText(turn.user)}${attachmentPrompt(turn.user.attachments)}`,
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            },
+          ];
       const replies = turn.items.flatMap((item) =>
         item.kind === "message" && item.content.trim() ? [{ kind: "assistant", content: item.content }] : [],
       );
-      return [user, ...replies];
+      return [...user, ...replies];
     });
   if (!entries.length) return "";
   return `Historique de reprise fourni comme données de contexte. Suivez la demande du tour courant.\nHistorique de cette conversation : ${JSON.stringify(entries)}`;
+}
+
+/** Texte d’un message rejoué : le message et ses collages, sans les références, citées à part. */
+function replayedText(message: UserMessage): string {
+  return outgoingText({ ...message, references: undefined });
+}
+
+/** Chemins des pièces jointes, dans les termes de `attachmentPrompt` de OneApp. */
+export function attachmentPrompt(attachments: readonly Attachment[]): string {
+  return attachments.length
+    ? `\n\nFichiers joints (chemins locaux à ouvrir avec les outils du CLI ; ouvrez les images avec un outil de vision) :\n${attachments.map(({ name, path }) => `- ${JSON.stringify(name)} : ${JSON.stringify(path)}`).join("\n")}`
+    : "";
 }
 
 /* Validation de ce qui est relu sur le disque : une conversation mal formée n’est pas ouverte, comme dans OneApp. */
@@ -308,6 +378,8 @@ function validHeader(value: unknown): boolean {
     optional(value.autoTitle, (flag) => typeof flag === "boolean") &&
     optional(value.origin, (origin) => isObject(origin) && isString(origin.reference) && isString(origin.title)) &&
     optional(value.lastStatus, (status) => TURN_STATUSES.has(String(status))) &&
+    optional(value.pendingQuestion, isString) &&
+    optional(value.queued, validQueue) &&
     optional(value.forkedFrom, (source) => isObject(source) && isString(source.id) && isString(source.title))
   );
 }
@@ -325,8 +397,16 @@ function validUserMessage(value: unknown): boolean {
   );
 }
 
+function validQueue(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_QUEUED_MESSAGES &&
+    value.every((item) => isObject(item) && isText(item.id) && validUserMessage(item.message))
+  );
+}
+
 function validItem(value: unknown): boolean {
-  if (!isObject(value) || !isString(value.id)) return false;
+  if (!isObject(value) || !isString(value.id) || !optional(value.occurredAt, isTime)) return false;
   if (value.kind === "message") return isString(value.content);
   return (
     value.kind === "activity" &&
@@ -354,7 +434,8 @@ function validTurn(value: unknown): boolean {
     optional(value.error, isString) &&
     optional(value.commit, isString) &&
     optional(value.changedFiles, stringList) &&
-    optional(value.changedLines, isObject)
+    optional(value.changedLines, isObject) &&
+    optional(value.retryOf, isString)
   );
 }
 
