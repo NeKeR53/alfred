@@ -69,14 +69,13 @@ function ConversationOptions({ conversation, locked }: { conversation: Conversat
       <ModelPicker
         value={{ provider: conversation.provider, model: conversation.model, effort: conversation.effort }}
         cwd={conversation.cwd || spaceDir}
-        providerLocked={started}
         disabled={locked}
         onChange={(choice) =>
           update(conversation.id, {
             provider: choice.provider,
             model: choice.model,
             effort: choice.effort,
-            // Une session ne change pas de harnais en cours de route : le relevé resterait, pas la mémoire de l’agent.
+            // Comme dans OneApp : un autre harnais ne peut pas reprendre la session ; la suivante rejoue l’historique.
             ...(choice.provider !== conversation.provider ? { sessionId: undefined } : {}),
           })
         }

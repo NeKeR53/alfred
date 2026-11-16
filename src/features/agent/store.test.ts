@@ -488,6 +488,20 @@ describe("lot 3 · repartir d’ici", () => {
     expect(live.options.instructions).not.toContain('"content":"Trois"');
   });
 
+  it("change de harnais en cours de conversation : la session suivante rejoue l’historique, comme OneApp", async () => {
+    const id = start();
+    await answeredTurn(id, "Un", "Réponse un.");
+    sessions[0].emit({ type: "session", sessionId: "claude-1" });
+    await useAgents
+      .getState()
+      .update(id, { provider: "codex", model: undefined, effort: undefined, sessionId: undefined });
+    await useAgents.getState().send(id, message("Deux"));
+    const live = sessions.at(-1)!;
+    expect(live.options.provider).toBe("codex");
+    expect(live.options.resumeSessionId).toBeUndefined();
+    expect(live.options.instructions).toContain("Réponse un.");
+  });
+
   it("depuis une réponse : reprend le fil jusqu’à elle", async () => {
     const id = start();
     await answeredTurn(id, "Un", "Réponse un.");
