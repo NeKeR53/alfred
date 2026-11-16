@@ -1,0 +1,25 @@
+# Diagnostic temporaire : Codex et OpenCode lancés comme dans Alfred, sous Windows.
+name: Diag Windows agents
+on:
+  push:
+    branches: [diag-windows-agents]
+jobs:
+  diag:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g @openai/codex opencode-ai
+      - run: |
+          where.exe codex
+          where.exe opencode
+          codex --version
+          opencode --version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: cargo test --lib windows_clis -- --ignored --nocapture
+        working-directory: src-tauri

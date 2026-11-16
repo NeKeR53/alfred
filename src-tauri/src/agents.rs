@@ -664,4 +664,80 @@ mod tests {
         assert!(!text.contains("jeton-secret"), "{text}");
         assert!(text.contains(TOKEN_PLACEHOLDER), "{text}");
     }
+    /// Diagnostic Windows, lancé à la main en CI (`cargo test -- --ignored windows_clis`) : Codex et OpenCode,
+    /// installés par npm, sont lancés comme le fait Alfred et doivent répondre à leurs premières requêtes.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn windows_clis_answer_their_first_requests() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
+        let cwd_json = serde_json::to_string(&cwd).unwrap();
+        let cases: Vec<(&str, &str, Vec<String>)> = vec![
+            ("codex", "app-server", vec![
+                r#"{"method":"initialize","id":1,"params":{"clientInfo":{"name":"alfred","title":"Alfred","version":"0.1.0"},"capabilities":null}}"#.to_string(),
+                r#"{"method":"initialized","params":{}}"#.to_string(),
+                format!(r#"{{"method":"thread/start","id":2,"params":{{"cwd":{cwd_json},"approvalPolicy":"on-request","sandbox":"workspace-write","ephemeral":true}}}}"#),
+            ]),
+            ("opencode", "acp", vec![
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"alfred","version":"0.1.0"}}}"#.to_string(),
+                format!(r#"{{"jsonrpc":"2.0","id":2,"method":"session/new","params":{{"cwd":{cwd_json},"mcpServers":[]}}}}"#),
+            ]),
+        ];
+        let mut failures = Vec::new();
+        for (program, subcommand, requests) in cases {
+            let path = resolve_program(program).unwrap_or_else(|| panic!("{program} introuvable"));
+            println!("=== {program} : {}", path.display());
+            let mut command = command(&path, Some(&cwd));
+            command.arg(subcommand).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            let (mut child, process) = process_tree::spawn(&mut command).unwrap();
+            let (sender, receiver) = mpsc::channel::<String>();
+            let stdout = child.stdout.take().unwrap();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    if sender.send(line).is_err() {
+                        return;
+                    }
+                }
+            });
+            let mut stderr = child.stderr.take().unwrap();
+            let errors = std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = stderr.read_to_string(&mut text);
+                text
+            });
+            let mut stdin = child.stdin.take().unwrap();
+            for request in &requests {
+                let id = serde_json::from_str::<Value>(request).unwrap().get("id").cloned();
+                println!("--> {request}");
+                stdin.write_all(format!("{request}\n").as_bytes()).unwrap();
+                stdin.flush().unwrap();
+                let Some(id) = id else { continue };
+                let answered = loop {
+                    match receiver.recv_timeout(Duration::from_secs(90)) {
+                        Ok(line) => {
+                            println!("<-- {}", line.chars().take(600).collect::<String>());
+                            if serde_json::from_str::<Value>(&line).ok().and_then(|value| value.get("id").cloned())
+                                == Some(id.clone())
+                            {
+                                break true;
+                            }
+                        }
+                        Err(_) => break false,
+                    }
+                };
+                if !answered {
+                    println!("!!! {program} : aucune réponse à la requête {id}");
+                    failures.push(format!("{program} / {id}"));
+                    break;
+                }
+            }
+            drop(stdin);
+            let _ = process.terminate();
+            let _ = child.wait();
+            println!("--- stderr de {program} :\n{}", errors.join().unwrap_or_default());
+        }
+        assert!(failures.is_empty(), "sans réponse : {failures:?}");
+    }
 }
