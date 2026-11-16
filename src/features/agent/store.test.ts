@@ -846,6 +846,36 @@ describe("lot 3 · titres, archives, notifications", () => {
     }
   });
 
+  it("n’annonce pas l’arrêt décidé pour envoyer un nouveau message, comme OneApp", async () => {
+    const { useNotifications } = await import("../../shell/notifications");
+    useNotifications.setState({ items: [], toasts: [] });
+    const id = start();
+    useShell.setState({ view: { kind: "settings" } });
+    await useAgents.getState().send(id, message("Long travail"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    sessions[0].session.steer.mockRejectedValueOnce(new Error("non"));
+    await useAgents.getState().send(id, message("Autre chose"), { now: true });
+    await vi.waitFor(() => expect(lastTurn(id)).toMatchObject({ status: "running", user: { text: "Autre chose" } }));
+    expect(conversation(id).turns[0].status).toBe("cancelled");
+    expect(useNotifications.getState().items.map((item) => item.title)).not.toContainEqual(
+      expect.stringContaining("s’est arrêté"),
+    );
+  });
+
+  it("ne notifie pas une conversation ouverte dans le panneau d’agent de la page affichée", async () => {
+    const { useNotifications } = await import("../../shell/notifications");
+    useNotifications.setState({ items: [], toasts: [] });
+    const id = start();
+    useShell.setState({
+      view: { kind: "section", id: "notes/main" },
+      activeTab: { "notes/main": "notes/page" },
+      agentPanel: { "notes/page": id },
+      panelHidden: {},
+    });
+    await answeredTurn(id, "Un", "Réponse un.");
+    expect(useNotifications.getState().items).toEqual([]);
+  });
+
   it("un tour arrêté non lu est annoncé comme un échec", async () => {
     const { useNotifications } = await import("../../shell/notifications");
     useNotifications.setState({ items: [], toasts: [] });

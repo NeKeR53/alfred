@@ -389,7 +389,22 @@ export const useAgents = create<AgentState>((set, get) => {
     return next;
   };
 
-  const isViewed = (id: string) => get().activeId === id && useShell.getState().view.kind === "agent";
+  /**
+   * Conversation affichée : ouverte sur la page Agent, ou dans le panneau d’agent visible de la page affichée. Comme
+   * dans OneApp, une conversation affichée ne notifie pas.
+   */
+  const isViewed = (id: string) => {
+    const shell = useShell.getState();
+    if (shell.view.kind === "agent") return get().activeId === id;
+    if (shell.view.kind !== "section") return false;
+    const page = shell.activeTab[shell.view.id];
+    return Boolean(page) && shell.agentPanel[page] === id && !shell.panelHidden[page];
+  };
+  /**
+   * Arrêts décidés par Alfred pour envoyer aussitôt un nouveau message : comme dans OneApp, l’agent repart au travail
+   * sans qu’on annonce qu’il s’est arrêté.
+   */
+  const silentStops = new Set<string>();
 
   /**
    * Notification d’un agent qui n’est pas affiché, reprise de `useAgentNotifications` de OneApp : « attend votre
@@ -471,7 +486,8 @@ export const useAgents = create<AgentState>((set, get) => {
     } catch {
       // Un espace sans dépôt utilisable n’empêche pas la conversation de se terminer.
     }
-    const viewed = isViewed(id);
+    const silent = silentStops.delete(id);
+    const viewed = silent || isViewed(id);
     let question: string | undefined;
     patchConversation(id, (latest) => {
       const turns = [...latest.turns];
@@ -820,7 +836,9 @@ export const useAgents = create<AgentState>((set, get) => {
     }
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
     // Comme OneApp : la réponse est arrêtée, puis ce message part aussitôt, dans une session neuve.
+    if (current(id)?.turns.at(-1)?.status === "running") silentStops.add(id);
     await get().cancel(id);
+    silentStops.delete(id);
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
     setQueue(id, (items) => items.filter((item) => item.id !== queuedId));
     await startTurn(id, queued.message, queued.id);
