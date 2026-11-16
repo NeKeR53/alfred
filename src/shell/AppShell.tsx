@@ -254,7 +254,7 @@ export function SectionView({
             </EmptyState>
           ) : page ? (
             <>
-              <SetupBanner module={page.module} />
+              <SetupBanner module={page.module} uses={page.uses} />
               <SpacePage key={page.reference} page={page} kind="page" />
             </>
           ) : (

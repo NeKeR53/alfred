@@ -380,5 +380,21 @@ it("le bandeau d’une page propose de vérifier un service seulement pas encore
   delete tests.gmail;
   render(<SetupBanner module="boite" />);
   await user.click(await screen.findByRole("button", { name: "Vérifier" }));
-  expect(await screen.findAllByText(/Boîte n’est pas encore prêt/)).not.toHaveLength(0);
+  expect(await screen.findAllByText(/Gmail n’est pas encore configuré/)).not.toHaveLength(0);
+});
+
+it("une page qui n’utilise que les services prêts s’affiche sans bandeau, même si le module attend un autre service", async () => {
+  stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
+  tests.gmail = { ok: true, message: "Le service répond (200)." };
+  modules = [summary("boite", "Boîte", { clients: [GMAIL, { id: "agenda", label: "Agenda" }] })];
+  const { unmount } = render(<SetupBanner module="boite" uses={{ clients: ["gmail"] }} />);
+  await waitFor(() => expect(calls.some((call) => call.command === "modules.setup")).toBe(true));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByText(/configur/)).toBeNull();
+  unmount();
+  // La page qui a besoin de l’agenda, elle, le dit, sans alarmer : une partie du module marche déjà.
+  render(<SetupBanner module="boite" uses={{ clients: ["agenda"] }} />);
+  expect(await screen.findByText(/Agenda n’est pas encore configuré/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Configurer" })).toBeTruthy();
 });

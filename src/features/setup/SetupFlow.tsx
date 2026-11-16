@@ -450,6 +450,8 @@ export function SetupFlow({
   };
 
   const left = setup.steps.filter((item) => !item.optional && item.state !== "ready");
+  /** Un service au moins est prêt : le module sert déjà, le reste peut attendre. */
+  const usable = setup.steps.some((item) => item.state === "ready");
   const done = (
     <div className="setup-flow__body">
       {setup.ready ? (
@@ -459,8 +461,12 @@ export function SetupFlow({
         </>
       ) : (
         <>
-          <h3>Presque fini</h3>
-          <Text>Il reste à configurer :</Text>
+          <h3>{usable ? `${setup.name} est prêt à servir` : "Presque fini"}</h3>
+          {usable ? (
+            <Text>Vous pouvez déjà vous en servir. Ce qui dépend de ces services restera vide en attendant :</Text>
+          ) : (
+            <Text>Il reste à configurer :</Text>
+          )}
           <ul className="setup-flow__needs">
             {left.map((item) => (
               <li key={item.key}>
@@ -472,8 +478,8 @@ export function SetupFlow({
             ))}
           </ul>
           <Text tone="muted" size="meta">
-            Le module reste marqué « Configuration à terminer » tant que ces services ne sont pas prêts. Vous pourrez
-            reprendre depuis Réglages → Modules.
+            Vous pourrez les configurer plus tard depuis Réglages → Modules, ou depuis le bandeau des pages qui en ont
+            besoin.
           </Text>
         </>
       )}
@@ -495,10 +501,18 @@ export function SetupFlow({
           <div className="setup-flow__footer">
             {index > 0 ? <Button onClick={() => go(-1)}>Précédent</Button> : null}
             <span className="setup-flow__spacer" />
+            {!last && step?.state === "ready" && !setup.ready && onOpenModule ? (
+              <Button onClick={onOpenModule}>Utiliser maintenant</Button>
+            ) : null}
             {last ? (
               <>
-                {setup.ready && onOpenModule ? <Button onClick={onOpenModule}>Ouvrir le module</Button> : null}
-                <Button variant="primary" onClick={onClose}>
+                {(setup.ready || usable) && onOpenModule ? (
+                  // Une partie marche déjà : s’en servir est la suite naturelle, finir la configuration attendra.
+                  <Button variant={!setup.ready ? "primary" : "secondary"} onClick={onOpenModule}>
+                    Ouvrir le module
+                  </Button>
+                ) : null}
+                <Button variant={!setup.ready && usable && onOpenModule ? "secondary" : "primary"} onClick={onClose}>
                   {setup.ready ? "Terminer" : "Terminer plus tard"}
                 </Button>
               </>
