@@ -145,40 +145,24 @@ pub(crate) fn terminate_tree(pid: u32) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Processus d’agent lancé par Alfred. Sous Windows il garde le Job Object qui contient tout son arbre : un
-/// descendant dont le parent est déjà sorti y reste rattaché, et la fermeture du Job (fin de la session, ou mort
-/// d’Alfred) l’arrête.
+/// Processus d’agent lancé par Alfred. Comme dans OneApp, il est lancé directement, sans Job Object ; son arrêt
+/// parcourt tout son arbre (`taskkill /T` sous Windows).
 pub(crate) struct OwnedProcess {
     pid: u32,
-    #[cfg(windows)]
-    job: crate::windows_job::Job,
 }
 
 impl OwnedProcess {
     /// Arrête le processus et tous ses descendants.
     pub(crate) fn terminate(&self) -> Result<(), AppError> {
-        #[cfg(windows)]
-        if self.job.terminate() {
-            return Ok(());
-        }
         terminate_tree(self.pid)
     }
 }
 
 /// Lance `command` en gardant de quoi arrêter tout son arbre.
 pub(crate) fn spawn(command: &mut std::process::Command) -> std::io::Result<(std::process::Child, OwnedProcess)> {
-    #[cfg(windows)]
-    {
-        let (child, job) = crate::windows_job::spawn(command)?;
-        let pid = child.id();
-        Ok((child, OwnedProcess { pid, job }))
-    }
-    #[cfg(not(windows))]
-    {
-        let child = command.spawn()?;
-        let pid = child.id();
-        Ok((child, OwnedProcess { pid }))
-    }
+    let child = command.spawn()?;
+    let pid = child.id();
+    Ok((child, OwnedProcess { pid }))
 }
 
 #[cfg(test)]

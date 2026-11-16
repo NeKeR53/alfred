@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CodexOptions, createCodexSession, listCodexModels } from "./codex";
+import { type CodexOptions, codexPolicy, createCodexSession, listCodexModels } from "./codex";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
 import type { Autonomy } from "./types";
 
@@ -459,5 +459,18 @@ describe("Codex · catalogue et appel unique", () => {
       turnCompleted("turn_1"),
     );
     expect(events.view.messages).toEqual(['{"titre":"Factures"}']);
+  });
+});
+
+describe("Codex · Windows", () => {
+  it("n’utilise jamais le bac à sable workspace-write, comme OneApp", () => {
+    for (const autonomy of ["ask", "auto"] as const)
+      expect(codexPolicy(autonomy, ["C:\\espace"], true)).toEqual({
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      });
+    expect(codexPolicy("strict", ["C:\\espace"], true)).toMatchObject({ approvalPolicy: "never", sandbox: "read-only" });
+    expect(codexPolicy("ask", ["/espace"], false)).toMatchObject({ sandbox: "workspace-write" });
   });
 });

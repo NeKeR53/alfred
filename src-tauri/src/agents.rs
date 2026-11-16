@@ -674,22 +674,37 @@ mod tests {
         use std::time::Duration;
         let cwd = std::env::current_dir().unwrap().to_string_lossy().to_string();
         let cwd_json = serde_json::to_string(&cwd).unwrap();
-        let cases: Vec<(&str, &str, Vec<String>)> = vec![
-            ("codex", "app-server", vec![
+        let v1 = r#"{"permission":{"external_directory":"ask","alfred_*":"allow"},"mcp":{"alfred":{"type":"remote","url":"http://127.0.0.1:9/mcp","oauth":false,"headers":{"Authorization":"Bearer x"},"enabled":true}}}"#;
+        let v2 = r#"{"permissions":[{"action":"external_directory","resource":"*","effect":"ask"}],"mcp":{"servers":{"alfred":{"type":"remote","url":"http://127.0.0.1:9/mcp","oauth":false,"codemode":false,"disabled":false,"headers":{"Authorization":"Bearer x"}}}}}"#;
+        let cases: Vec<(&str, &str, Option<&str>, Vec<String>)> = vec![
+            ("codex", "app-server", None, vec![
+                r#"{"method":"initialize","id":1,"params":{"clientInfo":{"name":"alfred","title":"Alfred","version":"0.1.0"},"capabilities":null}}"#.to_string(),
+                r#"{"method":"initialized","params":{}}"#.to_string(),
+                format!(r#"{{"method":"thread/start","id":2,"params":{{"cwd":{cwd_json},"approvalPolicy":"never","sandbox":"danger-full-access","ephemeral":true}}}}"#),
+            ]),
+            ("codex", "app-server", None, vec![
                 r#"{"method":"initialize","id":1,"params":{"clientInfo":{"name":"alfred","title":"Alfred","version":"0.1.0"},"capabilities":null}}"#.to_string(),
                 r#"{"method":"initialized","params":{}}"#.to_string(),
                 format!(r#"{{"method":"thread/start","id":2,"params":{{"cwd":{cwd_json},"approvalPolicy":"on-request","sandbox":"workspace-write","ephemeral":true}}}}"#),
             ]),
-            ("opencode", "acp", vec![
+            ("opencode", "acp", Some(v2), vec![
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"alfred","version":"0.1.0"}}}"#.to_string(),
+                format!(r#"{{"jsonrpc":"2.0","id":2,"method":"session/new","params":{{"cwd":{cwd_json},"mcpServers":[]}}}}"#),
+            ]),
+            ("opencode", "acp", Some(v1), vec![
                 r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"alfred","version":"0.1.0"}}}"#.to_string(),
                 format!(r#"{{"jsonrpc":"2.0","id":2,"method":"session/new","params":{{"cwd":{cwd_json},"mcpServers":[]}}}}"#),
             ]),
         ];
         let mut failures = Vec::new();
-        for (program, subcommand, requests) in cases {
+        for (program, subcommand, config, requests) in cases {
             let path = resolve_program(program).unwrap_or_else(|| panic!("{program} introuvable"));
-            println!("=== {program} : {}", path.display());
+            println!("=== {program} : {} ; configuration : {}", path.display(), config.unwrap_or("aucune"));
             let mut command = command(&path, Some(&cwd));
+            if let Some(config) = config {
+                command.env("OPENCODE_CONFIG_CONTENT", config);
+            }
+            let started = std::time::Instant::now();
             command.arg(subcommand).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
             let (mut child, process) = process_tree::spawn(&mut command).unwrap();
             let (sender, receiver) = mpsc::channel::<String>();
@@ -717,7 +732,7 @@ mod tests {
                 let answered = loop {
                     match receiver.recv_timeout(Duration::from_secs(90)) {
                         Ok(line) => {
-                            println!("<-- {}", line.chars().take(600).collect::<String>());
+                            println!("<-- [{:.1} s] {}", started.elapsed().as_secs_f32(), line.chars().take(600).collect::<String>());
                             if serde_json::from_str::<Value>(&line).ok().and_then(|value| value.get("id").cloned())
                                 == Some(id.clone())
                             {
@@ -729,7 +744,7 @@ mod tests {
                 };
                 if !answered {
                     println!("!!! {program} : aucune réponse à la requête {id}");
-                    failures.push(format!("{program} / {id}"));
+                    failures.push(format!("{program} {} / {id}", config.map(|_| "(config)").unwrap_or("")));
                     break;
                 }
             }

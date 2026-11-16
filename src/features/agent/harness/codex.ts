@@ -85,8 +85,20 @@ class JsonlParser {
   }
 }
 
-/** Politique d’approbation et bac à sable de Codex pour un niveau d’autonomie. */
-export function codexPolicy(autonomy: Autonomy, roots: string[]) {
+/** WebView2, sous Windows, se présente comme « Windows NT ». */
+const onWindows = () => typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
+/**
+ * Politique d’approbation et bac à sable de Codex pour un niveau d’autonomie. Sous Windows, comme dans OneApp :
+ * aucune demande d’accord et jamais le bac à sable « workspace-write », qui y prépare des droits sur les dossiers
+ * avant chaque démarrage et rend Codex très lent à se lancer ; le mode strict reste en lecture seule.
+ */
+export function codexPolicy(autonomy: Autonomy, roots: string[], windows = onWindows()) {
+  if (windows) {
+    return autonomy === "strict"
+      ? { approvalPolicy: "never", sandbox: "read-only", sandboxPolicy: { type: "readOnly" } }
+      : { approvalPolicy: "never", sandbox: "danger-full-access", sandboxPolicy: { type: "dangerFullAccess" } };
+  }
   if (autonomy === "auto") {
     return { approvalPolicy: "never", sandbox: "danger-full-access", sandboxPolicy: { type: "dangerFullAccess" } };
   }
@@ -331,6 +343,8 @@ class CodexSession implements HarnessSession {
   #turnId?: string;
   /** Tours interrompus par Alfred : leur fin, confirmée plus tard par le CLI, ne concerne plus le tour suivant. */
   readonly #interrupted = new Set<string>();
+  /** Fin de la sortie d’erreur du CLI : sa dernière ligne dit pourquoi il s’est arrêté. */
+  #stderr = "";
   #closed = false;
 
   constructor(process: HarnessProcess, options: CodexOptions) {
@@ -338,6 +352,9 @@ class CodexSession implements HarnessSession {
     this.#options = options;
     this.#emit = options.onEvent;
     process.onStdout((chunk) => this.handleOutput(chunk));
+    process.onStderr((chunk) => {
+      this.#stderr = (this.#stderr + chunk).slice(-2000);
+    });
     process.onClose(() => this.handleClosed());
   }
 
@@ -683,7 +700,11 @@ class CodexSession implements HarnessSession {
     this.#closed = true;
     this.rejectPending(new Error("Codex s’est arrêté."));
     this.closeApprovals();
-    this.#emit({ type: "error", message: "Codex s’est arrêté. Envoyer un message relance la conversation." });
+    const detail = this.#stderr.trim().split("\n").at(-1)?.trim();
+    this.#emit({
+      type: "error",
+      message: `Codex s’est arrêté${detail ? ` : ${detail}` : ""}. Envoyer un message relance la conversation.`,
+    });
     this.status("closed");
   }
 

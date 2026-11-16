@@ -493,6 +493,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_server_that_dies_at_startup_is_reported() {
         let dir = tempfile::tempdir().unwrap();

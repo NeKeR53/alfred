@@ -3,7 +3,7 @@
  * remontent à l’utilisateur, sauf en autonomie totale où la première option d’accord est choisie.
  */
 import { contentFiles } from "../lib/contentFiles";
-import { spawnProcess } from "./process";
+import { probe, spawnProcess } from "./process";
 import { AgentProtocol, object, type RpcMessage } from "./rpc";
 import type {
   ActivityAction,
@@ -81,6 +81,31 @@ export function openCodePermissions(autonomy: Autonomy, tools: boolean, alfred: 
   return alfred ? [...rules, rule("alfred_*", "allow")] : rules;
 }
 
+/** Nom des actions d’Alfred dans les règles « permission » d’OpenCode 1 (un objet, et non une liste). */
+const V1_ACTIONS: Record<string, string> = {
+  edit: "edit",
+  write: "edit",
+  shell: "bash",
+  external_directory: "external_directory",
+  webfetch: "webfetch",
+  websearch: "websearch",
+  subagent: "task",
+};
+
+/**
+ * OpenCode 1 et 2 n’ont pas le même contrat de configuration, comme le gère OneApp : une configuration écrite pour
+ * la version 2 empêche OpenCode 1 (celui que npm installe, notamment sous Windows) de répondre. La version est lue
+ * une fois par chargement ; illisible, la version 2 est supposée.
+ */
+let openCodeMajor: Promise<number> | undefined;
+export function openCodeVersion(): Promise<number> {
+  openCodeMajor ??= Promise.resolve()
+    .then(() => probe("opencode"))
+    .then((result) => Number(/(\d+)\.\d+/.exec(result?.version ?? "")?.[1] ?? 2))
+    .catch(() => 2);
+  return openCodeMajor;
+}
+
 /**
  * Configuration propre à la session, passée par l’environnement : elle déclare les outils d’Alfred et les règles
  * d’autorisation sans toucher aux fichiers de l’utilisateur. Le jeton y est un marqueur que Rust remplace au
@@ -91,23 +116,25 @@ export function openCodeSessionConfig(
   instructionsFile?: string,
   autonomy: Autonomy = "ask",
   tools = true,
+  version = 2,
 ) {
   const config: Record<string, unknown> = {};
   const permissions = openCodePermissions(autonomy, tools, Boolean(toolsUrl));
-  if (permissions.length) config.permissions = permissions;
-  if (toolsUrl) {
-    config.mcp = {
-      servers: {
-        alfred: {
-          type: "remote",
-          url: toolsUrl,
-          oauth: false,
-          codemode: false,
-          disabled: false,
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        },
-      },
-    };
+  const alfred = {
+    type: "remote",
+    url: toolsUrl,
+    oauth: false,
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  };
+  if (version < 2) {
+    if (permissions.length)
+      config.permission = Object.fromEntries(
+        permissions.map(({ action, effect }) => [V1_ACTIONS[action] ?? action, effect]),
+      );
+    if (toolsUrl) config.mcp = { alfred: { ...alfred, enabled: true } };
+  } else {
+    if (permissions.length) config.permissions = permissions;
+    if (toolsUrl) config.mcp = { servers: { alfred: { ...alfred, codemode: false, disabled: false } } };
   }
   if (instructionsFile) config.instructions = [instructionsFile];
   return JSON.stringify(config);
@@ -445,13 +472,23 @@ export async function createOpenCodeSession(options: OpenCodeOptions): Promise<H
       options.instructionsFile,
       options.autonomy,
       !options.withoutTools,
+      await openCodeVersion(),
     ),
+  });
+  // Fin de la sortie d’erreur du CLI : sa dernière ligne dit pourquoi il s’est arrêté.
+  let stderr = "";
+  process.onStderr((chunk) => {
+    stderr = (stderr + chunk).slice(-2000);
   });
   const rpc = new AgentProtocol(process, onMessage, () => {
     if (closed) return;
     closed = true;
     updates.endTurn();
-    emit({ type: "error", message: "OpenCode s’est arrêté. Envoyer un message relance la conversation." });
+    const detail = stderr.trim().split("\n").at(-1)?.trim();
+    emit({
+      type: "error",
+      message: `OpenCode s’est arrêté${detail ? ` : ${detail}` : ""}. Envoyer un message relance la conversation.`,
+    });
     emit({ type: "status", status: "closed" });
   });
   let canDelete = false;

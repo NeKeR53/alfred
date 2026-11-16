@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
-import { createOpenCodeSession, listOpenCodeModels, type OpenCodeOptions } from "./opencode";
+import { createOpenCodeSession, listOpenCodeModels, openCodeSessionConfig, type OpenCodeOptions } from "./opencode";
 
 vi.mock("./process", () => ({ spawnProcess: vi.fn(), probe: vi.fn() }));
 
@@ -519,5 +519,33 @@ describe("OpenCode · catalogue", () => {
     const { process } = spawned[0];
     expect(process.call("session/delete").params).toEqual({ sessionId: SESSION });
     expect(process.killed).toBe(true);
+  });
+});
+
+describe("OpenCode 1", () => {
+  it("reçoit sa propre forme de configuration, comme dans OneApp", () => {
+    const config = JSON.parse(
+      openCodeSessionConfig("http://127.0.0.1:4100/mcp", "C:\\espace\\consignes.md", "strict", true, 1),
+    );
+    expect(config).toEqual({
+      permission: { edit: "ask", bash: "ask", external_directory: "ask", "alfred_*": "allow" },
+      mcp: {
+        alfred: {
+          type: "remote",
+          url: "http://127.0.0.1:4100/mcp",
+          oauth: false,
+          enabled: true,
+          headers: { Authorization: "Bearer __ALFRED_MCP_TOKEN__" },
+        },
+      },
+      instructions: ["C:\\espace\\consignes.md"],
+    });
+    expect(config.permissions).toBeUndefined();
+  });
+
+  it("refuse les outils d’écriture d’un appel unique", () => {
+    const { permission } = JSON.parse(openCodeSessionConfig(undefined, undefined, "ask", false, 1));
+    expect(permission).toMatchObject({ edit: "deny", bash: "deny", task: "deny" });
+    expect(permission["*"]).toBeUndefined();
   });
 });
