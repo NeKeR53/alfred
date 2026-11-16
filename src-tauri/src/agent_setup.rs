@@ -105,8 +105,8 @@ pub async fn store_secret(state: &Arc<AppState>, args: &Value) -> AppResult<Valu
     notice(
         state,
         &format!("vault:{}", saved["id"].as_str().unwrap_or_default()),
-        &format!("L’agent a enregistré « {label} » dans le coffre"),
-        "Réglages, onglet Coffre, pour la revoir ou la supprimer.",
+        &format!("J’ai rangé « {label} » dans le coffre"),
+        "Vous la retrouverez dans Réglages → Mots de passe et clés.",
     );
     Ok(json!({
         "entry": saved["id"],
@@ -118,9 +118,16 @@ pub async fn store_secret(state: &Arc<AppState>, args: &Value) -> AppResult<Valu
 }
 
 /// `validate_client` : approuve le client tel que son fichier le décrit aujourd’hui.
-pub fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+pub async fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let id: String = arg(args, "client")?;
-    let validated = clients::validate_by_agent(state, &id)?;
+    let mut validated = clients::validate_by_agent(state, &id)?;
+    // Un client prêt est testé tout de suite : un module n’est dit prêt qu’après un test réussi de son compte, et
+    // l’utilisateur n’a rien à faire de plus.
+    let tests = if validated["status"] == json!("ready") { clients::test_instances(state, &id).await? } else { Vec::new() };
+    let failed = tests.iter().any(|test| test["ok"] != json!(true));
+    if !tests.is_empty() {
+        validated["tests"] = json!(tests);
+    }
     let label = validated["label"].as_str().unwrap_or(&id).to_string();
     // Adresses réellement appelées : celle de chaque instance.
     let addresses: Vec<&str> = validated["instances"]
@@ -133,14 +140,18 @@ pub fn validate_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     notice(
         state,
         &format!("client:{id}"),
-        &format!("L’agent a validé le client « {label} »"),
-        &format!("Ses requêtes partent vers {base_url}. Réglages, onglet Clients, pour le revoir."),
+        &format!("J’ai validé le service « {label} »"),
+        &format!("Ses requêtes partent vers {base_url}. Vous le retrouverez dans Réglages → Modules."),
     );
     Ok(json!({
         "client": id,
         "status": validated["status"],
         "problem": validated["problem"],
+        "tests": validated["tests"],
         "next": match validated["status"].as_str() {
+            _ if failed => {
+                "Client validé, mais son test échoue (voir `tests`) : corriger l’adresse, le `testPath` ou le secret, puis `validate_client` à nouveau."
+            }
             Some("missingSecret") => "Le secret manque : `vault_store`, puis `declare_client` avec `auth.secret`, puis `validate_client` à nouveau.",
             Some("toConnect") => "Client OAuth 2 pas encore connecté : `connect_client` ouvre la page de connexion du service.",
             _ => "Client prêt. Accorder l’accès aux pages et fonctions qui l’utilisent avec `grant_access`.",
@@ -210,8 +221,8 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     notice(
         state,
         &subject,
-        &format!("L’agent a accordé à {to} l’accès à {label}"),
-        "La page ne posera plus la question.",
+        &format!("J’ai accordé à {to} l’accès à {label}"),
+        "La page ne vous posera plus la question.",
     );
     Ok(json!({ "granted": { "to": to, "resource": resource } }))
 }
@@ -233,8 +244,8 @@ pub async fn connect_client(state: &Arc<AppState>, args: &Value) -> AppResult<Va
     notice(
         state,
         &format!("client:{id}"),
-        &format!("Connexion à « {} » ouverte dans le navigateur", client.label),
-        "Se connecter sur la page du service pour terminer.",
+        &format!("J’ai ouvert la connexion à « {} » dans votre navigateur", client.label),
+        "Il ne vous reste qu’à vous connecter sur la page du service.",
     );
     Ok(json!({
         "client": id,

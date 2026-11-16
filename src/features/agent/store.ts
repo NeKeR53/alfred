@@ -7,6 +7,7 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import type { Commit } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { useVoice } from "../voice/store";
 import {
   type ApprovalRequest,
   type Autonomy,
@@ -115,7 +116,8 @@ function signature(conversation: Conversation) {
 /** Consignes données au harnais, hors du fil : où est l’espace et où lire les règles de construction. */
 function instructions(spaceDir: string) {
   return [
-    "Tu travailles dans Alfred, une application de bureau que l’utilisateur construit avec toi.",
+    "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace.",
+    "Parle-lui comme un majordome posé et serviable : à la première personne, en le vouvoyant, sans jargon technique, sans parler de toi comme d’une application ou d’un agent. Propose de mettre en place ce dont il a besoin plutôt que d’expliquer l’outil. Tes réponses sont lues à voix haute : des phrases courtes et naturelles à l’oral.",
     `Son espace est le dossier ${spaceDir} : pages, panneaux, fonctions et clients y sont rangés par module.`,
     // Le séparateur du dossier est repris : un chemin Windows reste en barres inverses.
     `Avant de créer ou de modifier quoi que ce soit dans l’espace, lis ${spaceDir}${spaceDir.includes("\\") ? "\\" : "/"}AGENTS.md et suis-le.`,
@@ -251,16 +253,22 @@ export const useAgents = create<AgentState>((set, get) => {
         .catch(() => undefined);
       return;
     }
+    // La réponse à une demande dictée est lue, si la voix le prévoit ; un tour suivant dicté la coupera.
+    if (finished?.user.spoken && status === "done") {
+      const reply = plainText(lastAssistantText(finished));
+      const voice = useVoice.getState().status;
+      if (reply && voice?.enabled !== false && voice?.readReplies !== false) void useVoice.getState().read(reply);
+    }
     if (finished && status !== "cancelled") {
-      const title = get().loaded[id]?.title ?? "L’agent";
+      const title = get().loaded[id]?.title ?? "Alfred";
       void notifySystem(
-        status === "error" ? `${title} : l’agent a rencontré une erreur` : `${title} : l’agent a terminé`,
+        status === "error" ? `${title} : je me suis arrêté sur une erreur` : `${title} : c’est fait`,
         plainText(lastAssistantText(finished)) || undefined,
       );
     }
     if (!viewed && finished) {
       notify({
-        title: status === "error" ? `${conversation.title} : l’agent s’est arrêté sur une erreur` : conversation.title,
+        title: status === "error" ? `${conversation.title} : je me suis arrêté sur une erreur` : conversation.title,
         description: finished.error ?? plainText(lastAssistantText(finished)).slice(0, 160),
         tone: status === "error" ? "error" : "info",
         source: PROVIDER_LABEL[conversation.provider],
@@ -330,10 +338,10 @@ export const useAgents = create<AgentState>((set, get) => {
         return;
       case "approval":
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));
-        void notifySystem(`${get().loaded[id]?.title ?? "Un agent"} attend votre accord`, event.request.title);
+        void notifySystem(`${get().loaded[id]?.title ?? "Alfred"} : j’attends votre accord`, event.request.title);
         if (get().activeId !== id || useShell.getState().view.kind !== "agent") {
           notify({
-            title: `${get().loaded[id]?.title ?? "Un agent"} attend votre accord`,
+            title: `${get().loaded[id]?.title ?? "Alfred"} : j’attends votre accord`,
             description: event.request.title,
             tone: "warning",
           });
@@ -615,10 +623,10 @@ export function bindAgentQuestions() {
       kind: AgentQuestion["kind"];
       payload: Record<string, unknown>;
     };
-    const title = useAgents.getState().loaded[question.conversation]?.title ?? "Un agent";
+    const title = useAgents.getState().loaded[question.conversation]?.title ?? "Alfred";
     void notifySystem(
-      `${title} attend votre réponse`,
-      question.kind === "placement" ? "Où placer la nouvelle page ?" : undefined,
+      `${title} : j’attends votre réponse`,
+      question.kind === "placement" ? "Où dois-je placer la nouvelle page ?" : undefined,
     );
     useAgents.setState((state) => {
       const runtime = state.runtime[question.conversation] ?? idleRuntime;

@@ -31,7 +31,40 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `client`, `functions`, `ai`, `shell.notify`), sans les hooks React. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+
+### Fonction en script (bash, PowerShell, Python)
+
+Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichier `functions/<id>.sh`, `.ps1` ou `.py` qu’Alfred lance comme un processus, avec les droits de l’utilisateur. Elle s’appelle exactement comme une autre (`functions.call`, outil d’agent, webhook, planification) et garde ses schémas `input` et `output`.
+
+- **Entrée** : le JSON de l’entrée sur stdin.
+- **Sortie** : stdout. S’il contient du JSON, c’est la valeur rendue ; sinon, le texte sans ses blancs finaux ; vide, `null`. Au plus 1 Mo.
+- **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
+- **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER` et `ALFRED_SPACE`. Pas de `@alfred/sdk` : ni base, ni client, ni secret. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
+- **Interpréteur** : cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
+
+```bash
+# functions/saluer.sh
+nom=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["nom"])')
+printf '{"message": "Bonjour %s"}\n' "$nom"
+```
+
+```powershell
+# functions/doubler.ps1
+$entree = [Console]::In.ReadToEnd() | ConvertFrom-Json
+@{ double = $entree.valeur * 2 } | ConvertTo-Json -Compress
+```
+
+```python
+# functions/somme.py
+import json, sys
+entree = json.load(sys.stdin)
+if not entree.get("nombres"):
+    sys.exit("Aucun nombre fourni.")  # message d’erreur, code 1
+print(json.dumps({"somme": sum(entree["nombres"])}))
+```
+
+Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
 
 ## 3. Charger des données : `useAsync`
 
@@ -240,7 +273,7 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 - `auth.secret` : l’entrée du coffre renvoyée par `vault_store` ; omis, `declare_client` garde celle déjà reliée. `headers` : en-têtes fixes, jamais d’authentification.
 - `testPath` : chemin que lit le bouton Tester des Réglages (`GET`), pour chaque instance. Choisis une lecture légère qui demande l’authentification (`/me`, `/labels`…) : beaucoup d’API n’ont rien à la racine, qui est lue sans lui.
 
-Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des façons de s’authentifier, et `instances` les comptes (adresse libre, méthode, entrée du coffre). `declare_client` crée ou met à jour les instances qu’il reçoit et garde les autres ; l’utilisateur peut aussi en ajouter dans Réglages, onglet Clients.
+Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des façons de s’authentifier, et `instances` les comptes (adresse libre, méthode, entrée du coffre). `declare_client` crée ou met à jour les instances qu’il reçoit et garde les autres ; l’utilisateur peut aussi en ajouter dans la fiche du module (Réglages → Modules).
 
 ```json
 {
@@ -332,7 +365,62 @@ export async function trier(ticket: { id: number; titre: string }) {
 }
 ```
 
-## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`
+### `voice` : lire à voix haute et dicter
+
+```ts
+voice.speak(text: string): Promise<{ interrupted: boolean }>; // lit avec la voix d’Alfred, se résout à la fin
+voice.stopSpeaking(): Promise<void>;                          // coupe la lecture en cours
+voice.startListening(): Promise<void>;                        // page ou panneau : ouvre le micro
+voice.stopListening(): Promise<{ text: string }>;             // ferme le micro, rend la transcription
+voice.cancelListening(): Promise<void>;                       // ferme le micro sans transcrire
+```
+
+Tout tourne sur l’ordinateur : la transcription par whisper.cpp, la lecture par la voix d’Alfred (un majordome âgé, Qwen3-TTS), la voix du système ou Kokoro, réglées dans Réglages › Voix. La voix d’Alfred commence à parler en moins d’une seconde. L’utilisateur peut couper la voix : chaque appel est alors rejeté (« La voix est désactivée »), à montrer tel quel. Une seule lecture à la fois : `speak` coupe la précédente (`interrupted: true` pour celle-ci), comme l’ouverture du micro. 20 000 caractères lus au plus ; donne du texte, pas du Markdown.
+
+Le micro est unique et réservé aux pages et panneaux. La première fois, l’utilisateur l’accorde à la page. `startListening` se résout quand l’écoute a commencé : au premier usage, après le chargement du modèle (quelques secondes), donc affiche un état en cours. Rejet si la dictée n’est pas réglée, si l’utilisateur refuse ou si le micro sert déjà ailleurs (la page Agent, une autre page) : montre `error.message`. Une transcription vide signifie que rien de net n’a été entendu. Le micro se ferme seul quand le cadre disparaît.
+
+```tsx
+import { Button, FeedbackBanner, Page, Text } from "@alfred/ui";
+import { voice } from "@alfred/sdk";
+import { useState } from "react";
+
+export default function Dicter() {
+  const [etat, setEtat] = useState<"pret" | "ouverture" | "ecoute" | "transcription">("pret");
+  const [texte, setTexte] = useState("");
+  const [erreur, setErreur] = useState<string>();
+
+  const basculer = async () => {
+    setErreur(undefined);
+    try {
+      if (etat === "pret") {
+        setEtat("ouverture");
+        await voice.startListening();
+        setEtat("ecoute");
+      } else if (etat === "ecoute") {
+        setEtat("transcription");
+        const { text } = await voice.stopListening();
+        setTexte(text);
+        setEtat("pret");
+        if (text) await voice.speak(`Vous avez dit : ${text}`);
+      }
+    } catch (error) {
+      setErreur((error as Error).message);
+      setEtat("pret");
+    }
+  };
+
+  return (
+    <Page width="text">
+      <Button onClick={basculer} disabled={etat === "ouverture" || etat === "transcription"}>
+        {etat === "ecoute" ? "Terminer" : etat === "pret" ? "Dicter" : "Patientez…"}
+      </Button>
+      {erreur ? <FeedbackBanner tone="error">{erreur}</FeedbackBanner> : <Text>{texte}</Text>}
+    </Page>
+  );
+}
+```
+
+## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `badge`
 
 ```ts
 shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
@@ -350,6 +438,7 @@ interface PageContext {
   module: string;
   page: string;
   kind: "page" | "panel";
+  surface: "section" | "settings"; // « settings » : page placée dans les Réglages, qui prend leur style (DESIGN.md)
   theme: "light" | "dark"; // appliqué par Alfred, rien à faire
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
   instance: string | null; // section par instance : l’instance du client que montre la page ; sinon null
@@ -395,3 +484,50 @@ export default function NotePanneau() {
 ```
 
 Le panneau complet (aucune sélection, chargement, erreur, objet introuvable) est dans DESIGN.md, section 12.2.
+
+### Notifications et compteur : `shell.notify`, `badge`
+
+```ts
+shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
+badge.set(count: number, options?: { page?: string }): Promise<{ count: number }>;      // 0 efface la pastille
+badge.increment(by?: number, options?: { page?: string }): Promise<{ count: number }>; // 1 par défaut, négatif pour retirer
+badge.clear(options?: { page?: string }): Promise<{ count: number }>;                  // remise à zéro
+```
+
+`shell.notify` affiche toujours la notification dans Alfred : une surimpression en bas à droite, puis le centre de notifications (la cloche). Quand aucune fenêtre d’Alfred n’est au premier plan, elle part aussi au centre de notifications du système (titre et description, sans `tone`), si l’utilisateur l’a permis au système. Si l’utilisateur l’a choisi (Réglages › Voix), le titre et la description sont aussi lus à voix haute : écris-les comme une phrase courte qui se comprend à l’oral. Notifie ce qui demande son attention (un message reçu, une tâche planifiée terminée ou en échec) ; jamais pour confirmer une action qu’il vient de faire à l’écran (un `FeedbackBanner` suffit), jamais en boucle.
+
+`badge` règle le compteur de la page : une pastille avec ce nombre apparaît sur l’entrée de sa section dans le menu de gauche (la somme des onglets de la section) et sur son onglet, tant qu’il est supérieur à zéro. Le compteur dit combien d’éléments attendent l’utilisateur : messages non lus, demandes à traiter. Il est conservé d’un lancement à l’autre, et Alfred ne le remet jamais à zéro de lui-même : c’est la page qui le fait, quand l’utilisateur a vu ou traité les éléments.
+
+- Sans `page`, le compteur est celui de la page qui appelle ; un panneau règle celui de sa page.
+- `page` nomme une autre page du même module (« boite », ou « boite@instance ») ; jamais celle d’un autre module. Dans une section par instance, une page sans instance nommée est celle de la même instance.
+- Une fonction (planifiée, webhook) nomme toujours la page : c’est ainsi qu’un relevé fait en arrière-plan prévient l’utilisateur alors que la page est fermée.
+- Pour un nombre que la page sait recompter, préfère `badge.set` (le total exact) à `badge.increment`.
+
+```ts
+// functions/relever.ts : planifiée toutes les 10 minutes.
+import { badge, client, db, shell } from "@alfred/sdk";
+
+export default async function () {
+  const { body } = await client("messagerie").get<{ id: string; sujet: string }[]>("/messages", { nonLus: true });
+  const connus = await db.query<{ id: string }>("SELECT id FROM courrier_messages");
+  const nouveaux = body.filter((message) => !connus.some((ligne) => ligne.id === message.id));
+  for (const message of nouveaux)
+    await db.execute("INSERT INTO courrier_messages (id, sujet, lu) VALUES (?, ?, 0)", [message.id, message.sujet]);
+  const [{ total }] = await db.query<{ total: number }>("SELECT COUNT(*) AS total FROM courrier_messages WHERE lu = 0");
+  await badge.set(total, { page: "boite" });
+  if (nouveaux.length > 0)
+    await shell.notify({ title: `${nouveaux.length} nouveau${nouveaux.length > 1 ? "x" : ""} message${nouveaux.length > 1 ? "s" : ""}`, description: nouveaux[0].sujet });
+  return { nouveaux: nouveaux.length };
+}
+```
+
+```tsx
+// pages/boite.tsx : ouvrir un message le marque lu et recompte.
+import { badge, db } from "@alfred/sdk";
+
+export async function marquerLu(id: string) {
+  await db.execute("UPDATE courrier_messages SET lu = 1 WHERE id = ?", [id]);
+  const [{ total }] = await db.query<{ total: number }>("SELECT COUNT(*) AS total FROM courrier_messages WHERE lu = 0");
+  await badge.set(total);
+}
+```

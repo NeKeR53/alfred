@@ -17,7 +17,7 @@ it("de l’accueil à un espace construit : navigation, Réglages, palette et ac
   render(<App />);
 
   // Accueil : aucun espace mémorisé, le dossier proposé est dans le dossier personnel.
-  expect(await screen.findByRole("heading", { name: "Bienvenue dans Alfred" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Bonjour, je suis Alfred" })).toBeVisible();
   const folder = screen.getByRole("textbox", { name: "Dossier de l’espace" });
   expect(folder).toHaveValue("/Users/lea/Alfred");
   await user.clear(folder);
@@ -25,7 +25,7 @@ it("de l’accueil à un espace construit : navigation, Réglages, palette et ac
   await user.click(screen.getByRole("button", { name: "Ouvrir l’espace" }));
 
   // Espace ouvert, encore vide : la page Agent invite à construire.
-  expect(await screen.findByText("Que voulez-vous construire ?")).toBeVisible();
+  expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
   expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison" });
   const navigation = screen.getByRole("navigation", { name: "Sections de l’espace" });
   expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
@@ -64,45 +64,65 @@ it("de l’accueil à un espace construit : navigation, Réglages, palette et ac
   expect(await screen.findByText("Page en cours de création")).toBeVisible();
   expect(screen.queryByTitle("Détail")).not.toBeInTheDocument();
 
-  // Retour à la page Agent, puis les Réglages : dix onglets intégrés, suivis de la page placée par l’espace.
+  // Retour à la page Agent, puis les Réglages : une fenêtre par-dessus l’app, rubriques dans sa barre latérale.
   await user.click(screen.getByRole("button", { name: "Agent" }));
-  expect(await screen.findByText("Que voulez-vous construire ?")).toBeVisible();
+  expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Réglages" }));
-  const settings = await screen.findByRole("tablist", { name: "Onglets de Réglages" });
-  const labels = within(settings)
-    .getAllByRole("tab")
-    .map((tab) => tab.textContent);
-  expect(labels).toEqual([
-    "Espace",
-    "Agents",
-    "Navigation",
+  const settings = await screen.findByRole("dialog", { name: "Réglages" });
+  const nav = within(settings).getByRole("navigation", { name: "Rubriques des Réglages" });
+  expect(
+    within(nav)
+      .getAllByRole("button")
+      .map((item) => item.textContent),
+  ).toEqual([
     "Modules",
+    "Agent",
+    "Voix",
+    "Espace",
+    "Apparence",
+    "Mots de passe et clés",
+    "Ordre du menu",
     "Fonctions",
-    "Clients",
-    "Coffre",
     "Webhooks",
-    "Planification",
+    "Tâches planifiées",
     "Journal",
     "Préférences du suivi",
   ]);
+  // Les modules d’abord, en liste ; « Ajouter des modules » mène aux sources.
+  expect(await within(settings).findByRole("list", { name: "Modules de l’espace" })).toBeVisible();
+  await user.click(within(settings).getByRole("button", { name: "Ajouter des modules" }));
+  expect((await within(settings).findAllByText("Où trouver des modules"))[0]).toBeVisible();
+  await user.click(within(settings).getByRole("button", { name: "Tous les modules" }));
+
   const expected: Record<string, string> = {
+    Agent: "Harnais par défaut",
     Espace: "Historique",
-    Agents: "Harnais par défaut",
-    Navigation: "Pages des Réglages",
-    Modules: "Marketplaces",
+    Apparence: "Couleur d’accent",
+    "Mots de passe et clés": "Aucun mot de passe ni clé",
+    "Ordre du menu": "Pages des Réglages",
     Fonctions: "Synchronise les tâches avec Jira.",
-    Clients: "Aucun client",
-    Coffre: "Aucune entrée dans le coffre",
     Webhooks: "Aucun webhook",
-    Planification: "Aucune planification",
+    "Tâches planifiées": "Aucune planification",
     Journal: "Aucune exécution",
   };
-  for (const [tab, text] of Object.entries(expected)) {
-    await user.click(within(settings).getByRole("tab", { name: tab }));
-    expect((await screen.findAllByText(text))[0], `onglet ${tab}`).toBeVisible();
+  for (const [item, text] of Object.entries(expected)) {
+    await user.click(within(nav).getByRole("button", { name: item }));
+    expect((await within(settings).findAllByText(text))[0], `rubrique ${item}`).toBeVisible();
   }
-  await user.click(within(settings).getByRole("tab", { name: "Préférences du suivi" }));
-  expect(await screen.findByTitle("Préférences du suivi")).toBeInTheDocument();
+  await user.click(within(nav).getByRole("button", { name: "Préférences du suivi" }));
+  expect(await within(settings).findByTitle("Préférences du suivi")).toBeInTheDocument();
+
+  // La recherche réduit la barre latérale ; Échap ferme la fenêtre et rend la page Agent.
+  await user.type(within(nav).getByLabelText("Rechercher un réglage"), "cles");
+  expect(
+    within(nav)
+      .getAllByRole("button")
+      .filter((item) => item.classList.contains("settings-modal__item"))
+      .map((item) => item.textContent),
+  ).toEqual(["Mots de passe et clés"]);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Réglages" })).not.toBeInTheDocument());
+  expect(screen.getByText("Que puis-je faire pour vous ?")).toBeVisible();
 
   // Palette de commandes (Cmd+K sur macOS) : elle trouve une page et y mène.
   await user.keyboard("{Meta>}k{/Meta}");

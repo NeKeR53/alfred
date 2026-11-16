@@ -18,7 +18,7 @@ import {
 } from "@alfred/ui";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "../../lib/native";
-import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
+import type { FunctionRuntime, ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import "../vault/settings-dialog.css";
@@ -85,10 +85,22 @@ function stateOf(fn: ResolvedFunction): FunctionState {
   return "ready";
 }
 
+const RUNTIME_LABELS: Record<FunctionRuntime, string> = {
+  ts: "TypeScript",
+  bash: "bash",
+  pwsh: "PowerShell",
+  python: "Python",
+};
+
+function isScript(fn: ResolvedFunction): boolean {
+  return (fn.runtime ?? "ts") !== "ts";
+}
+
 function FunctionStatus({ fn }: { fn: ResolvedFunction }) {
   const state = stateOf(fn);
   if (state === "missing") return <StatusBadge tone="warning">Pas encore écrite</StatusBadge>;
-  if (state === "broken") return <StatusBadge tone="danger">Ne compile pas</StatusBadge>;
+  if (state === "broken")
+    return <StatusBadge tone="danger">{isScript(fn) ? "Interpréteur absent" : "Ne compile pas"}</StatusBadge>;
   return <StatusBadge tone="success">Prête</StatusBadge>;
 }
 
@@ -243,7 +255,14 @@ function FunctionItem({
     <Stack gap="sm">
       <Row justify="between" align="start" gap="md">
         <Stack gap="xs">
-          <Heading level={3}>{fn.id}</Heading>
+          <Row gap="sm" align="center">
+            <Heading level={3}>{fn.id}</Heading>
+            {isScript(fn) ? (
+              <StatusBadge tone="neutral" size="compact">
+                {RUNTIME_LABELS[fn.runtime]}
+              </StatusBadge>
+            ) : null}
+          </Row>
           <Text tone={fn.description ? "default" : "muted"}>{fn.description || "Aucune description."}</Text>
         </Stack>
         <FunctionStatus fn={fn} />

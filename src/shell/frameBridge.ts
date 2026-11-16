@@ -3,7 +3,8 @@
  * du cadre qui a émis le message, jamais par le contenu du message : une page ne peut pas se faire passer pour une
  * autre.
  */
-import { AlfredError, invoke, openExternal, openPageWindow } from "../lib/native";
+import { AlfredError, invoke, notifySystem, openExternal, openPageWindow } from "../lib/native";
+import { isKnownPage } from "./badges";
 import { notify } from "./notifications";
 import { useShell } from "./store";
 
@@ -47,6 +48,7 @@ export function frameContext(identity: FrameIdentity) {
     page,
     instance: identity.instance ?? null,
     kind: identity.kind,
+    surface: snapshot?.settingsPages.some((page) => page.reference === identity.reference) ? "settings" : "section",
     theme,
     accent: snapshot?.accent ?? null,
     selection: identity.host ? selectionOf(identity.host) : null,
@@ -67,6 +69,8 @@ export const frameServices: {
   callFunction?: (identity: FrameIdentity, reference: string, input: unknown) => Promise<unknown>;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;
+  /** Lit une notification à voix haute, si l’utilisateur l’a permis (Réglages › Voix). */
+  announce?: (text: string) => void;
 } = {};
 
 type PeerFrame = { kind: FrameIdentity["kind"]; deliver: (message: unknown) => void };
@@ -84,6 +88,40 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
   };
 }
 
+/** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
+export function releaseFrame(identity: FrameIdentity) {
+  void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
+}
+
+/**
+ * Page dont un cadre règle le compteur : la sienne (un panneau, celle de sa page), ou une autre page de son module
+ * nommée par `page` (« boite », ou « boite@instance »). Une fonction doit toujours nommer la page.
+ */
+function badgeTarget(identity: FrameIdentity, page: unknown): string {
+  let reference: string;
+  if (typeof page === "string" && page) {
+    const named = `${identity.module}/${page}`;
+    // Depuis une section par instance, une page sœur sans instance nommée est celle de la même instance.
+    const sibling = identity.instance && !page.includes("@") ? `${named}@${identity.instance}` : named;
+    reference = isKnownPage(useShell.getState().snapshot, sibling) ? sibling : named;
+  } else if (identity.kind === "function") {
+    throw new AlfredError({
+      message: 'Une fonction règle le compteur d’une page nommée : badge.set(3, { page: "boite" }).',
+    });
+  } else {
+    reference = identity.host ?? identity.reference;
+  }
+  if (!isKnownPage(useShell.getState().snapshot, reference))
+    throw new AlfredError({ message: `Compteur refusé : la page « ${reference} » n’existe pas dans l’espace.` });
+  return reference;
+}
+
+function badgeValue(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) throw new AlfredError({ message: "Le compteur attend un nombre." });
+  return Math.trunc(number);
+}
+
 export async function handleFrameRequest(identity: FrameIdentity, method: string, params: Params): Promise<unknown> {
   // Le backend reçoit la page déclarée (les accords valent pour toutes ses instances) et, à part, son instance.
   const subject = {
@@ -95,14 +133,27 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
   switch (method) {
     case "shell.context":
       return frameContext(identity);
-    case "shell.notify":
+    case "shell.notify": {
+      const title = String(params.title ?? "");
+      const description = params.description ? String(params.description) : undefined;
       notify({
-        title: String(params.title ?? ""),
-        description: params.description ? String(params.description) : undefined,
+        title,
+        description,
         tone: (params.tone as "info" | "success" | "warning" | "error") ?? "info",
         source: identity.reference,
       });
+      frameServices.announce?.(description ? `${title}. ${description}` : title);
+      // Alfred en arrière-plan : la notification part aussi au système (Rust vérifie le focus des fenêtres).
+      await notifySystem(title, description).catch(() => false);
       return null;
+    }
+    case "badge.update":
+      return invoke("frame.badges.update", {
+        subject,
+        page: badgeTarget(identity, params.page),
+        op: params.op === "increment" ? "increment" : "set",
+        value: badgeValue(params.value),
+      });
     case "shell.navigate":
       useShell.getState().openPage(String(params.reference ?? ""));
       return null;
@@ -150,6 +201,16 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "ai.startAgent":
       if (!frameServices.startAgent) throw new AlfredError({ message: "Les agents ne sont pas prêts." });
       return frameServices.startAgent(identity, params);
+    case "voice.speak":
+      return invoke("frame.voice.speak", { text: String(params.text ?? ""), subject });
+    case "voice.stopSpeaking":
+      return invoke("frame.voice.speak.stop", { subject });
+    case "voice.startListening":
+      return invoke("frame.voice.listen.start", { subject });
+    case "voice.stopListening":
+      return invoke("frame.voice.listen.stop", { subject });
+    case "voice.cancelListening":
+      return invoke("frame.voice.listen.cancel", { subject });
     // Les arguments sont recopiés un par un : un champ du message (`subject` en particulier) ne doit jamais
     // pouvoir remplacer ce que la coquille a fixé.
     case "db.query":

@@ -93,6 +93,8 @@ export interface ClientInstanceItem extends ClientInstanceConfig {
   /** Adresse réellement appelée ; `null` si l’instance est invalide. */
   effectiveUrl: string | null;
   authType: AuthType | null;
+  /** Dernier test du compte dans son état actuel ; `null` s’il n’a pas été testé depuis sa modification. */
+  lastTest?: { ok: boolean; message: string; testedAt: string } | null;
 }
 
 export interface ClientItem extends ClientConfig {
@@ -142,11 +144,11 @@ export interface ClientTestResult {
 
 export const AUTH_TYPES: ReadonlyArray<{ type: AuthType; label: string; vaultKind?: VaultKind }> = [
   { type: "none", label: "Aucune" },
-  { type: "bearer", label: "Jeton porteur (Bearer)", vaultKind: "token" },
+  { type: "bearer", label: "Jeton d’accès", vaultKind: "token" },
   { type: "apiKey", label: "Clé d’API", vaultKind: "token" },
-  { type: "basic", label: "Identifiant et mot de passe (Basic)", vaultKind: "basic" },
-  { type: "oauth2", label: "OAuth 2, connexion de l’utilisateur", vaultKind: "oauth2" },
-  { type: "clientCredentials", label: "OAuth 2, identifiants d’application", vaultKind: "clientCredentials" },
+  { type: "basic", label: "Identifiant et mot de passe", vaultKind: "basic" },
+  { type: "oauth2", label: "Connexion par le navigateur (OAuth)", vaultKind: "oauth2" },
+  { type: "clientCredentials", label: "Identifiants d’application (OAuth)", vaultKind: "clientCredentials" },
 ];
 
 export function authTypeLabel(type: string): string {

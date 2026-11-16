@@ -5,7 +5,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("../../lib/native");
 
 import { invoke, onNativeEvent, openExternal } from "../../lib/native";
+import type { ModuleSummary, ResolvedSection, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
+import { useShell } from "../../shell/store";
+import { ModulesSettings } from "../modules/ModulesSettings";
 import type { VaultEntry } from "../vault/api";
 import type {
   AuthType,
@@ -16,7 +19,19 @@ import type {
   ClientNeedItem,
   ClientValidation,
 } from "./api";
-import { ClientsSettings } from "./ClientsSettings";
+
+/**
+ * Les services se règlent dans l’onglet Modules : ceux d’un module dans sa fiche, ceux qu’aucun module n’utilise
+ * sous « Autres services ». Ces parcours passent donc par l’écran réel.
+ */
+vi.hoisted(() => {
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  })) as unknown as typeof window.matchMedia;
+});
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -168,6 +183,10 @@ beforeEach(() => {
           needs: needs.map((need) => ({ ...need })),
           redirectUri: REDIRECT,
         };
+      case "marketplace.list":
+      case "marketplace.updates":
+      case "marketplace.modules":
+        return [];
       case "vault.list":
         return vault.map((item) => ({ ...item }));
       case "vault.save": {
@@ -240,6 +259,54 @@ beforeEach(() => {
   });
 });
 
+function summary(id: string, name: string): ModuleSummary {
+  return {
+    id,
+    name,
+    version: "0.1.0",
+    description: "",
+    readOnly: false,
+    origin: null,
+    hidden: false,
+    requires: [],
+    requiredBy: [],
+    pages: 0,
+    functions: 0,
+    clients: [],
+    webhooks: [],
+    schedules: [],
+  };
+}
+
+/** Onglet Modules d’un espace dont les modules sont ceux des demandes ; `sections` y ajoute des pages. */
+function renderModules(sections: ResolvedSection[] = []) {
+  const modules = [...new Map(needs.map((need) => [need.module, summary(need.module, need.moduleName)])).values()];
+  const snapshot: Snapshot = {
+    path: "/espace",
+    name: "Démo",
+    accent: null,
+    sections,
+    settingsPages: [],
+    modules,
+    functions: [],
+    bindings: {},
+    problems: [],
+  };
+  useShell.setState({ snapshot });
+  return render(<ModulesSettings />);
+}
+
+/** Ouvre la fiche d’un module. */
+async function openModule(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole("button", { name: `Ouvrir la fiche de ${name}` }));
+}
+
+/** Ouvre le menu « … » d’une ligne (service ou compte) et rend l’entrée demandée. */
+async function menuItem(user: ReturnType<typeof userEvent.setup>, subject: string, item: string) {
+  await user.click(screen.getByRole("button", { name: `Actions de ${subject}` }));
+  return screen.findByRole("menuitem", { name: item });
+}
+
 const lastCall = (command: string) => calls.filter((call) => call.command === command).at(-1)?.args;
 const notifications = () => useNotifications.getState().items.map((item) => item.title);
 const optionLabels = (select: HTMLElement) =>
@@ -247,9 +314,11 @@ const optionLabels = (select: HTMLElement) =>
     .getAllByRole("option")
     .map((option) => option.textContent);
 
-it("crée un client à clé d’API, le teste, le relie à la demande d’un module puis le supprime", async () => {
+it("configure le service demandé par un module depuis sa fiche, le teste, change le service utilisé", async () => {
   const user = userEvent.setup();
   vault = [entry("jeton-jira", "Jeton Jira", "token"), entry("sso", "SSO", "oauth2", { connected: false })];
+  // Un service déjà configuré, qu’aucun module n’utilise : il pourra remplacer celui du module.
+  stored = [{ id: "secours", label: "Secours", baseUrl: "https://secours.exemple.com", auth: { type: "none" } }];
   needs = [
     {
       key: "crm/tickets",
@@ -263,35 +332,36 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
       client: null,
     },
   ];
-  render(<ClientsSettings />);
+  renderModules();
 
-  // Aucun client : l’état vide propose la création, et la demande du module attend d’être reliée.
-  expect(await screen.findByText("Aucun client")).toBeInTheDocument();
-  const needsTable = screen.getByRole("table", { name: "Demandes des modules" });
-  expect(within(needsTable).getByText("À relier")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Nouveau client" }));
+  // Le module signale qu’il attend un service ; sa fiche propose de le configurer.
+  expect(await screen.findByText("À configurer")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Comptes Secours" })).toBeInTheDocument();
+  await openModule(user, "CRM");
+  await user.click(await screen.findByRole("button", { name: "Configurer Tickets" }));
 
-  // Sans authentification, aucun champ de secret ; le type choisi fait apparaître les siens.
-  await user.type(screen.getByLabelText("Libellé"), "Jira");
-  expect(screen.getByLabelText("Identifiant")).toHaveValue("jira");
-  expect(screen.queryByLabelText("Entrée du coffre")).not.toBeInTheDocument();
-  await user.selectOptions(screen.getByLabelText("Authentification"), "apiKey");
+  // Le formulaire reprend la demande : nom et identifiant, type de connexion.
+  expect(screen.getByLabelText("Nom")).toHaveValue("Tickets");
+  expect(screen.getByLabelText("Identifiant")).toHaveValue("tickets");
+  expect(screen.getByLabelText("Type de connexion")).toHaveValue("apiKey");
   // Seules les entrées du bon type sont proposées.
-  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…", "Jeton Jira"]);
+  expect(optionLabels(screen.getByLabelText("Mot de passe ou clé"))).toEqual(["Choisir…", "Jeton Jira"]);
   expect(screen.getByLabelText("Nom de l’en-tête")).toBeInTheDocument();
   expect(screen.queryByLabelText("Adresse du serveur de jetons")).not.toBeInTheDocument();
 
   // Validation à la soumission, sous chaque champ.
-  await user.type(screen.getByLabelText("Adresse de base"), "http://jira.exemple.com");
+  await user.clear(screen.getByLabelText("Nom"));
+  await user.type(screen.getByLabelText("Nom"), "Jira");
+  await user.type(screen.getByLabelText("Adresse du service"), "http://jira.exemple.com");
   await user.click(screen.getByRole("button", { name: "Créer" }));
   expect(screen.getByText(/Saisissez une adresse en https:\/\//)).toBeInTheDocument();
-  expect(screen.getByText("Choisissez une entrée du coffre.")).toBeInTheDocument();
+  expect(screen.getByText("Choisissez un mot de passe ou une clé.")).toBeInTheDocument();
   expect(screen.getByText("Saisissez le nom de l’en-tête.")).toBeInTheDocument();
   expect(lastCall("clients.save")).toBeUndefined();
 
-  await user.clear(screen.getByLabelText("Adresse de base"));
-  await user.type(screen.getByLabelText("Adresse de base"), "https://jira.exemple.com");
-  await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "jeton-jira");
+  await user.clear(screen.getByLabelText("Adresse du service"));
+  await user.type(screen.getByLabelText("Adresse du service"), "https://jira.exemple.com");
+  await user.selectOptions(screen.getByLabelText("Mot de passe ou clé"), "jeton-jira");
   await user.type(screen.getByLabelText("Nom de l’en-tête"), "X-Api-Key");
   await user.type(screen.getByLabelText("En-têtes fixes (facultatif)"), "Accept: application/json");
   await user.type(screen.getByLabelText("Chemin de test (facultatif)"), "myself");
@@ -299,14 +369,16 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
   expect(await screen.findByText("Saisissez un chemin qui commence par « / », ex. /me.")).toBeInTheDocument();
   await user.clear(screen.getByLabelText("Chemin de test (facultatif)"));
   await user.type(screen.getByLabelText("Chemin de test (facultatif)"), "/myself");
+  // Le service du même nom répond d’office à la demande du module.
+  needs = needs.map((need) => ({ ...need, client: "tickets" }));
   await user.click(screen.getByRole("button", { name: "Créer" }));
 
-  // Le fichier du client ne reçoit que l’identifiant de l’entrée du coffre.
-  const table = await screen.findByRole("table", { name: "Clients" });
+  // Le fichier du service ne reçoit que l’identifiant de l’entrée du coffre.
+  const service = await screen.findByRole("group", { name: "Comptes Jira" });
   expect(lastCall("clients.save")).toEqual({
     create: true,
     client: {
-      id: "jira",
+      id: "tickets",
       label: "Jira",
       baseUrl: "https://jira.exemple.com",
       auth: { type: "apiKey", secret: "jeton-jira", header: "X-Api-Key" },
@@ -314,38 +386,42 @@ it("crée un client à clé d’API, le teste, le relie à la demande d’un mod
       testPath: "/myself",
     },
   });
-  expect(within(table).getByText("https://jira.exemple.com")).toBeInTheDocument();
-  expect(within(table).getByText("Clé d’API")).toBeInTheDocument();
-  expect(within(table).getByText("Prêt")).toBeInTheDocument();
+  expect(within(service).getByText(/^https:\/\/jira\.exemple\.com · Clé d’API/)).toBeInTheDocument();
+  // Prêt : aucune pastille d’état, rien à faire.
+  expect(within(service).queryByText(/À connecter|manquant|À approuver/)).not.toBeInTheDocument();
 
   // Tester : le résultat est notifié et reste visible sur la ligne.
-  await user.click(screen.getByRole("button", { name: "Tester Jira" }));
+  await user.click(await menuItem(user, "Jira", "Tester"));
   await waitFor(() => expect(notifications()).toContain("Jira : le service répond"));
-  expect(lastCall("clients.test")).toEqual({ id: "jira" });
-  expect(within(table).getByText("Dernier test : 200 · 42 ms")).toBeInTheDocument();
+  expect(lastCall("clients.test")).toEqual({ id: "tickets" });
+  expect(within(service).getByText("Dernier test : 200 · 42 ms")).toBeInTheDocument();
 
-  // Demandes des modules : relier la demande au client, appliqué dès le choix.
-  const binding = screen.getByLabelText("Client relié à la demande Tickets du module CRM");
-  expect(optionLabels(binding)).toEqual(["Aucun", "Jira"]);
-  await user.selectOptions(binding, "jira");
-  await waitFor(() =>
-    expect(within(screen.getByRole("table", { name: "Demandes des modules" })).getByText("Reliée")).toBeInTheDocument(),
-  );
-  expect(lastCall("clients.bind")).toEqual({ need: "crm/tickets", client: "jira" });
-
-  // Édition : identifiant figé, champs repris du client.
-  await user.click(screen.getByRole("button", { name: "Modifier Jira" }));
+  // Édition : identifiant figé, champs repris du service.
+  await user.click(await menuItem(user, "Jira", "Modifier le service…"));
   expect(screen.getByLabelText("Identifiant")).toBeDisabled();
-  expect(screen.getByLabelText("Entrée du coffre")).toHaveValue("jeton-jira");
+  expect(screen.getByLabelText("Mot de passe ou clé")).toHaveValue("jeton-jira");
   expect(screen.getByLabelText("Nom de l’en-tête")).toHaveValue("X-Api-Key");
   expect(screen.getByLabelText("En-têtes fixes (facultatif)")).toHaveValue("Accept: application/json");
   await user.click(screen.getByRole("button", { name: "Annuler" }));
 
-  // Suppression confirmée.
-  await user.click(await screen.findByRole("button", { name: "Supprimer Jira" }));
+  // Avancé : faire utiliser au module un autre service déjà configuré, appliqué dès le choix.
+  await user.click(await screen.findByRole("button", { name: "Service utilisé pour Tickets par le module CRM" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Utiliser « Secours » à la place" }));
+  await waitFor(() => expect(lastCall("clients.bind")).toEqual({ need: "crm/tickets", client: "secours" }));
+  // Un service utilisé par un module ne se supprime pas depuis sa fiche.
+  await user.click(screen.getByRole("button", { name: "Actions de Secours" }));
+  expect(screen.queryByRole("menuitem", { name: "Supprimer le service…" })).not.toBeInTheDocument();
+});
+
+it("supprime un service qu’aucun module n’utilise", async () => {
+  const user = userEvent.setup();
+  stored = [{ id: "secours", label: "Secours", baseUrl: "https://secours.exemple.com", auth: { type: "none" } }];
+  renderModules();
+  await screen.findByRole("group", { name: "Comptes Secours" });
+  await user.click(await menuItem(user, "Secours", "Supprimer le service…"));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
-  expect(await screen.findByText("Aucun client")).toBeInTheDocument();
-  expect(lastCall("clients.delete")).toEqual({ id: "jira" });
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Comptes Secours" })).not.toBeInTheDocument());
+  expect(lastCall("clients.delete")).toEqual({ id: "secours" });
 });
 
 it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", async () => {
@@ -365,8 +441,8 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
       },
     },
   ];
-  render(<ClientsSettings />);
-  const table = await screen.findByRole("table", { name: "Clients" });
+  renderModules();
+  const table = await screen.findByRole("group", { name: "Comptes Portail" });
   expect(within(table).getByText("À connecter")).toBeInTheDocument();
 
   // Se connecter ouvre l’adresse d’autorisation dans le navigateur du système.
@@ -378,13 +454,13 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
   // Retour du navigateur : le backend annonce la connexion, l’écran se relit.
   vault = [{ ...vault[0], connected: true }];
   listeners.get("clients:changed")?.({ client: "portail", connected: true });
-  expect(await within(table).findByText("Prêt")).toBeInTheDocument();
+  await waitFor(() => expect(within(table).queryByText("À connecter")).not.toBeInTheDocument());
   expect(within(table).queryByText("En attente du navigateur…")).not.toBeInTheDocument();
   expect(notifications()).toContain("Portail est connecté");
   expect(screen.queryByRole("button", { name: "Se connecter à Portail" })).not.toBeInTheDocument();
 
   // Un échec au retour est rapporté avec sa cause.
-  await user.click(screen.getByRole("button", { name: "Se déconnecter de Portail" }));
+  await user.click(await menuItem(user, "Portail", "Se déconnecter"));
   expect(await within(table).findByText("À connecter")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Se connecter à Portail" }));
   await waitFor(() => expect(openExternal).toHaveBeenCalledTimes(2));
@@ -396,10 +472,10 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
   await waitFor(() => expect(notifications()).toContain("La connexion de Portail a échoué"));
 
   // Le formulaire OAuth 2 montre ses adresses et l’adresse de retour à déclarer chez le fournisseur.
-  await user.click(screen.getByRole("button", { name: "Modifier Portail" }));
+  await user.click(await menuItem(user, "Portail", "Modifier le service…"));
   expect(screen.getByLabelText("Adresse d’autorisation")).toHaveValue("https://sso.exemple.com/authorize");
   expect(screen.getByLabelText("Adresse du serveur de jetons")).toHaveValue("https://sso.exemple.com/token");
-  expect(screen.getByLabelText("Portées (facultatif)")).toHaveValue("lire");
+  expect(screen.getByLabelText("Autorisations demandées (facultatif)")).toHaveValue("lire");
   expect(screen.getByText(new RegExp(REDIRECT))).toBeInTheDocument();
 });
 
@@ -419,18 +495,19 @@ it("crée l’entrée du coffre manquante depuis le formulaire d’un client dem
       client: null,
     },
   ];
-  render(<ClientsSettings />);
-  await user.click(await screen.findByRole("button", { name: "Créer le client demandé par RH : Paie" }));
+  renderModules();
+  await openModule(user, "RH");
+  await user.click(await screen.findByRole("button", { name: "Configurer Paie" }));
 
   // Le formulaire reprend ce que le module demande.
-  expect(screen.getByLabelText("Libellé")).toHaveValue("Paie");
+  expect(screen.getByLabelText("Nom")).toHaveValue("Paie");
   expect(screen.getByLabelText("Identifiant")).toHaveValue("paie");
-  expect(screen.getByLabelText("Adresse de base")).toHaveValue("https://paie.exemple.com");
-  expect(screen.getByLabelText("Authentification")).toHaveValue("basic");
+  expect(screen.getByLabelText("Adresse du service")).toHaveValue("https://paie.exemple.com");
+  expect(screen.getByLabelText("Type de connexion")).toHaveValue("basic");
   // Aucune entrée « identifiant et mot de passe » : le raccourci la crée, avec le type imposé.
-  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…"]);
-  await user.click(screen.getByRole("button", { name: "Nouvelle entrée" }));
-  const dialog = screen.getByRole("dialog", { name: "Nouvelle entrée du coffre" });
+  expect(optionLabels(screen.getByLabelText("Mot de passe ou clé"))).toEqual(["Choisir…"]);
+  await user.click(screen.getByRole("button", { name: "Nouveau…" }));
+  const dialog = screen.getByRole("dialog", { name: "Nouveau mot de passe ou clé" });
   expect(within(dialog).getByLabelText("Type")).toHaveValue("basic");
   expect(within(dialog).getByLabelText("Type")).toBeDisabled();
   expect(within(dialog).getByLabelText("Libellé")).toHaveValue("Paie");
@@ -440,10 +517,11 @@ it("crée l’entrée du coffre manquante depuis le formulaire d’un client dem
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
   // L’entrée créée est choisie d’office ; le client part sans le mot de passe.
-  expect(screen.getByLabelText("Entrée du coffre")).toHaveValue("paie");
+  expect(screen.getByLabelText("Mot de passe ou clé")).toHaveValue("paie");
   expect(document.body.textContent).not.toContain("p4ss-CCC");
+  needs = needs.map((need) => ({ ...need, client: "paie" }));
   await user.click(screen.getByRole("button", { name: "Créer" }));
-  await screen.findByRole("table", { name: "Clients" });
+  await screen.findByRole("group", { name: "Comptes Paie" });
   expect(lastCall("clients.save")).toEqual({
     create: true,
     client: {
@@ -468,7 +546,7 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
       changes: [
         {
           field: "baseUrl",
-          label: "Adresse de base",
+          label: "Adresse du service",
           before: "https://jira.exemple.com",
           after: "https://ailleurs.exemple.com",
         },
@@ -485,51 +563,78 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
       auth: { type: "bearer", secret: "jeton-jira" },
     },
   ];
-  render(<ClientsSettings />);
+  renderModules();
 
   // À valider : l’état le dit, et le test est impossible tant que rien n’est approuvé.
-  const table = await screen.findByRole("table", { name: "Clients" });
-  expect(within(table).getByText("À valider")).toBeInTheDocument();
+  const table = await screen.findByRole("group", { name: "Comptes Jira" });
+  expect(within(table).getByText("À approuver")).toBeInTheDocument();
   expect(within(table).getByText(/Modifié hors des Réglages/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Tester Jira" })).toBeDisabled();
+  expect(await menuItem(user, "Jira", "Tester")).toBeDisabled();
+  await user.keyboard("{Escape}");
 
   // Valider montre l’avant et l’après avant de confirmer ; annuler ne valide rien.
-  await user.click(screen.getByRole("button", { name: "Valider Jira" }));
+  await user.click(screen.getByRole("button", { name: "Approuver Jira" }));
   const dialog = screen.getByRole("alertdialog");
-  expect(within(dialog).getByText("Valider le client « Jira » ?")).toBeInTheDocument();
+  expect(within(dialog).getByText("Approuver le service « Jira » ?")).toBeInTheDocument();
   expect(within(dialog).getByText("Avant : https://jira.exemple.com")).toBeInTheDocument();
   expect(within(dialog).getByText("Maintenant : https://ailleurs.exemple.com")).toBeInTheDocument();
   expect(within(dialog).getByText("Avant : Clé d’API")).toBeInTheDocument();
-  expect(within(dialog).getByText("Maintenant : Jeton porteur (Bearer)")).toBeInTheDocument();
+  expect(within(dialog).getByText("Maintenant : Jeton d’accès")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Annuler" }));
   expect(lastCall("clients.validate")).toBeUndefined();
 
   // Confirmer renvoie au backend exactement les valeurs affichées.
-  await user.click(screen.getByRole("button", { name: "Valider Jira" }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Valider" }));
-  expect(await within(table).findByText("Prêt")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Approuver Jira" }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Approuver" }));
+  await waitFor(() => expect(within(table).queryByText("À approuver")).not.toBeInTheDocument());
   expect(lastCall("clients.validate")).toEqual({ id: "jira", fingerprint });
-  expect(notifications()).toContain("Jira est validé");
-  expect(screen.queryByRole("button", { name: "Valider Jira" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Tester Jira" })).toBeEnabled();
+  expect(notifications()).toContain("Jira est approuvé");
+  expect(screen.queryByRole("button", { name: "Approuver Jira" })).not.toBeInTheDocument();
+  expect(await menuItem(user, "Jira", "Tester")).toBeEnabled();
 });
 
 it("crée un client à plusieurs instances, ajoute ses instances et les gère une à une", async () => {
   const user = userEvent.setup();
   vault = [entry("pat-acme", "PAT Acme", "token"), entry("cloud-compte", "Compte Cloud", "basic")];
-  render(<ClientsSettings />);
-  await user.click(await screen.findByRole("button", { name: "Nouveau client" }));
+  needs = [
+    {
+      key: "suivi/jira",
+      module: "suivi",
+      moduleName: "Suivi",
+      id: "jira",
+      label: "Jira",
+      baseUrl: null,
+      auth: null,
+      binding: null,
+      client: null,
+    },
+  ];
+  // La page du module par compte : chaque compte dit quelle page il alimente.
+  renderModules([
+    {
+      id: "suivi/tickets@acme",
+      module: "suivi",
+      label: "Tickets — Acme",
+      icon: null,
+      color: null,
+      hidden: false,
+      pages: [],
+      instance: "acme",
+    },
+  ]);
+  await openModule(user, "Suivi");
+  await user.click(await screen.findByRole("button", { name: "Configurer Jira" }));
 
-  // Plusieurs instances : l’adresse devient facultative, l’entrée du coffre quitte le client pour l’instance.
-  await user.type(screen.getByLabelText("Libellé"), "Jira");
-  await user.click(screen.getByLabelText("Plusieurs instances"));
+  // Plusieurs comptes : l’adresse devient facultative, l’entrée du coffre quitte le service pour le compte.
+  needs = needs.map((need) => ({ ...need, client: "jira" }));
+  await user.click(screen.getByLabelText("Plusieurs comptes"));
   expect(screen.getByLabelText("Adresse par défaut (facultative)")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Entrée du coffre")).not.toBeInTheDocument();
-  await user.type(screen.getByLabelText("Nom de la méthode"), "Data Center (PAT)");
-  await user.selectOptions(screen.getByLabelText("Authentification"), "bearer");
-  await user.click(screen.getByRole("button", { name: "Ajouter une méthode" }));
-  await user.type(screen.getAllByLabelText("Nom de la méthode")[1], "Jira Cloud");
-  await user.selectOptions(screen.getAllByLabelText("Authentification")[1], "basic");
+  expect(screen.queryByLabelText("Mot de passe ou clé")).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Nom de la façon de se connecter"), "Data Center (PAT)");
+  await user.selectOptions(screen.getByLabelText("Type de connexion"), "bearer");
+  await user.click(screen.getByRole("button", { name: "Ajouter une façon de se connecter" }));
+  await user.type(screen.getAllByLabelText("Nom de la façon de se connecter")[1], "Jira Cloud");
+  await user.selectOptions(screen.getAllByLabelText("Type de connexion")[1], "basic");
   await user.click(screen.getByRole("button", { name: "Créer" }));
   expect(lastCall("clients.save")).toEqual({
     create: true,
@@ -546,18 +651,18 @@ it("crée un client à plusieurs instances, ajoute ses instances et les gère un
   });
 
   // Le client créé n’a rien à appeler : la première instance se saisit tout de suite, champ par champ.
-  expect(await screen.findByText("Nouvelle instance de Jira")).toBeInTheDocument();
+  expect(await screen.findByText("Nouveau compte Jira")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
-  expect(screen.getByText("Saisissez le nom de l’instance.")).toBeInTheDocument();
-  expect(screen.getByText("Saisissez l’adresse de l’instance.")).toBeInTheDocument();
-  expect(screen.getByText("Choisissez une entrée du coffre.")).toBeInTheDocument();
+  expect(screen.getByText("Saisissez le nom du compte.")).toBeInTheDocument();
+  expect(screen.getByText("Saisissez l’adresse du compte.")).toBeInTheDocument();
+  expect(screen.getByText("Choisissez un mot de passe ou une clé.")).toBeInTheDocument();
   expect(lastCall("clients.saveInstance")).toBeUndefined();
-  await user.type(screen.getByLabelText("Nom de l’instance"), "Acme");
-  expect(screen.getByLabelText("Identifiant de l’instance")).toHaveValue("acme");
-  await user.type(screen.getByLabelText("Adresse de l’instance"), "https://jira.acme.fr");
+  await user.type(screen.getByLabelText("Nom du compte"), "Acme");
+  expect(screen.getByLabelText("Identifiant du compte")).toHaveValue("acme");
+  await user.type(screen.getByLabelText("Adresse du compte"), "https://jira.acme.fr");
   // Seules les entrées du type de la méthode choisie sont proposées.
-  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…", "PAT Acme"]);
-  await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "pat-acme");
+  expect(optionLabels(screen.getByLabelText("Mot de passe ou clé"))).toEqual(["Choisir…", "PAT Acme"]);
+  await user.selectOptions(screen.getByLabelText("Mot de passe ou clé"), "pat-acme");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
   expect(lastCall("clients.saveInstance")).toEqual({
     client: "jira",
@@ -565,34 +670,37 @@ it("crée un client à plusieurs instances, ajoute ses instances et les gère un
     instance: { id: "acme", label: "Acme", method: "data-center-pat", url: "https://jira.acme.fr", secret: "pat-acme" },
   });
 
-  // La liste montre le client et, à part, chacune de ses instances.
-  const clientsTable = await screen.findByRole("table", { name: "Clients" });
-  expect(within(clientsTable).getByText("1 instance")).toBeInTheDocument();
-  expect(within(clientsTable).getByText("Data Center (PAT), Jira Cloud")).toBeInTheDocument();
-  const instancesTable = screen.getByRole("table", { name: "Instances" });
-  expect(within(instancesTable).getByText("https://jira.acme.fr")).toBeInTheDocument();
-  expect(within(instancesTable).getByText("Par défaut")).toBeInTheDocument();
+  // La fiche montre directement les comptes du seul service du module, avec la page que chacun alimente.
+  const instancesTable = await screen.findByRole("group", { name: "Comptes Jira" });
+  expect(screen.getByRole("heading", { name: "Comptes" })).toBeInTheDocument();
+  expect(within(instancesTable).getByText("Acme")).toBeInTheDocument();
+  expect(within(instancesTable).getByText("Page « Tickets — Acme » dans le menu")).toBeInTheDocument();
+  // Rien de technique : l’adresse du compte reste dans son formulaire.
+  expect(within(instancesTable).queryByText(/jira\.acme\.fr/)).not.toBeInTheDocument();
+  // Un seul compte : il n’y a pas de « par défaut » à montrer.
+  expect(within(instancesTable).queryByText("Par défaut")).not.toBeInTheDocument();
 
   // Une deuxième instance, avec une autre méthode et donc d’autres entrées du coffre.
-  await user.click(screen.getByRole("button", { name: "Ajouter une instance à Jira" }));
-  await user.type(screen.getByLabelText("Nom de l’instance"), "Cloud");
-  await user.type(screen.getByLabelText("Adresse de l’instance"), "https://acme.atlassian.net");
-  await user.selectOptions(screen.getByLabelText("Méthode d’authentification"), "jira-cloud");
-  expect(optionLabels(screen.getByLabelText("Entrée du coffre"))).toEqual(["Choisir une entrée…", "Compte Cloud"]);
-  await user.selectOptions(screen.getByLabelText("Entrée du coffre"), "cloud-compte");
+  await user.click(screen.getByRole("button", { name: "Ajouter un compte à Jira" }));
+  await user.type(screen.getByLabelText("Nom du compte"), "Cloud");
+  await user.type(screen.getByLabelText("Adresse du compte"), "https://acme.atlassian.net");
+  await user.selectOptions(screen.getByLabelText("Type de connexion"), "jira-cloud");
+  expect(optionLabels(screen.getByLabelText("Mot de passe ou clé"))).toEqual(["Choisir…", "Compte Cloud"]);
+  await user.selectOptions(screen.getByLabelText("Mot de passe ou clé"), "cloud-compte");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
-  const instances = await screen.findByRole("table", { name: "Instances" });
-  expect(within(instances).getByText("https://acme.atlassian.net")).toBeInTheDocument();
+  const instances = await screen.findByRole("group", { name: "Comptes Jira" });
+  expect(await within(instances).findByText("Cloud")).toBeInTheDocument();
 
   // Chaque instance se teste et peut devenir celle par défaut.
-  await user.click(screen.getByRole("button", { name: "Tester Jira — Cloud" }));
+  await user.click(await menuItem(user, "Jira — Cloud", "Tester"));
   await waitFor(() => expect(notifications()).toContain("Jira — Cloud : le service répond"));
   expect(lastCall("clients.test")).toEqual({ id: "jira", instance: "cloud" });
-  await user.click(screen.getByRole("button", { name: "Utiliser Jira — Cloud par défaut" }));
+  await user.click(await menuItem(user, "Jira — Cloud", "Utiliser par défaut"));
   expect(lastCall("clients.defaultInstance")).toEqual({ client: "jira", instance: "cloud" });
-  await waitFor(() =>
-    expect(screen.queryByRole("button", { name: "Utiliser Jira — Cloud par défaut" })).not.toBeInTheDocument(),
-  );
+  await user.click(screen.getByRole("button", { name: "Actions de Jira — Cloud" }));
+  expect(await screen.findByRole("menuitem", { name: "Tester" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Utiliser par défaut" })).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
 
   // Une instance modifiée hors des Réglages : la validation du client montre l’instance concernée.
   pending["jira#cloud"] = {
@@ -601,7 +709,7 @@ it("crée un client à plusieurs instances, ajoute ses instances et les gère un
     changes: [
       {
         field: "baseUrl",
-        label: "Adresse de base",
+        label: "Adresse du service",
         before: "https://acme.atlassian.net",
         after: "https://ailleurs.fr",
       },
@@ -609,20 +717,20 @@ it("crée un client à plusieurs instances, ajoute ses instances et les gère un
     fingerprint: { baseUrl: "https://ailleurs.fr" },
   };
   listeners.get("clients:changed")?.({ client: "jira" });
-  await user.click(await screen.findByRole("button", { name: "Valider Jira" }));
+  await user.click(await screen.findByRole("button", { name: "Approuver Jira" }));
   const dialog = screen.getByRole("alertdialog");
-  expect(within(dialog).getByText("Cloud · Adresse de base")).toBeInTheDocument();
-  await user.click(within(dialog).getByRole("button", { name: "Valider" }));
-  await waitFor(() => expect(notifications()).toContain("Jira est validé"));
+  expect(within(dialog).getByText("Cloud · Adresse du service")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Approuver" }));
+  await waitFor(() => expect(notifications()).toContain("Jira est approuvé"));
   expect(lastCall("clients.validate")).toEqual({
     id: "jira",
     fingerprints: { cloud: { baseUrl: "https://ailleurs.fr" } },
   });
 
   // Supprimer une instance est confirmé, et ne touche ni au client ni aux autres instances.
-  await user.click(screen.getByRole("button", { name: "Supprimer Jira — Acme" }));
+  await user.click(await menuItem(user, "Jira — Acme", "Supprimer le compte…"));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "acme" }));
-  await waitFor(() => expect(screen.queryByText("https://jira.acme.fr")).not.toBeInTheDocument());
-  expect(screen.getByRole("table", { name: "Clients" })).toBeInTheDocument();
+  await waitFor(() => expect(within(instances).queryByText("Acme")).not.toBeInTheDocument());
+  expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
 });

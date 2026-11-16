@@ -76,9 +76,9 @@ it("crée, modifie et supprime une entrée sans jamais afficher ni préremplir l
   render(<VaultSettings />);
 
   // Coffre vide : l’état vide explique le coffre et propose la création.
-  expect(await screen.findByText("Aucune entrée dans le coffre")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Nouvelle entrée" }));
-  const creation = screen.getByRole("dialog", { name: "Nouvelle entrée du coffre" });
+  expect(await screen.findByText("Aucun mot de passe ni clé")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Ajouter" }));
+  const creation = screen.getByRole("dialog", { name: "Nouveau mot de passe ou clé" });
 
   // L’identifiant suit le libellé ; le secret est un champ masqué, vide, et obligatoire à la création.
   await user.type(within(creation).getByLabelText("Libellé"), "Jeton Jira");
@@ -100,12 +100,12 @@ it("crée, modifie et supprime une entrée sans jamais afficher ni préremplir l
     meta: {},
     secrets: { value: SECRET },
   });
-  expect(notifications()).toContain("Entrée du coffre créée");
+  expect(notifications()).toContain("Mot de passe ou clé ajouté");
 
   // La liste montre l’entrée et son état, pas sa valeur.
-  const table = await screen.findByRole("table", { name: "Entrées du coffre" });
+  const table = await screen.findByRole("group", { name: "Mots de passe et clés" });
   expect(within(table).getByText("Jeton Jira")).toBeInTheDocument();
-  expect(within(table).getByText("Jeton ou clé d’API")).toBeInTheDocument();
+  expect(within(table).getByText(/^Jeton ou clé d’API · mis à jour le/)).toBeInTheDocument();
   expect(within(table).getByText("Secret enregistré")).toBeInTheDocument();
   expect(document.body.textContent).not.toContain(SECRET);
 
@@ -135,19 +135,19 @@ it("crée, modifie et supprime une entrée sans jamais afficher ni préremplir l
   deleteError = "Cette entrée est utilisée par le client : Jira.";
   await user.click(screen.getByRole("button", { name: "Supprimer Jeton Jira (prod)" }));
   const confirmation = screen.getByRole("alertdialog");
-  expect(within(confirmation).getByText("Supprimer l’entrée « Jeton Jira (prod) » ?")).toBeInTheDocument();
+  expect(within(confirmation).getByText("Supprimer « Jeton Jira (prod) » ?")).toBeInTheDocument();
   await user.click(within(confirmation).getByRole("button", { name: "Annuler" }));
   expect(lastCall("vault.delete")).toBeUndefined();
   await user.click(screen.getByRole("button", { name: "Supprimer Jeton Jira (prod)" }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
-  await waitFor(() => expect(notifications()).toContain("L’entrée du coffre n’a pas été supprimée"));
+  await waitFor(() => expect(notifications()).toContain("Le mot de passe ou la clé n’a pas été supprimé"));
   expect(useNotifications.getState().items[0].description).toBe(deleteError);
   expect(screen.getByText("Jeton Jira (prod)")).toBeInTheDocument();
 
   deleteError = undefined;
   await user.click(screen.getByRole("button", { name: "Supprimer Jeton Jira (prod)" }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
-  expect(await screen.findByText("Aucune entrée dans le coffre")).toBeInTheDocument();
+  expect(await screen.findByText("Aucun mot de passe ni clé")).toBeInTheDocument();
   expect(lastCall("vault.delete")).toEqual({ id: "jeton-jira" });
 });
 
@@ -165,7 +165,7 @@ it("adapte le formulaire au type et suit les changements venus d’ailleurs", as
     },
   ];
   render(<VaultSettings />);
-  const table = await screen.findByRole("table", { name: "Entrées du coffre" });
+  const table = await screen.findByRole("group", { name: "Mots de passe et clés" });
   expect(within(table).getByText("Non connecté")).toBeInTheDocument();
 
   // Une connexion OAuth aboutie ailleurs met la liste à jour.
@@ -174,8 +174,8 @@ it("adapte le formulaire au type et suit les changements venus d’ailleurs", as
   expect(await within(table).findByText("Connecté")).toBeInTheDocument();
 
   // Identifiant et mot de passe : l’identifiant de connexion n’est pas secret, le mot de passe l’est.
-  await user.click(screen.getByRole("button", { name: "Nouvelle entrée" }));
-  const dialog = screen.getByRole("dialog", { name: "Nouvelle entrée du coffre" });
+  await user.click(screen.getByRole("button", { name: "Ajouter" }));
+  const dialog = screen.getByRole("dialog", { name: "Nouveau mot de passe ou clé" });
   await user.selectOptions(within(dialog).getByLabelText("Type"), "basic");
   await user.type(within(dialog).getByLabelText("Libellé"), "Compte de service");
   await user.clear(within(dialog).getByLabelText("Identifiant"));

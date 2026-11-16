@@ -215,6 +215,30 @@ function desk() {
           entry.id === args.module ? { ...entry, installed: "2.0.0" } : entry,
         );
         return null;
+      case "modules.setup":
+        // Parcours de configuration : un service par besoin, aucun encore configuré.
+        return {
+          modules: state.modules.map((candidate) => ({
+            module: candidate.id,
+            name: candidate.name,
+            description: candidate.description,
+            welcome: "",
+            installed: candidate.readOnly,
+            ready: candidate.clients.length === 0,
+            steps: candidate.clients.map((need) => ({
+              key: `${candidate.id}/${need.id}`,
+              module: candidate.id,
+              moduleName: candidate.name,
+              need: need.id,
+              label: need.label,
+              help: "",
+              optional: false,
+              hasTemplate: false,
+              client: null,
+              state: "missing",
+            })),
+          })),
+        };
       default:
         throw new Error(`Commande inattendue : ${command}`);
     }
@@ -248,7 +272,7 @@ describe("ModulesSettings", () => {
     expect(await within(row).findByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
     expect(within(row).getByText("Modifié sur place")).toBeInTheDocument();
     expect(within(row).getByText(/Installé depuis Équipe/)).toBeInTheDocument();
-    expect(within(rowOf(moduleList(), "Notes")).getByText(/^Local/)).toBeInTheDocument();
+    expect(within(rowOf(moduleList(), "Notes")).getByText(/^Créé ici/)).toBeInTheDocument();
     // L’ouverture de l’écran interroge les marketplaces distants.
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.updates", { refresh: true }));
     expect(screen.getByRole("button", { name: "Tout mettre à jour (1)" })).toBeInTheDocument();
@@ -267,7 +291,9 @@ describe("ModulesSettings", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(invoke).toHaveBeenCalledWith("marketplace.update", { module: "suivi" });
     await waitFor(() => expect(screen.queryByText(/Mise à jour disponible/)).not.toBeInTheDocument());
-    expect(within(rowOf(moduleList(), "Suivi")).getByText("v1.1.0")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(rowOf(moduleList(), "Suivi")).queryByText(/Mise à jour disponible/)).not.toBeInTheDocument(),
+    );
     expect(screen.queryByRole("button", { name: /Tout mettre à jour/ })).not.toBeInTheDocument();
     expect(lastNotification()).toBe("Suivi mis à jour");
   });
@@ -306,7 +332,10 @@ describe("ModulesSettings", () => {
   it("publie un module local et liste les problèmes quand la vérification échoue", async () => {
     desk();
     render(<ModulesSettings />);
+    // Les sources se chargent ; la liste des modules reste affichée.
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter des modules" }));
     await screen.findByText("Équipe");
+    fireEvent.click(screen.getByRole("button", { name: "Tous les modules" }));
 
     openModuleMenu("Notes", /Publier/);
     const dialog = screen.getByRole("dialog", { name: "Publier Notes" });
@@ -317,7 +346,7 @@ describe("ModulesSettings", () => {
       marketplace: "equipe",
       refresh: true,
     });
-    expect(within(dialog).getByRole("combobox", { name: "Marketplace cible" })).toHaveValue("equipe");
+    expect(within(dialog).getByRole("combobox", { name: "Dépôt de destination" })).toHaveValue("equipe");
     fireEvent.change(within(dialog).getByLabelText("Notes de version"), { target: { value: "Première version" } });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Publier" }));
@@ -341,9 +370,10 @@ describe("ModulesSettings", () => {
   it("branche un marketplace, installe depuis son catalogue après avoir listé les accès, puis le retire", async () => {
     desk();
     render(<ModulesSettings />);
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter des modules" }));
     const catalog = await screen.findByRole("list", { name: "Modules proposés par Équipe" });
     const offered = rowOf(catalog, "Facturation");
-    expect(within(offered).getByText(/1 page · 1 fonction · demande Banque, Relance les impayés/)).toBeInTheDocument();
+    expect(within(offered).getByText(/1 page · demande Banque, Relance les impayés/)).toBeInTheDocument();
     expect(within(rowOf(catalog, "Suivi")).getByText("Installé (v1.0.0)")).toBeInTheDocument();
     expect(within(rowOf(catalog, "Suivi")).queryByRole("button", { name: "Installer" })).not.toBeInTheDocument();
 
@@ -362,28 +392,65 @@ describe("ModulesSettings", () => {
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("marketplace.install", { marketplace: "equipe", module: "facturation" }),
     );
-    expect(await within(moduleList()).findByText("Facturation")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Juste après l’installation, le parcours de configuration présente le module ; on peut le quitter.
+    expect(await screen.findByRole("heading", { name: "Configurer Facturation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bienvenue dans Facturation" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Terminer plus tard" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Tous les modules" }));
+    expect(await within(moduleList()).findByText("Facturation")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter des modules" }));
 
     // Accès refusé : le message du backend s’affiche sous le champ, rien n’est ajouté.
-    const address = screen.getByLabelText("Adresse git du marketplace");
+    const address = screen.getByLabelText("Adresse du dépôt");
     fireEvent.change(address, { target: { value: "git@exemple.fr:commun.git" } });
-    fireEvent.click(screen.getByRole("button", { name: "Brancher" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter" }));
     expect(await screen.findByText(/Accès refusé \(clonage\)/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Brancher" }));
-    const marketplaces = screen.getByRole("list", { name: "Marketplaces branchés" });
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter" }));
+    const marketplaces = screen.getByRole("list", { name: "Dépôts de modules" });
     expect(await within(marketplaces).findByText("commun")).toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("marketplace.add", { url: "git@exemple.fr:commun.git" });
     expect(address).toHaveValue("");
 
     fireEvent.click(within(rowOf(marketplaces, "Équipe")).getByRole("button", { name: "Retirer" }));
     const confirmation = screen.getByRole("alertdialog");
-    expect(
-      within(confirmation).getByText(/1 module installé depuis ce marketplace reste dans l.espace, sans source/),
-    ).toBeInTheDocument();
+    expect(within(confirmation).getByText(/1 module installé depuis ce dépôt reste dans l.espace/)).toBeInTheDocument();
     fireEvent.click(within(confirmation).getByRole("button", { name: "Retirer" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.remove", { id: "equipe" }));
     await waitFor(() => expect(within(marketplaces).queryByText("Équipe")).not.toBeInTheDocument());
+  });
+  it("cherche et filtre les modules, puis ouvre la fiche de l’un d’eux", async () => {
+    const state = desk();
+    for (const index of [1, 2, 3, 4, 5]) state.modules.push(module({ id: `m${index}`, name: `Outil ${index}` }));
+    state.modules.push(module({ id: "agenda", name: "Agenda", description: "Rendez-vous de l’équipe" }));
+    useShell.setState({ snapshot: { ...(useShell.getState().snapshot as Snapshot), modules: state.modules } });
+    render(<ModulesSettings />);
+    expect(await screen.findByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
+
+    // La recherche ignore les accents et lit aussi la description.
+    fireEvent.change(screen.getByLabelText("Rechercher un module"), { target: { value: "equipe" } });
+    expect(
+      within(moduleList())
+        .getAllByRole("listitem")
+        .map((item) => item.dataset.module),
+    ).toEqual(["agenda"]);
+    fireEvent.change(screen.getByLabelText("Rechercher un module"), { target: { value: "" } });
+
+    // Le filtre ne garde que les modules qui ont une mise à jour.
+    fireEvent.click(screen.getByRole("radio", { name: "Mises à jour (1)" }));
+    expect(
+      within(moduleList())
+        .getAllByRole("listitem")
+        .map((item) => item.dataset.module),
+    ).toEqual(["suivi"]);
+
+    // La fiche s’ouvre sur sa propre vue, et le retour ramène à la liste.
+    fireEvent.click(screen.getByRole("button", { name: "Ouvrir la fiche de Suivi" }));
+    expect(screen.getByRole("heading", { name: "Suivi" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /Modules de l.espace/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tous les modules" }));
+    expect(moduleList()).toBeInTheDocument();
   });
 });
 

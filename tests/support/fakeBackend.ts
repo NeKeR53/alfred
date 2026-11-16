@@ -87,6 +87,18 @@ export class FakeBackend {
   readonly unknown: string[] = [];
   readonly events: Array<{ name: string; payload: unknown }> = [];
   readonly settings = new Map<string, unknown>();
+  /** Compteurs des pages (`badge.set`), comme `badges.rs` : une entrée par page, toujours supérieure à zéro. */
+  badges: Record<string, number> = {};
+  /** Voix : dictée réglée ou non, ce que rendra la prochaine dictée, ce qui a été lu. */
+  voice = {
+    configured: false,
+    transcript: "",
+    listening: false,
+    spoken: [] as string[],
+    readReplies: true,
+    dictation: true,
+    readNotifications: false,
+  };
   readonly conversations = new Map<string, Json>();
   grants: Array<{ subject: string; resource: string; grantedAt: string }> = [];
   journal: Json[] = [];
@@ -207,6 +219,7 @@ export class FakeBackend {
         missing: false,
         errors: [],
         uses: {},
+        runtime: "ts",
       })),
     );
     return {
@@ -349,6 +362,16 @@ export class FakeBackend {
   #beforeChanges: SpaceState | undefined;
 
   private readonly handlers: Record<string, (args: Json) => unknown> = {
+    "badges.list": () => (this.space ? { ...this.badges } : {}),
+    "frame.badges.update": (args) => {
+      const page = String(args.page);
+      const current = this.badges[page] ?? 0;
+      const count = Math.max(0, args.op === "increment" ? current + Number(args.value) : Number(args.value));
+      if (count === 0) delete this.badges[page];
+      else this.badges[page] = count;
+      this.emit("badges:changed", { ...this.badges });
+      return { count };
+    },
     "app.info": () => ({
       version: "0.1.0",
       serverPort: 14731,
@@ -356,6 +379,50 @@ export class FakeBackend {
       platform: "macos",
       home: "/Users/lea",
     }),
+    "voice.status": () => ({
+      configured: this.voice.configured,
+      listenError: this.voice.configured ? null : "Réglages vocaux invalides : aucun modèle Whisper n’est indiqué.",
+      speakError: null,
+      listening: this.voice.listening,
+      readReplies: this.voice.readReplies,
+      dictation: this.voice.dictation,
+      readNotifications: this.voice.readNotifications,
+      enabled: true,
+      qwenInstalled: false,
+    }),
+    "voice.listen.start": () => {
+      if (!this.voice.dictation) throw new Error("La dictée est bloquée (Réglages, onglet Voix).");
+      if (!this.voice.configured) throw new Error("Réglages vocaux invalides : aucun modèle Whisper n’est indiqué.");
+      this.voice.listening = true;
+      return null;
+    },
+    "voice.listen.stop": () => {
+      if (!this.voice.listening) throw new Error("Aucune écoute n’est en cours.");
+      this.voice.listening = false;
+      this.emit("voice:event", { type: "final", text: this.voice.transcript });
+      return { text: this.voice.transcript };
+    },
+    "voice.listen.cancel": () => {
+      this.voice.listening = false;
+      return null;
+    },
+    "voice.speak": (args) => {
+      this.voice.spoken.push(String(args.text));
+      return { interrupted: false };
+    },
+    "voice.speak.stop": () => null,
+    "voice.enabled.set": (args) => this.handlers["voice.status"]?.(args),
+    "voice.preferences.set": (args) => {
+      if (typeof args.dictation === "boolean") this.voice.dictation = args.dictation;
+      if (typeof args.readNotifications === "boolean") this.voice.readNotifications = args.readNotifications;
+      if (!this.voice.dictation) this.voice.listening = false;
+      return this.handlers["voice.status"]?.({});
+    },
+    "frame.voice.listen.start": () => this.handlers["voice.listen.start"]?.({}),
+    "frame.voice.listen.stop": () => this.handlers["voice.listen.stop"]?.({}),
+    "frame.voice.listen.cancel": () => this.handlers["voice.listen.cancel"]?.({}),
+    "frame.voice.speak": (args) => this.handlers["voice.speak"]?.(args),
+    "frame.voice.speak.stop": () => null,
     "settings.get": (args) => this.settings.get(String(args.key)) ?? null,
     "settings.set": (args) => {
       this.settings.set(String(args.key), args.value);
@@ -472,6 +539,18 @@ export class FakeBackend {
       clients: clone(this.clients),
       needs: [],
       redirectUri: "http://127.0.0.1:14731/oauth/callback",
+    }),
+    // Les modules du faux espace n’ont besoin d’aucun service : ils sont prêts d’office.
+    "modules.setup": () => ({
+      modules: (this.space?.modules ?? []).map((module) => ({
+        module: module.id,
+        name: module.name,
+        description: "",
+        welcome: "",
+        installed: false,
+        ready: true,
+        steps: [],
+      })),
     }),
     "webhooks.list": () => clone(this.webhooks),
     "schedules.list": () => clone(this.schedules),

@@ -17,7 +17,7 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import type { Commit, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { type Grant, SpaceSettings } from "./SpaceSettings";
+import { AppearanceSettings, type Grant, SpaceSettings } from "./SpaceSettings";
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -124,6 +124,9 @@ beforeEach(() => {
       }
       case "space.snapshot":
         return snapshot;
+      case "space.open":
+        snapshot = { ...snapshot, path: String(args.path), name: "Perso" };
+        return snapshot;
       case "space.undo":
         if (undoError) throw new Error(undoError);
         history = [
@@ -146,7 +149,7 @@ const notifications = () => useNotifications.getState().items.map((item) => item
 
 it("renomme l’espace, montre son dossier, règle l’apparence et ramène à l’accueil après confirmation", async () => {
   const user = userEvent.setup();
-  render(<SpaceSettings />);
+  const { unmount } = render(<SpaceSettings />);
 
   const name = screen.getByLabelText("Nom de l’espace");
   await user.clear(name);
@@ -160,6 +163,11 @@ it("renomme l’espace, montre son dossier, règle l’apparence et ramène à l
   expect(screen.getByText("/Users/test/Espaces/Atelier")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Afficher dans le Finder" }));
   expect(lastCall("files.reveal")).toEqual({ path: "/Users/test/Espaces/Atelier" });
+
+  // L’apparence est une rubrique à part.
+  expect(screen.queryByLabelText("Couleur d’accent")).not.toBeInTheDocument();
+  unmount();
+  const appearance = render(<AppearanceSettings />);
 
   // Thème : suivre le système est le choix actif, puis Sombre.
   expect(screen.getByRole("radio", { name: /^Système/ })).toBeChecked();
@@ -176,11 +184,27 @@ it("renomme l’espace, montre son dossier, règle l’apparence et ramène à l
   await user.selectOptions(screen.getByLabelText("Couleur d’accent"), "");
   await waitFor(() => expect(lastCall("space.updateLayout")).toMatchObject({ accent: null }));
 
-  // Changer d’espace : confirmé, puis fermeture.
-  await user.click(screen.getByRole("button", { name: "Changer d’espace" }));
+  // Changer d’espace : un espace récent s’ouvre en un clic, sans repasser par l’accueil.
+  appearance.unmount();
+  useShell.setState({
+    recentSpaces: [
+      { path: "/Users/test/Espaces/Atelier", name: "Atelier Lyon", openedAt: "2026-11-14T09:00:00Z" },
+      { path: "/Users/test/Espaces/Perso", name: "Perso", openedAt: "2026-11-13T09:00:00Z" },
+    ],
+  });
+  render(<SpaceSettings />);
+  const recent = screen.getByRole("group", { name: "Espaces récents" });
+  // L’espace ouvert n’est pas proposé.
+  expect(within(recent).queryByText("Atelier Lyon")).not.toBeInTheDocument();
+  await user.click(within(recent).getByRole("button", { name: "Ouvrir l’espace Perso" }));
+  await waitFor(() => expect(lastCall("space.open")).toEqual({ path: "/Users/test/Espaces/Perso" }));
+  expect(useShell.getState().recentSpaces[0]?.path).toBe("/Users/test/Espaces/Perso");
+
+  // Fermer l’espace : confirmé, puis retour à l’accueil.
+  await user.click(screen.getByRole("button", { name: "Fermer l’espace" }));
   const dialog = screen.getByRole("alertdialog");
   expect(within(dialog).getByText(/Rien n’est supprimé/)).toBeInTheDocument();
-  await user.click(within(dialog).getByRole("button", { name: "Changer d’espace" }));
+  await user.click(within(dialog).getByRole("button", { name: "Fermer l’espace" }));
   await waitFor(() => expect(useShell.getState().snapshot).toBeNull());
   expect(lastCall("space.close")).toEqual({});
 });

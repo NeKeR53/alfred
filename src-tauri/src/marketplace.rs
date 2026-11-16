@@ -1517,7 +1517,7 @@ fn verify(space: &Space, manifest: &ModuleManifest, published_manifest: &str, no
         }
     }
     for function in &manifest.functions {
-        let file = format!("functions/{}.ts", function.id);
+        let file = format!("functions/{}", function.file_name());
         if !dir.join(&file).is_file() {
             let message = format!("La fonction « {} » est déclarée mais son fichier n’existe pas.", function.id);
             problems.push(Problem { file, line: None, column: None, message });

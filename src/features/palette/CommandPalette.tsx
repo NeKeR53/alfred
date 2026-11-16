@@ -14,7 +14,7 @@ import { NamedIcon } from "../../shell/icons";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { useAgents } from "../agent/store";
-import { settingsTabs } from "../settings/tabs";
+import { openSettings, settingsTabs } from "../settings/tabs";
 import "./palette.css";
 
 interface PaletteState {
@@ -337,10 +337,7 @@ export function CommandPalette() {
                       keywords={[tab.label, "Réglages"]}
                       icon={<Settings size={16} aria-hidden="true" />}
                       meta="Réglages"
-                      onSelect={run(() => {
-                        shell().setView({ kind: "settings" });
-                        shell().setActiveTab("réglages", tab.id);
-                      })}
+                      onSelect={run(() => openSettings(tab.id))}
                     >
                       {tab.label}
                     </Item>

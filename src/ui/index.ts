@@ -4,6 +4,7 @@
  */
 import "./styles.css";
 import "./accents.css";
+import "./settings-surface.css";
 
 export { AnchoredPanel } from "./components/AnchoredPanel";
 export { Button, type ButtonProps, type ButtonVariant, IconButton, type IconButtonProps } from "./components/Button";
@@ -43,6 +44,7 @@ export { PanelHeader } from "./components/PanelHeader";
 export { Grid, Heading, KeyValueList, Page, Row, Section, Spinner, Stack, Surface, Text } from "./components/page";
 export { RefreshButton } from "./components/RefreshButton";
 export { SearchField } from "./components/SearchField";
+export { SettingRow, SettingRows } from "./components/SettingRow";
 export { StatusBadge } from "./components/StatusBadge";
 export { StatusDot, type StatusDotTone } from "./components/StatusDot";
 export { StepList } from "./components/StepList";

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
+pub use crate::scripts::Runtime;
 use crate::transpile::{self, Diagnostic};
 
 pub const SPACE_FILE: &str = "alfred.json";
@@ -86,6 +87,19 @@ pub struct ModuleManifest {
     pub webhooks: Vec<WebhookDecl>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub schedules: Vec<ScheduleDecl>,
+    /// Parcours de configuration proposé après l’installation (texte d’accueil).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<SetupDecl>,
+}
+
+/// Ce que le module dit à l’utilisateur au début du parcours de configuration. Les étapes suivent l’ordre de
+/// `clients`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SetupDecl {
+    /// Texte d’accueil, en mots simples : ce que fait le module et ce qu’il faudra avoir sous la main.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub welcome: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -226,6 +240,16 @@ pub struct FunctionDecl {
     pub tool: bool,
     #[serde(skip_serializing_if = "Uses::is_empty")]
     pub uses: Uses,
+    /// Langage : TypeScript (par défaut, exécuté dans l’interface) ou un script (bash, pwsh, python) lancé par Rust.
+    #[serde(skip_serializing_if = "Runtime::is_ts")]
+    pub runtime: Runtime,
+}
+
+impl FunctionDecl {
+    /// Fichier de la fonction dans `functions/` : `<id>.ts`, `.sh`, `.ps1` ou `.py` selon son langage.
+    pub fn file_name(&self) -> String {
+        format!("{}.{}", self.id, self.runtime.extension())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -238,6 +262,16 @@ pub struct ClientNeed {
     /// Type d’authentification attendu : `bearer`, `apiKey`, `basic`, `oauth2`, `clientCredentials`, `none`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<String>,
+    /// Aide du parcours de configuration : où trouver la clé, quel compte utiliser.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub help: String,
+    /// Le module fonctionne sans ce service : le parcours permet de passer l’étape.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+    /// Modèle du service, de la forme de `clients/<id>.json` sans secret ni instance : le parcours de
+    /// configuration le crée tel quel, l’utilisateur n’ajoute que son compte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -346,6 +380,7 @@ pub struct ModuleSummary {
     pub clients: Vec<ClientNeed>,
     pub webhooks: Vec<WebhookDecl>,
     pub schedules: Vec<ScheduleDecl>,
+    pub setup: Option<SetupDecl>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -362,6 +397,7 @@ pub struct ResolvedFunction {
     pub missing: bool,
     pub errors: Vec<Diagnostic>,
     pub uses: Uses,
+    pub runtime: Runtime,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -482,8 +518,21 @@ impl Space {
         self.module_dir(module).join("pages").join(format!("{page}.tsx"))
     }
 
+    /// Fichier d’une fonction déclarée.
+    pub fn function_path(&self, module: &str, function: &FunctionDecl) -> PathBuf {
+        self.module_dir(module).join("functions").join(function.file_name())
+    }
+
+    /// Fichier d’une fonction désignée par son identifiant : son langage est lu dans le manifeste du module (une
+    /// fonction non déclarée est supposée en TypeScript).
     pub fn function_file(&self, module: &str, function: &str) -> PathBuf {
-        self.module_dir(module).join("functions").join(format!("{function}.ts"))
+        let runtime = self
+            .module(module)
+            .ok()
+            .and_then(|manifest| manifest.functions.into_iter().find(|declared| declared.id == function))
+            .map(|declared| declared.runtime)
+            .unwrap_or_default();
+        self.module_dir(module).join("functions").join(format!("{function}.{}", runtime.extension()))
     }
 
     /// Crée un espace vide dans `root`, ou ouvre celui qui s’y trouve déjà.
@@ -840,7 +889,7 @@ impl Space {
                 }
                 Ok(client) => expanded.push(ResolvedSection {
                     waiting: Some(format!(
-                        "Le client « {} » n’a encore aucune instance. En ajouter une dans Réglages → Clients : cette section apparaîtra pour chacune.",
+                        "Le service « {} » n’a encore aucun compte. En ajouter un dans Réglages → Modules, fiche du module : cette section apparaîtra pour chacun.",
                         client.label
                     )),
                     ..section
@@ -979,11 +1028,15 @@ impl Space {
         let mut functions = Vec::new();
         for module in &modules {
             for function in &module.functions {
-                let file = self.function_file(&module.id, &function.id);
-                let (missing, errors) = match fs::read_to_string(&file) {
+                let file = self.function_path(&module.id, function);
+                let (missing, mut errors) = match fs::read_to_string(&file) {
+                    Ok(_) if function.runtime.is_script() => (false, Vec::new()),
                     Ok(source) => (false, transpile::transpile_at(&source, "function.ts", 1).err().unwrap_or_default()),
                     Err(_) => (true, Vec::new()),
                 };
+                if let Some(message) = crate::scripts::availability(function.runtime) {
+                    errors.push(Diagnostic { message, line: None, column: None });
+                }
                 functions.push(ResolvedFunction {
                     reference: format!("{}/{}", module.id, function.id),
                     module: module.id.clone(),
@@ -995,6 +1048,7 @@ impl Space {
                     missing,
                     errors,
                     uses: function.uses.clone(),
+                    runtime: function.runtime,
                 });
             }
         }
@@ -1026,6 +1080,7 @@ impl Space {
                     clients: module.clients.clone(),
                     webhooks: module.webhooks.clone(),
                     schedules: module.schedules.clone(),
+                    setup: module.setup.clone(),
                 })
                 .collect(),
             functions,

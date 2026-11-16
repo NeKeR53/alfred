@@ -54,7 +54,7 @@ Une page est un fichier TSX affiché dans un cadre isolé, sans réseau ni disqu
 |---|---|---|---|
 | Page (onglet d’une section) | `<Page>` pour un tableau ou une vue dense ; `<Page width="text">` pour de la lecture ou un formulaire | Toute la place restante ; `text` limite chaque bloc à 760 px | `PageToolbar` (40 px) en option, puis le contenu. Une liste se pose directement dans `Page`. |
 | Panneau de droite | `<Page>` | 280 à 900 px : concevoir pour 280 px | Une seule colonne : `Heading`, `KeyValueList`, `Section`, `EmptyState size="compact"`, `StatusBadge size="compact"`. Ni `PageToolbar`, ni `Grid`, ni tableau à plus de deux colonnes. Il lit la sélection de sa page (section 8). |
-| Onglet de Réglages | `<Page width="text">` | 760 px au plus | Une `Section` par sujet, un formulaire par section, `FormActions` en bas du formulaire ; les interrupteurs s’appliquent immédiatement (section 7). |
+| Onglet de Réglages | `<Page width="text">` | 760 px au plus | Une `Section` par sujet, et dedans des lignes `SettingRow` réunies dans `SettingRows` : titre et explication à gauche, contrôle à droite, un trait fin entre deux lignes, comme les Réglages intégrés. Un réglage s’applique dès qu’il change ; une saisie libre porte ses boutons sur sa ligne. Ni `FormField` empilés ni `FormActions` en bas de page (exemple en 12.3). |
 
 `Page` fixe la marge intérieure (16 px), l’espace entre ses enfants directs (24 px), le fond et le défilement.
 
@@ -240,7 +240,7 @@ Props de `ChoiceGroup` : `label: string` (obligatoire), `appearance`: `"default"
 
 Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, que l’erreur remplace), `error?` (message d’erreur ; marque le champ invalide), `layout`: `"stacked" \| "inline"` (`inline` : libellé à gauche, dans une barre d’outils), `children` (un `TextInput`, `TextArea`, `SelectControl` ou une combobox), `htmlFor?` (`id` du contrôle quand ce n’est pas l’enfant direct), `compound` (`false` ; champ qui réunit plusieurs commandes, par exemple une liste et son bouton : passer alors `htmlFor`), `messageId?` (identifiant imposé du message d’aide ou d’erreur). Les autres attributs vont au `label`.
 
-**`TextInput`**, **`TextArea`**, **`SelectControl`** — champs natifs habillés ; ils acceptent les attributs de `<input>`, `<textarea>` et `<select>`. `TextArea` a une prop `variant` (`"default"`, `"composer"`, `"inline"`) : garder `default` dans un formulaire. Exemple en 12.3.
+**`TextInput`**, **`TextArea`**, **`SelectControl`** — champs natifs habillés ; ils acceptent les attributs de `<input>`, `<textarea>` et `<select>`. `TextArea` a une prop `variant` (`"default"`, `"composer"`, `"inline"`) : garder `default` dans un formulaire.
 
 **`FormControlGroup`** — aligne un champ et l’action qui lui est liée. `children` : un `FormField` puis un `Button`.
 
@@ -255,6 +255,21 @@ Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, 
   </FormField>
   <Button onClick={tester}>Tester</Button>
 </FormControlGroup>
+```
+
+**`SettingRow`**, **`SettingRows`** — le gabarit des Réglages : une ligne par réglage, titre et explication à gauche, contrôle à droite. `SettingRows` réunit les lignes d’une `Section` et trace un trait fin entre elles ; `label?` en fait un groupe nommé. Props de `SettingRow` : `title: ReactNode` (obligatoire, visible, en graisse normale), `description?` (explication en gris dessous, ou l’erreur de la saisie), `badge?` (une `StatusBadge size="compact"` à côté du titre, seulement pour un état qui demande l’attention), `children` (le contrôle : `SwitchControl` sans libellé visible, `SelectControl`, `ChoiceGroup appearance="segmented"`, un `TextInput` court, un `Button` ou un `OverflowMenu` pour les actions rares). Le titre est visuel : le contrôle porte son nom par `aria-label` (« Notifier les tâches en retard »). Un seul contrôle par ligne de préférence ; les actions occasionnelles vont dans un `OverflowMenu`.
+
+```tsx
+<SettingRows>
+  <SettingRow title="Notifier les retards" description="Une notification quand une tâche dépasse son échéance.">
+    <SwitchControl
+      label=""
+      aria-label="Notifier les tâches en retard"
+      checked={notifier}
+      onChange={(event) => void basculer(event.target.checked)}
+    />
+  </SettingRow>
+</SettingRows>
 ```
 
 **`CheckboxControl`**, **`RadioControl`**, **`SwitchControl`** — props : `label: ReactNode` (obligatoire) et les attributs natifs `checked`, `onChange`, `name`, `value`, `disabled`. Case à cocher : option d’un formulaire, validée avec lui. Interrupteur : réglage appliqué immédiatement (exemple en 12.3). Radios : choix exclusif aux libellés longs, avec le même `name` ; pour deux à quatre choix courts, préférer `ChoiceGroup`.
@@ -312,7 +327,7 @@ Dans un `FormField`, une combobox est reliée comme un `TextInput` au libellé, 
 />
 ```
 
-**`FormActions`** — actions d’un formulaire, alignées à droite : Annuler puis l’action principale, qui porte l’état d’enregistrement. Exemple en 12.3.
+**`FormActions`** — actions d’un formulaire, alignées à droite : Annuler puis l’action principale, qui porte l’état d’enregistrement (section 7).
 
 Props : `submitLabel` (sans lui, pas d’action principale), `form` (`id` du `<form>` : le bouton devient `type="submit"`), `onSubmit` (clic, sans `<form>`), `onCancel` (sans lui, pas d’Annuler), `cancelLabel` (`"Annuler"`), `pending` et `pendingLabel` (enregistrement en cours), `disabled`, `cancelDisabled` (`pending`), `submitIcon`, `submitKeyShortcuts`, `children` (actions supplémentaires, avant Annuler).
 
@@ -490,6 +505,7 @@ Un libellé d’action est un verbe à l’infinitif, suivi de son objet quand l
 - **Actions.** `FormActions` en bas du formulaire, à droite : Annuler, s’il y a quelque chose à abandonner, puis l’action principale. Pendant l’enregistrement, `pending` les désactive et affiche le libellé d’attente. Ne pas répéter ces actions ailleurs.
 - **Résultat.** Un succès est une notification `success` ; un échec est une notification `error` qui laisse la saisie intacte.
 - **Réglages immédiats.** Un interrupteur ou un choix fini s’applique dès qu’il change, sans bouton Enregistrer : il réussit en silence, et un échec remet la valeur précédente et notifie. Une saisie libre garde une validation explicite.
+- **Onglet de Réglages.** Pas de formulaire empilé : chaque réglage est une `SettingRow`. Une saisie libre (un nom, une adresse) garde son champ sur sa ligne ; « Annuler » et « Enregistrer » n’apparaissent sur la ligne qu’une fois la valeur modifiée, Entrée enregistre et l’erreur remplace l’explication. Un formulaire long (création d’un objet, plusieurs champs liés) reste un formulaire, dans une page ou une `Modal`.
 - **Longueur.** Un formulaire long va dans une page ou dans le panneau de droite ; une `Modal` ne porte qu’une saisie courte (trois champs au plus).
 
 ## 8. Listes, tableaux et panneau de droite
@@ -802,19 +818,19 @@ export default function TacheDetailPanel() {
 }
 ```
 
-### 12.3 Onglet de Réglages : formulaire et réglage immédiat
+### 12.3 Onglet de Réglages : lignes de réglage
 
 ```tsx
 import { type FormEvent, useState } from "react";
 import {
   Button,
   FeedbackBanner,
-  FormActions,
-  FormField,
   LoadingSkeleton,
   Page,
   Section,
-  Stack,
+  SelectControl,
+  SettingRow,
+  SettingRows,
   SwitchControl,
   TextInput,
 } from "@alfred/ui";
@@ -823,6 +839,7 @@ import { db, shell, useAsync } from "@alfred/sdk";
 interface Reglages {
   equipe: string;
   notifierRetards: boolean;
+  delai: string;
 }
 
 const ECRIRE =
@@ -834,28 +851,47 @@ async function lireReglages(): Promise<Reglages> {
   return {
     equipe: valeurs.get("equipe") ?? "",
     notifierRetards: valeurs.get("notifier_retards") === "1",
+    delai: valeurs.get("delai") ?? "7",
   };
 }
 
-function ReglagesForm({ initial }: { initial: Reglages }) {
-  const [saisie, setSaisie] = useState(initial);
-  const [erreurs, setErreurs] = useState<{ equipe?: string }>({});
+/** Un réglage appliqué dès qu’il change : en cas d’échec, la valeur précédente revient et l’échec est notifié. */
+async function appliquer(cle: string, valeur: string, annuler: () => void) {
+  try {
+    await db.execute(ECRIRE, [cle, valeur]);
+  } catch (error) {
+    annuler();
+    void shell.notify({
+      title: "Le réglage n’a pas été enregistré",
+      description: error instanceof Error ? error.message : undefined,
+      tone: "error",
+    });
+  }
+}
+
+function ReglagesSuivi({ initial }: { initial: Reglages }) {
+  const [enregistre, setEnregistre] = useState(initial.equipe);
+  const [equipe, setEquipe] = useState(initial.equipe);
+  const [erreur, setErreur] = useState<string>();
   const [enCours, setEnCours] = useState(false);
   const [notifier, setNotifier] = useState(initial.notifierRetards);
+  const [delai, setDelai] = useState(initial.delai);
 
+  // Saisie libre : « Annuler » et « Enregistrer » n’apparaissent sur la ligne qu’une fois la valeur modifiée.
   const enregistrer = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const suivantes = { equipe: saisie.equipe.trim() ? undefined : "Saisissez le nom de l’équipe." };
-    setErreurs(suivantes);
-    if (suivantes.equipe) return;
-
+    if (!equipe.trim()) {
+      setErreur("Saisissez le nom de l’équipe.");
+      return;
+    }
     setEnCours(true);
     try {
-      await db.execute(ECRIRE, ["equipe", saisie.equipe.trim()]);
-      void shell.notify({ title: "Réglages enregistrés", tone: "success" });
+      await db.execute(ECRIRE, ["equipe", equipe.trim()]);
+      setEnregistre(equipe.trim());
+      void shell.notify({ title: "Équipe enregistrée", tone: "success" });
     } catch (error) {
       void shell.notify({
-        title: "Les réglages n’ont pas été enregistrés",
+        title: "L’équipe n’a pas été enregistrée",
         description: error instanceof Error ? error.message : undefined,
         tone: "error",
       });
@@ -864,47 +900,63 @@ function ReglagesForm({ initial }: { initial: Reglages }) {
     }
   };
 
-  const basculerNotification = async (actif: boolean) => {
-    setNotifier(actif);
-    try {
-      await db.execute(ECRIRE, ["notifier_retards", actif ? "1" : "0"]);
-    } catch (error) {
-      setNotifier(!actif);
-      void shell.notify({
-        title: "Le réglage n’a pas été enregistré",
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
-  };
-
   return (
     <Page width="text">
       <Section title="Suivi des tâches" description="Valeurs appliquées aux nouvelles tâches.">
-        <form id="reglages-suivi" noValidate onSubmit={enregistrer}>
-          <Stack gap="md">
-            <FormField label="Nom de l’équipe" error={erreurs.equipe}>
+        <SettingRows>
+          <SettingRow title="Nom de l’équipe" description={erreur ?? "Affiché sur chaque tâche."}>
+            <form noValidate onSubmit={enregistrer}>
               <TextInput
-                value={saisie.equipe}
-                aria-required="true"
-                onChange={(event) => setSaisie({ ...saisie, equipe: event.target.value })}
+                aria-label="Nom de l’équipe"
+                aria-invalid={erreur ? true : undefined}
+                value={equipe}
+                onChange={(event) => {
+                  setEquipe(event.target.value);
+                  setErreur(undefined);
+                }}
               />
-            </FormField>
-            <FormActions
-              form="reglages-suivi"
-              submitLabel="Enregistrer"
-              pendingLabel="Enregistrement…"
-              pending={enCours}
-            />
-          </Stack>
-        </form>
+              {equipe !== enregistre ? (
+                <>
+                  <Button onClick={() => setEquipe(enregistre)}>Annuler</Button>
+                  <Button type="submit" variant="primary" loading={enCours} loadingLabel="Enregistrement…">
+                    Enregistrer
+                  </Button>
+                </>
+              ) : null}
+            </form>
+          </SettingRow>
+          <SettingRow title="Délai par défaut" description="Échéance proposée pour une nouvelle tâche.">
+            <SelectControl
+              aria-label="Délai par défaut"
+              value={delai}
+              onChange={(event) => {
+                const avant = delai;
+                setDelai(event.target.value);
+                void appliquer("delai", event.target.value, () => setDelai(avant));
+              }}
+            >
+              <option value="1">Un jour</option>
+              <option value="7">Une semaine</option>
+              <option value="30">Un mois</option>
+            </SelectControl>
+          </SettingRow>
+        </SettingRows>
       </Section>
-      <Section title="Notifications" description="Ces réglages s’appliquent dès qu’ils sont modifiés.">
-        <SwitchControl
-          label="Notifier les tâches en retard"
-          checked={notifier}
-          onChange={(event) => void basculerNotification(event.target.checked)}
-        />
+      <Section title="Notifications">
+        <SettingRows>
+          <SettingRow title="Tâches en retard" description="Une notification quand une tâche dépasse son échéance.">
+            <SwitchControl
+              label=""
+              aria-label="Notifier les tâches en retard"
+              checked={notifier}
+              onChange={(event) => {
+                const actif = event.target.checked;
+                setNotifier(actif);
+                void appliquer("notifier_retards", actif ? "1" : "0", () => setNotifier(!actif));
+              }}
+            />
+          </SettingRow>
+        </SettingRows>
       </Section>
     </Page>
   );
@@ -929,7 +981,7 @@ export default function ReglagesSuiviPage() {
       </Page>
     );
   }
-  return <ReglagesForm initial={reglages.data} />;
+  return <ReglagesSuivi initial={reglages.data} />;
 }
 ```
 

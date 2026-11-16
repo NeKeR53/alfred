@@ -1,5 +1,6 @@
 import {
   Button,
+  Disclosure,
   FeedbackBanner,
   FormActions,
   FormControlGroup,
@@ -23,6 +24,7 @@ import {
   methodLabel,
   saveInstance,
 } from "./api";
+import "./services.css";
 import { urlError } from "./ClientEditor";
 
 type Errors = Partial<Record<"label" | "id" | "url" | "secret", string>>;
@@ -64,7 +66,11 @@ export function InstanceEditor({
     try {
       setEntries(await listVault());
     } catch (failure) {
-      notify({ title: "Le coffre n’a pas pu être lu", description: errorMessage(failure), tone: "error" });
+      notify({
+        title: "Les mots de passe et clés n’ont pas pu être lus",
+        description: errorMessage(failure),
+        tone: "error",
+      });
     }
   }, []);
 
@@ -91,12 +97,12 @@ export function InstanceEditor({
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const next: Errors = {
-      label: label.trim() || unnamedDefault ? undefined : "Saisissez le nom de l’instance.",
+      label: label.trim() || unnamedDefault ? undefined : "Saisissez le nom du compte.",
       id: ID_PATTERN.test(resolvedId)
         ? undefined
         : "Saisissez un identifiant en minuscules, chiffres et tirets (64 caractères au plus).",
-      url: url.trim() ? urlError(url, "") : client.baseUrl ? undefined : "Saisissez l’adresse de l’instance.",
-      secret: vaultKind && !secret ? "Choisissez une entrée du coffre." : undefined,
+      url: url.trim() ? urlError(url, "") : client.baseUrl ? undefined : "Saisissez l’adresse du compte.",
+      secret: vaultKind && !secret ? "Choisissez un mot de passe ou une clé." : undefined,
     };
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
@@ -106,11 +112,11 @@ export function InstanceEditor({
     setPending(true);
     try {
       const saved = await saveInstance(client.id, instance, !initial);
-      notify({ title: initial ? "Instance enregistrée" : "Instance ajoutée", tone: "success" });
+      notify({ title: initial ? "Compte enregistré" : "Compte ajouté", tone: "success" });
       onSaved(saved);
     } catch (failure) {
       notify({
-        title: initial ? "L’instance n’a pas été enregistrée" : "L’instance n’a pas été ajoutée",
+        title: initial ? "Le compte n’a pas été enregistré" : "Le compte n’a pas été ajouté",
         description: errorMessage(failure),
         tone: "error",
       });
@@ -121,16 +127,12 @@ export function InstanceEditor({
   return (
     <Page width="text">
       <Section
-        title={
-          initial
-            ? `Modifier l’instance « ${initial.label} » de ${client.label}`
-            : `Nouvelle instance de ${client.label}`
-        }
-        description="Une instance est un compte ou une installation du service. Son secret reste dans le coffre : l’instance n’en garde que l’identifiant."
+        title={initial ? `Compte « ${initial.label} »` : `Nouveau compte ${client.label}`}
+        description={`Un compte ${client.label} : son nom, son adresse et son mot de passe ou sa clé. Le mot de passe reste enregistré à part, sur ce poste.`}
       >
-        <form id={formId} noValidate onSubmit={submit}>
+        <form id={formId} className="settings-form" noValidate onSubmit={submit}>
           <Stack gap="md">
-            <FormField label="Nom de l’instance" error={errors.label}>
+            <FormField label="Nom du compte" error={errors.label}>
               <TextInput
                 value={label}
                 placeholder={unnamedDefault ? "Principale" : "Ex. Acme"}
@@ -144,33 +146,11 @@ export function InstanceEditor({
               />
             </FormField>
             <FormField
-              label="Identifiant de l’instance"
-              hint={
-                initial
-                  ? "Les pages choisissent l’instance par cet identifiant : il ne se modifie pas."
-                  : "Nom par lequel une page choisit cette instance. Minuscules, chiffres et tirets."
-              }
-              error={errors.id}
-            >
-              <TextInput
-                value={resolvedId}
-                disabled={Boolean(initial)}
-                aria-required="true"
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => {
-                  setIdEdited(true);
-                  setId(event.target.value);
-                  clear("id");
-                }}
-              />
-            </FormField>
-            <FormField
-              label="Adresse de l’instance"
+              label="Adresse du compte"
               hint={
                 client.baseUrl
-                  ? `Laissez vide pour utiliser l’adresse du client (${client.baseUrl}).`
-                  : "Les pages ne peuvent appeler que des chemins situés sous cette adresse."
+                  ? `Laissez vide pour utiliser l’adresse du service (${client.baseUrl}).`
+                  : "Les pages ne peuvent appeler que des adresses qui commencent ainsi."
               }
               error={errors.url}
             >
@@ -188,7 +168,7 @@ export function InstanceEditor({
               />
             </FormField>
             {client.methods.length > 1 ? (
-              <FormField label="Méthode d’authentification">
+              <FormField label="Type de connexion">
                 <SelectControl
                   value={method}
                   onChange={(event) => {
@@ -210,13 +190,13 @@ export function InstanceEditor({
             ) : null}
             {vaultKind ? (
               <FormField
-                label="Entrée du coffre"
+                label="Mot de passe ou clé"
                 compound
                 htmlFor={secretId}
                 hint={
                   missingEntry
-                    ? "Cette entrée n’existe pas sur ce poste. « Nouvelle entrée » la crée avec cet identifiant."
-                    : "Le secret reste dans le coffre ; l’instance n’en garde que l’identifiant."
+                    ? "Introuvable sur ce poste. « Nouveau… » permet de le saisir."
+                    : "Enregistré à part, sur ce poste : le compte n’en garde que le nom."
                 }
                 error={errors.secret}
               >
@@ -230,7 +210,7 @@ export function InstanceEditor({
                       clear("secret");
                     }}
                   >
-                    <option value="">Choisir une entrée…</option>
+                    <option value="">Choisir…</option>
                     {candidates.map((entry) => (
                       <option key={entry.id} value={entry.id}>
                         {entry.label}
@@ -238,15 +218,39 @@ export function InstanceEditor({
                     ))}
                     {missingEntry ? <option value={secret}>{secret} (absente de ce poste)</option> : null}
                   </SelectControl>
-                  <Button onClick={() => setCreatingEntry(true)}>Nouvelle entrée</Button>
+                  <Button onClick={() => setCreatingEntry(true)}>Nouveau…</Button>
                 </FormControlGroup>
               </FormField>
             ) : null}
             {chosen?.type === "oauth2" && redirectUri ? (
               <FeedbackBanner tone="info" appearance="contained">
-                Adresse de retour à déclarer chez le fournisseur d’identité : {redirectUri}
+                Adresse de retour à donner au service : {redirectUri}
               </FeedbackBanner>
             ) : null}
+            <Disclosure label="Options avancées" appearance="subtle" open={errors.id ? true : undefined}>
+              <FormField
+                label="Identifiant du compte"
+                hint={
+                  initial
+                    ? "Les pages choisissent le compte par cet identifiant : il ne se modifie pas."
+                    : "Nom technique du compte. Déduit du nom : inutile de le changer."
+                }
+                error={errors.id}
+              >
+                <TextInput
+                  value={resolvedId}
+                  disabled={Boolean(initial)}
+                  aria-required="true"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    setIdEdited(true);
+                    setId(event.target.value);
+                    clear("id");
+                  }}
+                />
+              </FormField>
+            </Disclosure>
             <FormActions
               form={formId}
               submitLabel={initial ? "Enregistrer" : "Ajouter"}

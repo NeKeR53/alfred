@@ -38,6 +38,7 @@ const fn = (reference: string, patch: Partial<ResolvedFunction> = {}): ResolvedF
   missing: false,
   errors: [],
   uses: {},
+  runtime: "ts",
   ...patch,
 });
 
@@ -191,4 +192,24 @@ it("explique comment créer une fonction quand il n’y en a aucune", async () =
   expect(screen.getByText(/en le demandant à l’agent/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Ouvrir l’agent" }));
   expect(useShell.getState().view).toEqual({ kind: "agent" });
+});
+
+it("indique le langage d’un script et l’absence de son interpréteur", () => {
+  snapshot = {
+    ...snapshot,
+    functions: [
+      fn("ventes/archiver", { runtime: "python" }),
+      fn("ventes/sauver", {
+        runtime: "pwsh",
+        errors: [{ message: "Interpréteur PowerShell introuvable : installer PowerShell 7." }],
+      }),
+    ],
+  };
+  useShell.setState({ snapshot });
+  render(<FunctionsSettings />);
+  expect(screen.getByText("Python")).toBeInTheDocument();
+  expect(screen.getByText("PowerShell")).toBeInTheDocument();
+  expect(screen.getByText("Interpréteur absent")).toBeInTheDocument();
+  expect(screen.getByText("Interpréteur PowerShell introuvable : installer PowerShell 7.")).toBeInTheDocument();
+  expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
 });

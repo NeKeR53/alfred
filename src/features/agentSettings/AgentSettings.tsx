@@ -2,18 +2,15 @@ import {
   Button,
   ChoiceButton,
   ChoiceGroup,
-  FeedbackBanner,
-  FormField,
-  Grid,
-  Heading,
   Page,
   RadioControl,
   RefreshButton,
   Row,
   Section,
   SelectControl,
+  SettingRow,
+  SettingRows,
   Spinner,
-  Stack,
   StatusBadge,
   Text,
 } from "@alfred/ui";
@@ -55,54 +52,48 @@ function errorMessage(error: unknown): string {
 
 function HarnessStatus({ provider, state }: { provider: Provider; state: Loadable<ProbeResult> | undefined }) {
   const label = PROVIDER_LABEL[provider];
+  const description =
+    state?.status === "error"
+      ? `L’état de ${label} n’a pas pu être vérifié : ${state.message}`
+      : state?.status === "ready" && !state.value.installed
+        ? `Installez ${label}, puis connectez-vous dans un terminal ; Alfred le détecte à la prochaine vérification.`
+        : state?.status === "ready" && state.value.loggedIn === false
+          ? `Connectez-vous à ${label} dans un terminal pour qu’Alfred puisse l’utiliser.`
+          : undefined;
   return (
-    <Stack gap="xs">
-      <Row gap="sm" wrap>
-        <Heading level={3}>{label}</Heading>
-        {!state || state.status === "loading" ? (
-          <Row gap="xs">
-            <Spinner label={`Vérification de ${label}`} />
-            <Text as="span" tone="muted">
-              Vérification…
-            </Text>
-          </Row>
-        ) : state.status === "error" ? (
-          <StatusBadge tone="warning" size="compact">
-            État inconnu
+    <SettingRow title={label} description={description}>
+      {!state || state.status === "loading" ? (
+        <Row gap="xs">
+          <Spinner label={`Vérification de ${label}`} />
+          <Text as="span" tone="muted">
+            Vérification…
+          </Text>
+        </Row>
+      ) : state.status === "error" ? (
+        <StatusBadge tone="warning" size="compact">
+          État inconnu
+        </StatusBadge>
+      ) : state.value.installed ? (
+        <>
+          <StatusBadge tone="success" size="compact">
+            {state.value.version ? `Installé · ${state.value.version}` : "Installé"}
           </StatusBadge>
-        ) : state.value.installed ? (
-          <>
+          {state.value.loggedIn === true ? (
             <StatusBadge tone="success" size="compact">
-              {state.value.version ? `Installé · ${state.value.version}` : "Installé"}
+              Connecté
             </StatusBadge>
-            {state.value.loggedIn === true ? (
-              <StatusBadge tone="success" size="compact">
-                Connecté
-              </StatusBadge>
-            ) : state.value.loggedIn === false ? (
-              <StatusBadge tone="warning" size="compact">
-                Non connecté
-              </StatusBadge>
-            ) : null}
-          </>
-        ) : (
-          <StatusBadge tone="danger" size="compact">
-            Non installé
-          </StatusBadge>
-        )}
-      </Row>
-      {state?.status === "error" ? (
-        <Text tone="muted">
-          L’état de {label} n’a pas pu être vérifié : {state.message}
-        </Text>
-      ) : state?.status === "ready" && !state.value.installed ? (
-        <Text tone="muted">
-          Installez {label}, puis connectez-vous dans un terminal ; Alfred le détecte à la prochaine vérification.
-        </Text>
-      ) : state?.status === "ready" && state.value.loggedIn === false ? (
-        <Text tone="muted">Connectez-vous à {label} dans un terminal pour qu’Alfred puisse l’utiliser.</Text>
-      ) : null}
-    </Stack>
+          ) : state.value.loggedIn === false ? (
+            <StatusBadge tone="warning" size="compact">
+              Non connecté
+            </StatusBadge>
+          ) : null}
+        </>
+      ) : (
+        <StatusBadge tone="danger" size="compact">
+          Non installé
+        </StatusBadge>
+      )}
+    </SettingRow>
   );
 }
 
@@ -125,63 +116,64 @@ function ModelFields({
   const efforts = selected?.efforts ?? [];
 
   return (
-    <Stack gap="sm">
-      <Heading level={3}>{label}</Heading>
-      {models?.status === "error" ? (
-        <FeedbackBanner tone="warning" appearance="contained" action={<Button onClick={onRetry}>Réessayer</Button>}>
-          Les modèles de {label} n’ont pas pu être lus : {models.message} Vérifiez que le CLI est installé et connecté.
-        </FeedbackBanner>
-      ) : null}
-      {!models || models.status === "loading" ? (
-        <Row gap="xs">
-          <Spinner label={`Chargement des modèles de ${label}`} />
-          <Text as="span" tone="muted">
-            Chargement des modèles…
-          </Text>
-        </Row>
-      ) : null}
-      <Grid minColumnWidth={200}>
-        <FormField label={`Modèle de ${label}`}>
-          <SelectControl
-            value={value.model ?? ""}
-            disabled={models?.status !== "ready"}
-            onChange={(event) => {
-              const model = event.target.value || undefined;
-              const nextEfforts = list.find((candidate) => candidate.id === model)?.efforts ?? [];
-              onChange({
-                model,
-                effort: value.effort && nextEfforts.includes(value.effort) ? value.effort : undefined,
-              });
-            }}
-          >
-            <option value="">Par défaut du harnais</option>
-            {value.model && !selected ? <option value={value.model}>{value.model}</option> : null}
-            {list.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </SelectControl>
-        </FormField>
-        <FormField
-          label={`Effort de ${label}`}
-          hint={selected && efforts.length === 0 ? "Ce modèle ne propose pas de niveau d’effort." : undefined}
-        >
-          <SelectControl
-            value={value.effort ?? ""}
-            disabled={efforts.length === 0}
-            onChange={(event) => onChange({ model: value.model, effort: event.target.value || undefined })}
-          >
-            <option value="">Par défaut du modèle</option>
-            {efforts.map((effort) => (
-              <option key={effort} value={effort}>
-                {effortLabel(effort)}
-              </option>
-            ))}
-          </SelectControl>
-        </FormField>
-      </Grid>
-    </Stack>
+    <SettingRow
+      title={label}
+      description={
+        models?.status === "error" ? (
+          <Row gap="xs" wrap>
+            <span>
+              Les modèles de {label} n’ont pas pu être lus : {models.message} Vérifiez que le CLI est installé et
+              connecté.
+            </span>
+            <Button aria-label={`Relire les modèles de ${label}`} onClick={onRetry}>
+              Réessayer
+            </Button>
+          </Row>
+        ) : !models || models.status === "loading" ? (
+          <Row gap="xs">
+            <Spinner label={`Chargement des modèles de ${label}`} />
+            <span>Chargement des modèles…</span>
+          </Row>
+        ) : selected && efforts.length === 0 ? (
+          "Ce modèle ne propose pas de niveau d’effort."
+        ) : undefined
+      }
+    >
+      <SelectControl
+        aria-label={`Modèle de ${label}`}
+        value={value.model ?? ""}
+        disabled={models?.status !== "ready"}
+        onChange={(event) => {
+          const model = event.target.value || undefined;
+          const nextEfforts = list.find((candidate) => candidate.id === model)?.efforts ?? [];
+          onChange({
+            model,
+            effort: value.effort && nextEfforts.includes(value.effort) ? value.effort : undefined,
+          });
+        }}
+      >
+        <option value="">Modèle par défaut</option>
+        {value.model && !selected ? <option value={value.model}>{value.model}</option> : null}
+        {list.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.name}
+          </option>
+        ))}
+      </SelectControl>
+      <SelectControl
+        aria-label={`Effort de ${label}`}
+        value={value.effort ?? ""}
+        disabled={efforts.length === 0}
+        onChange={(event) => onChange({ model: value.model, effort: event.target.value || undefined })}
+      >
+        <option value="">Effort par défaut</option>
+        {efforts.map((effort) => (
+          <option key={effort} value={effort}>
+            {effortLabel(effort)}
+          </option>
+        ))}
+      </SelectControl>
+    </SettingRow>
   );
 }
 
@@ -253,40 +245,39 @@ export function AgentSettings() {
         description="Alfred pilote le CLI de l’agent installé sur ce poste. Installation et connexion se font dans un terminal."
         actions={<RefreshButton label="Vérifier de nouveau les harnais" loading={checking} onClick={check} />}
       >
-        <Stack gap="md">
+        <SettingRows>
           {PROVIDERS.map((provider) => (
             <HarnessStatus key={provider} provider={provider} state={probes[provider]} />
           ))}
-        </Stack>
+        </SettingRows>
       </Section>
 
       <Section
-        title="Harnais par défaut"
-        description="Utilisé pour toute nouvelle conversation. Ces réglages s’appliquent dès qu’ils sont modifiés."
+        title="Conversations"
+        description="Choix utilisés pour toute nouvelle conversation. Ils s’appliquent dès qu’ils sont modifiés ; chaque conversation peut les changer."
       >
-        <ChoiceGroup label="Harnais par défaut">
-          <Row gap="xs" wrap>
-            {PROVIDERS.map((provider) => (
-              <ChoiceButton
-                key={provider}
-                variant="label"
-                selectionMode="radio"
-                label={PROVIDER_LABEL[provider]}
-                selected={defaults.provider === provider}
-                onClick={() => void save({ ...defaults, provider })}
-              >
-                {PROVIDER_LABEL[provider]}
-              </ChoiceButton>
-            ))}
-          </Row>
-        </ChoiceGroup>
+        <SettingRows>
+          <SettingRow title="Harnais par défaut" description="L’agent qui répond quand vous ouvrez une conversation.">
+            <ChoiceGroup label="Harnais par défaut" appearance="segmented">
+              {PROVIDERS.map((provider) => (
+                <ChoiceButton
+                  key={provider}
+                  variant="label"
+                  selectionMode="radio"
+                  label={PROVIDER_LABEL[provider]}
+                  selected={defaults.provider === provider}
+                  onClick={() => void save({ ...defaults, provider })}
+                >
+                  {PROVIDER_LABEL[provider]}
+                </ChoiceButton>
+              ))}
+            </ChoiceGroup>
+          </SettingRow>
+        </SettingRows>
       </Section>
 
-      <Section
-        title="Modèle et effort"
-        description="Choix par défaut de chaque harnais pour une nouvelle conversation."
-      >
-        <Stack gap="lg">
+      <Section title="Modèle et effort" description="Le modèle et le niveau d’effort de chaque harnais.">
+        <SettingRows>
           {PROVIDERS.map((provider) => (
             <ModelFields
               key={provider}
@@ -297,34 +288,27 @@ export function AgentSettings() {
               onChange={(value) => void save({ ...defaults, models: { ...defaults.models, [provider]: value } })}
             />
           ))}
-        </Stack>
+        </SettingRows>
       </Section>
 
       <Section
         title="Autonomie par défaut"
         description="Ce que l’agent peut faire sans vous demander. Chaque conversation peut la changer."
       >
-        <Stack gap="sm">
+        <SettingRows label="Autonomie par défaut">
           {AUTONOMY.map((level) => (
-            <RadioControl
-              key={level.value}
-              name="agent-autonomy"
-              value={level.value}
-              checked={defaults.autonomy === level.value}
-              onChange={() => void save({ ...defaults, autonomy: level.value })}
-              label={
-                <Stack gap="none">
-                  <Text as="span" weight="medium">
-                    {level.label}
-                  </Text>
-                  <Text as="span" size="meta" tone="muted">
-                    {level.description}
-                  </Text>
-                </Stack>
-              }
-            />
+            <SettingRow key={level.value} title={level.label} description={level.description}>
+              <RadioControl
+                name="agent-autonomy"
+                value={level.value}
+                aria-label={level.label}
+                checked={defaults.autonomy === level.value}
+                onChange={() => void save({ ...defaults, autonomy: level.value })}
+                label=""
+              />
+            </SettingRow>
           ))}
-        </Stack>
+        </SettingRows>
       </Section>
 
       <ArchivedConversations />

@@ -2,7 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { frameBase } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
-import { type FrameIdentity, frameContext, handleFrameRequest, onSelectionChange, registerPeer } from "./frameBridge";
+import {
+  type FrameIdentity,
+  frameContext,
+  handleFrameRequest,
+  onSelectionChange,
+  registerPeer,
+  releaseFrame,
+} from "./frameBridge";
 import { frameErrors, sanitizeFrameError } from "./frameErrors";
 import { frameKey } from "./frameKeys";
 import { addFrameConsole, addFrameErrorLog, addFrameLog } from "./frameLogs";
@@ -137,6 +144,7 @@ export function PageFrame({
       stopPeer();
       stopSelection();
       stopTheme();
+      if (!capture) releaseFrame(identity);
     };
   }, [identity, capture]);
 

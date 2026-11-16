@@ -43,7 +43,7 @@ export interface ModuleUpdate {
   module: string;
   name: string;
   current: string;
-  /** Version proposée, ou `null` quand le module est à jour ou sans source. */
+  /** Version proposée, ou `null` quand le module est à jour ou sans dépôt. */
   available: string | null;
   pinned: boolean;
   /** Le marketplace d’origine n’est plus branché. */

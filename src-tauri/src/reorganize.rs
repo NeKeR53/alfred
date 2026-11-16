@@ -1245,7 +1245,15 @@ pub fn split(
     moves.extend(
         plan.functions
             .iter()
-            .map(|id| (PathBuf::from("functions").join(format!("{id}.ts")), true)),
+            .map(|id| {
+                let name = module
+                    .functions
+                    .iter()
+                    .find(|declared| &declared.id == id)
+                    .map(|declared| declared.file_name())
+                    .unwrap_or_else(|| format!("{id}.ts"));
+                (PathBuf::from("functions").join(name), true)
+            }),
     );
     let lib_used = moves
         .iter()

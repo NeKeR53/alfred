@@ -118,6 +118,9 @@ export async function callFunction(reference: string, input: unknown, caller: st
   const declared = useShell.getState().snapshot?.functions.find((candidate) => candidate.reference === reference);
   if (!module || !name || !declared) throw new AlfredError({ message: `La fonction « ${reference} » n’existe pas.` });
   if (declared.missing) throw new AlfredError({ message: `La fonction « ${reference} » n’est pas encore écrite.` });
+  // Un script (bash, PowerShell, Python) est lancé par Alfred lui-même, qui le note au journal.
+  if (declared.runtime && declared.runtime !== "ts")
+    return invoke("functions.call", { function: reference, input, caller });
   if (active >= MAX_ACTIVE_CALLS)
     throw new AlfredError({
       message: "Trop d’appels de fonctions en cours : une fonction s’appelle peut-être en boucle.",

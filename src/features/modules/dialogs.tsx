@@ -90,9 +90,7 @@ function DependencySteps({ steps }: { steps: DependencyStep[] }) {
         {steps.map((step) => (
           <li key={step.module}>
             {step.name} v{step.version} :{" "}
-            {step.action === "install"
-              ? "installé, masqué du menu (Réglages → Navigation pour l’afficher)"
-              : "mis à jour"}
+            {step.action === "install" ? "installé, désactivé (à activer dans Réglages → Modules)" : "mis à jour"}
           </li>
         ))}
       </ul>
@@ -442,7 +440,8 @@ export function PublishDialog({
     >
       {marketplaces.length === 0 ? (
         <FeedbackBanner tone="info" appearance="contained">
-          Aucun marketplace n’est branché. En brancher un dans la partie Marketplaces avant de publier.
+          Aucun dépôt n’est ajouté. Un dépôt est le dossier partagé (git) où votre équipe range ses modules : ajoutez-le
+          dans « Ajouter des modules » avant de publier.
         </FeedbackBanner>
       ) : (
         <p>
@@ -469,7 +468,7 @@ export function PublishDialog({
         </FeedbackBanner>
       ) : null}
       <form id={formId} className="modules-form" onSubmit={submit}>
-        <FormField label="Marketplace cible">
+        <FormField label="Dépôt de destination">
           <SelectControl value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy} required>
             {marketplaces.map((marketplace) => (
               <option key={marketplace.id} value={marketplace.id}>

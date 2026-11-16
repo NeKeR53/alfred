@@ -260,7 +260,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_function",
-            "Déclare (ou met à jour) une fonction d’un module et renvoie le fichier .ts à écrire. Une fonction est appelable par les pages, par les agents (`tool: true`), par les webhooks et par la planification.",
+            "Déclare (ou met à jour) une fonction d’un module et renvoie le fichier à écrire. Une fonction est appelable par les pages, par les agents (`tool: true`), par les webhooks et par la planification. Elle s’écrit en TypeScript (par défaut, sans réseau ni disque, avec `@alfred/sdk`) ou en script bash, PowerShell ou Python (`runtime`) : le script reçoit l’entrée en JSON sur stdin, écrit sa sortie sur stdout (JSON, sinon texte) et tourne avec les droits de l’utilisateur, sans `@alfred/sdk`.",
             json!({
                 "module": { "type": "string" },
                 "id": { "type": "string", "description": "Identifiant en minuscules et tirets." },
@@ -268,6 +268,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "input": { "type": "object", "description": "Schéma JSON de l’entrée." },
                 "output": { "type": "object", "description": "Schéma JSON de la sortie." },
                 "tool": { "type": "boolean", "description": "Proposer la fonction aux agents comme outil." },
+                "runtime": { "enum": ["ts", "bash", "pwsh", "python"], "description": "Langage : `ts` (par défaut), ou un script `bash` (.sh), `pwsh` (.ps1) ou `python` (.py)." },
                 "uses": { "type": "object", "properties": { "clients": { "type": "array", "items": { "type": "string" } } } },
             }),
             &["module", "id", "description"],
@@ -367,7 +368,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_webhook",
-            "Déclare (ou met à jour) un webhook : une adresse locale qui, appelée par un service avec le secret du webhook, exécute une fonction du même module. Déclarer la fonction d’abord (`declare_function`). Renvoie l’adresse ; le secret, lui, ne se lit que dans Réglages, onglet Webhooks.",
+            "Déclare (ou met à jour) un webhook : une adresse locale qui, appelée par un service avec le secret du webhook, exécute une fonction du même module. Déclarer la fonction d’abord (`declare_function`). Renvoie l’adresse ; le secret, lui, ne se lit que dans Réglages → Webhooks.",
             json!({
                 "module": { "type": "string" },
                 "id": { "type": "string", "description": "Identifiant en minuscules et tirets." },
@@ -404,7 +405,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "set_visibility",
-            "Masque ou réaffiche dans le menu un module entier, une section ou une page, sans rien supprimer : ses pages restent ouvrables par `shell.navigate`, ses fonctions et ses clients servent toujours. L’utilisateur peut revenir dessus dans Réglages → Navigation. À utiliser quand l’utilisateur le demande, ou pour masquer un module que tu as créé uniquement comme dépendance d’un autre.",
+            "Masque ou réaffiche dans le menu un module entier, une section ou une page, sans rien supprimer : ses pages restent ouvrables par `shell.navigate`, ses fonctions et ses clients servent toujours. L’utilisateur peut revenir dessus dans Réglages → Modules ou Réglages → Ordre du menu. À utiliser quand l’utilisateur le demande, ou pour masquer un module que tu as créé uniquement comme dépendance d’un autre.",
             json!({
                 "target": { "type": "string", "description": "« module:<module> », « section:<module>/<section> » ou « page:<module>/<page> » ; ajouter « @<instance> » pour la copie d’une section par instance (« section:jira/principal@acme »)." },
                 "hidden": { "type": "boolean", "description": "true pour masquer, false pour réafficher." },
@@ -524,7 +525,7 @@ fn overview(snapshot: &Snapshot, clients: Value) -> Value {
             "directory": format!("{}/modules/{}", snapshot.path, module.id),
         })).collect::<Vec<_>>(),
         "functions": snapshot.functions.iter().map(|function| json!({
-            "function": function.reference, "description": function.description, "tool": function.tool,
+            "function": function.reference, "description": function.description, "tool": function.tool, "runtime": function.runtime,
             "written": !function.missing, "errors": function.errors.len(),
         })).collect::<Vec<_>>(),
         "clients": clients,
@@ -768,10 +769,16 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let declared = functions::handle(state, "functions.declare", args)
                 .await
                 .unwrap_or_else(|| Err(AppError::new("Déclaration impossible.")))?;
+            let runtime = opt_arg::<crate::space::Runtime>(args, "runtime").ok().flatten().unwrap_or_default();
             Ok(json!({
                 "function": declared["reference"],
                 "file": declared["file"],
-                "next": "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` et l’essayer avec `call_function`.",
+                "runtime": runtime,
+                "next": if runtime.is_script() {
+                    "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` et l’essayer avec `call_function`."
+                } else {
+                    "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` et l’essayer avec `call_function`."
+                },
             }))
         }
         "declare_client" => {
@@ -804,7 +811,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             }))
         }
         "vault_store" => crate::agent_setup::store_secret(state, args).await,
-        "validate_client" => crate::agent_setup::validate_client(state, args),
+        "validate_client" => crate::agent_setup::validate_client(state, args).await,
         "grant_access" => crate::agent_setup::grant_access(state, args),
         "connect_client" => crate::agent_setup::connect_client(state, args).await,
         "declare_webhook" => {
@@ -812,7 +819,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             Ok(json!({
                 "hook": declared["hook"],
                 "url": declared["url"],
-                "next": "Donner cette adresse locale à l’utilisateur. Le service doit l’appeler avec le secret du webhook, que l’utilisateur lit (et renouvelle) dans Réglages, onglet Webhooks : tu ne le vois jamais. Appeler ensuite `check`.",
+                "next": "Donner cette adresse locale à l’utilisateur. Le service doit l’appeler avec le secret du webhook, que l’utilisateur lit (et renouvelle) dans Réglages → Webhooks : tu ne le vois jamais. Appeler ensuite `check`.",
             }))
         }
         "remove_webhook" => {
@@ -1100,6 +1107,60 @@ mod tests {
         list.as_array().into_iter().flatten().any(|item| item[key] == json!(value) && item.to_string().contains(words))
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_declares_and_calls_script_functions() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        state.set_space(Some(space.clone()));
+        space.place_page("Liste", None, "", &PlaceTarget::Menu { label: "Outils".into(), icon: None, color: None }, None).unwrap();
+
+        let declared = call(&state, "declare_function", json!({
+            "module": "outils", "id": "saluer", "description": "Salue quelqu’un.", "runtime": "bash", "tool": true,
+            "input": { "type": "object", "properties": { "nom": { "type": "string" } }, "required": ["nom"] },
+        }))
+        .await
+        .unwrap();
+        let file = declared["file"].as_str().unwrap().to_string();
+        assert!(file.ends_with("modules/outils/functions/saluer.sh"), "{file}");
+        assert!(declared["next"].as_str().unwrap().contains("stdin"));
+        assert_eq!(space.module("outils").unwrap().functions[0].runtime, crate::space::Runtime::Bash);
+
+        // Pas encore écrite : ni outil, ni appel possible.
+        let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
+        assert!(mentions(&checked["functions"], "function", "outils/saluer", "pas encore écrit"), "{checked:#}");
+        std::fs::write(&file, "nom=$(sed -E 's/.*\"nom\":\"([^\"]*)\".*/\\1/')\nprintf '{\"message\":\"Bonjour %s\"}' \"$nom\"\n").unwrap();
+        let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
+        assert!(!checked["functions"].to_string().contains("outils/saluer"), "{checked:#}");
+
+        let listed = rpc(&state, "tools/list", json!({})).await;
+        let tool = listed["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "fn__outils__saluer").cloned();
+        assert_eq!(tool.expect("outil proposé")["inputSchema"]["required"], json!(["nom"]));
+        let output = call(&state, "fn__outils__saluer", json!({ "nom": "Zoé" })).await.unwrap();
+        assert_eq!(output, json!({ "message": "Bonjour Zoé" }));
+
+        if crate::scripts::interpreter(crate::space::Runtime::Python).is_some() {
+            let declared = call(&state, "declare_function", json!({
+                "module": "outils", "id": "somme", "description": "Additionne.", "runtime": "python",
+            }))
+            .await
+            .unwrap();
+            let file = declared["file"].as_str().unwrap().to_string();
+            assert!(file.ends_with("somme.py"), "{file}");
+            std::fs::write(&file, "import json, sys\nprint(json.dumps(sum(json.load(sys.stdin)['n'])))\n").unwrap();
+            let output = call(&state, "call_function", json!({ "function": "outils/somme", "input": { "n": [1, 2] } })).await.unwrap();
+            assert_eq!(output, json!(3));
+            std::fs::write(&file, "import sys\nsys.exit('montant négatif')\n").unwrap();
+            let failed = call(&state, "call_function", json!({ "function": "outils/somme", "input": {} })).await.unwrap_err();
+            assert!(failed.contains("montant négatif"), "{failed}");
+        }
+
+        let journal = call(&state, "read_journal", json!({ "kind": "function" })).await.unwrap();
+        assert!(journal.to_string().contains("outils/saluer"), "{journal:#}");
+        assert!(call(&state, "declare_function", json!({ "module": "outils", "id": "x", "description": "", "runtime": "ruby" })).await.is_err());
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_agent_hides_a_dependency_module_and_sees_its_dependencies() {
         let dir = tempfile::tempdir().unwrap();
@@ -1273,7 +1334,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hook["url"], json!("http://127.0.0.1:4567/hooks/ventes/paiement"));
-        assert!(hook["next"].as_str().unwrap().contains("onglet Webhooks"));
+        assert!(hook["next"].as_str().unwrap().contains("Réglages → Webhooks"));
         assert_eq!(space.module(&module).unwrap().webhooks.len(), 1);
         call(&state, "remove_webhook", json!({ "hook": "ventes/paiement" })).await.unwrap();
         assert!(space.module(&module).unwrap().webhooks.is_empty());

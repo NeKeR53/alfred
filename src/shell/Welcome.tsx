@@ -30,11 +30,11 @@ export function Welcome() {
   return (
     <main className="welcome">
       <div className="welcome__panel">
-        <h1>Bienvenue dans Alfred</h1>
+        <h1>Bonjour, je suis Alfred</h1>
         <p>
-          Alfred est une application vide que vous construisez en parlant à un agent : pages, onglets, panneaux et
-          réglages. Tout ce que vous créez est rangé dans un dossier, votre espace. Choisissez un dossier existant pour
-          l’ouvrir, ou un nouvel emplacement pour le créer.
+          Dites-moi ce dont vous avez besoin et je le mets en place : pages, onglets, panneaux, réglages. Je range tout
+          ce que nous créons dans un dossier, votre espace. Choisissez un dossier existant pour l’ouvrir, ou un nouvel
+          emplacement pour le créer.
         </p>
         {startupError ? <p role="alert">{startupError}</p> : null}
         <form className="welcome__form" onSubmit={submit}>

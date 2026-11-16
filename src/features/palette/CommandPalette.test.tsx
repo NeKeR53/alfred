@@ -48,6 +48,7 @@ function fn(reference: string, input: unknown): ResolvedFunction {
     missing: false,
     errors: [],
     uses: {},
+    runtime: "ts",
   };
 }
 

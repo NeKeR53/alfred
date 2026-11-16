@@ -11,3 +11,4 @@ src/runtime/generated
 *.tsbuildinfo
 .scratch/
 *.config.d.ts
+.claude/

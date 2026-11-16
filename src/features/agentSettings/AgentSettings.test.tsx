@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -96,8 +96,7 @@ it("montre l’état des harnais et enregistre harnais, modèle, effort et auton
 
   // Réessayer le catalogue de Codex une fois connecté.
   codexModelsFail = false;
-  const banner = screen.getByText(/Les modèles de Codex/).closest("[role]") ?? document.body;
-  await user.click(within(banner as HTMLElement).getByRole("button", { name: "Réessayer" }));
+  await user.click(screen.getByRole("button", { name: "Relire les modèles de Codex" }));
   await waitFor(() => expect(screen.getByLabelText("Modèle de Codex")).toBeEnabled());
 
   // Autonomie : chaque niveau est expliqué.

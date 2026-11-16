@@ -1,0 +1,55 @@
+import { beforeEach, expect, it, vi } from "vitest";
+
+vi.mock("../lib/native");
+vi.hoisted(() => {
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+});
+
+import { invoke } from "../lib/native";
+import type { ResolvedFunction, Snapshot } from "../lib/types";
+import { callFunction } from "./functionHost";
+import { useShell } from "./store";
+
+const script: ResolvedFunction = {
+  reference: "outils/saluer",
+  module: "outils",
+  id: "saluer",
+  description: "",
+  input: null,
+  output: null,
+  tool: true,
+  missing: false,
+  errors: [],
+  uses: {},
+  runtime: "bash",
+};
+
+beforeEach(() => {
+  vi.mocked(invoke).mockReset();
+  useShell.setState({ snapshot: { functions: [script] } as unknown as Snapshot });
+});
+
+it("confie un script à Alfred, sans cadre, avec son appelant", async () => {
+  vi.mocked(invoke).mockResolvedValue({ message: "Bonjour Zoé" });
+  await expect(callFunction("outils/saluer", { nom: "Zoé" }, "outils/accueil")).resolves.toEqual({
+    message: "Bonjour Zoé",
+  });
+  expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.call", {
+    function: "outils/saluer",
+    input: { nom: "Zoé" },
+    caller: "outils/accueil",
+  });
+  expect(document.querySelector("iframe")).toBeNull();
+});
+
+it("refuse un script pas encore écrit sans rien lancer", async () => {
+  useShell.setState({ snapshot: { functions: [{ ...script, missing: true }] } as unknown as Snapshot });
+  await expect(callFunction("outils/saluer", {}, "agent")).rejects.toBeDefined();
+  expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+});

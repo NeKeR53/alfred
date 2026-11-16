@@ -12,6 +12,8 @@ import {
 import { inTauri, pickFolder } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { DictationButton } from "../voice/DictationButton";
+import { useVoice } from "../voice/store";
 import { takeComposerDraft } from "./drafts";
 import { attachmentFromPath, isImage, pickAttachments, saveBlob } from "./files";
 import type { Autonomy } from "./harness";
@@ -118,6 +120,8 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [contexts, setContexts] = useState<PastedContext[]>([]);
   const [dragging, setDragging] = useState(false);
+  const dictation = useVoice((state) => state.dictation);
+  const partial = useVoice((state) => state.partial);
   const field = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const conversationId = conversation.id;
@@ -237,14 +241,17 @@ export function Composer({
   // Pendant une réponse, le message rejoint la file et part dès que l’agent a fini.
   const canSend = text.trim().length > 0 || attachments.length > 0 || contexts.length > 0;
 
-  const submit = async () => {
-    if (!canSend) return;
-    const chosen = references.take(text);
+  /** Envoie la saisie ; une dictée y ajoute sa transcription et demande que la réponse soit lue. */
+  const submit = async (dictated?: string) => {
+    const full = dictated ? [text.trim(), dictated].filter(Boolean).join(" ") : text;
+    if (!dictated && !canSend) return;
+    const chosen = references.take(full);
     const message: UserMessage = {
-      text: text.trim(),
+      text: full.trim(),
       attachments,
       contexts,
       ...(chosen.length ? { references: chosen } : {}),
+      ...(dictated ? { spoken: true } : {}),
     };
     setText("");
     setAttachments([]);
@@ -261,6 +268,11 @@ export function Composer({
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void submit();
+    }
+    if (event.key === "Escape" && dictation === "listening") {
+      event.preventDefault();
+      void useVoice.getState().cancelDictation();
+      return;
     }
     if (event.key === "Escape" && responding) {
       event.preventDefault();
@@ -391,11 +403,15 @@ export function Composer({
             data-slot="composer-input"
             aria-label="Message à l’agent"
             placeholder={
-              dragging
-                ? "Déposez vos fichiers ici"
-                : conversation.turns.length
-                  ? "Répondre à l’agent…"
-                  : "Décrire ce que l’agent doit faire…"
+              dictation === "listening"
+                ? partial || "Je vous écoute…"
+                : dictation === "transcribing"
+                  ? "Transcription…"
+                  : dragging
+                    ? "Déposez vos fichiers ici"
+                    : conversation.turns.length
+                      ? "Votre réponse…"
+                      : "Que puis-je mettre en place pour vous ?"
             }
             rows={1}
             value={text}
@@ -409,6 +425,7 @@ export function Composer({
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
+          <DictationButton onTranscript={(dictated) => void submit(dictated)} />
           {responding ? (
             <IconButton
               label="Interrompre la réponse"

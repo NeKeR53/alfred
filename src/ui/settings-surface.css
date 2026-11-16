@@ -1,0 +1,52 @@
+/*
+ * Style des Réglages, commun aux onglets intégrés (fenêtre des Réglages) et aux pages de l’espace placées dans les
+ * Réglages : la coquille et le cadre d’une page posent `data-surface="settings"` (contexte `surface` du SDK).
+ * Titres de bloc légers, tableaux sans cadre, rubrique vide en haut à gauche. Les lignes sont `SettingRow`.
+ */
+[data-surface="settings"] .al-section__header h2 {
+  font-size: var(--font-size-panel);
+  font-weight: 500;
+  line-height: 20px;
+}
+[data-surface="settings"] .al-section__header p {
+  margin-top: 2px;
+  font-size: var(--font-size-secondary);
+}
+/* Tableaux des Réglages (mots de passe, webhooks, tâches, journal…) : pas de cadre ni de fond d’en-tête, des
+   traits fins entre les lignes, comme les listes de réglages. */
+[data-surface="settings"] .al-table-scroll {
+  border: 0;
+  border-radius: 0;
+}
+[data-surface="settings"] .al-table th {
+  background: var(--color-bg);
+  font-weight: 400;
+}
+[data-surface="settings"] .al-table :is(th, td):first-child {
+  padding-left: 0;
+}
+[data-surface="settings"] .al-table th:first-child > button {
+  padding-left: 0;
+}
+[data-surface="settings"] .al-table :is(th, td):last-child {
+  padding-right: 0;
+}
+/* Rubrique vide : un titre et une phrase en haut à gauche, comme un bloc de réglages, pas un message centré. */
+[data-surface="settings"] .al-page__body > .empty-state {
+  min-height: 0;
+  flex: none;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 20px 0 12px;
+  text-align: start;
+}
+[data-surface="settings"] .al-page__body > .empty-state strong {
+  font-weight: 500;
+}
+[data-surface="settings"] .al-page__body > .empty-state .empty-state__description {
+  max-width: 72ch;
+  font-size: var(--font-size-secondary);
+}
+[data-surface="settings"] .al-page__body > .empty-state .empty-state__actions {
+  margin-top: 10px;
+}

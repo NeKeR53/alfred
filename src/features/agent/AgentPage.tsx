@@ -63,7 +63,7 @@ export function AgentPage() {
     await archive(id);
     notify({
       title: "Conversation archivée",
-      description: `${title} · retrouvez-la dans Réglages, onglet Agents.`,
+      description: `${title} · retrouvez-la dans Réglages, onglet Agent.`,
       tone: "info",
       action: { label: "Annuler", run: () => void unarchive(id) },
     });
@@ -174,8 +174,8 @@ export function AgentPage() {
               {conversation.turns.length === 0 ? (
                 <div className="agents-page__state">
                   <EmptyState
-                    title="Que voulez-vous construire ?"
-                    description="Décrivez une page, un panneau ou une fonction : l’agent demande où la placer, l’écrit, et elle apparaît dans l’application."
+                    title="Que puis-je faire pour vous ?"
+                    description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
                   />
                 </div>
               ) : (

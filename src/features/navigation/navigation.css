@@ -74,3 +74,26 @@
   flex-direction: column;
   overflow-wrap: anywhere;
 }
+
+/* Poignée de glissement, au début de chaque ligne. */
+.nav-settings__handle {
+  width: 16px;
+  height: 24px;
+  display: inline-grid;
+  flex: 0 0 16px;
+  place-items: center;
+  margin-left: -4px;
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+  cursor: grab;
+  touch-action: none;
+}
+.nav-settings__handle:hover {
+  color: var(--color-ink);
+  background: color-mix(in oklch, var(--color-ink) 6%, transparent);
+}
+.nav-settings__section.sortable-row.is-drop-before::after,
+.nav-settings__section.sortable-row.is-drop-after::after {
+  right: 0;
+  left: 0;
+}

@@ -153,7 +153,7 @@ function Entries({ blocks, cwd, conversationId }: { blocks: Block[]; cwd: string
   return blocks.map((block) =>
     block.message !== undefined ? (
       <li key={block.key} className="agent-chat__entry agent-chat__entry--assistant">
-        <strong className="sr-only">Agent</strong>
+        <strong className="sr-only">Alfred</strong>
         <div className="agent-chat__message">
           <Markdown remarkPlugins={plugins} onLink={(href) => void followLink(href, cwd)}>
             {block.message}

@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use crate::app_db::{self, JournalEntry};
 use crate::error::{arg, opt_arg, AppError, AppResult};
 use crate::permissions::{self, Subject};
-use crate::space::{valid_id, FunctionDecl, Uses};
+use crate::scripts::{self, Runtime, ScriptCall};
+use crate::space::{valid_id, FunctionDecl, ModuleManifest, Uses};
 use crate::state::AppState;
 
 fn db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, rusqlite::Connection>> {
@@ -33,8 +34,11 @@ pub async fn call(state: &Arc<AppState>, reference: &str, input: Value, caller: 
     let (module, function) = split(reference)?;
     let space = state.space()?;
     let manifest = space.module(module)?;
-    if !manifest.functions.iter().any(|declared| declared.id == function) {
+    let Some(declared) = manifest.functions.iter().find(|declared| declared.id == function) else {
         return Err(AppError::new(format!("La fonction « {reference} » n’est pas déclarée dans son module.")));
+    };
+    if declared.runtime.is_script() {
+        return call_script(state, &space, &manifest, declared, input, caller).await;
     }
     state
         .ask_ui(
@@ -43,6 +47,51 @@ pub async fn call(state: &Arc<AppState>, reference: &str, input: Value, caller: 
             Duration::from_secs(180),
         )
         .await
+}
+
+fn declaration_for(manifest: &ModuleManifest, id: &str) -> AppResult<FunctionDecl> {
+    manifest.functions.iter().find(|declared| declared.id == id).cloned().ok_or_else(|| AppError::new("Fonction inconnue."))
+}
+
+/// Lance une fonction écrite en script, sans passer par l’interface, et note l’appel au journal.
+async fn call_script(
+    state: &Arc<AppState>,
+    space: &crate::space::Space,
+    manifest: &ModuleManifest,
+    declared: &FunctionDecl,
+    input: Value,
+    caller: &str,
+) -> AppResult<Value> {
+    let reference = format!("{}/{}", manifest.id, declared.id);
+    let started = std::time::Instant::now();
+    let result = scripts::run(ScriptCall {
+        runtime: declared.runtime,
+        file: space.function_path(&manifest.id, declared),
+        dir: space.module_dir(&manifest.id),
+        env: vec![
+            ("ALFRED_MODULE".to_string(), manifest.id.clone()),
+            ("ALFRED_FUNCTION".to_string(), declared.id.clone()),
+            ("ALFRED_CALLER".to_string(), caller.to_string()),
+            ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
+        ],
+        input,
+        timeout: scripts::TIMEOUT,
+    })
+    .await;
+    let duration = Some(started.elapsed().as_millis() as u64);
+    match &result {
+        Ok(_) => journal(state, "function", &reference, true, duration, &format!("Appelée par {caller}"), Some(&json!({ "caller": caller }))),
+        Err(error) => journal(
+            state,
+            "function",
+            &reference,
+            false,
+            duration,
+            &format!("Échec (appelée par {caller}) : {}", error.message),
+            Some(&json!({ "caller": caller, "error": error.message, "diagnostics": error.detail })),
+        ),
+    }
+    result
 }
 
 /// Écrit une ligne au journal d’exécution de l’espace ouvert.
@@ -98,13 +147,16 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 output: args.get("output").cloned().unwrap_or(Value::Null),
                 tool: opt_arg::<bool>(args, "tool")?.unwrap_or(false),
                 uses: opt_arg::<Uses>(args, "uses")?.unwrap_or_default(),
+                runtime: opt_arg::<Runtime>(args, "runtime")
+                    .map_err(|_| AppError::new("Langage inconnu : `runtime` vaut ts, bash, pwsh ou python."))?
+                    .unwrap_or_default(),
             };
             match manifest.functions.iter_mut().find(|declared| declared.id == id) {
                 Some(existing) => *existing = declaration,
                 None => manifest.functions.push(declaration),
             }
             space.write_module(&manifest)?;
-            let file = space.function_file(&module, &id);
+            let file = space.function_path(&module, &declaration_for(&manifest, &id)?);
             if let Some(parent) = file.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -119,9 +171,10 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             if manifest.read_only() {
                 return Err(AppError::new("Ce module est en lecture seule."));
             }
+            let file = space.function_file(module, function);
             manifest.functions.retain(|declared| declared.id != function);
             space.write_module(&manifest)?;
-            let _ = std::fs::remove_file(space.function_file(module, function));
+            let _ = std::fs::remove_file(file);
             crate::permissions::forget_function(state, &reference)?;
             crate::git::commit_all(&space.root, &format!("Suppression de la fonction {reference}"))?;
             state.emit("space:changed", Value::Null);
@@ -151,7 +204,9 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             let reference: Result<String, _> = arg(args, "function");
             match reference {
                 Ok(reference) => {
-                    call(state, &reference, args.get("input").cloned().unwrap_or(json!({})), "interface").await
+                    let caller = opt_arg::<String>(args, "caller").ok().flatten();
+                    let caller = caller.as_deref().unwrap_or("interface");
+                    call(state, &reference, args.get("input").cloned().unwrap_or(json!({})), caller).await
                 }
                 Err(error) => Err(error),
             }

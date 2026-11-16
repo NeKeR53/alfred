@@ -1,6 +1,7 @@
 mod agent_setup;
 mod agents;
 mod app_db;
+mod badges;
 mod clients;
 mod composer;
 mod conversations;
@@ -19,14 +20,18 @@ mod permissions;
 mod process_tree;
 mod reorganize;
 mod schedules;
+mod scripts;
 mod server;
+mod setup;
 mod space;
 mod space_db;
 mod state;
+mod system_notifications;
 mod transpile;
 mod vault;
 #[cfg(feature = "verify")]
 mod verify;
+mod voice;
 mod webhooks;
 mod webview;
 #[cfg(windows)]
@@ -66,12 +71,17 @@ fn on_core_event(state: &AppState, event: &events::AppEvent) {
 /// Commandes de la fenêtre ; le banc de vérification ajoute la sienne, absente des versions normales.
 #[cfg(not(feature = "verify"))]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window]
+    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window, system_notifications::alfred_notify_system]
 }
 
 #[cfg(feature = "verify")]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window, verify::verify_result]
+    tauri::generate_handler![
+        alfred_invoke,
+        page_windows::alfred_open_window,
+        system_notifications::alfred_notify_system,
+        verify::verify_result
+    ]
 }
 
 pub fn run() {
@@ -109,6 +119,11 @@ pub fn run() {
             vault::init(&data_dir);
             let state = AppState::new(&data_dir)?;
             app.manage(state.clone());
+            // La voix d’Alfred se charge pendant que la fenêtre s’ouvre.
+            {
+                let state = state.clone();
+                tauri::async_runtime::spawn(async move { voice::preload(state) });
+            }
 
             // Les événements du cœur partent vers la fenêtre ; le pont de développement s’y abonne aussi.
             let handle = app.handle().clone();

@@ -66,7 +66,7 @@ pub fn redirect_uri(state: &AppState) -> AppResult<String> {
 
 fn not_connected(client: &Client) -> AppError {
     AppError::new(format!(
-        "Le client « {} » n’est pas connecté. Ouvrir Réglages → Clients et choisir « Se connecter ».",
+        "Le client « {} » n’est pas connecté. Ouvrir Réglages → Modules et choisir « Se connecter » dans la fiche du module.",
         client.label
     ))
 }
@@ -254,7 +254,7 @@ pub async fn access_token(state: &Arc<AppState>, client: &Client, stale: Option<
     let result = if client.auth.kind == AuthKind::ClientCredentials {
         if client_secret.is_none() {
             return Err(AppError::new(format!(
-                "Le secret du client « {} » n’est pas renseigné. Le saisir dans Réglages → Coffre.",
+                "Le mot de passe ou la clé du service « {} » n’est pas renseigné. Le saisir dans Réglages → Mots de passe et clés.",
                 client.label
             )));
         }
@@ -283,7 +283,7 @@ pub async fn access_token(state: &Arc<AppState>, client: &Client, stale: Option<
             }
             state.emit("clients:changed", json!({ "client": client.id, "instance": client.instance, "connected": false }));
             Err(AppError::new(format!(
-                "La connexion du client « {} » a expiré. Ouvrir Réglages → Clients et choisir « Se connecter ».",
+                "La connexion du client « {} » a expiré. Ouvrir Réglages → Modules et choisir « Se connecter » dans la fiche du module.",
                 client.label
             )))
         }
@@ -448,6 +448,12 @@ pub async fn callback(State(state): State<Arc<AppState>>, Query(params): Query<H
     match exchange(&flow, &params).await {
         Ok(()) => {
             state.emit("clients:changed", json!({ "client": flow.client, "instance": flow.instance, "connected": true }));
+            // Le compte vient d’être connecté : on le teste aussitôt, pour qu’un module qui l’attend devienne prêt
+            // sans un clic de plus.
+            let (tested, client, instance) = (state.clone(), flow.client.clone(), flow.instance.clone());
+            tokio::spawn(async move {
+                let _ = crate::clients::test_instance(&tested, &client, &instance).await;
+            });
             page(
                 StatusCode::OK,
                 "Connexion réussie",

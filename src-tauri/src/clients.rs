@@ -525,7 +525,7 @@ impl ClientDef {
             }),
             None => self.instances.first().ok_or_else(|| {
                 AppError::new(format!(
-                    "Le client « {} » n’a aucune instance : en ajouter une dans Réglages → Clients.",
+                    "Le service « {} » n’a aucun compte : en ajouter un dans Réglages → Modules, dans la fiche du module.",
                     self.label
                 ))
             }),
@@ -536,7 +536,7 @@ impl ClientDef {
     pub fn resolve_instance(&self, instance: &Instance) -> AppResult<Client> {
         let method = self.method(&instance.method).ok_or_else(|| {
             AppError::new(format!(
-                "L’instance « {} » du client « {} » utilise la méthode « {} », qui n’existe plus : en choisir une autre dans Réglages → Clients.",
+                "L’instance « {} » du client « {} » utilise la méthode « {} », qui n’existe plus : en choisir une autre dans Réglages → Modules, dans la fiche du module.",
                 instance.display_label(),
                 self.label,
                 instance.method
@@ -681,13 +681,13 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
     if let Some(bound) = space.manifest()?.bindings.get(&need) {
         return load(space, bound)?.ok_or_else(|| {
             AppError::new(format!(
-                "La demande « {need} » est reliée au client « {bound} », qui n’existe plus. La relier à un autre client dans Réglages → Clients."
+                "La demande « {need} » est reliée au client « {bound} », qui n’existe plus. La relier à un autre service dans Réglages → Modules, dans la fiche du module."
             ))
         });
     }
     load(space, name)?.ok_or_else(|| {
         AppError::new(format!(
-            "Le client « {name} » n’existe pas dans cet espace. Le créer dans Réglages → Clients, ou y relier la demande « {need} » à un client existant."
+            "Le client « {name} » n’existe pas dans cet espace. Le configurer dans Réglages → Modules, ou y relier la demande « {need} » à un client existant."
         ))
     })
 }
@@ -786,6 +786,57 @@ fn record_trust(state: &AppState, space: &Space, client: &Client) -> AppResult<(
     Ok(())
 }
 
+/// Résultats du bouton Tester, par instance, dans la base d’Alfred. Un résultat ne vaut que pour l’empreinte
+/// testée : modifier l’adresse, l’authentification ou l’entrée du coffre de l’instance l’efface d’office.
+fn tests_db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, rusqlite::Connection>> {
+    let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS client_tests (space TEXT NOT NULL, client TEXT NOT NULL, fingerprint TEXT NOT NULL, ok INTEGER NOT NULL, message TEXT NOT NULL, tested_at TEXT NOT NULL, PRIMARY KEY (space, client))",
+        [],
+    )?;
+    Ok(db)
+}
+
+fn record_test(state: &AppState, space: &Space, client: &Client, ok: bool, message: &str) -> AppResult<()> {
+    let db = tests_db(state)?;
+    db.execute(
+        "INSERT INTO client_tests (space, client, fingerprint, ok, message, tested_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT (space, client) DO UPDATE SET fingerprint = excluded.fingerprint, ok = excluded.ok,
+           message = excluded.message, tested_at = excluded.tested_at",
+        params![space_key(space), client.trust_key(), fingerprint(client).to_string(), ok, message, app_db::now()],
+    )?;
+    Ok(())
+}
+
+/// Dernier test de l’instance dans son état actuel : `{ ok, message, testedAt }`, ou `null`.
+fn last_test(state: &AppState, space: &Space, client: &Client) -> Value {
+    let Ok(db) = tests_db(state) else { return Value::Null };
+    let row: Option<(String, bool, String, String)> = db
+        .query_row(
+            "SELECT fingerprint, ok, message, tested_at FROM client_tests WHERE space = ?1 AND client = ?2",
+            params![space_key(space), client.trust_key()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    match row {
+        Some((stored, ok, message, at)) if serde_json::from_str::<Value>(&stored).ok() == Some(fingerprint(client)) => {
+            json!({ "ok": ok, "message": message, "testedAt": at })
+        }
+        _ => Value::Null,
+    }
+}
+
+fn forget_tests(state: &AppState, space: &Space, id: &str) -> AppResult<()> {
+    let db = tests_db(state)?;
+    db.execute(
+        "DELETE FROM client_tests WHERE space = ?1 AND (client = ?2 OR client LIKE ?3)",
+        params![space_key(space), id, format!("{id}#%")],
+    )?;
+    Ok(())
+}
+
 /// Refuse d’utiliser le secret d’un client que l’utilisateur n’a pas validé dans son état actuel. À appeler avant
 /// tout envoi : requête d’une page, test, demande ou rafraîchissement de jeton, départ d’une connexion.
 pub fn ensure_trusted(state: &AppState, client: &Client) -> AppResult<()> {
@@ -798,7 +849,7 @@ pub fn ensure_trusted(state: &AppState, client: &Client) -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::new(format!(
-        "Le client « {} » n’est pas validé dans son état actuel : l’agent le valide avec `validate_client`, ou l’utilisateur dans Réglages, onglet Clients.",
+        "Le client « {} » n’est pas validé dans son état actuel : l’agent le valide avec `validate_client`, ou l’utilisateur l’approuve dans Réglages → Modules.",
         client.label
     )))
 }
@@ -823,13 +874,13 @@ fn trust_changes(stored: Option<&Value>, current: &Value) -> Vec<Value> {
 pub async fn secret_of(state: &Arc<AppState>, client: &Client) -> AppResult<(vault::Entry, Option<Value>)> {
     let id = client.auth.secret.as_deref().ok_or_else(|| {
         AppError::new(format!(
-            "Le client « {} » n’a pas d’entrée du coffre. La choisir dans Réglages → Clients.",
+            "Le service « {} » n’a pas de mot de passe ou de clé. Le choisir dans Réglages → Modules, dans la fiche du module.",
             client.label
         ))
     })?;
     let entry = vault::entry(state, id)?.ok_or_else(|| {
         AppError::new(format!(
-            "Le client « {} » attend l’entrée « {id} » du coffre, qui n’existe pas sur ce poste. La créer dans Réglages → Coffre.",
+            "Le client « {} » attend l’entrée « {id} » du coffre, qui n’existe pas sur ce poste. La créer dans Réglages → Mots de passe et clés.",
             client.label
         ))
     })?;
@@ -856,7 +907,7 @@ struct Credential {
 
 fn missing_secret(client: &Client) -> AppError {
     AppError::new(format!(
-        "Le secret du client « {} » n’est pas renseigné. Le saisir dans Réglages → Coffre.",
+        "Le mot de passe ou la clé du service « {} » n’est pas renseigné. Le saisir dans Réglages → Mots de passe et clés.",
         client.label
     ))
 }
@@ -1423,12 +1474,14 @@ fn instance_state(state: &AppState, client: &Client) -> Value {
     } else {
         "ready"
     };
+    let last_test = state.try_space().map_or(Value::Null, |space| last_test(state, &space, client));
     json!({
         "status": status,
         "hasSecret": has_secret,
         "connected": connected,
         "problem": problem,
         "validation": validation,
+        "lastTest": last_test,
     })
 }
 
@@ -1560,6 +1613,11 @@ fn describe(state: &AppState, def: &ClientDef, used_by: &[Value]) -> Value {
         item["auth"] = auth;
     }
     item
+}
+
+/// Vue des clients et des besoins des modules, celle des Réglages (`clients.list`).
+pub fn overview(state: &Arc<AppState>) -> AppResult<Value> {
+    list(state)
 }
 
 fn list(state: &Arc<AppState>) -> AppResult<Value> {
@@ -1910,6 +1968,7 @@ fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             params![space_key(&space), format!("client:{id}")],
         )?;
     }
+    forget_tests(state, &space, &id)?;
     git::commit_all(&space.root, &format!("Suppression du client {label}"))?;
     state.emit("clients:changed", json!({ "client": id }));
     Ok(Value::Null)
@@ -1947,8 +2006,36 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let result = perform(state, &client, &call).await;
     journal(state, &space, &client, &call, ("settings", "Réglages"), started, outcome_of(&result));
     let duration = started.elapsed().as_millis() as u64;
-    // Un test raté est un résultat, pas une erreur de commande : l’écran l’affiche à côté du client.
-    Ok(match result {
+    let outcome = test_outcome(result, &path, duration);
+    // Le parcours de configuration d’un module ne le dit prêt qu’après un test réussi de l’instance.
+    record_test(state, &space, &client, outcome["ok"] == json!(true), outcome["message"].as_str().unwrap_or_default())?;
+    state.emit("clients:changed", json!({ "client": client.id }));
+    Ok(outcome)
+}
+
+/// Teste une instance et garde le résultat (voir `test_client`).
+pub async fn test_instance(state: &Arc<AppState>, id: &str, instance: &str) -> AppResult<Value> {
+    test_client(state, &json!({ "id": id, "instance": instance })).await
+}
+
+/// Teste chaque instance du client `id` telle que son fichier la décrit, et garde le résultat (voir `test_client`).
+pub async fn test_instances(state: &Arc<AppState>, id: &str) -> AppResult<Vec<Value>> {
+    let space = state.space()?;
+    let def = require(&space, id)?;
+    let mut results = Vec::new();
+    for instance in &def.instances {
+        let args = json!({ "id": id, "instance": instance.id });
+        let mut outcome = test_client(state, &args).await?;
+        outcome["instance"] = json!(instance.id);
+        results.push(outcome);
+    }
+    Ok(results)
+}
+
+/// Résultat d’un test en mots simples. Un test raté est un résultat, pas une erreur de commande : l’écran
+/// l’affiche à côté du client.
+fn test_outcome(result: AppResult<Value>, path: &str, duration: u64) -> Value {
+    match result {
         Ok(response) => {
             let status = response["status"].as_u64().unwrap_or_default();
             let message = match status {
@@ -1964,7 +2051,7 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             json!({ "ok": status < 400, "status": status, "durationMs": duration, "message": message })
         }
         Err(error) => json!({ "ok": false, "status": null, "durationMs": duration, "message": error.message }),
-    })
+    }
 }
 
 /// Traite les commandes de ce module ; `None` quand la commande ne le concerne pas.
@@ -2729,7 +2816,7 @@ mod tests {
         // Sans secret, la requête d’une page explique quoi faire.
         grant(&state, &subject, "jira-interne");
         let error = request(&state, &subject, "jira-interne", json!({ "path": "/x" })).await.unwrap_err();
-        assert!(error.message.contains("Réglages → Coffre"), "{}", error.message);
+        assert!(error.message.contains("Mots de passe et clés"), "{}", error.message);
 
         // Un module demande un client « jira » : sans liaison ni client de ce nom, la demande reste à relier.
         std::fs::create_dir_all(space.root.join("modules/crm")).unwrap();
@@ -2764,7 +2851,7 @@ mod tests {
         assert_eq!(client["usedBy"][0]["key"], json!("crm/jira"));
         let error = request(&state, &subject, "jira", json!({ "path": "/x" })).await.unwrap_err();
         assert!(
-            error.message.contains("Réglages → Coffre"),
+            error.message.contains("Mots de passe et clés"),
             "la liaison doit mener au client relié : {}",
             error.message
         );
@@ -3079,7 +3166,7 @@ mod tests {
         assert_eq!((saved["status"].clone(), saved["instances"].clone()), (json!("noInstance"), json!([])));
         grant(&state, &subject, "jira");
         let error = request(&state, &subject, "jira", json!({ "path": "/api/echo" })).await.unwrap_err();
-        assert!(error.message.contains("aucune instance"), "{}", error.message);
+        assert!(error.message.contains("aucun compte"), "{}", error.message);
 
         let add = |id: &str, label: &str, url: &str, method: &str, secret: &str| {
             json!({ "client": "jira", "create": true, "instance": { "id": id, "label": label, "url": url, "method": method, "secret": secret } })
@@ -3212,7 +3299,7 @@ mod tests {
             json!({ "id": "jira", "label": "Jira", "methods": [{ "id": "pat", "label": "PAT", "type": "bearer" }] }),
         )
         .await;
-        assert!(sections(&space)[0].waiting.as_deref().unwrap().contains("aucune instance"));
+        assert!(sections(&space)[0].waiting.as_deref().unwrap().contains("aucun compte"));
 
         // Une copie par instance, avec ses pages, dans l’ordre des instances.
         let token_id = unique("pat");

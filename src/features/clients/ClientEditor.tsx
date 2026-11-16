@@ -1,5 +1,6 @@
 import {
   Button,
+  Disclosure,
   FeedbackBanner,
   Fieldset,
   FormActions,
@@ -29,6 +30,7 @@ import {
   type ClientMethod,
   saveClient,
 } from "./api";
+import "./services.css";
 
 /** Champs d’une authentification, communs au client à une seule adresse et à chaque méthode. */
 interface AuthDraft {
@@ -191,7 +193,7 @@ function AuthFields({
   errors,
   multiple,
   onChange,
-  typeLabel = "Authentification",
+  typeLabel = "Type de connexion",
   children,
 }: {
   auth: AuthDraft;
@@ -281,18 +283,33 @@ function AuthFields({
               onChange={(event) => onChange({ tokenUrl: event.target.value }, ["tokenUrl"])}
             />
           </FormField>
-          <FormField label="Portées (facultatif)" hint="Séparées par des espaces.">
-            <TextInput
-              value={auth.scopes}
-              placeholder="Ex. read write"
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => onChange({ scopes: event.target.value })}
-            />
-          </FormField>
+          <Disclosure label="Options avancées de la connexion" appearance="subtle">
+            <FormField
+              label="Autorisations demandées (facultatif)"
+              hint="Laissez vide sauf si le service vous indique quoi saisir. Séparées par des espaces."
+            >
+              <TextInput
+                value={auth.scopes}
+                placeholder="Ex. read write"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => onChange({ scopes: event.target.value })}
+              />
+            </FormField>
+          </Disclosure>
         </>
       ) : null}
     </>
+  );
+}
+
+/** Façons de se connecter d’un service : repliées pour un service existant, où l’on n’y touche guère. */
+function MethodsBlock({ collapsed, children }: { collapsed: boolean; children: ReactNode }) {
+  if (!collapsed) return <>{children}</>;
+  return (
+    <Disclosure label="Façons de se connecter" appearance="subtle">
+      {children}
+    </Disclosure>
   );
 }
 
@@ -330,7 +347,11 @@ export function ClientEditor({
     try {
       setEntries(await listVault());
     } catch (failure) {
-      notify({ title: "Le coffre n’a pas pu être lu", description: errorMessage(failure), tone: "error" });
+      notify({
+        title: "Les mots de passe et clés n’ont pas pu être lus",
+        description: errorMessage(failure),
+        tone: "error",
+      });
     }
   }, []);
 
@@ -423,7 +444,7 @@ export function ClientEditor({
       }
     }
     const next: Errors = {
-      label: draft.label.trim() ? undefined : "Saisissez un libellé.",
+      label: draft.label.trim() ? undefined : "Saisissez un nom.",
       id: ID_PATTERN.test(resolvedId)
         ? undefined
         : "Saisissez un identifiant en minuscules, chiffres et tirets (64 caractères au plus).",
@@ -431,8 +452,8 @@ export function ClientEditor({
         ? draft.baseUrl.trim()
           ? urlError(draft.baseUrl, "")
           : undefined
-        : urlError(draft.baseUrl, "Saisissez l’adresse de base."),
-      secret: !draft.multiple && vaultKind && !draft.secret ? "Choisissez une entrée du coffre." : undefined,
+        : urlError(draft.baseUrl, "Saisissez l’adresse du service."),
+      secret: !draft.multiple && vaultKind && !draft.secret ? "Choisissez un mot de passe ou une clé." : undefined,
       headers: headers ? undefined : "Écrivez un en-tête par ligne, sous la forme « Nom: valeur ».",
       testPath:
         !testPath || testPath.startsWith("/") ? undefined : "Saisissez un chemin qui commence par « / », ex. /me.",
@@ -476,11 +497,11 @@ export function ClientEditor({
     setPending(true);
     try {
       const saved = await saveClient(config, !initial);
-      notify({ title: initial ? "Client enregistré" : "Client créé", tone: "success" });
+      notify({ title: initial ? "Service enregistré" : "Service créé", tone: "success" });
       onSaved(saved);
     } catch (failure) {
       notify({
-        title: initial ? "Le client n’a pas été enregistré" : "Le client n’a pas été créé",
+        title: initial ? "Le service n’a pas été enregistré" : "Le service n’a pas été créé",
         description: errorMessage(failure),
         tone: "error",
       });
@@ -491,12 +512,16 @@ export function ClientEditor({
   return (
     <Page width="text">
       <Section
-        title={initial ? `Modifier « ${initial.label} »` : "Nouveau client"}
-        description="Le client est enregistré dans l’espace, sans aucun secret : seul l’identifiant de l’entrée du coffre y figure."
+        title={initial ? "Paramètres du service" : "Nouveau service"}
+        description={
+          initial
+            ? `Ce qui est commun à tous les comptes ${initial.label}. En général, on n’y touche pas : le module ou l’agent l’a déjà réglé.`
+            : "Le service en ligne à appeler et la façon de s’y connecter. Les mots de passe restent enregistrés à part, sur ce poste."
+        }
       >
-        <form id={formId} noValidate onSubmit={submit}>
+        <form id={formId} className="settings-form" noValidate onSubmit={submit}>
           <Stack gap="md">
-            <FormField label="Libellé" error={errors.label}>
+            <FormField label="Nom" error={errors.label}>
               <TextInput
                 value={draft.label}
                 aria-required="true"
@@ -504,45 +529,24 @@ export function ClientEditor({
                 onChange={(event) => set({ label: event.target.value }, ["label", "id"])}
               />
             </FormField>
-            <FormField
-              label="Identifiant"
-              hint={
-                initial
-                  ? "Les pages appellent le client par cet identifiant : il ne se modifie pas."
-                  : "Nom par lequel les pages et les modules appellent ce client. Minuscules, chiffres et tirets."
-              }
-              error={errors.id}
-            >
-              <TextInput
-                value={resolvedId}
-                disabled={Boolean(initial)}
-                aria-required="true"
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => {
-                  setIdEdited(true);
-                  set({ id: event.target.value }, ["id"]);
-                }}
-              />
-            </FormField>
             {canChooseMode ? (
               <FormField
-                label="Instances"
-                hint="Plusieurs comptes ou installations du même service (plusieurs sites Jira, plusieurs boîtes mail) : chacune aura son adresse, sa méthode et son secret."
+                label="Comptes"
+                hint="Pour utiliser ce service avec plusieurs comptes (plusieurs sites Jira, plusieurs boîtes mail) : chacun aura son adresse et son mot de passe."
               >
                 <SwitchControl
-                  label="Plusieurs instances"
+                  label="Plusieurs comptes"
                   checked={draft.multiple}
                   onChange={(event) => toggleMultiple(event.target.checked)}
                 />
               </FormField>
             ) : null}
             <FormField
-              label={draft.multiple ? "Adresse par défaut (facultative)" : "Adresse de base"}
+              label={draft.multiple ? "Adresse par défaut (facultative)" : "Adresse du service"}
               hint={
                 draft.multiple
-                  ? "Proposée aux instances qui n’ont pas la leur. Laissez vide si chaque instance a son adresse."
-                  : "Les pages ne peuvent appeler que des chemins situés sous cette adresse."
+                  ? "Proposée aux comptes qui n’ont pas la leur. Laissez vide si chaque compte a son adresse."
+                  : "Les pages ne peuvent appeler que des adresses qui commencent ainsi."
               }
               error={errors.baseUrl}
             >
@@ -558,67 +562,69 @@ export function ClientEditor({
             </FormField>
 
             {draft.multiple ? (
-              <Stack gap="md">
-                <Text tone="muted">
-                  Méthodes d’authentification que les instances pourront choisir. Le secret de chaque instance se
-                  choisit avec elle.
-                </Text>
-                {draft.methods.map((method, index) => (
-                  <Fieldset key={method.key} legend={method.label.trim() || `Méthode ${index + 1}`}>
-                    <Stack gap="md">
-                      <FormField label="Nom de la méthode" error={errors.methods?.[method.key]?.label}>
-                        <TextInput
-                          value={method.label}
-                          placeholder="Ex. Jira Cloud (jeton d’API)"
-                          autoComplete="off"
-                          onChange={(event) => setMethod(method.key, { label: event.target.value }, ["label"])}
+              <MethodsBlock collapsed={Boolean(initial) && !errors.methods}>
+                <Stack gap="md">
+                  <Text tone="muted">
+                    Les façons de se connecter que les comptes pourront choisir. Le mot de passe ou la clé de chaque
+                    compte se choisit avec lui.
+                  </Text>
+                  {draft.methods.map((method, index) => (
+                    <Fieldset key={method.key} legend={method.label.trim() || `Méthode ${index + 1}`}>
+                      <Stack gap="md">
+                        <FormField label="Nom de la façon de se connecter" error={errors.methods?.[method.key]?.label}>
+                          <TextInput
+                            value={method.label}
+                            placeholder="Ex. Jira Cloud (jeton d’API)"
+                            autoComplete="off"
+                            onChange={(event) => setMethod(method.key, { label: event.target.value }, ["label"])}
+                          />
+                        </FormField>
+                        <AuthFields
+                          auth={method}
+                          errors={errors.methods?.[method.key]}
+                          multiple
+                          onChange={(changes, cleared) => setMethod(method.key, changes, cleared)}
                         />
-                      </FormField>
-                      <AuthFields
-                        auth={method}
-                        errors={errors.methods?.[method.key]}
-                        multiple
-                        onChange={(changes, cleared) => setMethod(method.key, changes, cleared)}
-                      />
-                      {draft.methods.length > 1 ? (
-                        <Row justify="end">
-                          <Button
-                            aria-label={`Retirer la méthode ${method.label.trim() || index + 1}`}
-                            onClick={() =>
-                              setDraft((current) => ({
-                                ...current,
-                                methods: current.methods.filter((known) => known.key !== method.key),
-                              }))
-                            }
-                          >
-                            Retirer
-                          </Button>
-                        </Row>
-                      ) : null}
-                    </Stack>
-                  </Fieldset>
-                ))}
-                <Row>
-                  <Button
-                    onClick={() =>
-                      setDraft((current) => ({ ...current, methods: [...current.methods, toMethodDraft()] }))
-                    }
-                  >
-                    Ajouter une méthode
-                  </Button>
-                </Row>
-              </Stack>
+                        {draft.methods.length > 1 ? (
+                          <Row justify="end">
+                            <Button
+                              aria-label={`Retirer la méthode ${method.label.trim() || index + 1}`}
+                              onClick={() =>
+                                setDraft((current) => ({
+                                  ...current,
+                                  methods: current.methods.filter((known) => known.key !== method.key),
+                                }))
+                              }
+                            >
+                              Retirer
+                            </Button>
+                          </Row>
+                        ) : null}
+                      </Stack>
+                    </Fieldset>
+                  ))}
+                  <Row>
+                    <Button
+                      onClick={() =>
+                        setDraft((current) => ({ ...current, methods: [...current.methods, toMethodDraft()] }))
+                      }
+                    >
+                      Ajouter une façon de se connecter
+                    </Button>
+                  </Row>
+                </Stack>
+              </MethodsBlock>
             ) : (
               <AuthFields auth={draft.auth} errors={errors.auth} multiple={false} onChange={setAuth}>
                 {vaultKind ? (
                   <FormField
-                    label="Entrée du coffre"
+                    label="Mot de passe ou clé"
                     compound
                     htmlFor={secretId}
                     hint={
                       missingEntry
-                        ? "Cette entrée n’existe pas sur ce poste. « Nouvelle entrée » la crée avec cet identifiant."
-                        : "Le secret reste dans le coffre ; le client n’en garde que l’identifiant."
+                        ? "Introuvable sur ce poste. « Nouveau… » permet de le saisir."
+                        : "Enregistré à part, sur ce poste : le service n’en garde que le nom."
                     }
                     error={errors.secret}
                   >
@@ -629,7 +635,7 @@ export function ClientEditor({
                         aria-required="true"
                         onChange={(event) => set({ secret: event.target.value }, ["secret"])}
                       >
-                        <option value="">Choisir une entrée…</option>
+                        <option value="">Choisir…</option>
                         {candidates.map((entry) => (
                           <option key={entry.id} value={entry.id}>
                             {entry.label}
@@ -639,7 +645,7 @@ export function ClientEditor({
                           <option value={draft.secret}>{draft.secret} (absente de ce poste)</option>
                         ) : null}
                       </SelectControl>
-                      <Button onClick={() => setCreatingEntry(true)}>Nouvelle entrée</Button>
+                      <Button onClick={() => setCreatingEntry(true)}>Nouveau…</Button>
                     </FormControlGroup>
                   </FormField>
                 ) : null}
@@ -647,36 +653,64 @@ export function ClientEditor({
             )}
             {showsOauthHint && redirectUri ? (
               <FeedbackBanner tone="info" appearance="contained">
-                Adresse de retour à déclarer chez le fournisseur d’identité : {redirectUri}
+                Adresse de retour à donner au service : {redirectUri}
               </FeedbackBanner>
             ) : null}
 
-            <FormField
-              label="En-têtes fixes (facultatif)"
-              hint="Un en-tête par ligne, sous la forme « Nom: valeur ». L’authentification n’en fait pas partie : elle vient du coffre."
-              error={errors.headers}
+            <Disclosure
+              label="Options avancées"
+              appearance="subtle"
+              open={errors.id || errors.headers || errors.testPath ? true : undefined}
             >
-              <TextArea
-                value={draft.headers}
-                placeholder="Ex. Accept: application/json"
-                spellCheck={false}
-                onChange={(event) => set({ headers: event.target.value }, ["headers"])}
-              />
-            </FormField>
-            <FormField
-              label="Chemin de test (facultatif)"
-              hint="Lu par le bouton Tester. Choisissez une lecture qui demande l’authentification, ex. /me ; sans chemin, Tester lit la racine de l’adresse de base."
-              error={errors.testPath}
-            >
-              <TextInput
-                value={draft.testPath}
-                placeholder="Ex. /me"
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => set({ testPath: event.target.value }, ["testPath"])}
-              />
-            </FormField>
-
+              <Stack gap="md">
+                <FormField
+                  label="Identifiant"
+                  hint={
+                    initial
+                      ? "Les pages appellent le service par cet identifiant : il ne se modifie pas."
+                      : "Nom technique par lequel les pages appellent ce service. Déduit du nom : inutile de le changer."
+                  }
+                  error={errors.id}
+                >
+                  <TextInput
+                    value={resolvedId}
+                    disabled={Boolean(initial)}
+                    aria-required="true"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setIdEdited(true);
+                      set({ id: event.target.value }, ["id"]);
+                    }}
+                  />
+                </FormField>
+                <FormField
+                  label="En-têtes fixes (facultatif)"
+                  hint="Un en-tête par ligne, sous la forme « Nom: valeur ». L’authentification n’en fait pas partie : elle vient du coffre."
+                  error={errors.headers}
+                >
+                  <TextArea
+                    value={draft.headers}
+                    placeholder="Ex. Accept: application/json"
+                    spellCheck={false}
+                    onChange={(event) => set({ headers: event.target.value }, ["headers"])}
+                  />
+                </FormField>
+                <FormField
+                  label="Chemin de test (facultatif)"
+                  hint="Lu par le bouton Tester. Choisissez une lecture qui demande l’authentification, ex. /me ; sans chemin, Tester lit l’adresse du service."
+                  error={errors.testPath}
+                >
+                  <TextInput
+                    value={draft.testPath}
+                    placeholder="Ex. /me"
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => set({ testPath: event.target.value }, ["testPath"])}
+                  />
+                </FormField>
+              </Stack>
+            </Disclosure>
             <FormActions
               form={formId}
               submitLabel={initial ? "Enregistrer" : "Créer"}

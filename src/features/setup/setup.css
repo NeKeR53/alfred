@@ -1,0 +1,98 @@
+/* Parcours de configuration d’un module (Réglages → Modules). Uniquement les variables de `src/ui/styles.css`. */
+.setup-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.setup-flow__header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.setup-flow__title h2 {
+  margin: 0;
+  font-size: var(--font-size-title, 18px);
+  font-weight: 600;
+}
+.setup-flow__title p {
+  margin: 2px 0 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+/* Étapes en bandeau au-dessus de l’étape courante : `StepList` est horizontale. */
+.setup-flow__layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.setup-flow__steps {
+  min-width: 0;
+}
+.setup-flow__main {
+  max-width: 760px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.setup-flow__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.setup-flow__body h3 {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+.setup-flow__body p {
+  margin: 0;
+}
+.setup-flow__step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.setup-flow__needs {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setup-flow__done {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  color: var(--color-success-ink);
+  font-size: var(--font-size-secondary);
+}
+.setup-flow__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-primary-strong);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.setup-flow__inline-actions {
+  display: flex;
+  gap: 8px;
+}
+.setup-flow__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.setup-flow__spacer {
+  flex: 1;
+}

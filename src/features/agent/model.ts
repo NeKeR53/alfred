@@ -23,6 +23,8 @@ export interface UserMessage {
   contexts: PastedContext[];
   /** Commandes, skills et fichiers choisis par `/` et `@` ; leur mention reste dans `text`. */
   references?: ComposerReference[];
+  /** Demande dictée : la réponse de l’agent est lue à voix haute (Réglages › Voix). */
+  spoken?: boolean;
 }
 
 export type TurnItem =

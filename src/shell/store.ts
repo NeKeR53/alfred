@@ -3,6 +3,22 @@ import { invoke, onNativeEvent } from "../lib/native";
 import type { AppInfo, Snapshot } from "../lib/types";
 import { pageWindowReference } from "./pageWindowMode";
 
+/** Espace déjà ouvert sur ce poste, proposé pour y revenir en un clic. */
+export interface RecentSpace {
+  path: string;
+  name: string;
+  openedAt: string;
+}
+
+const RECENT_KEY = "spaces.recent";
+const RECENT_LIMIT = 10;
+
+/** Préférence secondaire : une lecture ou une écriture qui échoue ne gêne rien. */
+const quietly = <T>(run: () => Promise<T>): Promise<T | null> =>
+  Promise.resolve()
+    .then(run)
+    .catch(() => null);
+
 export type View = { kind: "agent" } | { kind: "section"; id: string } | { kind: "settings" };
 export type Theme = "light" | "dark";
 
@@ -14,12 +30,18 @@ interface ShellState {
   revision: number;
   startupError: string | null;
   view: View;
+  /** Vue restée derrière la fenêtre des Réglages, rendue quand on la ferme. */
+  behind: Exclude<View, { kind: "settings" }>;
   /** Onglet affiché par section (`module/section` → `module/page`) ; « réglages » pour les Réglages. */
   activeTab: Record<string, string>;
   panelHidden: Record<string, boolean>;
   /** Conversation d’agent affichée dans le panneau de droite d’une page (`module/page` → conversation). */
   agentPanel: Record<string, string>;
   sidebarCollapsed: boolean;
+  /** Espaces ouverts récemment, le plus récent d’abord (celui ouvert compris). */
+  recentSpaces: RecentSpace[];
+  /** Retire un espace de la liste des récents, sans rien supprimer sur le disque. */
+  forgetSpace: (path: string) => void;
   theme: Theme;
   /** Vrai quand le thème suit celui du système plutôt qu’un choix de l’utilisateur. */
   themeFollowsSystem: boolean;
@@ -28,6 +50,8 @@ interface ShellState {
   openSpace: (path: string, name?: string) => Promise<void>;
   closeSpace: () => Promise<void>;
   setView: (view: View) => void;
+  /** Ferme la fenêtre des Réglages et revient à la vue d’où elle a été ouverte. */
+  closeSettings: () => void;
   setActiveTab: (section: string, page: string) => void;
   openPage: (reference: string) => void;
   togglePanel: (page: string) => void;
@@ -57,23 +81,26 @@ export const useShell = create<ShellState>((set, get) => ({
   revision: 0,
   startupError: null,
   view: { kind: "agent" },
+  behind: { kind: "agent" },
   activeTab: {},
   panelHidden: {},
   agentPanel: {},
   sidebarCollapsed: false,
+  recentSpaces: [],
   theme: systemTheme(),
   themeFollowsSystem: true,
 
   async start() {
     try {
       const info = await invoke<AppInfo>("app.info");
-      const [snapshot, theme, collapsed] = await Promise.all([
+      const [snapshot, theme, collapsed, recent] = await Promise.all([
         // Une fenêtre de page relit l’espace que la fenêtre principale a ouvert, sans le rouvrir.
         pageWindowReference()
           ? invoke<Snapshot | null>("space.snapshot").catch(() => null)
           : invoke<Snapshot | null>("space.restore"),
         invoke<Theme | null>("settings.get", { key: "appearance.theme" }),
         invoke<boolean | null>("settings.get", { key: "shell.sidebarCollapsed" }),
+        quietly(() => invoke<RecentSpace[] | null>("settings.get", { key: RECENT_KEY })),
       ]);
       const resolved = theme ?? systemTheme();
       applyTheme(resolved, snapshot?.accent);
@@ -83,8 +110,10 @@ export const useShell = create<ShellState>((set, get) => ({
         theme: resolved,
         themeFollowsSystem: theme === null,
         sidebarCollapsed: collapsed ?? false,
+        recentSpaces: Array.isArray(recent) ? recent : [],
         startupError: null,
       });
+      if (snapshot && !pageWindowReference()) rememberSpace(snapshot);
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
         if (!get().themeFollowsSystem) return;
         applyTheme(systemTheme(), get().snapshot?.accent);
@@ -116,12 +145,22 @@ export const useShell = create<ShellState>((set, get) => ({
     const snapshot = await invoke<Snapshot>("space.snapshot");
     applyTheme(get().theme, snapshot.accent);
     set((state) => ({ snapshot, revision: state.revision + 1 }));
+    // Un espace renommé garde son nouveau nom dans la liste des récents.
+    const known = get().recentSpaces.find((space) => space.path === snapshot.path);
+    if (known && known.name !== snapshot.name) rememberSpace(snapshot);
   },
 
   async openSpace(path, name) {
     const snapshot = await invoke<Snapshot>("space.open", { path, name });
     applyTheme(get().theme, snapshot.accent);
     set((state) => ({ snapshot, revision: state.revision + 1, view: { kind: "agent" } }));
+    rememberSpace(snapshot);
+  },
+
+  forgetSpace(path) {
+    const recentSpaces = get().recentSpaces.filter((space) => space.path !== path);
+    set({ recentSpaces });
+    void quietly(() => invoke("settings.set", { key: RECENT_KEY, value: recentSpaces }));
   },
 
   async closeSpace() {
@@ -129,7 +168,8 @@ export const useShell = create<ShellState>((set, get) => ({
     set({ snapshot: null, view: { kind: "agent" } });
   },
 
-  setView: (view) => set({ view }),
+  setView: (view) => set((state) => ({ view, behind: state.view.kind === "settings" ? state.behind : state.view })),
+  closeSettings: () => set((state) => (state.view.kind === "settings" ? { view: state.behind } : {})),
   setActiveTab: (section, page) => set((state) => ({ activeTab: { ...state.activeTab, [section]: page } })),
 
   openPage(reference) {
@@ -151,7 +191,11 @@ export const useShell = create<ShellState>((set, get) => ({
         activeTab: { ...state.activeTab, [section.id]: target },
       }));
     } else if (snapshot.settingsPages.some((page) => page.reference === reference)) {
-      set((state) => ({ view: { kind: "settings" }, activeTab: { ...state.activeTab, réglages: reference } }));
+      set((state) => ({
+        view: { kind: "settings" },
+        behind: state.view.kind === "settings" ? state.behind : state.view,
+        activeTab: { ...state.activeTab, réglages: reference },
+      }));
     }
   },
 
@@ -182,3 +226,14 @@ export const useShell = create<ShellState>((set, get) => ({
     void invoke("settings.set", { key: "appearance.theme", value: theme });
   },
 }));
+
+/** Place l’espace ouvert en tête des récents, avec son nom du moment. */
+function rememberSpace(snapshot: Pick<Snapshot, "path" | "name">) {
+  const others = useShell.getState().recentSpaces.filter((space) => space.path !== snapshot.path);
+  const recentSpaces = [
+    { path: snapshot.path, name: snapshot.name, openedAt: new Date().toISOString() },
+    ...others,
+  ].slice(0, RECENT_LIMIT);
+  useShell.setState({ recentSpaces });
+  void quietly(() => invoke("settings.set", { key: RECENT_KEY, value: recentSpaces }));
+}

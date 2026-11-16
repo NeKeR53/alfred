@@ -19,8 +19,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { SetupBanner } from "../features/setup/SetupBanner";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
+import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { NamedIcon } from "./icons";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
 import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
@@ -28,6 +30,7 @@ import { mergeVisibleOrder, pagesOf, reorderSections, reorderTabs, SETTINGS_SECT
 import { notify } from "./notifications";
 import { PageFrame } from "./PageFrame";
 import { ResizablePanel } from "./ResizablePanel";
+import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
 import { useDragReorder } from "./useDragReorder";
 import "./shell.css";
@@ -45,6 +48,10 @@ export interface BuiltInTab {
   id: string;
   label: string;
   render: () => ReactNode;
+  /** Réglages : icône de l’entrée dans la barre latérale. */
+  icon?: ReactNode;
+  /** Réglages : groupe de l’entrée ; un trait sépare deux groupes. */
+  group?: string;
 }
 
 /** Contenu d’une page de l’espace : son cadre, ou l’état qui explique pourquoi il n’y a encore rien à afficher. */
@@ -53,7 +60,7 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
     return (
       <EmptyState
         title="Page en cours de création"
-        description="L’agent n’a pas encore écrit le contenu de cette page."
+        description="Je n’ai pas encore écrit le contenu de cette page."
         size={kind === "panel" ? "compact" : "default"}
       />
     );
@@ -95,6 +102,7 @@ export function SectionView({
   variant?: "section" | "settings";
 }) {
   const activeTab = useShell((state) => state.activeTab[sectionId]);
+  const counts = useBadges((state) => state.counts);
   const setActiveTab = useShell((state) => state.setActiveTab);
   const panelHidden = useShell((state) => state.panelHidden);
   const togglePanel = useShell((state) => state.togglePanel);
@@ -119,11 +127,16 @@ export function SectionView({
         content: (
           <span data-tab-ref={id} className={`shell-tab${drag.draggedId === id ? " is-dragging" : ""}`}>
             {page.title}
+            {counts[id] ? (
+              <span className="shell-count" role="img" aria-label={countLabel(counts[id])}>
+                {badgeText(counts[id])}
+              </span>
+            ) : null}
           </span>
         ),
       })),
     ],
-    [builtIn, drag.orderedItems, drag.draggedId],
+    [builtIn, drag.orderedItems, drag.draggedId, counts],
   );
   const activeId = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0]?.id;
   // L’onglet affiché par défaut est retenu : réordonner ou déplacer les onglets ne change pas la page ouverte.
@@ -226,20 +239,26 @@ export function SectionView({
           {builtInTab ? (
             builtInTab.render()
           ) : waiting ? (
-            <EmptyState title="En attente d’une instance" description={waiting}>
+            <EmptyState title="En attente d’un compte" description={waiting}>
               <Button
                 onClick={() => {
-                  useShell.getState().setView({ kind: "settings" });
-                  useShell.getState().setActiveTab(SETTINGS_SECTION, "clients");
+                  const shell = useShell.getState();
+                  shell.setView({ kind: "settings" });
+                  shell.setActiveTab(SETTINGS_SECTION, "modules");
+                  // Ouvre la fiche du module de la section, où ses comptes se règlent.
+                  shell.setActiveTab("réglages:module", sectionId.split("/")[0] ?? "");
                 }}
               >
-                Ouvrir les clients
+                Ajouter un compte
               </Button>
             </EmptyState>
           ) : page ? (
-            <SpacePage key={page.reference} page={page} kind="page" />
+            <>
+              <SetupBanner module={page.module} />
+              <SpacePage key={page.reference} page={page} kind="page" />
+            </>
           ) : (
-            <EmptyState title="Section vide" description="Demander à l’agent d’y créer une page." />
+            <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
           )}
         </div>
         {waiting ? null : page && panelVisible && agentConversation && renderAgentPanel ? (
@@ -263,6 +282,7 @@ function NavButton({
   children,
   className = "",
   badge,
+  count = 0,
   glyph = false,
   ...props
 }: {
@@ -273,6 +293,8 @@ function NavButton({
   className?: string;
   /** Pastille à droite du libellé, ou sur l’icône quand le menu est replié. */
   badge?: AgentSummary;
+  /** Compteur des pages de la section (`badge.set` du SDK), en pastille quand il dépasse zéro. */
+  count?: number;
   /** Icône posée dans un cadre fixe (entrée Agent), qui porte aussi la pastille du menu replié. */
   glyph?: boolean;
 } & Pick<
@@ -284,7 +306,7 @@ function NavButton({
     <IconButton
       {...props}
       appearance="navigation"
-      label={label}
+      label={count > 0 ? `${label} · ${countLabel(count)}` : label}
       tooltip={collapsed ? label : false}
       tooltipPlacement="right"
       className={`${className}${active ? " is-active" : ""}`}
@@ -300,6 +322,11 @@ function NavButton({
         children
       )}
       <span className="sidebar__label">{badge ? label.split(" · ")[0] : label}</span>
+      {count > 0 ? (
+        <span className={`sidebar-count${collapsed ? " is-collapsed" : ""}`} aria-hidden="true">
+          {badgeText(count)}
+        </span>
+      ) : null}
       {badge && !collapsed ? (
         <span className="sidebar-orchestrator__badge">
           <AgentsBadge summary={badge} collapsed={false} />
@@ -307,6 +334,11 @@ function NavButton({
       ) : null}
     </IconButton>
   );
+}
+
+/** Compteur lu par un lecteur d’écran : « 3 nouveautés ». */
+function countLabel(count: number) {
+  return `${count} nouveauté${count > 1 ? "s" : ""}`;
 }
 
 /** État résumé des conversations de l’agent, affiché en pastille sur l’entrée Agent du menu. */
@@ -393,11 +425,17 @@ export function AppShell({
   renderPageTools?: PageToolsRenderer;
 }) {
   const snapshot = useShell((state) => state.snapshot);
-  const view = useShell((state) => state.view);
+  const shown = useShell((state) => state.view);
+  const behind = useShell((state) => state.behind);
+  const settingsOpen = shown.kind === "settings";
+  // Les Réglages s’ouvrent par-dessus : la vue d’où ils ont été ouverts reste affichée derrière.
+  const view: View = settingsOpen ? behind : shown;
   const setView = useShell((state) => state.setView);
   const collapsed = useShell((state) => state.sidebarCollapsed);
   const toggleSidebar = useShell((state) => state.toggleSidebar);
   const editor = useNavigationEditor();
+  const counts = useBadges((state) => state.counts);
+  useEffect(() => startBadges(), []);
   const [query, setQuery] = useState("");
   const folded = fold(query.trim());
   const matches = (label: string) => !folded || fold(label).includes(folded);
@@ -425,7 +463,7 @@ export function AppShell({
 
   return (
     <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
-      <aside className="sidebar" aria-label="Navigation principale">
+      <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
         <IconButton
           appearance="navigation"
           className="sidebar__toggle"
@@ -464,7 +502,8 @@ export function AppShell({
               >
                 <NavButton
                   label={section.label}
-                  active={sameView(effective, { kind: "section", id: section.id })}
+                  count={sectionCount(counts, section.pages)}
+                  active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
                   onClick={() => setView({ kind: "section", id: section.id })}
                   className={`product-nav product-color--${section.color ?? "steel"}`}
                   aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
@@ -514,7 +553,7 @@ export function AppShell({
         </nav>
         <NavButton
           label={agentSummary ? `Agent · ${AGENT_STATE_LABEL[agentSummary.state](agentSummary.count)}` : "Agent"}
-          active={sameView(effective, { kind: "agent" })}
+          active={!settingsOpen && sameView(effective, { kind: "agent" })}
           onClick={() => setView({ kind: "agent" })}
           className="sidebar-orchestrator"
           badge={agentSummary}
@@ -524,14 +563,14 @@ export function AppShell({
         </NavButton>
         <NavButton
           label="Réglages"
-          active={sameView(effective, { kind: "settings" })}
+          active={settingsOpen}
           onClick={() => setView({ kind: "settings" })}
           className="sidebar-settings"
         >
           <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
         </NavButton>
       </aside>
-      <main className="workspace">
+      <main className="workspace" inert={settingsOpen}>
         {effective.kind === "agent" ? agent : null}
         {effective.kind === "section" && current ? (
           <SectionView
@@ -545,18 +584,15 @@ export function AppShell({
             onPageMenu={editor.openPageMenu}
           />
         ) : null}
-        {effective.kind === "settings" ? (
-          <SectionView
-            title="Réglages"
-            sectionId={SETTINGS_SECTION}
-            pages={snapshot.settingsPages}
-            builtIn={settingsTabs}
-            renderPageTools={renderPageTools}
-            onPageMenu={editor.openPageMenu}
-            variant="settings"
-          />
-        ) : null}
       </main>
+      {settingsOpen ? (
+        <SettingsModal
+          tabs={settingsTabs}
+          pages={snapshot.settingsPages}
+          onPageMenu={editor.openPageMenu}
+          onClose={() => useShell.getState().closeSettings()}
+        />
+      ) : null}
       {editor.elements}
       <NotificationToasts />
     </div>

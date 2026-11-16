@@ -437,3 +437,192 @@
   pointer-events: none;
   opacity: 0;
 }
+
+/* Fenêtre des Réglages, par-dessus l’app : barre latérale à gauche, rubrique à droite. */
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in oklch, black 45%, transparent);
+}
+.settings-modal__panel {
+  width: min(1120px, 100%);
+  height: min(860px, 100%);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  box-shadow: 0 24px 64px color-mix(in oklch, black 35%, transparent);
+}
+.settings-modal__header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  padding: 0 10px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-modal__header h1 {
+  margin: 0;
+  font-size: var(--font-size-panel);
+  font-weight: 500;
+}
+.settings-modal__layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.settings-modal__nav {
+  flex: 0 0 220px;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+  border-right: 1px solid var(--line);
+  background: var(--color-surface);
+}
+.settings-modal__nav .page-toolbar-search {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 6px;
+}
+.settings-modal__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-modal__item {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--font-size-body);
+  text-align: start;
+  cursor: default;
+}
+.settings-modal__item:hover {
+  background: color-mix(in oklch, var(--color-ink) 6%, transparent);
+}
+.settings-modal__item[aria-current="page"] {
+  background: color-mix(in oklch, var(--color-ink) 10%, transparent);
+}
+.settings-modal__item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.settings-modal__icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--color-muted);
+}
+.settings-modal__item[aria-current="page"] .settings-modal__icon {
+  color: var(--color-ink);
+}
+.settings-modal__separator {
+  width: calc(100% - 16px);
+  margin: 6px 8px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.settings-modal__group {
+  margin: 0 10px 4px;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+.settings-modal__empty {
+  margin: 4px 10px;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+.settings-modal__content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Le contenu des Réglages prend toute la largeur de la fenêtre, avec une simple marge. */
+.settings-modal__content.shell-body--settings {
+  --settings-inline: 24px;
+}
+/* Titres des blocs : plus grands et plus légers, description en gris dessous, comme chez Claude. */
+.settings-modal__content.shell-body--settings .al-page__body > .al-section {
+  padding-block: 20px 12px;
+}
+.settings-modal__content.shell-body--settings .al-page__body > .al-section + .al-section {
+  border-top: 0;
+}
+.settings-modal__content.shell-body--settings .al-page__body > .al-section > .al-section__header h2 {
+  font-size: var(--font-size-panel);
+  font-weight: 500;
+  line-height: 20px;
+}
+.settings-modal__content.shell-body--settings .al-page__body > .al-section > .al-section__header p {
+  margin-top: 2px;
+  font-size: var(--font-size-secondary);
+}
+
+/* Compteur d’une page (`badge.set` du SDK) : à droite du libellé de la section, sur l’icône quand le menu est
+ * replié, et après le titre de l’onglet. */
+.sidebar-count,
+.shell-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: var(--color-on-brand);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.sidebar-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.sidebar-count.is-collapsed {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 9px;
+}
+.shell-count {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+@media (forced-colors: active) {
+  .sidebar-count,
+  .shell-count {
+    border: 1px solid CanvasText;
+  }
+}

@@ -4,7 +4,8 @@ import { NavigationSettings } from "../features/navigation/NavigationSettings";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
-import { type FullLayout, project } from "./navigationLayout";
+import { applyLayoutChange } from "./navigationEditing";
+import { type FullLayout, project, setModuleHidden } from "./navigationLayout";
 import { useNotifications } from "./notifications";
 import { useShell } from "./store";
 
@@ -222,20 +223,23 @@ describe("réorganisation de la navigation", () => {
     expect(lastLayoutCall()?.layout.overrides).toEqual({});
   });
 
-  it("masque un module entier depuis les Réglages, puis le réaffiche depuis sa section", async () => {
+  it("masque un module entier, puis le réaffiche depuis sa section dans l’ordre du menu", async () => {
     renderShell(true);
     act(() => useShell.getState().setView({ kind: "settings" }));
-    const moduleRow = screen.getByText("CRM partagé").closest("[data-nav-row]") as HTMLElement;
-    fireEvent.click(within(moduleRow).getByRole("button", { name: "Masquer le module CRM partagé" }));
+    // Le module se désactive depuis sa fiche (onglet Modules) : même changement de présentation.
+    await act(async () => {
+      await applyLayoutChange((current) => setModuleHidden(current, "crm", true));
+    });
     expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage du module CRM partagé"));
     expect(lastLayoutCall()?.layout.overrides).toEqual({ "module:crm": { hidden: true } });
 
-    // La section et la page du module disent qui les masque ; leur bouton réaffiche le module.
+    // La section du module dit qui la masque ; son bouton réaffiche le module. Sa page unique ne fait pas de
+    // ligne à part : la section et sa page tiennent sur une seule ligne.
     const sectionRow = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
     expect(within(sectionRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
-    const pageRow = screen.getByText("Contacts").closest("[data-nav-row]") as HTMLElement;
-    expect(within(pageRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
+    expect(screen.queryByText("Contacts")).not.toBeInTheDocument();
+    expect(within(sectionRow).getByRole("button", { name: "Historique de la section Clients" })).toBeInTheDocument();
     fireEvent.click(within(sectionRow).getByRole("button", { name: "Réafficher le module CRM partagé" }));
     expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage du module CRM partagé"));
@@ -366,15 +370,17 @@ describe("sections par instance", () => {
     useShell.setState({ snapshot: withInstances(), view: { kind: "section", id: "suivi/principal" }, activeTab: {} });
   });
 
-  it("montre une entrée par instance, et une section en attente qui mène aux clients", () => {
+  it("montre une entrée par instance, et une section en attente qui mène à la fiche du module", () => {
     renderShell();
     expect(sidebarLabels()).toEqual(["Suivi", "Jira — Acme", "Jira — Cloud", "Mail"]);
     fireEvent.click(screen.getByRole("button", { name: "Mail" }));
-    expect(screen.getByText("En attente d’une instance")).toBeInTheDocument();
+    expect(screen.getByText("En attente d’un compte")).toBeInTheDocument();
     expect(screen.getByText("Le client « Mail » n’a encore aucune instance.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ouvrir les clients" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ajouter un compte" }));
     expect(useShell.getState().view).toEqual({ kind: "settings" });
-    expect(useShell.getState().activeTab.réglages).toBe("clients");
+    // La fiche du module Mail s’ouvre dans l’onglet Modules.
+    expect(useShell.getState().activeTab.réglages).toBe("modules");
+    expect(useShell.getState().activeTab["réglages:module"]).toBe("mail");
   });
 
   it("ouvre la page déclarée dans la première copie, ou celle de l’instance nommée", () => {

@@ -76,13 +76,13 @@ describe("notification du système", () => {
     } as HarnessEvent);
     await vi.waitFor(() => expect(notifications()).toHaveLength(1));
     expect(notifications()[0]).toEqual({
-      options: { title: "Ajoute une page Factures attend votre accord", body: "Exécuter une commande" },
+      options: { title: "Ajoute une page Factures : j’attends votre accord", body: "Exécuter une commande" },
     });
 
     await finish();
     await vi.waitFor(() => expect(notifications()).toHaveLength(2));
     expect(notifications()[1]).toEqual({
-      options: { title: "Ajoute une page Factures : l’agent a terminé", body: "Page Factures créée." },
+      options: { title: "Ajoute une page Factures : c’est fait", body: "Page Factures créée." },
     });
   });
 

@@ -61,6 +61,12 @@ export interface ClientNeed {
   label: string;
   baseUrl?: string;
   auth?: string;
+  /** Aide du parcours de configuration : où trouver la clé, quel compte utiliser. */
+  help?: string;
+  /** Le module fonctionne sans ce service. */
+  optional?: boolean;
+  /** Modèle du service (forme de `clients/<id>.json`, sans secret ni compte), créé tel quel par le parcours. */
+  client?: Record<string, unknown>;
 }
 
 /** Module dont un autre utilise les fonctions et les clients (`requires` du manifeste). */
@@ -86,6 +92,8 @@ export interface ModuleSummary {
   clients: ClientNeed[];
   webhooks: Array<{ id: string; description: string; function: string }>;
   schedules: Array<{ id: string; description: string; function: string; everyMinutes?: number; at?: string }>;
+  /** Parcours de configuration : texte d’accueil (`setup` du manifeste). */
+  setup?: { welcome?: string } | null;
 }
 
 export interface ResolvedFunction {
@@ -99,7 +107,11 @@ export interface ResolvedFunction {
   missing: boolean;
   errors: Diagnostic[];
   uses: Uses;
+  /** Langage : TypeScript (dans l’interface) ou script lancé par Alfred. */
+  runtime: FunctionRuntime;
 }
+
+export type FunctionRuntime = "ts" | "bash" | "pwsh" | "python";
 
 export interface Snapshot {
   path: string;

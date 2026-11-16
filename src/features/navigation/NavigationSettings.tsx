@@ -1,10 +1,10 @@
 /**
- * Onglet « Navigation » des Réglages : les modules affichés, puis toutes les sections et pages, masquées
- * comprises, avec de quoi les réafficher, les renommer et les réordonner sans glisser-déposer.
+ * « Ordre du menu » : toutes les sections et pages, masquées comprises, avec de quoi les
+ * réafficher, les renommer et les réordonner sans glisser-déposer.
  */
 import { EmptyState, IconButton, Page, Section, StatusBadge, Text } from "@alfred/ui";
-import { ArrowDown, ArrowUp, Eye, EyeOff, History, Pencil } from "lucide-react";
-import { useState } from "react";
+import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, History, Pencil } from "lucide-react";
+import { type PointerEvent, useMemo, useState } from "react";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { NamedIcon } from "../../shell/icons";
 import { applyLayoutChange, RenameDialog } from "../../shell/navigationEditing";
@@ -22,6 +22,7 @@ import {
   shift,
 } from "../../shell/navigationLayout";
 import { useShell } from "../../shell/store";
+import { useDragReorder } from "../../shell/useDragReorder";
 import { PageHistoryDialog } from "./PageHistory";
 import "./navigation.css";
 
@@ -33,6 +34,11 @@ function hiddenModuleOf(snapshot: Snapshot, module: string): ModuleSummary | und
 const moduleName = (module: ModuleSummary) => module.name || module.id;
 
 type Renaming = { kind: "section"; id: string; label: string } | { kind: "page"; reference: string; label: string };
+
+/** Classes de la ligne pendant un glissement : la ligne tirée s’estompe, la cible montre où elle tombera. */
+function dragClasses(drag: { draggedId?: string; dropTarget?: { id: string; placement: string } }, id: string) {
+  return `${drag.draggedId === id ? " is-dragging" : ""}${drag.dropTarget?.id === id ? ` is-drop-${drag.dropTarget.placement}` : ""}`;
+}
 
 /** Le bouton actionné reste sous le focus après le déplacement de sa ligne. */
 function refocus(key: string, action: string) {
@@ -120,6 +126,26 @@ function RowActions({
   );
 }
 
+/** Poignée de glissement d’une ligne : un appui la fait glisser ; Alt+Flèche ou les flèches font de même au clavier. */
+function DragHandle({
+  subject,
+  onPointerDown,
+}: {
+  subject: string;
+  onPointerDown: (event: PointerEvent<HTMLElement>) => void;
+}) {
+  return (
+    <span
+      className="nav-settings__handle"
+      title={`Glisser pour déplacer ${subject}`}
+      onPointerDown={onPointerDown}
+      aria-hidden="true"
+    >
+      <GripVertical size={14} />
+    </span>
+  );
+}
+
 function PageRows({
   place,
   pages,
@@ -132,6 +158,10 @@ function PageRows({
   onHistory: (page: ResolvedPage) => void;
 }) {
   const snapshot = useShell((state) => state.snapshot);
+  const items = useMemo(() => pages.map((page) => ({ id: page.reference, page })), [pages]);
+  const drag = useDragReorder(items, (order, moved) =>
+    applyLayoutChange((current) => reorderTabs(current, place, order, moved)),
+  );
   if (pages.length === 0)
     return (
       <Text size="meta" tone="muted">
@@ -140,12 +170,25 @@ function PageRows({
     );
   return (
     <ul className="nav-settings__list nav-settings__list--pages">
-      {pages.map((page, index) => {
+      {drag.orderedItems.map(({ page }, index) => {
         const key = `page:${page.reference}`;
         const owner = snapshot ? hiddenModuleOf(snapshot, page.module) : undefined;
         return (
-          <li key={page.reference} className="nav-settings__row" data-nav-row={key}>
+          <li
+            key={page.reference}
+            className={`nav-settings__row sortable-row${dragClasses(drag, page.reference)}`}
+            data-nav-row={key}
+            data-sortable-scope={drag.scopeId}
+            data-sortable-id={page.reference}
+          >
             <span className="nav-settings__name">
+              <DragHandle
+                subject={`la page ${page.title}`}
+                onPointerDown={(event) => {
+                  const row = event.currentTarget.closest<HTMLElement>("li");
+                  if (row) drag.startDrag(event, page.reference, row);
+                }}
+              />
               <Text as="span" tone={page.hidden ? "muted" : "default"}>
                 {page.title}
               </Text>
@@ -165,7 +208,7 @@ function PageRows({
               rowKey={key}
               hidden={page.hidden}
               first={index === 0}
-              last={index === pages.length - 1}
+              last={index === drag.orderedItems.length - 1}
               onMove={(offset) =>
                 void applyLayoutChange((snapshot) => {
                   const order = shift(
@@ -198,95 +241,68 @@ export function NavigationSettings() {
   const snapshot = useShell((state) => state.snapshot);
   const [renaming, setRenaming] = useState<Renaming>();
   const [history, setHistory] = useState<ResolvedPage>();
+  const items = useMemo(() => (snapshot?.sections ?? []).map((section) => ({ id: section.id, section })), [snapshot]);
+  const drag = useDragReorder(items, (order, moved) =>
+    applyLayoutChange((current) => reorderSections(current, order, moved)),
+  );
   if (!snapshot) return null;
-  const { sections, settingsPages, modules } = snapshot;
-  const nameOf = (id: string) => {
-    const module = modules.find((candidate) => candidate.id === id);
-    return module ? moduleName(module) : id;
-  };
+  const { sections, settingsPages } = snapshot;
 
   return (
     <Page width="text">
       <Section
-        title="Modules"
-        description="Un module masqué quitte le menu avec toutes ses sections et ses pages ; ses fonctions et ses clients servent toujours aux modules qui en dépendent."
-      >
-        {modules.length === 0 ? (
-          <Text size="meta" tone="muted">
-            Aucun module.
-          </Text>
-        ) : (
-          <ul className="nav-settings__list">
-            {modules.map((module) => {
-              const key = `module:${module.id}`;
-              const hidden = isModuleHidden(snapshot, module.id);
-              const name = moduleName(module);
-              return (
-                <li key={module.id} className="nav-settings__row" data-nav-row={key}>
-                  <span className="nav-settings__name">
-                    <Text as="span" weight="medium" tone={hidden ? "muted" : "default"}>
-                      {name}
-                    </Text>
-                    {hidden ? <StatusBadge size="compact">Masqué</StatusBadge> : null}
-                    {module.requiredBy.length > 0 ? (
-                      <Text as="span" size="meta" tone="muted">
-                        utilisé par {module.requiredBy.map(nameOf).join(", ")}
-                      </Text>
-                    ) : null}
-                  </span>
-                  <span className="nav-settings__actions">
-                    <IconButton
-                      size="small"
-                      label={`${hidden ? "Réafficher" : "Masquer"} le module ${name}`}
-                      tooltip={hidden ? "Réafficher" : "Masquer"}
-                      data-nav-action="toggle"
-                      onClick={() => {
-                        void applyLayoutChange((current) => setModuleHidden(current, module.id, !hidden));
-                        refocus(key, "toggle");
-                      }}
-                    >
-                      {hidden ? <Eye size={16} aria-hidden="true" /> : <EyeOff size={16} aria-hidden="true" />}
-                    </IconButton>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Section>
-      <Section
-        title="Menu"
-        description="Les sections du menu de gauche et leurs onglets, masqués compris. Le menu se réorganise aussi par glisser-déposer, Alt+Flèche ou clic droit."
+        title="Ordre du menu"
+        description="L’ordre et le nom des sections du menu de gauche et, quand une section en a plusieurs, de ses onglets. Les pages s’activent depuis la fiche de leur module (rubrique Modules). Glissez une ligne par sa poignée pour la déplacer."
       >
         {sections.length === 0 ? (
           <EmptyState title="Aucune section" description="Demander à l’agent de créer une page." size="compact" />
         ) : (
           <ul className="nav-settings__list">
-            {sections.map((section, index) => {
+            {drag.orderedItems.map(({ section }, index) => {
               const key = `section:${section.id}`;
               const owner = hiddenModuleOf(snapshot, section.module);
+              // Une section d’une seule page tient sur une ligne : la section et sa page s’affichent ensemble.
+              const only = section.pages.length === 1 ? section.pages[0] : undefined;
+              const hidden = section.hidden || Boolean(only?.hidden);
               return (
-                <li key={section.id} className="nav-settings__section">
+                <li
+                  key={section.id}
+                  className={`nav-settings__section sortable-row${dragClasses(drag, section.id)}`}
+                  data-sortable-scope={drag.scopeId}
+                  data-sortable-id={section.id}
+                >
                   <div className="nav-settings__row" data-nav-row={key}>
                     <span className={`nav-settings__name product-color--${section.color ?? "steel"}`}>
+                      <DragHandle
+                        subject={`la section ${section.label}`}
+                        onPointerDown={(event) => {
+                          const row = event.currentTarget.closest<HTMLElement>("li");
+                          if (row) drag.startDrag(event, section.id, row);
+                        }}
+                      />
                       <span className="nav-settings__icon">
                         <NamedIcon name={section.icon} />
                       </span>
-                      <Text as="span" weight="medium" tone={section.hidden ? "muted" : "default"}>
+                      <Text as="span" tone={hidden ? "muted" : "default"}>
                         {section.label}
                       </Text>
                       {owner ? (
                         <StatusBadge size="compact">Module {moduleName(owner)} masqué</StatusBadge>
-                      ) : section.hidden ? (
+                      ) : hidden ? (
                         <StatusBadge size="compact">Masquée</StatusBadge>
+                      ) : null}
+                      {only?.readOnly ? (
+                        <StatusBadge size="compact" title="Module installé : seule sa présentation se règle ici.">
+                          Lecture seule
+                        </StatusBadge>
                       ) : null}
                     </span>
                     <RowActions
                       subject={`la section ${section.label}`}
                       rowKey={key}
-                      hidden={section.hidden}
+                      hidden={hidden}
                       first={index === 0}
-                      last={index === sections.length - 1}
+                      last={index === drag.orderedItems.length - 1}
                       onMove={(offset) =>
                         void applyLayoutChange((current) => {
                           const order = shift(
@@ -298,17 +314,23 @@ export function NavigationSettings() {
                         })
                       }
                       onRename={() => setRenaming({ kind: "section", id: section.id, label: section.label })}
+                      onHistory={only ? () => setHistory(only) : undefined}
                       toggleLabel={owner ? `Réafficher le module ${moduleName(owner)}` : undefined}
-                      onToggle={() =>
-                        void applyLayoutChange((current) =>
-                          owner
-                            ? setModuleHidden(current, owner.id, false)
-                            : setSectionHidden(current, section.id, !section.hidden),
-                        )
-                      }
+                      onToggle={() => {
+                        if (owner) {
+                          void applyLayoutChange((current) => setModuleHidden(current, owner.id, false));
+                          return;
+                        }
+                        void applyLayoutChange((current) => setSectionHidden(current, section.id, !hidden));
+                        // Réafficher la ligne réaffiche aussi la page seule, si elle avait été masquée à part.
+                        if (hidden && only?.hidden)
+                          void applyLayoutChange((current) => setPageHidden(current, only.reference, false));
+                      }}
                     />
                   </div>
-                  <PageRows place={section.id} pages={section.pages} onRename={setRenaming} onHistory={setHistory} />
+                  {only ? null : (
+                    <PageRows place={section.id} pages={section.pages} onRename={setRenaming} onHistory={setHistory} />
+                  )}
                 </li>
               );
             })}

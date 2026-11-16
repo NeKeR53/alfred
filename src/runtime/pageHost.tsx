@@ -27,8 +27,11 @@ const moduleKey = params.get("key") ?? "";
 const pageId = params.get("page") ?? "";
 const base = new URL(".", import.meta.url).href.replace(/runtime\/$/, "");
 
-function applyTheme(context: Pick<PageContext, "theme"> & { accent?: string | null }) {
+function applyTheme(context: Pick<PageContext, "theme"> & { accent?: string | null; surface?: string }) {
   document.documentElement.dataset.theme = context.theme;
+  // Une page placée dans les Réglages prend leur style (titres de bloc, lignes, tableaux sans cadre).
+  if (context.surface === "settings") document.documentElement.dataset.surface = "settings";
+  else delete document.documentElement.dataset.surface;
   if (context.accent) document.documentElement.dataset.accent = context.accent;
   else delete document.documentElement.dataset.accent;
 }
@@ -56,7 +59,7 @@ function Failure({ title, error }: { title: string; error: unknown }) {
   const details = describe(error);
   return (
     <div className="alfred-frame__failure">
-      <EmptyState title={title} description="L’agent peut corriger cette page : l’erreur lui est transmise.">
+      <EmptyState title={title} description="Je peux corriger cette page : l’erreur m’a été transmise.">
         <pre data-alfred-withheld="true">
           {details.diagnostics?.length
             ? details.diagnostics.map((item) => `${item.line ? `ligne ${item.line} : ` : ""}${item.message}`).join("\n")

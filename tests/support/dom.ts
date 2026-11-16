@@ -22,6 +22,9 @@ globalThis.ResizeObserver ??= class {
 } as unknown as typeof ResizeObserver;
 
 Element.prototype.scrollIntoView ??= () => undefined;
+// Les infobulles passent par l’API Popover.
+HTMLElement.prototype.showPopover ??= () => undefined;
+HTMLElement.prototype.hidePopover ??= () => undefined;
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => undefined;
 Element.prototype.releasePointerCapture ??= () => undefined;

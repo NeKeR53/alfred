@@ -186,6 +186,37 @@ export const ai = {
   },
 };
 
+// --- Voix ------------------------------------------------------------------------------------------------------
+
+export const voice = {
+  /**
+   * Lit `text` à voix haute avec la voix d’Alfred (Réglages › Voix) et se résout à la fin de la lecture.
+   * Une nouvelle lecture coupe la précédente ; `interrupted` dit si celle-ci a été coupée avant la fin.
+   */
+  speak(text: string): Promise<{ interrupted: boolean }> {
+    return request("voice.speak", { text });
+  },
+  /** Coupe la lecture en cours, quelle qu’en soit l’origine. */
+  stopSpeaking(): Promise<void> {
+    return request<void>("voice.stopSpeaking", {});
+  },
+  /**
+   * Ouvre le micro (page ou panneau seulement). La première fois, l’utilisateur l’accorde à la page. La promesse se
+   * résout quand l’écoute a commencé, après le chargement du modèle de transcription au premier usage.
+   */
+  startListening(): Promise<void> {
+    return request<void>("voice.startListening", {});
+  },
+  /** Ferme le micro et rend la transcription (vide si rien de net n’a été entendu). */
+  stopListening(): Promise<{ text: string }> {
+    return request("voice.stopListening", {});
+  },
+  /** Ferme le micro sans rien transcrire. */
+  cancelListening(): Promise<void> {
+    return request<void>("voice.cancelListening", {});
+  },
+};
+
 // --- Coquille --------------------------------------------------------------------------------------------------
 
 export interface PageContext {
@@ -195,6 +226,8 @@ export interface PageContext {
   page: string;
   /** « page » ou « panel ». */
   kind: "page" | "panel";
+  /** Où la page est affichée : une section du menu, ou les Réglages (qui ont leur propre style de lignes). */
+  surface: "section" | "settings";
   theme: "light" | "dark";
   /** Pour un panneau : la sélection publiée par la page hôte (`shell.publish`). */
   selection: unknown;
@@ -206,7 +239,10 @@ export interface PageContext {
 }
 
 export const shell = {
-  /** Affiche une notification dans le centre de notifications d’Alfred. */
+  /**
+   * Affiche une notification dans Alfred (surimpression et centre de notifications). Quand aucune fenêtre d’Alfred
+   * n’est au premier plan, elle part aussi au centre de notifications du système.
+   */
   notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }) {
     return request<void>("shell.notify", options);
   },
@@ -239,6 +275,36 @@ export const shell = {
    */
   send(message: unknown) {
     return request<void>("shell.send", { message });
+  },
+};
+
+// --- Compteur de la page ---------------------------------------------------------------------------------------
+
+export interface BadgeOptions {
+  /**
+   * Autre page du même module dont régler le compteur (« boite », ou « boite@instance »). Sans elle, la page
+   * elle-même (un panneau règle celui de sa page). Obligatoire depuis une fonction.
+   */
+  page?: string;
+}
+
+/**
+ * Compteur affiché en pastille sur l’entrée de la page dans le menu de gauche (somme des pages de la section) et
+ * sur son onglet, tant qu’il est supérieur à zéro. Il est conservé d’un lancement à l’autre, jusqu’à ce que la page
+ * ou une fonction de son module le change. Chaque appel rend la nouvelle valeur.
+ */
+export const badge = {
+  /** Fixe le compteur (0 l’efface). */
+  set(count: number, options: BadgeOptions = {}): Promise<{ count: number }> {
+    return request("badge.update", { op: "set", value: count, ...options });
+  },
+  /** Ajoute `by` (1 par défaut, négatif pour retirer) ; le compteur ne descend pas sous zéro. */
+  increment(by = 1, options: BadgeOptions = {}): Promise<{ count: number }> {
+    return request("badge.update", { op: "increment", value: by, ...options });
+  },
+  /** Remet le compteur à zéro : la pastille disparaît. */
+  clear(options: BadgeOptions = {}): Promise<{ count: number }> {
+    return request("badge.update", { op: "set", value: 0, ...options });
   },
 };
 

@@ -103,12 +103,14 @@ export function VaultEntryDialog({
         meta: fields.meta ? { [fields.meta.name]: meta.trim() } : {},
         secrets: secret ? { [fields.secret.name]: secret } : {},
       });
-      notify({ title: entry ? "Entrée du coffre enregistrée" : "Entrée du coffre créée", tone: "success" });
+      notify({ title: entry ? "Mot de passe ou clé enregistré" : "Mot de passe ou clé ajouté", tone: "success" });
       onSaved(saved);
       dialog.current?.close();
     } catch (error) {
       notify({
-        title: entry ? "L’entrée du coffre n’a pas été enregistrée" : "L’entrée du coffre n’a pas été créée",
+        title: entry
+          ? "Le mot de passe ou la clé n’a pas été enregistré"
+          : "Le mot de passe ou la clé n’a pas été ajouté",
         description: errorMessage(error),
         tone: "error",
       });
@@ -129,7 +131,7 @@ export function VaultEntryDialog({
     >
       <form id={formId} noValidate onSubmit={submit}>
         <DialogHeader
-          title={entry ? `Modifier « ${entry.label} »` : "Nouvelle entrée du coffre"}
+          title={entry ? `Modifier « ${entry.label} »` : "Nouveau mot de passe ou clé"}
           titleId={titleId}
           dialogRef={dialog}
         />
@@ -150,8 +152,8 @@ export function VaultEntryDialog({
               label="Identifiant"
               hint={
                 entry
-                  ? "Les clients désignent l’entrée par cet identifiant : il ne se modifie pas."
-                  : "Les clients désignent l’entrée par cet identifiant. Minuscules, chiffres et tirets."
+                  ? "Les services le désignent par cet identifiant : il ne se modifie pas."
+                  : "Les services le désignent par cet identifiant. Minuscules, chiffres et tirets."
               }
               error={errors.id}
             >
