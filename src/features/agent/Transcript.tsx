@@ -487,7 +487,8 @@ const TurnView = memo(function TurnView({
   const entryProps = { cwd, onQuote, onFork, onOpenFile };
   return (
     <>
-      <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onForkUser} />
+      {/* Comme OneApp : une relance reprend le même message, sa bulle n’est pas redessinée. */}
+      {turn.retryOf ? null : <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onForkUser} />}
       <li className="agent-chat__work">
         {!completed ? (
           <>

@@ -235,6 +235,17 @@ describe("relevé", () => {
     expect(screen.getAllByText("Envoyé")).toHaveLength(2);
   });
 
+  it("ne redessine pas la bulle d’un message relancé, comme OneApp", () => {
+    render(
+      <Transcript
+        conversation={conversation([turn("t1", { status: "error" }), turn("t2", { retryOf: "t1" })])}
+        runtime={idle}
+      />,
+    );
+    expect(screen.getAllByText("Demande t1")).toHaveLength(1);
+    expect(screen.queryByText("Demande t2")).not.toBeInTheDocument();
+  });
+
   it("n’affiche l’arrêt qu’en bas de la conversation, comme OneApp", () => {
     const { unmount } = render(
       <Transcript conversation={conversation([turn("t1", { status: "cancelled" }), turn("t2")])} runtime={idle} />,
