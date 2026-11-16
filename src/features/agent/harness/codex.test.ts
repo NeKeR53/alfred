@@ -470,7 +470,10 @@ describe("Codex · Windows", () => {
         sandbox: "danger-full-access",
         sandboxPolicy: { type: "dangerFullAccess" },
       });
-    expect(codexPolicy("strict", ["C:\\espace"], true)).toMatchObject({ approvalPolicy: "never", sandbox: "read-only" });
+    expect(codexPolicy("strict", ["C:\\espace"], true)).toMatchObject({
+      approvalPolicy: "never",
+      sandbox: "read-only",
+    });
     expect(codexPolicy("ask", ["/espace"], false)).toMatchObject({ sandbox: "workspace-write" });
   });
 });

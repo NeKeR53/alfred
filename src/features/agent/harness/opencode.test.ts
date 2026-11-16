@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeProcess, fakeSpawn, flush, recorder, type Spawned } from "./fakeProcess.test-helper";
-import { createOpenCodeSession, listOpenCodeModels, openCodeSessionConfig, type OpenCodeOptions } from "./opencode";
+import { createOpenCodeSession, listOpenCodeModels, type OpenCodeOptions, openCodeSessionConfig } from "./opencode";
 
 vi.mock("./process", () => ({ spawnProcess: vi.fn(), probe: vi.fn() }));
 
