@@ -1,13 +1,14 @@
 /**
- * Messages en attente, au-dessus de la saisie, repris de `AgentQueue` de OneApp : une ligne chacun, avec ses
+ * Messages en attente, en tête du cadre de la saisie, repris de `AgentQueue` de OneApp : une ligne chacun, avec ses
  * pastilles de références. Ils partent à la fin de l’étape en cours, ou tout de suite avec « Envoyer maintenant » ;
  * leur ordre se change par glisser-déposer ou Flèches haut et bas sur la poignée, quand le store sait réordonner.
  */
 import { IconButton } from "@alfred/ui";
-import { ArrowUpRight, Clock, GripVertical, Pencil, X } from "lucide-react";
+import { Clock3, GripVertical, Pencil, X } from "lucide-react";
 import { type ReactNode, type PointerEvent as ReactPointerEvent, useEffect, useId, useRef, useState } from "react";
+import { AgentSendButton } from "./AgentSendButton";
 import { type ComposerReference, type ComposerReferenceMention, referenceDisplayName } from "./lib/composerReferences";
-import type { QueuedMessage } from "./model";
+import { ATTACHMENTS_ONLY_TEXT, type QueuedMessage } from "./model";
 
 /** Un glissement ne commence qu’après 4 px : un simple clic sur la poignée ne déplace rien. */
 const DRAG_ACTIVATION_DISTANCE = 4;
@@ -40,11 +41,19 @@ export function ReferencePills({ text, references }: { text: string; references:
   return <>{content}</>;
 }
 
-/** Aperçu d’un message en file : son texte, « Texte collé » pour un collage seul, sinon ses pièces jointes. */
+/**
+ * Aperçu d’un message en file, comme dans OneApp : son texte, « Texte collé » pour un collage seul, sinon le texte
+ * envoyé avec des pièces jointes seules.
+ */
 export function queuedPreview(message: QueuedMessage["message"]): string {
   if (message.text.trim()) return message.text;
   if (message.contexts.length) return "Texte collé";
-  return `${message.attachments.length} pièce(s) jointe(s)`;
+  return message.attachments.length ? ATTACHMENTS_ONLY_TEXT : message.text;
+}
+
+/** Comme dans OneApp, un message avec pièces jointes ou texte collé ne se reprend pas dans la saisie. */
+export function queuedEditable(message: QueuedMessage["message"]): boolean {
+  return !message.attachments.length && !message.contexts.length;
 }
 
 type Placement = "before" | "after";
@@ -215,14 +224,14 @@ export function QueueList({
   const plural = queue.length > 1 ? "s" : "";
   return (
     <section
-      className="agent-composer__queue"
+      className="agent-queue"
       aria-label={`${queue.length} message${plural} en file, envoyé${plural} à la fin de l’étape en cours`}
     >
       <ol>
         {ordered.map((item, index) => (
           <li
             key={item.id}
-            className={`agent-composer__queued sortable-row${draggedId === item.id ? " is-dragging" : ""}${dropTarget?.id === item.id ? ` is-drop-${dropTarget.placement}` : ""}`}
+            className={`agent-queue__item sortable-row${draggedId === item.id ? " is-dragging" : ""}${dropTarget?.id === item.id ? ` is-drop-${dropTarget.placement}` : ""}`}
             data-sortable-id={item.id}
             data-sortable-scope={scopeId}
           >
@@ -230,7 +239,7 @@ export function QueueList({
               <button
                 type="button"
                 id={`queued-${item.id}`}
-                className="drag-handle agent-composer__handle"
+                className="drag-handle reorder-handle reorder-handle--micro"
                 aria-label={`Déplacer le message ${index + 1}`}
                 title="Flèches haut et bas pour réordonner"
                 onPointerDown={(event) => {
@@ -246,23 +255,23 @@ export function QueueList({
                 <GripVertical size={12} aria-hidden="true" />
               </button>
             ) : (
-              <Clock className="agent-composer__queued-mark" size={12} aria-hidden="true" />
+              <Clock3 className="agent-queue__mark" size={12} aria-hidden="true" />
             )}
-            <span className="agent-composer__queued-text" title="En file : part à la fin de l’étape en cours">
+            <span className="agent-queue__text" title="En file : part à la fin de l’étape en cours">
               <ReferencePills text={queuedPreview(item.message)} references={item.message.references ?? []} />
             </span>
-            <span className="agent-composer__queued-actions">
+            <span className="agent-queue__actions">
               <IconButton
-                size="small"
+                className="agent-queue__action"
                 label={`Modifier le message ${index + 1}`}
                 tooltip="Modifier"
-                disabled={disabled}
+                disabled={disabled || !queuedEditable(item.message)}
                 onClick={() => onEdit(item)}
               >
                 <Pencil size={12} aria-hidden="true" />
               </IconButton>
               <IconButton
-                size="small"
+                className="agent-queue__action"
                 label={`Retirer le message ${index + 1}`}
                 tooltip="Retirer"
                 disabled={disabled}
@@ -271,16 +280,14 @@ export function QueueList({
                 <X size={12} aria-hidden="true" />
               </IconButton>
             </span>
-            <IconButton
-              size="small"
-              className="agent-composer__queued-send"
+            <AgentSendButton
+              micro
+              direction="upRight"
               label={`Envoyer le message ${index + 1} maintenant`}
               tooltip="Envoyer maintenant"
               disabled={disabled}
               onClick={() => onSendNow(item)}
-            >
-              <ArrowUpRight size={12} aria-hidden="true" />
-            </IconButton>
+            />
           </li>
         ))}
       </ol>

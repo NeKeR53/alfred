@@ -345,6 +345,8 @@ function countLabel(count: number) {
 export interface AgentSummary {
   state: "attention" | "working" | "done";
   count: number;
+  /** Réponses attendues, conversations au travail et à consulter : le libellé de l’entrée les cite toutes. */
+  counts?: { attention: number; working: number; unread: number };
 }
 
 /** Pastille de l’entrée Agent, reprise de celle des agents de OneApp. */
@@ -366,11 +368,27 @@ function AgentsBadge({ summary, collapsed }: { summary: AgentSummary; collapsed:
   );
 }
 
-const AGENT_STATE_LABEL: Record<AgentSummary["state"], (count: number) => string> = {
-  attention: (count) => `${count} réponse${count > 1 ? "s" : ""} attendue${count > 1 ? "s" : ""}`,
-  working: (count) => `${count} conversation${count > 1 ? "s" : ""} en cours`,
-  done: (count) => `${count} à consulter`,
-};
+/**
+ * Libellé de l’entrée Agent, comme celui de l’entrée Agents de OneApp : les réponses attendues, l’activité en cours,
+ * puis les conversations à consulter, chacun s’il y a lieu.
+ */
+export function agentEntryLabel(summary: AgentSummary | undefined): string {
+  if (!summary) return "Agent";
+  const counts = summary.counts ?? {
+    attention: summary.state === "attention" ? summary.count : 0,
+    working: summary.state === "working" ? summary.count : 0,
+    unread: summary.state === "done" ? summary.count : 0,
+  };
+  const plural = counts.attention > 1 ? "s" : "";
+  return [
+    "Agent",
+    counts.attention ? `${counts.attention} réponse${plural} attendue${plural}` : "",
+    counts.working ? "Activité en cours" : "",
+    counts.unread ? `${counts.unread} à consulter` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 const shortcutLabel = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
 
@@ -552,7 +570,7 @@ export function AppShell({
           ) : null}
         </nav>
         <NavButton
-          label={agentSummary ? `Agent · ${AGENT_STATE_LABEL[agentSummary.state](agentSummary.count)}` : "Agent"}
+          label={agentEntryLabel(agentSummary)}
           active={!settingsOpen && sameView(effective, { kind: "agent" })}
           onClick={() => setView({ kind: "agent" })}
           className="sidebar-orchestrator"

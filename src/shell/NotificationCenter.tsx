@@ -79,16 +79,19 @@ export function NotificationBell() {
   );
 }
 
-/** Thème affiché (`data-theme` de la racine), suivi en direct : les surimpressions suivent le choix de l’utilisateur. */
-function useDocumentTheme(): "light" | "dark" {
-  const read = (): "light" | "dark" =>
-    document.documentElement.dataset.theme === "dark" ||
+/** Thème affiché par la racine (`data-theme`), sinon celui du système. */
+function readDocumentTheme(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "dark" ||
     (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches)
-      ? "dark"
-      : "light";
-  const [theme, setTheme] = useState(read);
+    ? "dark"
+    : "light";
+}
+
+/** Thème affiché, suivi en direct : les surimpressions suivent le choix de l’utilisateur. */
+function useDocumentTheme(): "light" | "dark" {
+  const [theme, setTheme] = useState(readDocumentTheme);
   useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(read()));
+    const observer = new MutationObserver(() => setTheme(readDocumentTheme()));
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => observer.disconnect();
   }, []);

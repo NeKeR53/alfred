@@ -86,7 +86,7 @@ beforeEach(() => {
 });
 
 async function editor() {
-  const input = screen.getByRole("textbox", { name: "Message à l’agent" });
+  const input = screen.getByRole("textbox", { name: /^Message à / });
   await waitFor(() => expect(input).toHaveAttribute("contenteditable", "true"));
   return input;
 }

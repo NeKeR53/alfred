@@ -28,7 +28,7 @@ it("dicter une demande l’envoie, et la réponse de l’agent est lue", async (
 
   await user.click(await screen.findByRole("button", { name: "Dicter un message" }));
   const stop = await screen.findByRole("button", { name: "Terminer la dictée et envoyer" });
-  expect(screen.getByRole("textbox", { name: "Message à l’agent" })).toHaveAttribute(
+  expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveAttribute(
     "aria-placeholder",
     "Je vous écoute…",
   );
@@ -44,7 +44,7 @@ it("dicter une demande l’envoie, et la réponse de l’agent est lue", async (
   await waitFor(() => expect(backend.voice.spoken).toEqual(["La page recettes/recettes est prête."]));
 
   // Une demande tapée ensuite n’est pas lue.
-  await user.type(screen.getByRole("textbox", { name: "Message à l’agent" }), "Et une page pour les courses");
+  await user.type(screen.getByRole("textbox", { name: /^Message à / }), "Et une page pour les courses");
   await user.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(backend.agent.written.filter((message) => message.type === "user")).toHaveLength(2));
   await finishTurn(user, 2);

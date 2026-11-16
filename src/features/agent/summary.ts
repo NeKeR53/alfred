@@ -36,19 +36,26 @@ export function conversationState(
 /**
  * Résumé des conversations pour la pastille du menu, comme l’entrée Agents de OneApp : d’abord celles qui attendent
  * une réponse, sinon celles qui travaillent ou attendent leur tour, sinon celles à consulter (terminées ou en échec).
+ * Les trois compteurs servent au libellé de l’entrée, qui les cite tous.
  */
 export function useAgentSummary(): AgentSummary | undefined {
   const headers = useAgents((state) => state.headers);
   const runtime = useAgents((state) => state.runtime);
   return useMemo(() => {
     const visible = headers.filter((header) => !header.archived && header.started);
-    const states = visible.map((header) => conversationState(header, runtime[header.id]));
-    const count = (...wanted: ConversationState[]) => states.filter((state) => wanted.includes(state)).length;
-    const attention = count("attention");
-    if (attention) return { state: "attention", count: attention };
-    const working = count("working", "waiting");
-    if (working) return { state: "working", count: working };
-    const unread = count("done", "error");
-    return unread ? { state: "done", count: unread } : undefined;
+    return agentSummary(visible.map((header) => conversationState(header, runtime[header.id])));
   }, [headers, runtime]);
+}
+
+/** Pastille et compteurs à partir des états des conversations visibles. */
+export function agentSummary(states: readonly ConversationState[]): AgentSummary | undefined {
+  const count = (...wanted: ConversationState[]) => states.filter((state) => wanted.includes(state)).length;
+  const counts = {
+    attention: count("attention"),
+    working: count("working", "waiting"),
+    unread: count("done", "error"),
+  };
+  if (counts.attention) return { state: "attention", count: counts.attention, counts };
+  if (counts.working) return { state: "working", count: counts.working, counts };
+  return counts.unread ? { state: "done", count: counts.unread, counts } : undefined;
 }

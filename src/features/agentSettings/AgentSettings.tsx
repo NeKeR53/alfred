@@ -25,6 +25,7 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { effortLabel } from "../agent/effort";
 import { type Autonomy, type HarnessModel, listModels, PROVIDER_LABEL, type Provider, probe } from "../agent/harness";
+import { EffortSlider } from "../agent/panel/EffortSlider";
 import {
   type AgentPreferences,
   type ModelChoice,
@@ -64,8 +65,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function HarnessStatus({ provider, state }: { provider: Provider; state: Loadable<ProbeResult> | undefined }) {
+/**
+ * Une ligne par harnais, comme dans les réglages des agents de OneApp : son état, le nombre de modèles affichés et
+ * « Choisir les modèles… ».
+ */
+function HarnessStatus({
+  provider,
+  state,
+  catalog,
+  shown,
+  onChoose,
+}: {
+  provider: Provider;
+  state: Loadable<ProbeResult> | undefined;
+  catalog: readonly HarnessModel[];
+  shown?: readonly string[];
+  onChoose: () => void;
+}) {
   const label = PROVIDER_LABEL[provider];
+  const shownCount = shown ? catalog.filter(({ id }) => shown.includes(id)).length : catalog.length;
   const description =
     state?.status === "error"
       ? `L’état de ${label} n’a pas pu être vérifié : ${state.message}`
@@ -107,6 +125,12 @@ function HarnessStatus({ provider, state }: { provider: Provider; state: Loadabl
           Non installé
         </StatusBadge>
       )}
+      <Text as="span" tone="muted">
+        {catalog.length ? `${shownCount} / ${catalog.length} modèles affichés` : "Aucun modèle chargé"}
+      </Text>
+      <Button aria-label={`Choisir les modèles de ${label}`} disabled={!catalog.length} onClick={onChoose}>
+        Choisir les modèles…
+      </Button>
     </SettingRow>
   );
 }
@@ -152,8 +176,6 @@ function ModelFields({
             <Spinner label={`Chargement des modèles de ${label}`} />
             <span>Chargement des modèles…</span>
           </Row>
-        ) : selected && efforts.length === 0 ? (
-          "Ce modèle ne propose pas de niveau d’effort."
         ) : undefined
       }
     >
@@ -161,14 +183,8 @@ function ModelFields({
         aria-label={`Modèle de ${label}`}
         value={value.model ?? ""}
         disabled={models?.status !== "ready"}
-        onChange={(event) => {
-          const model = event.target.value || undefined;
-          const nextEfforts = list.find((candidate) => candidate.id === model)?.efforts ?? [];
-          onChange({
-            model,
-            effort: value.effort && nextEfforts.includes(value.effort) ? value.effort : undefined,
-          });
-        }}
+        // Comme dans OneApp, changer de modèle revient à son raisonnement par défaut.
+        onChange={(event) => onChange({ model: event.target.value || undefined, effort: undefined })}
       >
         <option value="">Modèle par défaut</option>
         {value.model && !selected ? <option value={value.model}>{value.model}</option> : null}
@@ -178,19 +194,15 @@ function ModelFields({
           </option>
         ))}
       </SelectControl>
-      <SelectControl
-        aria-label={`Effort de ${label}`}
-        value={value.effort ?? ""}
-        disabled={efforts.length === 0}
-        onChange={(event) => onChange({ model: value.model, effort: event.target.value || undefined })}
-      >
-        <option value="">Effort par défaut</option>
-        {efforts.map((effort) => (
-          <option key={effort} value={effort}>
-            {effortLabel(effort)}
-          </option>
-        ))}
-      </SelectControl>
+      {/* Comme dans OneApp : le raisonnement en curseur, sur les seuls niveaux du modèle choisi. */}
+      {selected ? (
+        <EffortSlider
+          label={`Raisonnement de ${label}`}
+          efforts={efforts}
+          value={value.effort ?? ""}
+          onChange={(effort) => onChange({ model: value.model, effort: effort || undefined })}
+        />
+      ) : null}
     </SettingRow>
   );
 }
@@ -259,21 +271,16 @@ function TitlingFields({
           </option>
         ))}
       </SelectControl>
-      <SelectControl
-        aria-label="Effort du nommage"
-        value={value?.effort ?? ""}
-        disabled={!provider || efforts.length === 0}
-        onChange={(event) =>
-          value && onChange({ provider: value.provider, model: value.model, effort: event.target.value || undefined })
-        }
-      >
-        <option value="">Effort par défaut</option>
-        {efforts.map((effort) => (
-          <option key={effort} value={effort}>
-            {effortLabel(effort)}
-          </option>
-        ))}
-      </SelectControl>
+      {value && selected ? (
+        <EffortSlider
+          label="Raisonnement du nommage"
+          efforts={efforts}
+          value={value.effort ?? ""}
+          onChange={(effort) =>
+            onChange({ provider: value.provider, model: value.model, ...(effort ? { effort } : {}) })
+          }
+        />
+      ) : null}
     </SettingRow>
   );
 }
@@ -537,12 +544,32 @@ export function AgentSettings() {
       <Section
         title="Harnais"
         description="Alfred pilote le CLI de l’agent installé sur ce poste. Installation et connexion se font dans un terminal."
-        actions={<RefreshButton label="Vérifier de nouveau les harnais" loading={checking} onClick={check} />}
+        actions={
+          <RefreshButton
+            label="Vérifier de nouveau les harnais"
+            loading={checking}
+            onClick={() => {
+              // Comme « Actualiser les modèles » de OneApp : vérifier le harnais relit aussi ses modèles.
+              check();
+              for (const provider of PROVIDERS) loadModels(provider);
+            }}
+          />
+        }
       >
         <SettingRows>
-          {PROVIDERS.map((provider) => (
-            <HarnessStatus key={provider} provider={provider} state={probes[provider]} />
-          ))}
+          {PROVIDERS.map((provider) => {
+            const loaded = models[provider];
+            return (
+              <HarnessStatus
+                key={provider}
+                provider={provider}
+                state={probes[provider]}
+                catalog={loaded?.status === "ready" ? loaded.value : []}
+                shown={preferences.shownModels[provider]}
+                onChoose={() => setChoosing(provider)}
+              />
+            );
+          })}
         </SettingRows>
       </Section>
 
@@ -570,7 +597,10 @@ export function AgentSettings() {
         </SettingRows>
       </Section>
 
-      <Section title="Modèle et effort" description="Le modèle et le niveau d’effort de chaque harnais.">
+      <Section
+        title="Modèle et raisonnement"
+        description="Le modèle et le niveau de raisonnement de chaque harnais. Un modèle masqué reste utilisable s’il est déjà choisi."
+      >
         <SettingRows>
           {PROVIDERS.map((provider) => (
             <ModelFields
@@ -592,36 +622,6 @@ export function AgentSettings() {
         </SettingRows>
       </Section>
 
-      <Section
-        title="Modèles affichés"
-        description="Les modèles proposés dans les choix du modèle. Un modèle masqué reste utilisable s’il est déjà choisi."
-      >
-        <SettingRows>
-          {PROVIDERS.map((provider) => {
-            const loaded = models[provider];
-            const catalog = loaded?.status === "ready" ? loaded.value : [];
-            const shown = preferences.shownModels[provider];
-            const shownCount = shown ? catalog.filter(({ id }) => shown.includes(id)).length : catalog.length;
-            return (
-              <SettingRow
-                key={provider}
-                title={PROVIDER_LABEL[provider]}
-                description={
-                  catalog.length ? `${shownCount} / ${catalog.length} modèles affichés` : "Aucun modèle chargé"
-                }
-              >
-                <Button
-                  aria-label={`Choisir les modèles de ${PROVIDER_LABEL[provider]}`}
-                  disabled={!catalog.length}
-                  onClick={() => setChoosing(provider)}
-                >
-                  Choisir les modèles…
-                </Button>
-              </SettingRow>
-            );
-          })}
-        </SettingRows>
-      </Section>
       {choosing ? (
         <ShownModelsDialog
           provider={choosing}

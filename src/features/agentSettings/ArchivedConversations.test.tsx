@@ -17,6 +17,7 @@ vi.mock("../../lib/native", async (importOriginal) => ({
 }));
 
 import { useNotifications } from "../../shell/notifications";
+import { useComposerDrafts } from "../agent/drafts";
 import type { Conversation } from "../agent/model";
 import { useAgents } from "../agent/store";
 import { ArchivedConversations } from "./ArchivedConversations";
@@ -87,9 +88,12 @@ it("trie par date d’archivage et l’affiche, la date de mise à jour servant 
   expect(rows.map((row) => row.split("Codex")[0])).toEqual(["Notes", "Factures", "Ancienne"]);
   expect(rows[0]).toMatch(/Codex · archivée le 12 nov\. 2026/);
   expect(screen.getByRole("heading", { name: "Conversations archivées · 3" })).toBeInTheDocument();
+  // Comme dans OneApp : restaurer ou supprimer, rien d’autre ; l’origine n’est pas rappelée.
+  expect(screen.queryByRole("button", { name: /^Ouvrir / })).toBeNull();
 });
 
 it("restaure avec une notification, et supprime définitivement après confirmation", async () => {
+  const clear = vi.spyOn(useComposerDrafts.getState(), "clear");
   render(<ArchivedConversations />);
   fireEvent.click(await screen.findByRole("button", { name: "Restaurer Notes" }));
   await waitFor(() => expect(database.b.archived).toBe(false));
@@ -102,6 +106,8 @@ it("restaure avec une notification, et supprime définitivement après confirmat
   const dialog = await screen.findByRole("alertdialog", { name: "Supprimer définitivement « Factures » ?" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Supprimer définitivement" }));
   await waitFor(() => expect(database.a).toBeUndefined());
+  // Son brouillon part avec elle, comme `deleteChatDraft` dans OneApp.
+  await waitFor(() => expect(clear).toHaveBeenCalledWith("a"));
   expect(lastNotification()).toMatchObject({ title: "Conversation supprimée", description: "Factures" });
   // Une seule conversation archivée : plus de « Tout supprimer ».
   expect(screen.queryByRole("button", { name: "Tout supprimer" })).toBeNull();

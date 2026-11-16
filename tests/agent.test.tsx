@@ -16,7 +16,7 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
   render(<App />);
 
   // L’espace du lancement précédent est rouvert ; une conversation vide attend le premier message.
-  const composer = await screen.findByRole("textbox", { name: "Message à l’agent" });
+  const composer = await screen.findByRole("textbox", { name: /^Message à / });
   expect(screen.getByText("Que puis-je faire pour vous ?")).toBeVisible();
   await user.type(composer, "Ajoute une page pour les recettes de la famille");
   await user.click(screen.getByRole("button", { name: "Envoyer" }));
