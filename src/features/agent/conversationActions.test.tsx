@@ -108,7 +108,7 @@ describe("conversations d’agent", () => {
     // Archiver, puis annuler depuis la notification.
     fireEvent.click(screen.getAllByRole("button", { name: "Archiver Notes" })[0]);
     await waitFor(() => expect(database.c2.archived).toBe(true));
-    const toast = (await screen.findByText("Conversation archivée")).closest(".notification") as HTMLElement;
+    const toast = (await screen.findByText("Conversation archivée")).closest("[data-sonner-toast]") as HTMLElement;
     fireEvent.click(within(toast).getByRole("button", { name: "Annuler" }));
     await waitFor(() => expect(database.c2.archived).toBe(false));
 

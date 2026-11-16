@@ -249,11 +249,7 @@ interface Engine {
   flushStream: () => void;
   releaseIdleSessions: (idleMs: number, now?: number) => Promise<number>;
   checkSilence: () => void;
-  announce: (
-    kind: "attention" | "done" | "error",
-    id: string,
-    notification: { title: string; description?: string; source?: string },
-  ) => void;
+  announce: (kind: "attention" | "done" | "error", id: string, message?: string) => void;
   reset: () => void;
 }
 let engine: Engine;
@@ -373,21 +369,30 @@ export const useAgents = create<AgentState>((set, get) => {
 
   const isViewed = (id: string) => get().activeId === id && useShell.getState().view.kind === "agent";
 
-  /** Notification d’Alfred, une seule par tour et par sorte ; son bouton ouvre la conversation. */
-  const announce = (
-    kind: "attention" | "done" | "error",
-    id: string,
-    notification: { title: string; description?: string; source?: string },
-  ) => {
+  /**
+   * Notification d’un agent qui n’est pas affiché, reprise de `useAgentNotifications` de OneApp : « attend votre
+   * réponse » (jusqu’à ce qu’on la ferme, bouton « Répondre »), « a terminé » et « s’est arrêté » (bouton « Ouvrir »),
+   * une seule par tour et par sorte.
+   */
+  const announce = (kind: "attention" | "done" | "error", id: string, message?: string) => {
     const conversation = current(id);
-    const key = `${kind}:${id}:${conversation?.turns.at(-1)?.id ?? ""}`;
+    const turnId = conversation?.turns.at(-1)?.id ?? "";
+    const key = `agent-${kind}:${id}:${turnId}`;
     if (!conversation || conversation.archived || announced.has(key)) return;
     announced.add(key);
+    const scope = PROVIDER_LABEL[conversation.provider];
     notify({
-      ...notification,
       tone: kind === "attention" ? "warning" : kind === "done" ? "success" : "error",
-      // Une réponse attendue reste affichée : elle bloque l’agent tant que l’utilisateur ne l’a pas vue.
-      persistent: kind === "attention",
+      title:
+        kind === "attention"
+          ? `${conversation.title} attend votre réponse`
+          : kind === "done"
+            ? `${conversation.title} a terminé`
+            : `${conversation.title} s’est arrêté`,
+      description: kind === "done" ? scope : (message ?? scope),
+      source: scope,
+      ...(kind === "attention" ? { duration: null } : {}),
+      dedupeKey: key,
       action: { label: kind === "attention" ? "Répondre" : "Ouvrir", run: () => void get().show(id) },
     });
   };
@@ -486,20 +491,10 @@ export const useAgents = create<AgentState>((set, get) => {
     if (!viewed && finished) {
       // Un tour arrêté que l’utilisateur n’a pas vu compte comme un échec, comme dans OneApp.
       const failed = status === "error" || status === "cancelled";
-      announce(failed ? "error" : "done", id, {
-        title:
-          status === "error"
-            ? `${title} : je me suis arrêté sur une erreur`
-            : status === "cancelled"
-              ? `${title} : je me suis arrêté`
-              : title,
-        description: finished.error ?? plainText(lastAssistantText(finished)).slice(0, 160),
-        source: PROVIDER_LABEL[conversation.provider],
-      });
+      announce(failed ? "error" : "done", id, finished.error);
     }
   };
 
-  /** Ferme la session d’une conversation : ses derniers événements sont ignorés, le prochain message en rouvre une. */
   /** Sessions en cours de fermeture : la suivante de la même conversation attend que le CLI soit arrêté. */
   const closings = new Map<string, Promise<void>>();
 
@@ -524,6 +519,7 @@ export const useAgents = create<AgentState>((set, get) => {
     });
   };
 
+  /** Ferme la session d’une conversation : ses derniers événements sont ignorés, le prochain message en rouvre une. */
   const dropSession = async (id: string) => {
     const live = sessions.get(id);
     sessions.delete(id);
@@ -677,8 +673,7 @@ export const useAgents = create<AgentState>((set, get) => {
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));
         const title = current(id)?.title ?? "Alfred";
         announceSystem("attention", id, `${title} : j’attends votre accord`, event.request.title);
-        if (!isViewed(id))
-          announce("attention", id, { title: `${title} : j’attends votre accord`, description: event.request.title });
+        if (!isViewed(id)) announce("attention", id, event.request.title);
         return;
       }
       case "approvalClosed":
@@ -1356,12 +1351,9 @@ export function bindAgentQuestions() {
         },
       };
     });
-    const { activeId, loaded } = useAgents.getState();
+    const { activeId } = useAgents.getState();
     if (activeId !== question.conversation || useShell.getState().view.kind !== "agent") {
-      engine.announce("attention", question.conversation, {
-        title: `${loaded[question.conversation]?.title ?? "Un agent"} a une question`,
-        description: "Ouvrir la conversation pour lui répondre.",
-      });
+      engine.announce("attention", question.conversation, "Choisir où placer la page.");
     }
   });
   // Une question tranchée ailleurs (autre fenêtre, délai dépassé) disparaît de toutes les conversations.

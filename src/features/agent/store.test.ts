@@ -857,7 +857,8 @@ describe("lot 3 · titres, archives, notifications", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(useNotifications.getState().items[0]).toMatchObject({
       tone: "error",
-      title: "Long travail : je me suis arrêté",
+      title: "Long travail s’est arrêté",
+      dedupeKey: expect.stringMatching(/^agent-error:/),
     });
   });
 });

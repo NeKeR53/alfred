@@ -1,7 +1,10 @@
 import { AnchoredPanel, Button, EmptyState, IconButton } from "@alfred/ui";
-import { Bell, X } from "lucide-react";
-import { useState } from "react";
-import { type AppNotification, useNotifications } from "./notifications";
+import { Bell, CircleAlert, CircleCheck, Info, TriangleAlert } from "lucide-react";
+import { type CSSProperties, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { Toaster } from "sonner";
+import { type AppNotification, maximumVisibleNotifications, useNotifications } from "./notifications";
+import "./notification-toasts.css";
 
 const toneLabel: Record<AppNotification["tone"], string> = {
   info: "Information",
@@ -76,39 +79,62 @@ export function NotificationBell() {
   );
 }
 
-/** Notifications récentes en surimpression, en bas à droite. */
+/** Thème affiché (`data-theme` de la racine), suivi en direct : les surimpressions suivent le choix de l’utilisateur. */
+function useDocumentTheme(): "light" | "dark" {
+  const read = (): "light" | "dark" =>
+    document.documentElement.dataset.theme === "dark" ||
+    (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches)
+      ? "dark"
+      : "light";
+  const [theme, setTheme] = useState(read);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(read()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
+
+/** Notifications récentes en surimpression, en bas à droite, comme le `NotificationProvider` de OneApp. */
 export function NotificationToasts() {
-  const items = useNotifications((state) => state.items);
-  const toasts = useNotifications((state) => state.toasts);
-  const dismiss = useNotifications((state) => state.dismissToast);
-  const shown = items.filter((item) => toasts.includes(item.id)).slice(0, 4);
-  return (
-    <div className="notification-toasts" aria-live="polite">
-      {shown.map((item) => (
-        <div
-          key={item.id}
-          className={`notification notification--${item.tone} notification--toast`}
-          role={item.tone === "error" ? "alert" : "status"}
-        >
-          <div>
-            <strong>{item.title}</strong>
-            {item.description ? <p>{item.description}</p> : null}
-          </div>
-          {item.action ? (
-            <Button
-              onClick={() => {
-                item.action?.run();
-                dismiss(item.id);
-              }}
-            >
-              {item.action.label}
-            </Button>
-          ) : null}
-          <IconButton label="Fermer la notification" size="small" onClick={() => dismiss(item.id)}>
-            <X size={14} aria-hidden="true" />
-          </IconButton>
-        </div>
-      ))}
-    </div>
+  const theme = useDocumentTheme();
+  return createPortal(
+    <Toaster
+      className="notification-toaster"
+      theme={theme}
+      position="bottom-right"
+      visibleToasts={maximumVisibleNotifications}
+      gap={8}
+      offset={16}
+      closeButton
+      containerAriaLabel="Notifications"
+      customAriaLabel="Notifications"
+      icons={{
+        success: <CircleCheck size={16} />,
+        warning: <TriangleAlert size={16} />,
+        error: <CircleAlert size={16} />,
+        info: <Info size={16} />,
+      }}
+      style={
+        {
+          "--normal-bg": "var(--color-bg)",
+          "--normal-text": "var(--color-ink)",
+          "--normal-border": "var(--line)",
+          "--border-radius": "8px",
+          "--width": "380px",
+        } as CSSProperties
+      }
+      toastOptions={{
+        closeButtonAriaLabel: "Fermer la notification",
+        classNames: {
+          toast: "notification-toast",
+          title: "notification-title",
+          description: "notification-description",
+          actionButton: "notification-action",
+          closeButton: "notification-close",
+        },
+      }}
+    />,
+    document.body,
   );
 }

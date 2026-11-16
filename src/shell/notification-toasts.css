@@ -1,0 +1,73 @@
+/* Surimpressions des notifications, reprises de OneApp (`components/shell/notifications.css`). */
+.notification-toaster {
+  font-family: inherit;
+}
+.notification-toaster [data-sonner-toast][data-styled="true"].notification-toast {
+  padding: 12px;
+  gap: 8px;
+  font-size: var(--font-size-body);
+  transition-duration: 200ms;
+}
+.notification-toaster .notification-title {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+.notification-toaster .notification-description {
+  font-size: var(--font-size-secondary);
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+  /* Un bilan peut lister plusieurs échecs, un par ligne. */
+  white-space: pre-line;
+}
+.notification-toaster [data-sonner-toast][data-styled="true"] .notification-action {
+  min-height: 28px;
+  font-size: var(--font-size-secondary);
+  cursor: default;
+}
+.notification-toaster [data-sonner-toast][data-styled="true"] .notification-close {
+  width: 28px;
+  height: 28px;
+  cursor: default;
+}
+.notification-toaster [data-type="success"] [data-icon] {
+  color: var(--color-success);
+}
+.notification-toaster [data-type="warning"] [data-icon] {
+  color: var(--color-warning-ink);
+}
+.notification-toaster [data-type="error"] [data-icon] {
+  color: var(--color-danger);
+}
+.notification-toaster [data-type="info"] [data-icon] {
+  color: var(--color-primary);
+}
+.notification-toaster button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+@media print {
+  .notification-toaster {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notification-toaster [data-sonner-toast][data-styled="true"].notification-toast {
+    transition-duration: 0ms;
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .notification-toaster [data-sonner-toast][data-styled="true"].notification-toast {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .notification-toaster[data-sonner-toaster] [data-sonner-toast].notification-toast button {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .notification-toaster[data-sonner-toaster] [data-sonner-toast].notification-toast button:focus-visible {
+    outline-color: Highlight;
+  }
+}
