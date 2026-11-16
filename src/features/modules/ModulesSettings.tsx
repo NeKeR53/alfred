@@ -29,6 +29,7 @@ import type { ClientNeedItem } from "../clients/api";
 import { ServiceBlock, serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
+import { ModuleFunctions } from "../functions/ModuleFunctions";
 import { remainingSummary, SETUP_FOCUS } from "../setup/api";
 import { SetupFlow } from "../setup/SetupFlow";
 import { useModuleSetup } from "../setup/useModuleSetup";
@@ -383,6 +384,7 @@ export function ModulesSettings() {
       originLabel(module, update, publishedOf(module), marketplaceName),
       withVersion ? `version ${module.version}` : null,
       plural(module.pages, "page"),
+      module.functions > 0 ? plural(module.functions, "fonction") : null,
       serviceCount > 0 ? plural(serviceCount, "service") : null,
       installed ? "lecture seule" : null,
     ]
@@ -551,6 +553,7 @@ export function ModulesSettings() {
           </div>
           {snapshot ? <ModulePages snapshot={snapshot} module={module.id} disabled={hidden} /> : null}
         </div>
+        <ModuleFunctions module={module} clientLabels={module.clients.map((need) => need.label || need.id)} />
         <div className="module-part">
           <div className="module-part__head">
             {single ? (

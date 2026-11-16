@@ -150,9 +150,24 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 runtime: opt_arg::<Runtime>(args, "runtime")
                     .map_err(|_| AppError::new("Langage inconnu : `runtime` vaut ts, bash, pwsh ou python."))?
                     .unwrap_or_default(),
+                effect: opt_arg::<crate::space::Effect>(args, "effect")
+                    .map_err(|_| AppError::new("Effet inconnu : `effect` vaut read ou write."))?,
+                tests: opt_arg::<Vec<crate::space::FunctionTest>>(args, "tests")
+                    .map_err(|error| AppError::new(format!("Tests illisibles : {}", error.message)))?
+                    .unwrap_or_default(),
             };
+            let mut declaration = declaration;
             match manifest.functions.iter_mut().find(|declared| declared.id == id) {
-                Some(existing) => *existing = declaration,
+                Some(existing) => {
+                    // Une redéclaration qui ne parle pas de l’effet ou des tests les garde.
+                    if args.get("effect").is_none() {
+                        declaration.effect = existing.effect;
+                    }
+                    if args.get("tests").is_none() {
+                        declaration.tests = std::mem::take(&mut existing.tests);
+                    }
+                    *existing = declaration
+                }
                 None => manifest.functions.push(declaration),
             }
             space.write_module(&manifest)?;
