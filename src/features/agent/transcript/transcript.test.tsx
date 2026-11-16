@@ -232,6 +232,16 @@ describe("relevé", () => {
     expect(screen.getAllByText("Envoyé")).toHaveLength(2);
   });
 
+  it("n’affiche l’arrêt qu’en bas de la conversation, comme OneApp", () => {
+    const { unmount } = render(
+      <Transcript conversation={conversation([turn("t1", { status: "cancelled" }), turn("t2")])} runtime={idle} />,
+    );
+    expect(screen.queryByText("Exécution arrêtée · Travail non terminé")).not.toBeInTheDocument();
+    unmount();
+    render(<Transcript conversation={conversation([turn("t1", { status: "cancelled" })])} runtime={idle} />);
+    expect(screen.getByText("Exécution arrêtée · Travail non terminé")).toBeInTheDocument();
+  });
+
   it("propose « Réessayer le message » sous l’erreur du dernier tour", () => {
     render(
       <Transcript

@@ -492,14 +492,15 @@ const TurnView = memo(function TurnView({
             <ConversationFiles files={files} label="Fichiers du tour" />
           </>
         )}
-        {turn.status === "cancelled" ? (
+        {/* Comme OneApp : l’arrêt et l’erreur ne se lisent qu’en bas de la conversation, tant qu’elle en reste là. */}
+        {last && turn.status === "cancelled" ? (
           <p className="agent-chat__work-summary" role="status">
             Exécution arrêtée · Travail non terminé
           </p>
-        ) : turn.error ? (
+        ) : last && turn.error ? (
           <div className="agent-chat__recovery" role="alert">
             <p>{turn.error}</p>
-            {last ? <Button onClick={onRetry}>Réessayer le message</Button> : null}
+            <Button onClick={onRetry}>Réessayer le message</Button>
           </div>
         ) : null}
         {turn.commit ? <ChangeSummary conversationId={conversationId} turn={turn} /> : null}
