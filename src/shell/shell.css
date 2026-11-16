@@ -561,9 +561,23 @@
   font-size: var(--font-size-secondary);
 }
 
-/* Compteur d’une page (`badge.set` du SDK) : à droite du libellé de la section, sur l’icône quand le menu est
- * replié, et après le titre de l’onglet. */
-.sidebar-count,
+/* Compteur d’une page (`badge.set` du SDK). Sur la ligne d’une section : la pastille des agents de OneApp, à la place
+ * fixe de `.product-agents__trigger` (à gauche du bouton « … », qui ne la décale pas) ; sur l’icône quand le menu est
+ * replié. Après le titre d’un onglet, une pastille pleine. */
+.sidebar-count {
+  position: absolute;
+  top: 5px;
+  right: 36px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+.sidebar-count.is-collapsed {
+  top: -2px;
+  right: 2px;
+  height: 14px;
+  display: flex;
+}
 .shell-count {
   min-width: 16px;
   height: 16px;
@@ -579,26 +593,11 @@
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
-.sidebar-count {
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-.sidebar-count.is-collapsed {
-  position: absolute;
-  top: 1px;
-  right: 2px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  font-size: 9px;
-}
 .shell-count {
   margin-left: 6px;
   vertical-align: 1px;
 }
 @media (forced-colors: active) {
-  .sidebar-count,
   .shell-count {
     border: 1px solid CanvasText;
   }

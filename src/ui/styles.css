@@ -1093,11 +1093,11 @@ html select:not([multiple], [data-slot="native-select"]) {
 .sidebar-product .product-nav {
   width: 100%;
 }
-.sidebar-product[class*="sidebar-product--agent-"] .product-nav {
-  padding-right: 44px;
+.sidebar-product.has-count .product-nav {
+  padding-right: 86px;
 }
 .app-shell--sidebar-collapsed .sidebar-product .product-nav,
-.app-shell--sidebar-collapsed .sidebar-product[class*="sidebar-product--agent-"] .product-nav {
+.app-shell--sidebar-collapsed .sidebar-product.has-count .product-nav {
   padding-right: 0;
 }
 .app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product:hover .product-nav,
@@ -1105,13 +1105,9 @@ html select:not([multiple], [data-slot="native-select"]) {
 .app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product.is-menu-open .product-nav {
   padding-right: 34px;
 }
-.app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product[class*="sidebar-product--agent-"]:hover .product-nav,
-.app-shell:not(.app-shell--sidebar-collapsed)
-  .sidebar-product[class*="sidebar-product--agent-"]:focus-within
-  .product-nav,
-.app-shell:not(.app-shell--sidebar-collapsed)
-  .sidebar-product[class*="sidebar-product--agent-"].is-menu-open
-  .product-nav {
+.app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product.has-count:hover .product-nav,
+.app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product.has-count:focus-within .product-nav,
+.app-shell:not(.app-shell--sidebar-collapsed) .sidebar-product.has-count.is-menu-open .product-nav {
   padding-right: 86px;
 }
 .sidebar-product .sidebar-product__actions {
@@ -1121,9 +1117,6 @@ html select:not([multiple], [data-slot="native-select"]) {
   z-index: 1;
   opacity: 0;
   pointer-events: none;
-}
-.sidebar-product[class*="sidebar-product--agent-"] .sidebar-product__actions {
-  right: 56px;
 }
 .sidebar-product:hover .sidebar-product__actions,
 .sidebar-product:focus-within .sidebar-product__actions,

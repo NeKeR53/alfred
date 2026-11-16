@@ -323,9 +323,16 @@ function NavButton({
       )}
       <span className="sidebar__label">{badge ? label.split(" · ")[0] : label}</span>
       {count > 0 ? (
-        <span className={`sidebar-count${collapsed ? " is-collapsed" : ""}`} aria-hidden="true">
-          {badgeText(count)}
-        </span>
+        // Même pastille que celle des agents de OneApp : à place fixe, à gauche du bouton « … » de la ligne.
+        collapsed ? (
+          <span className="product-agents__badge is-collapsed sidebar-count" aria-hidden="true">
+            {badgeText(count)}
+          </span>
+        ) : (
+          <span className="sidebar-count" aria-hidden="true">
+            <span className="product-agents__badge">{badgeText(count)}</span>
+          </span>
+        )
       ) : null}
       {badge && !collapsed ? (
         <span className="sidebar-orchestrator__badge">
@@ -513,7 +520,7 @@ export function AppShell({
             const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
             return (
               <div
-                className={`sidebar-product${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
+                className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
                 key={section.id}
                 data-sortable-scope={drag.scopeId}
                 data-sortable-id={section.id}
