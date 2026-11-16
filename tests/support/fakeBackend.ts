@@ -523,6 +523,7 @@ export class FakeBackend {
     },
     "grants.list": () => clone(this.grants),
     "backups.list": () => [],
+    "jobs.list": () => [],
     "backups.settings": () => ({ keep: 14 }),
     "grants.revoke": (args) => {
       this.grants = this.grants.filter(

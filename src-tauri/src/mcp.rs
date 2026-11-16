@@ -490,7 +490,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "read_journal",
             "Dernières exécutions enregistrées : fonctions, webhooks, requêtes des clients, appels IA, avec leur durée et leur erreur éventuelle.",
             json!({
-                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "agent"] },
+                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "job", "event", "agent"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
             }),
             &[],

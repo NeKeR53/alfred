@@ -142,6 +142,69 @@ export const files = {
   },
 };
 
+// --- Tâches de fond -------------------------------------------------------------------------------------------
+
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+export interface Job<Result = unknown> {
+  id: string;
+  module: string;
+  function: string;
+  title: string;
+  input: unknown;
+  /** Nombre d’étapes faites. */
+  step: number;
+  status: JobStatus;
+  /** De 0 à 1, telle que la dernière étape l’a donnée. */
+  progress: number | null;
+  message: string | null;
+  result: Result | null;
+  error: string | null;
+  attempts: number;
+  cancelRequested: boolean;
+  startedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+/** Ce que reçoit la fonction d’une tâche de fond, à chaque étape. */
+export interface JobStep<Input = unknown, State = unknown> {
+  input: Input;
+  /** État rendu par l’étape précédente ; `null` à la première. */
+  state: State | null;
+  /** Numéro de l’étape, à partir de 0. */
+  step: number;
+  job: { id: string; title: string };
+}
+
+/**
+ * Travail long, découpé en étapes : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`,
+ * en lui passant l’état laissé par l’étape précédente. Une tâche reprend après une fermeture d’Alfred, s’annule
+ * entre deux étapes, et l’utilisateur la suit dans Réglages → Tâches de fond.
+ */
+export const jobs = {
+  /** Lance la fonction `fonction` du module en tâche de fond ; rend la tâche, qui attend son tour. */
+  start(fonction: string, input: unknown = {}, options: { title?: string } = {}): Promise<Job> {
+    return request("jobs.start", { function: fonction, input, ...options });
+  },
+  get<Result = unknown>(id: string): Promise<Job<Result>> {
+    return request("jobs.get", { id });
+  },
+  /** Tâches du module, les plus récentes d’abord. */
+  list(options: { status?: JobStatus; limit?: number } = {}): Promise<Job[]> {
+    return request("jobs.list", options);
+  },
+  /** Annule tout de suite une tâche qui attend, après l’étape en cours une tâche qui tourne. */
+  cancel(id: string): Promise<Job> {
+    return request("jobs.cancel", { id });
+  },
+  /** Reprend une tâche en échec ou annulée, à l’étape où elle s’était arrêtée. */
+  resume(id: string): Promise<Job> {
+    return request("jobs.resume", { id });
+  },
+};
+
 // --- Documents ------------------------------------------------------------------------------------------------
 
 type CellValue = string | number | boolean | null;

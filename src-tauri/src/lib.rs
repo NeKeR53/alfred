@@ -14,6 +14,7 @@ mod error;
 mod events;
 mod functions;
 mod git;
+mod jobs;
 mod libraries;
 mod marketplace;
 mod module_files;
@@ -165,6 +166,7 @@ pub fn run() {
             verify::attach(app.handle(), &data_dir, state.server()?.port)?;
             let _runtime = tauri::async_runtime::handle().inner().enter();
             backups::start(state.clone());
+            jobs::start(state.clone());
             schedules::start(state);
             Ok(())
         })

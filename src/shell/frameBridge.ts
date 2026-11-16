@@ -240,6 +240,14 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "files.open":
     case "files.dataUrl":
       return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "jobs.start":
+      return invoke("frame.jobs.start", { ...pick(params, ["function", "input", "title"]), subject });
+    case "jobs.list":
+      return invoke("frame.jobs.list", { ...pick(params, ["status", "limit"]), subject });
+    case "jobs.get":
+    case "jobs.cancel":
+    case "jobs.resume":
+      return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
     case "documents.pdf":
       return invoke("frame.documents.pdf", { ...pick(params, ["name", "title", "blocks"]), subject });
     case "documents.csv":

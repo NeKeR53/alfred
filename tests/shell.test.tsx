@@ -85,6 +85,7 @@ it("de l’accueil à un espace construit : navigation, Réglages, palette et ac
     "Fonctions",
     "Webhooks",
     "Tâches planifiées",
+    "Tâches de fond",
     "Journal",
     "Préférences du suivi",
   ]);

@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, backups, module_files, documents, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
+    delegate!(vault, agent_workspace, clients, space_db, backups, module_files, documents, jobs, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -192,6 +192,8 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
     git::commit_all(&space.root, "Ouverture de l’espace")?;
+    // Les tâches de fond interrompues à la fermeture reprennent.
+    crate::jobs::kick();
     let root = space.root.clone();
     state.set_space(Some(space));
     {

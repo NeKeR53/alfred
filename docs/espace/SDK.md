@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes, ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `documents`, `jobs`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -608,4 +608,52 @@ export async function exporterFactures() {
   });
   await files.export(pdf.id);
 }
+```
+
+## 11. Tâches de fond : `jobs`
+
+Pour un travail plus long que les 120 secondes d’une fonction (importer des milliers de lignes, relever tout un service page par page), découpe-le en **étapes** : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`, en lui passant l’état que l’étape précédente a rendu. L’état est gardé : si Alfred se ferme, la tâche reprend à la même étape à la réouverture. L’utilisateur la suit, l’annule ou la reprend dans Réglages → Tâches de fond, et il est notifié quand elle se termine ou échoue.
+
+```ts
+jobs.start(fonction: string, input?: unknown, options?: { title?: string }): Promise<Job>; // fonction du module
+jobs.get(id: string): Promise<Job>;
+jobs.list(options?: { status?: JobStatus; limit?: number }): Promise<Job[]>; // tâches du module, plus récentes d’abord
+jobs.cancel(id: string): Promise<Job>;  // tout de suite si elle attend, après l’étape en cours sinon
+jobs.resume(id: string): Promise<Job>;  // une tâche en échec ou annulée repart de son étape
+type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+interface Job { id; title; status: JobStatus; step: number; progress: number | null; message: string | null; result: unknown; error: string | null; createdAt; finishedAt; … }
+
+// Chaque étape, la fonction reçoit :
+interface JobStep<Input, State> { input: Input; state: State | null; step: number; job: { id: string; title: string } }
+// et rend :
+{ state?: unknown; progress?: number /* 0 à 1 */; message?: string; done?: boolean; result?: unknown }
+```
+
+- Une étape qui rend un `state` (sans `done: true`) ou `done: false` est suivie d’une autre ; sinon la tâche est terminée, avec `result` (ou la sortie entière si la fonction ne rend aucun de ces champs).
+- Une étape tient en moins de 120 secondes : traite un lot (une page d’API, 500 lignes) et rends où tu en es. Une étape qui échoue est retentée deux fois ; au troisième échec, la tâche passe en échec avec le message de l’erreur.
+- Une seule tâche avance à la fois par module (trois en tout) ; les autres attendent. Une étape doit pouvoir être rejouée sans dégât (après une fermeture d’Alfred, la dernière peut repasser) : écris avec `INSERT OR REPLACE` ou vérifie avant d’insérer.
+- La fonction se déclare comme toute autre (`declare_function`) ; elle peut être en script. `read_journal` (`kind: "job"`) montre les fins et les échecs.
+
+```ts
+// functions/importer-contacts.ts
+import { client, db, type JobStep } from "@alfred/sdk";
+
+export default async function ({ state }: JobStep<{}, { page: number }>) {
+  const page = state?.page ?? 1;
+  const { body } = await client("crm").get<{ contacts: { id: string; nom: string }[]; pages: number }>("/contacts", { page });
+  for (const contact of body.contacts)
+    await db.execute("INSERT OR REPLACE INTO annuaire_contacts (id, nom) VALUES (?, ?)", [contact.id, contact.nom]);
+  if (page >= body.pages) return { done: true, result: { pages: body.pages } };
+  return { state: { page: page + 1 }, progress: page / body.pages, message: `Page ${page} sur ${body.pages}` };
+}
+```
+
+```tsx
+// Dans une page : lancer, puis suivre (rien ne se recharge seul : relis avec `reload()`, par exemple chaque seconde).
+const tache = await jobs.start("importer-contacts", {}, { title: "Import des contacts du CRM" });
+const suivi = useAsync(() => jobs.get(tache.id), [tache.id]);
+useEffect(() => {
+  const minuterie = setInterval(suivi.reload, 1000);
+  return () => clearInterval(minuterie);
+}, [suivi.reload]);
 ```
