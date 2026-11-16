@@ -243,6 +243,67 @@ pub struct FunctionDecl {
     /// Langage : TypeScript (par défaut, exécuté dans l’interface) ou un script (bash, pwsh, python) lancé par Rust.
     #[serde(skip_serializing_if = "Runtime::is_ts")]
     pub runtime: Runtime,
+    /// Ce que fait la fonction chez le service : lire (`read`) ou modifier (`write`). Absent, elle compte comme
+    /// une écriture : ses tests ne se lancent jamais d’office.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
+    /// Cas de test : une entrée d’exemple et ce que la sortie doit montrer.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<FunctionTest>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Effect {
+    Read,
+    Write,
+}
+
+/// Cas de test d’une fonction. Ceux d’une fonction de lecture se lancent d’office (bouton « Tout vérifier »,
+/// outil `check`) ; ceux d’une écriture attendent l’accord de l’utilisateur, sur la cible qu’il choisit.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FunctionTest {
+    /// Ce que vérifie le test, en mots simples ; identifie le test dans la fonction.
+    pub name: String,
+    pub input: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<TestTarget>,
+    pub expect: Expect,
+}
+
+/// Cible d’un test d’écriture : l’utilisateur la saisit (un ticket de test…) et elle remplace `input[field]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TestTarget {
+    /// Chemin dans l’entrée (`issue`, `filter.project`).
+    pub field: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hint: String,
+}
+
+/// Ce que la sortie doit montrer. Les chemins s’écrivent `issues.0.key` ; `""` désigne la sortie elle-même.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Expect {
+    /// Conforme au schéma `output` de la fonction (vrai par défaut).
+    pub schema: bool,
+    /// Chemins présents et non nuls.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub has: Vec<String>,
+    /// Chemins vers une liste, un texte ou un objet non vide.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub non_empty: Vec<String>,
+    /// Valeurs attendues, chemin par chemin.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub equals: BTreeMap<String, Value>,
+}
+
+impl Default for Expect {
+    fn default() -> Self {
+        Expect { schema: true, has: Vec::new(), non_empty: Vec::new(), equals: BTreeMap::new() }
+    }
 }
 
 impl FunctionDecl {
@@ -398,6 +459,8 @@ pub struct ResolvedFunction {
     pub errors: Vec<Diagnostic>,
     pub uses: Uses,
     pub runtime: Runtime,
+    pub effect: Option<Effect>,
+    pub tests: Vec<FunctionTest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1050,6 +1113,8 @@ impl Space {
                     errors,
                     uses: function.uses.clone(),
                     runtime: function.runtime,
+                    effect: function.effect,
+                    tests: function.tests.clone(),
                 });
             }
         }

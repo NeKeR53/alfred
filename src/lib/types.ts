@@ -109,9 +109,22 @@ export interface ResolvedFunction {
   uses: Uses;
   /** Langage : TypeScript (dans l’interface) ou script lancé par Alfred. */
   runtime: FunctionRuntime;
+  /** Lecture ou écriture chez le service ; absent, la fonction compte comme une écriture. */
+  effect?: FunctionEffect | null;
+  /** Cas de test déclarés avec la fonction. */
+  tests?: FunctionTestCase[];
 }
 
 export type FunctionRuntime = "ts" | "bash" | "pwsh" | "python";
+export type FunctionEffect = "read" | "write";
+
+export interface FunctionTestCase {
+  name: string;
+  input: unknown;
+  /** Test d’écriture : cible que l’utilisateur choisit, placée à `input[field]`. */
+  target?: { field: string; label: string; hint?: string };
+  expect?: unknown;
+}
 
 export interface Snapshot {
   path: string;

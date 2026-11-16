@@ -24,6 +24,7 @@ import { invoke } from "../../lib/native";
 import type { FunctionRuntime, ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { type FunctionTests, TEST_STATE_LABELS } from "./tests";
 import "../vault/settings-dialog.css";
 import "./functions.css";
 import { DialogHeader } from "../../shell/DialogHeader";
@@ -82,7 +83,7 @@ export function skeleton(schema: unknown, depth = 0): unknown {
 
 type FunctionState = "ready" | "missing" | "broken";
 
-function stateOf(fn: ResolvedFunction): FunctionState {
+export function stateOf(fn: ResolvedFunction): FunctionState {
   if (fn.missing) return "missing";
   if (fn.errors.length > 0) return "broken";
   return "ready";
@@ -99,7 +100,45 @@ function isScript(fn: ResolvedFunction): boolean {
   return (fn.runtime ?? "ts") !== "ts";
 }
 
-function FunctionStatus({ fn }: { fn: ResolvedFunction }) {
+/** Lecture ou écriture : sans effet déclaré, la fonction compte comme une écriture. */
+export function EffectBadge({ fn }: { fn: ResolvedFunction }) {
+  if (fn.effect === "read")
+    return (
+      <StatusBadge size="compact" title="Ne fait que lire : ses tests se lancent d’office.">
+        Lecture
+      </StatusBadge>
+    );
+  return (
+    <StatusBadge
+      size="compact"
+      title={
+        fn.effect === "write"
+          ? "Modifie le service : ses tests attendent votre accord."
+          : "Effet non déclaré : traitée comme une écriture."
+      }
+    >
+      Écriture
+    </StatusBadge>
+  );
+}
+
+/** État des tests d’une fonction, quand elle en a. */
+function TestBadge({ tests }: { tests: FunctionTests | undefined }) {
+  if (!tests || tests.state === "none") return null;
+  const { label, tone } = TEST_STATE_LABELS[tests.state];
+  const total = tests.tests.length;
+  return (
+    <StatusBadge
+      tone={tone}
+      size="compact"
+      title={`${tests.passed} réussi${tests.passed > 1 ? "s" : ""} sur ${total} test${total > 1 ? "s" : ""}`}
+    >
+      {label}
+    </StatusBadge>
+  );
+}
+
+export function FunctionStatus({ fn }: { fn: ResolvedFunction }) {
   const state = stateOf(fn);
   if (state === "missing") return <StatusBadge tone="warning">Pas encore écrite</StatusBadge>;
   if (state === "broken")
@@ -107,7 +146,7 @@ function FunctionStatus({ fn }: { fn: ResolvedFunction }) {
   return <StatusBadge tone="success">Prête</StatusBadge>;
 }
 
-function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () => void }) {
+export function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const formId = useId();
   const titleId = useId();
@@ -218,18 +257,23 @@ function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () => void 
 
 /**
  * Une fonction sur une ligne : nom, langage, description (coupée, en entier au survol), état seulement quand elle
- * n’est pas prête, interrupteur « outil des agents », essai et suppression. Les erreurs s’ajoutent dessous.
+ * n’est pas prête, interrupteur « outil des agents », essai et suppression. Les erreurs s’ajoutent dessous. Dans la
+ * fiche d’un module, la ligne montre aussi l’effet (lecture, écriture) et l’état des tests.
  */
-function FunctionItem({
+export function FunctionItem({
   fn,
   readOnly,
   onTry,
   onRemove,
+  tests,
+  withTests = false,
 }: {
   fn: ResolvedFunction;
   readOnly: boolean;
   onTry: () => void;
   onRemove: () => void;
+  tests?: FunctionTests;
+  withTests?: boolean;
 }) {
   const [tool, setTool] = useState(fn.tool);
   const [saving, setSaving] = useState(false);
@@ -271,7 +315,8 @@ function FunctionItem({
         >
           {fn.description || "Aucune description."}
         </span>
-        {ready ? null : <FunctionStatus fn={fn} />}
+        {withTests ? <EffectBadge fn={fn} /> : null}
+        {ready ? withTests ? <TestBadge tests={tests} /> : null : <FunctionStatus fn={fn} />}
         <span
           className="function-row__tool"
           title={

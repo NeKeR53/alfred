@@ -207,9 +207,27 @@ export async function compter() {
 }
 ```
 
+### Passer par le connecteur d’un service
+
+Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires`), jamais `client()` directement. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
+
+```tsx
+import { functions, useAsync } from "@alfred/sdk";
+
+// Module « sprint », avec `"requires": [{ "module": "jira" }]`.
+const tickets = useAsync(
+  () => functions.call<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", { projet: "ALF" }),
+  [],
+);
+```
+
+Seules les fonctions du connecteur écrivent `client("jira")`. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect` et ses tests (AGENTS.md, « Tests d’une fonction »), puis la page l’appelle.
+
 Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }` (corps JSON décodé, sinon texte ; en-têtes d’authentification retirés). Sa valeur de retour part en JSON à l’émetteur si elle arrive en moins de 25 secondes ; sinon l’émetteur reçoit `202` et la fonction continue. Planifiée, elle reçoit le `input` de sa planification. Webhooks et planifications se déclarent avec les outils `declare_webhook` et `declare_schedule` (AGENTS.md).
 
 ## 6. Clients : `client(id)`
+
+`client()` s’écrit dans les fonctions du module connecteur du service (voir § 5) ; les autres modules passent par ces fonctions.
 
 ```ts
 client(id: string, options?: { instance?: string }): {

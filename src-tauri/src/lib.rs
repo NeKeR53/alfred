@@ -10,6 +10,7 @@ mod dispatch;
 mod docs;
 mod error;
 mod events;
+mod function_tests;
 mod functions;
 mod git;
 mod libraries;
