@@ -133,7 +133,7 @@ export function deletePage(reference: string): Promise<boolean> {
       notify({
         tone: "success",
         title: `Page « ${found.page.title} » supprimée`,
-        description: "Annulable par l’historique de l’espace.",
+        description: "Annulable par l’historique de l’espace de travail.",
       });
       await useShell
         .getState()
@@ -422,7 +422,7 @@ export function useNavigationEditor() {
     const accepted = await confirm({
       title: `Supprimer la page « ${page.title} » ?`,
       message:
-        "Son fichier et son entrée sont retirés du module. La suppression reste annulable par l’historique de l’espace.",
+        "Son fichier et son entrée sont retirés du module. La suppression reste annulable par l’historique de l’espace de travail.",
       confirmLabel: "Supprimer",
       tone: "danger",
     });

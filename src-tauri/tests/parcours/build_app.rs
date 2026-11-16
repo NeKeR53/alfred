@@ -12,9 +12,9 @@ async fn construire_reorganiser_supprimer_puis_annuler() {
     let snapshot = desk.snapshot().await;
     assert_eq!(snapshot["name"], json!("Atelier"));
     assert_eq!(snapshot["sections"], json!([]));
-    assert!(desk.read("AGENTS.md").is_some_and(|guide| guide.contains("Guide de l’espace Alfred")));
+    assert!(desk.read("AGENTS.md").is_some_and(|guide| guide.contains("Guide de l’espace de travail Alfred")));
     assert!(desk.read("docs/alfred/SDK.md").is_some());
-    assert_eq!(desk.history().await, ["Ouverture de l’espace"]);
+    assert_eq!(desk.history().await, ["Ouverture de l’espace de travail"]);
 
     // Une page par menu (nouveau module), un onglet, un panneau de droite et une page des Réglages.
     let menu = json!({ "kind": "menu", "label": "Suivi", "icon": "list-checks", "color": "blue" });
@@ -132,7 +132,7 @@ async fn construire_reorganiser_supprimer_puis_annuler() {
             "Réorganisation",
             "Tour 2 : carnet",
             "Tour 1 : module de suivi",
-            "Ouverture de l’espace",
+            "Ouverture de l’espace de travail",
         ]
     );
 

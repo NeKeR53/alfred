@@ -86,12 +86,14 @@ function DependencySteps({ steps }: { steps: DependencyStep[] }) {
   if (steps.length === 0) return null;
   return (
     <section>
-      <h3>Modules requis, installés avec lui</h3>
+      <h3>Modules dont il dépend, du même marketplace</h3>
       <ul className="modules-facts">
         {steps.map((step) => (
           <li key={step.module}>
             {step.name} v{step.version} :{" "}
-            {step.action === "install" ? "installé, désactivé (à activer dans Réglages → Modules)" : "mis à jour"}
+            {step.action === "install"
+              ? "importé avec lui, désactivé (à activer dans Réglages → Modules)"
+              : "mis à jour avec lui (même version majeure)"}
           </li>
         ))}
       </ul>
@@ -180,7 +182,7 @@ export function UpdateDialog({
       <p>
         Version {update.current} → {update.available}
         {update.marketplaceName ? `, depuis ${update.marketplaceName}` : ""}. Le contenu du module est remplacé ; ses
-        données sont conservées. La mise à jour s’annule depuis l’historique de l’espace.
+        données sont conservées. La mise à jour s’annule depuis l’historique de l’espace de travail.
       </p>
       {error ? (
         <FeedbackBanner tone="error" appearance="contained">
@@ -195,8 +197,8 @@ export function UpdateDialog({
       <DependencySteps steps={update.dependencies ?? []} />
       {update.locallyModified ? (
         <FeedbackBanner tone="warning" appearance="contained">
-          Ce module a été modifié sur place depuis son installation. La mise à jour écrase ces modifications ; le
-          détacher d’abord pour les garder.
+          Ce module a été modifié sur place depuis son import. La mise à jour écrase ces modifications ; le détacher
+          d’abord pour les garder.
         </FeedbackBanner>
       ) : null}
       {changes.newAccesses.length > 0 ? (
@@ -219,7 +221,7 @@ export function UpdateDialog({
   );
 }
 
-/** Désinstallation : le dossier du module part toujours ; l’utilisateur décide du sort de ses données. */
+/** Retrait d’un module importé, ou suppression d’un module développé ici ; l’utilisateur décide du sort de ses données. */
 export function UninstallDialog({
   module,
   onClose,
@@ -234,7 +236,7 @@ export function UninstallDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const installed = module.origin !== null && !module.origin.detached;
-  const verb = installed ? "Désinstaller" : "Supprimer";
+  const verb = installed ? "Retirer" : "Supprimer";
 
   const apply = async () => {
     setBusy(true);
@@ -249,7 +251,7 @@ export function UninstallDialog({
 
   return (
     <Modal
-      title={`${verb} ${module.name}`}
+      title={installed ? `Retirer ${module.name} de l’espace de travail` : `Supprimer ${module.name}`}
       busy={busy}
       onClose={onClose}
       actions={(close) => (
@@ -265,8 +267,10 @@ export function UninstallDialog({
     >
       <p>
         {installed
-          ? "Ses pages et ses fonctions quittent l’espace. Il pourra être réinstallé depuis son marketplace."
-          : "Ses pages et ses fonctions quittent l’espace. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace."}
+          ? "Ses pages et ses fonctions quittent l’espace de travail. Il pourra être importé de nouveau depuis son marketplace."
+          : (module.published ?? []).length > 0
+            ? "Ses pages et ses fonctions quittent l’espace de travail. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
+            : "Ses pages et ses fonctions quittent l’espace de travail. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
       </p>
       {error ? (
         <FeedbackBanner tone="error" appearance="contained">
@@ -292,7 +296,7 @@ export function UninstallDialog({
   );
 }
 
-/** Confirmation d’installation : ce que le module contient et les accès qu’il demande. */
+/** Confirmation d’import : ce que le module contient, les modules dont il dépend et les accès qu’il demande. */
 export function InstallDialog({
   module,
   marketplace,
@@ -321,23 +325,23 @@ export function InstallDialog({
 
   return (
     <Modal
-      title={`Installer ${module.name} v${module.version}`}
+      title={`Importer ${module.name} v${module.version}`}
       busy={busy}
       onClose={onClose}
       actions={(close) => (
         <FormActions
           onCancel={close}
           onSubmit={apply}
-          submitLabel="Installer"
-          pendingLabel="Installation…"
+          submitLabel="Importer"
+          pendingLabel="Import…"
           pending={busy}
           disabled={Boolean(module.blocked)}
         />
       )}
     >
       <p>
-        Depuis {marketplace.name}. Le module s’installe en lecture seule et recevra les mises à jour ; pour l’adapter,
-        il faudra le détacher.
+        Depuis le marketplace {marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et
+        recevra les mises à jour de ce marketplace ; pour l’adapter, il faudra le détacher.
       </p>
       {error ? (
         <FeedbackBanner tone="error" appearance="contained">
@@ -357,7 +361,7 @@ export function InstallDialog({
           <>
             <AccessList accesses={accesses} />
             {accesses.some((access) => access.kind === "client") ? (
-              <p>Un client demandé reste à relier à un client de l’espace avant de servir.</p>
+              <p>Un client demandé reste à relier à un client de l’espace de travail avant de servir.</p>
             ) : null}
           </>
         ) : (
@@ -373,15 +377,21 @@ export function InstallDialog({
   );
 }
 
-/** Publication d’un module local ou détaché : marketplace cible, version, notes ; liste les problèmes si refusée. */
+/**
+ * Publication d’un module développé dans l’espace de travail (ou détaché) vers un marketplace : marketplace cible,
+ * version, notes ; liste les problèmes si refusée.
+ */
 export function PublishDialog({
   module,
   marketplaces,
+  onManage,
   onClose,
   onPublished,
 }: {
   module: ModuleSummary;
   marketplaces: Marketplace[];
+  /** Ouvre la rubrique Marketplaces, où l’on en ajoute un. */
+  onManage: () => void;
   onClose: () => void;
   onPublished: (version: string, marketplace: Marketplace) => void;
 }) {
@@ -457,14 +467,19 @@ export function PublishDialog({
       )}
     >
       {marketplaces.length === 0 ? (
-        <FeedbackBanner tone="info" appearance="contained">
-          Aucun dépôt n’est ajouté. Un dépôt est le dossier partagé (git) où votre équipe range ses modules : ajoutez-le
-          dans « Ajouter des modules » avant de publier.
+        <FeedbackBanner
+          tone="info"
+          appearance="contained"
+          action={<Button onClick={onManage}>Ajouter un marketplace</Button>}
+        >
+          Aucun marketplace n’est branché. Un marketplace est le catalogue de modules partagé de votre équipe :
+          ajoutez-le dans Réglages › Marketplaces avant de publier.
         </FeedbackBanner>
       ) : (
         <p>
           Alfred vérifie que chaque page et fonction compile et qu’aucun secret ni chemin de ce poste ne part, puis
-          pousse le module dans le dépôt du marketplace.
+          envoie le module au marketplace. Une dépendance sans version minimale part avec celle de cet espace de travail
+          : qui importe le module recevra la même version majeure.
         </p>
       )}
       {error ? (
@@ -486,7 +501,7 @@ export function PublishDialog({
         </FeedbackBanner>
       ) : null}
       <form id={formId} className="modules-form" onSubmit={submit}>
-        <FormField label="Dépôt de destination">
+        <FormField label="Marketplace de destination">
           <SelectControl value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy} required>
             {marketplaces.map((marketplace) => (
               <option key={marketplace.id} value={marketplace.id}>

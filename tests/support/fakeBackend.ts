@@ -566,6 +566,7 @@ export class FakeBackend {
     "schedules.list": () => clone(this.schedules),
     "marketplace.list": () => [],
     "marketplace.updates": () => [],
+    "marketplace.publications": () => [],
     "functions.call": (args) => this.functionResult(String(args.function), args.input),
     // Requêtes des cadres : la coquille y joint l’identité du cadre, jamais celle que le message prétend.
     "frame.db.query": (args) => [{ demandeur: (args.subject as Json).reference, sql: args.sql }],

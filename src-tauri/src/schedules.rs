@@ -301,7 +301,7 @@ fn writable(space: &Space, module: &str) -> AppResult<ModuleManifest> {
     let manifest = space.module(module)?;
     if manifest.read_only() {
         return Err(AppError::new(format!(
-            "Le module « {} » est installé depuis un marketplace : le détacher pour modifier ses planifications.",
+            "Le module « {} » est importé d’un marketplace : le détacher pour modifier ses planifications.",
             manifest.name
         )));
     }

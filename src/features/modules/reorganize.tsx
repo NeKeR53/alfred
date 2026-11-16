@@ -157,7 +157,7 @@ export function MergeDialog({
           <p>
             Pages, fonctions, sections, planifications, code partagé et migrations de « {module.name} » rejoignent «{" "}
             {chosen?.name ?? "…"} ». Ses tables gardent leurs données et prennent le préfixe du module d’accueil.
-            L’opération s’annule depuis l’historique de l’espace.
+            L’opération s’annule depuis l’historique de l’espace de travail.
           </p>
         </>
       )}

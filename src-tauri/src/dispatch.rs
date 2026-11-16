@@ -180,6 +180,7 @@ fn commit(space: &Space, message: &str) -> AppResult<Option<String>> {
 fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>) -> AppResult<()> {
     use notify::Watcher;
 
+    crate::marketplace::refuse_as_workspace(state, path)?;
     let space = Space::open_or_create(path, name)?;
     crate::docs::materialize(&space)?;
     // Les migrations écrites pendant qu’Alfred était fermé passent dès l’ouverture : les pages trouvent leurs tables.
@@ -187,7 +188,7 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
-    git::commit_all(&space.root, "Ouverture de l’espace")?;
+    git::commit_all(&space.root, "Ouverture de l’espace de travail")?;
     let root = space.root.clone();
     state.set_space(Some(space));
     {

@@ -337,7 +337,10 @@ export function FunctionsSettings() {
   if (snapshot === null) {
     return (
       <Page width="text">
-        <EmptyState title="Aucun espace ouvert" description="Ouvrez ou créez un espace depuis l’accueil d’Alfred." />
+        <EmptyState
+          title="Aucun espace de travail ouvert"
+          description="Ouvrez ou créez un espace de travail depuis l’accueil d’Alfred."
+        />
       </Page>
     );
   }
@@ -372,7 +375,7 @@ export function FunctionsSettings() {
     const confirmed = await confirm({
       title: `Supprimer la fonction « ${fn.id} » ?`,
       message:
-        "Son fichier et sa déclaration sont retirés du module ; les pages qui l’appellent échoueront. La suppression est enregistrée dans l’historique de l’espace et peut y être annulée.",
+        "Son fichier et sa déclaration sont retirés du module ; les pages qui l’appellent échoueront. La suppression est enregistrée dans l’historique de l’espace de travail et peut y être annulée.",
       confirmLabel: "Supprimer",
       tone: "danger",
     });

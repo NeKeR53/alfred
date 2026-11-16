@@ -28,10 +28,7 @@ it("dicter une demande l’envoie, et la réponse de l’agent est lue", async (
 
   await user.click(await screen.findByRole("button", { name: "Dicter un message" }));
   const stop = await screen.findByRole("button", { name: "Terminer la dictée et envoyer" });
-  expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveAttribute(
-    "aria-placeholder",
-    "Je vous écoute…",
-  );
+  expect(screen.getByRole("textbox", { name: /^Message à / })).toHaveAttribute("aria-placeholder", "Je vous écoute…");
   await user.click(stop);
 
   await waitFor(() => expect(backend.agent.written.some((message) => message.type === "user")).toBe(true));

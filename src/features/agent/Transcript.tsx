@@ -307,8 +307,8 @@ function ChangeSummary({ conversationId, turn }: { conversationId: string; turn:
         <div className="agent-chat__change-title">
           <strong>
             {files.length
-              ? `${files.length} fichier${files.length > 1 ? "s" : ""} de l’espace modifié${files.length > 1 ? "s" : ""}`
-              : "L’espace a été modifié"}
+              ? `${files.length} fichier${files.length > 1 ? "s" : ""} de l’espace de travail modifié${files.length > 1 ? "s" : ""}`
+              : "L’espace de travail a été modifié"}
           </strong>
           {complete ? (
             <div className="agent-chat__change-totals">
@@ -323,7 +323,7 @@ function ChangeSummary({ conversationId, turn }: { conversationId: string; turn:
             const accepted = await confirm({
               title: "Annuler cette modification ?",
               message:
-                "L’espace revient à son état d’avant ce tour. L’annulation est elle-même enregistrée et peut être défaite.",
+                "L’espace de travail revient à son état d’avant ce tour. L’annulation est elle-même enregistrée et peut être défaite.",
               confirmLabel: "Annuler la modification",
             });
             if (!accepted) return;

@@ -47,7 +47,7 @@ export const AUTONOMY: Array<{ value: Autonomy; label: string; description: stri
     value: "ask",
     label: "Libre dans ses dossiers, accord ailleurs",
     description:
-      "L’agent lit et écrit sans demander dans le dossier de l’espace et dans le dossier de travail. Il vous présente une carte d’accord pour lancer une commande, écrire ailleurs ou accéder au réseau.",
+      "L’agent lit et écrit sans demander dans le dossier de l’espace de travail et dans le dossier de travail. Il vous présente une carte d’accord pour lancer une commande, écrire ailleurs ou accéder au réseau.",
   },
   {
     value: "auto",
@@ -57,7 +57,8 @@ export const AUTONOMY: Array<{ value: Autonomy; label: string; description: stri
   {
     value: "strict",
     label: "Accord à chaque action",
-    description: "L’agent demande votre accord avant chaque écriture et chaque commande, même dans l’espace.",
+    description:
+      "L’agent demande votre accord avant chaque écriture et chaque commande, même dans l’espace de travail.",
   },
 ];
 
