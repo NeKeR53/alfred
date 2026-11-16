@@ -213,11 +213,16 @@ describe("conversation d’agent · un tour", () => {
     sessions[0].emit({ type: "status", status: "responding" });
     sessions[0].session.steer.mockRejectedValueOnce(new Error("non"));
     await useAgents.getState().send(id, message("Autre chose"), { now: true });
-    expect(sessions[0].session.cancel).toHaveBeenCalled();
-    sessions[0].emit({ type: "status", status: "idle" });
+    // Comme OneApp : le tour s’arrête tout de suite, la session est fermée et le message part dans une neuve.
     await vi.waitFor(() => expect(lastTurn(id)).toMatchObject({ status: "running", user: { text: "Autre chose" } }));
+    expect(sessions[0].session.cancel).toHaveBeenCalled();
+    expect(sessions[0].session.close).toHaveBeenCalled();
     expect(conversation(id).turns[0].status).toBe("cancelled");
     expect(runtime(id).queued).toEqual([]);
+    await vi.waitFor(() => expect(sessions[1]?.session.send).toHaveBeenCalledWith("Autre chose", [], expect.any(String)));
+    // Les derniers événements de la session fermée ne touchent plus la conversation.
+    sessions[0].emit({ type: "status", status: "idle" });
+    expect(lastTurn(id).status).toBe("running");
   });
 
   it("rend un message retiré de la file", async () => {

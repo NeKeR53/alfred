@@ -176,8 +176,6 @@ const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const failedSaves = new Set<string>();
 /** Tours en train de se terminer : deux signaux de fin rapprochés ne doivent donner qu’un commit. */
 const finishing = new Set<string>();
-/** Conversations dont l’utilisateur a demandé l’interruption : le prochain tour terminé est « annulé ». */
-const cancelRequested = new Set<string>();
 /** Dernier signe du CLI pour le tour en cours de chaque conversation, pour la surveillance du silence. */
 const lastEventAt = new Map<string, number>();
 /**
@@ -411,7 +409,6 @@ export const useAgents = create<AgentState>((set, get) => {
     finishing.add(turn.id);
     resuming.delete(id);
     lastEventAt.delete(id);
-    if (cancelRequested.delete(id) && status === "done") status = "cancelled";
     patchRuntime(id, (runtime) => ({ ...runtime, status: "idle", approvals: [], questions: [] }));
     // Ce que l’agent a écrit dans l’espace devient un commit : c’est ce qui rend le tour annulable.
     let commitId: string | undefined;
@@ -502,6 +499,30 @@ export const useAgents = create<AgentState>((set, get) => {
   };
 
   /** Ferme la session d’une conversation : ses derniers événements sont ignorés, le prochain message en rouvre une. */
+  /** Sessions en cours de fermeture : la suivante de la même conversation attend que le CLI soit arrêté. */
+  const closings = new Map<string, Promise<void>>();
+
+  /**
+   * Interrompt et ferme la session, comme OneApp à l’arrêt d’un tour : ses derniers événements sont ignorés et le
+   * message suivant ouvre une session neuve qui reprend la conversation. Garder la session interrompue laissait un
+   * CLI encore occupé (OpenCode) refuser le message suivant.
+   */
+  const stopSession = (id: string) => {
+    const live = sessions.get(id);
+    sessions.delete(id);
+    resuming.delete(id);
+    nextGeneration(id);
+    if (!live) return;
+    const closing = (async () => {
+      await live.session.cancel().catch(() => undefined);
+      await live.session.close().catch(() => undefined);
+    })();
+    closings.set(id, closing);
+    void closing.finally(() => {
+      if (closings.get(id) === closing) closings.delete(id);
+    });
+  };
+
   const dropSession = async (id: string) => {
     const live = sessions.get(id);
     sessions.delete(id);
@@ -739,6 +760,7 @@ export const useAgents = create<AgentState>((set, get) => {
    * refuse de la reprendre, une session neuve reçoit l’historique dans ses consignes, comme dans OneApp.
    */
   const ensureSession = async (conversation: Conversation, currentTurnId?: string): Promise<HarnessSession> => {
+    await closings.get(conversation.id);
     const live = sessions.get(conversation.id);
     const wanted = signature(conversation);
     if (live && live.signature === wanted) return live.session;
@@ -1197,13 +1219,10 @@ export const useAgents = create<AgentState>((set, get) => {
     },
 
     async cancel(id) {
-      if (current(id)?.turns.at(-1)?.status === "running") cancelRequested.add(id);
-      const live = sessions.get(id);
-      await live?.session.cancel().catch(() => undefined);
-      // Un harnais qui ne confirme pas l’interruption ne doit pas laisser le tour bloqué.
-      setTimeout(() => {
-        if (current(id)?.turns.at(-1)?.status === "running") void finishTurn(id, "cancelled");
-      }, 4000);
+      // Comme OneApp : le tour est arrêté tout de suite et sa session fermée, sans attendre la confirmation du CLI.
+      const running = current(id)?.turns.at(-1)?.status === "running";
+      stopSession(id);
+      if (running) await finishTurn(id, "cancelled");
     },
 
     async answerApproval(id, approvalId, optionId) {
