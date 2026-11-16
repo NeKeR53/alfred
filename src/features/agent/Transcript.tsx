@@ -92,13 +92,35 @@ function duration(milliseconds: number): string {
       : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
 }
 
-/** Résumé d’un tour terminé, repris de `workSummary` de OneApp. */
+/** Temps écoulé d’un tour en cours, repris de `elapsedWorkTime` de OneApp : à la seconde, même au-delà d’une heure. */
+export function elapsedWorkTime(startedAt: number, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return seconds < 60
+    ? `${seconds} s`
+    : seconds < 3600
+      ? `${Math.floor(seconds / 60)} min ${seconds % 60} s`
+      : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min ${seconds % 60} s`;
+}
+
+/** Résumé d’un tour terminé, repris de `workSummary` de OneApp (« 0 outils appelés » compris). */
 export function turnSummary(turn: Turn): string {
   const count = turn.items.filter((item) => item.kind === "activity" && item.activityKind !== "analysis").length;
   const worked =
     turn.endedAt !== undefined ? `A travaillé pendant ${duration(turn.endedAt - turn.startedAt)}` : "Travail terminé";
-  if (count === 0) return `${worked} · aucun outil appelé`;
   return `${worked} · ${count} outil${count === 1 ? " appelé" : "s appelés"}`;
+}
+
+/**
+ * Réponse finale d’un tour terminé, comme `work` de OneApp : le dernier message non vide, même suivi d’activités. Elle
+ * reste visible sous le résumé ; le reste du tour se replie derrière lui.
+ */
+export function finalMessage(turn: Turn): Extract<TurnItem, { kind: "message" }> | undefined {
+  if (turn.status !== "done") return undefined;
+  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (item.kind === "message" && item.content.trim()) return item;
+  }
+  return undefined;
 }
 
 /** Statut de remise du message de l’utilisateur, repris de OneApp : envoyé dès que l’agent a répondu. */
@@ -223,7 +245,7 @@ function RunningWork({ startedAt, label }: { startedAt: number; label: string })
         <LoaderCircle size={14} className="is-spinning" aria-hidden="true" />
         {label}
       </span>
-      <span role="timer">Depuis {duration(now - startedAt)}</span>
+      <span role="timer">Depuis {elapsedWorkTime(startedAt, now)}</span>
       <span>
         Début à{" "}
         <time dateTime={new Date(startedAt).toISOString()}>
@@ -234,12 +256,13 @@ function RunningWork({ startedAt, label }: { startedAt: number; label: string })
   );
 }
 
-function runningLabel(turn: Turn, runtime: ConversationRuntime): string {
-  if (runtime.approvals.length || runtime.questions.length) return "Accord requis";
+/** État du travail en cours, repris de `currentWorkActivity` de OneApp. */
+export function runningLabel(turn: Turn, runtime: ConversationRuntime): string {
+  if (runtime.approvals.length) return "Autorisation requise";
   if (runtime.status === "connecting") return "Connexion en cours";
   const latest = turn.items.at(-1);
   if (latest?.kind === "message") return "Rédaction en cours";
-  if (latest?.kind === "activity" && latest.status === "running")
+  if (latest?.kind === "activity" && !["completed", "failed", "cancelled", "stopped"].includes(latest.status))
     return latest.activityKind === "analysis"
       ? "Réflexion en cours"
       : `Outil en cours : ${latest.title || "Exécution"}`;
@@ -429,13 +452,15 @@ const TurnView = memo(function TurnView({
   resend?: TurnActions["resend"];
   fork?: TurnActions["fork"];
 }) {
-  const blocks = useMemo(() => blocksOf(turn.items), [turn.items]);
-  const running = turn.status === "running";
-  // La réponse finale reste visible ; le travail qui la précède se replie derrière son résumé.
-  const lastBlock = blocks.at(-1);
-  const final = !running && lastBlock?.message !== undefined ? lastBlock : undefined;
-  const work = useMemo(() => (final ? blocks.slice(0, -1) : blocks), [blocks, final]);
-  const finalBlocks = useMemo(() => (final ? [final] : []), [final]);
+  // Comme OneApp, seul un tour terminé se replie derrière son résumé ; un tour en cours, arrêté ou en erreur montre
+  // tout son travail. La réponse finale reste visible sous le résumé.
+  const completed = turn.status === "done";
+  const final = useMemo(() => finalMessage(turn), [turn]);
+  const blocks = useMemo(
+    () => blocksOf(final ? turn.items.filter((item) => item !== final) : turn.items),
+    [turn.items, final],
+  );
+  const finalBlocks = useMemo<Block[]>(() => (final ? [{ key: final.id, message: final.content }] : []), [final]);
   const onResend = useMemo(
     () => (resend ? () => void resend(conversationId, turn.id).catch(report("Message non relancé")) : undefined),
     [resend, conversationId, turn.id],
@@ -453,23 +478,25 @@ const TurnView = memo(function TurnView({
   );
   const onForkUser = useMemo(() => (fork ? () => forkFrom("user") : undefined), [fork, forkFrom]);
   const onFork = useMemo(() => (fork ? () => forkFrom("reply") : undefined), [fork, forkFrom]);
-  const images = useMemo(() => (running ? [] : producedImages(turn)), [running, turn]);
-  const files = useMemo(() => (running ? [] : producedFiles(turn)), [running, turn]);
+  const images = useMemo(() => (completed ? producedImages(turn) : []), [completed, turn]);
+  const files = useMemo(() => (completed ? producedFiles(turn) : []), [completed, turn]);
   const entryProps = { cwd, onQuote, onFork, onOpenFile };
   return (
     <>
       <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onForkUser} />
       <li className="agent-chat__work">
-        {running ? (
+        {!completed ? (
           <>
             <ol className="agent-chat__work-entries">
               <Entries blocks={blocks} {...entryProps} />
             </ol>
-            {working ? <RunningWork startedAt={turn.startedAt} label={working} /> : null}
+            {working && turn.status === "running" && turn.endedAt === undefined ? (
+              <RunningWork startedAt={turn.startedAt} label={working} />
+            ) : null}
           </>
         ) : (
           <>
-            {work.length ? (
+            {blocks.length ? (
               <Disclosure
                 appearance="subtle"
                 lazy
@@ -477,12 +504,12 @@ const TurnView = memo(function TurnView({
                 label={<span>{turnSummary(turn)}</span>}
               >
                 <ol className="agent-chat__work-entries">
-                  <Entries blocks={work} {...entryProps} />
+                  <Entries blocks={blocks} {...entryProps} />
                 </ol>
               </Disclosure>
-            ) : turn.items.length || turn.status === "done" ? (
+            ) : (
               <div className="agent-chat__work-summary">{turnSummary(turn)}</div>
-            ) : null}
+            )}
             {final ? (
               <ol className="agent-chat__work-entries">
                 <Entries blocks={finalBlocks} timestamp={turn.endedAt} {...entryProps} />
@@ -498,7 +525,7 @@ const TurnView = memo(function TurnView({
             Exécution arrêtée · Travail non terminé
           </p>
         ) : last && turn.error ? (
-          <div className="agent-chat__recovery" role="alert">
+          <div className="agent-chat__recovery">
             <p>{turn.error}</p>
             <Button onClick={onRetry}>Réessayer le message</Button>
           </div>
@@ -535,14 +562,55 @@ function focusComposer(from: HTMLElement | null) {
   field?.focus();
 }
 
+/**
+ * Question de l’agent ou autorisation attendue, reprise de OneApp, où elle se pose dans le pied de la page, au-dessus
+ * de la saisie (`agents-page__question`). Rien quand aucune réponse n’est attendue.
+ */
+export function ConversationQuestion({
+  conversation,
+  runtime,
+  onOther,
+}: {
+  conversation: Conversation;
+  runtime: ConversationRuntime;
+  /** « Autre réponse… » : renvoie au champ de saisie. */
+  onOther: () => void;
+}) {
+  const send = useAgents((state) => state.send);
+  const answerApproval = useAgents((state) => state.answerApproval);
+  const question = agentQuestion(conversation, runtime);
+  const permission = runtime.approvals[0];
+  if (!question && !permission) return null;
+  const { id } = conversation;
+  return (
+    <AgentQuestionCard
+      key={`${id}:${conversation.turns.at(-1)?.id ?? ""}:${permission?.id ?? ""}`}
+      question={question}
+      permission={permission as ApprovalRequest | undefined}
+      disabled={!permission && runtime.status !== "idle"}
+      onAnswer={(text) => void send(id, { text, attachments: [], contexts: [] }).catch(report("Message non envoyé"))}
+      onRespond={(optionId) =>
+        permission && void answerApproval(id, permission.id, optionId).catch(report("Réponse non transmise"))
+      }
+      onOther={onOther}
+    />
+  );
+}
+
 /** Relevé d’une conversation : chaque tour, puis les cartes qui attendent une réponse de l’utilisateur. */
 export function Transcript({
   conversation,
   runtime,
   header,
+  dockQuestion = true,
 }: {
   conversation: Conversation;
   runtime: ConversationRuntime;
+  /**
+   * Carte de question collée en bas du relevé. `false` quand la page pose `ConversationQuestion` dans son pied, au-dessus
+   * de la saisie, comme OneApp.
+   */
+  dockQuestion?: boolean;
   /**
    * Ligne au-dessus du relevé, dans la colonne défilante. Quand elle est demandée, c’est l’en-tête de OneApp
    * (« Depuis {origine} · {date} », modèle en infobulle) qui s’affiche, quel que soit le contenu passé.
@@ -552,8 +620,6 @@ export function Transcript({
   const scroller = useRef<HTMLElement>(null);
   const pinned = useRef(true);
   const retry = useAgents((state) => state.retry);
-  const send = useAgents((state) => state.send);
-  const answerApproval = useAgents((state) => state.answerApproval);
   const resend = useAgents((state) => (state as unknown as TurnActions).resend);
   const fork = useAgents((state) => (state as unknown as TurnActions).fork);
   const sent = useAgents((state) => (state as unknown as TurnActions).follow?.[conversation.id] ?? 0);
@@ -571,25 +637,25 @@ export function Transcript({
   const visibleTurns = complete ? turns : turns.slice(-RECENT_TURNS);
 
   const lastTurn = turns.at(-1);
-  const lastItem = lastTurn?.items.at(-1);
   const question = agentQuestion(conversation, runtime);
   const permission = runtime.approvals[0];
-  const growth = `${visibleTurns.length}:${lastTurn?.items.length}:${lastItem?.kind === "message" ? lastItem.content.length : 0}:${runtime.approvals.length}:${runtime.questions.length}:${question ? 1 : 0}`;
 
-  // Après un envoi de l’utilisateur, le relevé se recolle en bas, même s’il était remonté.
+  // Comme OneApp : une conversation ouverte part du bas, et un envoi de l’utilisateur l’y recolle, même s’il était
+  // remonté.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: la conversation ouverte et l’envoi déclenchent le recollage.
   useLayoutEffect(() => {
-    if (!sent) return;
     pinned.current = true;
     const element = scroller.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [sent]);
+  }, [conversationId, sent]);
 
-  // Le relevé suit la réponse tant que l’utilisateur est resté en bas ; s’il remonte, on ne le ramène pas.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `growth` résume ce qui allonge le relevé.
+  // Le relevé suit chaque changement de la conversation (fragment, activité, fin du tour) tant que l’utilisateur est
+  // resté en bas ; s’il remonte, on ne le ramène pas.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ces valeurs sont ce qui change la hauteur du relevé.
   useLayoutEffect(() => {
     const element = scroller.current;
     if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [growth]);
+  }, [turns, complete, runtime.approvals, runtime.questions, runtime.status, question]);
 
   const onQuote = useCallback(
     (text: string) => window.dispatchEvent(new CustomEvent(QUOTE_EVENT, { detail: { conversationId, text } })),
@@ -617,7 +683,7 @@ export function Transcript({
       className="agents-page__transcript"
       // biome-ignore lint/a11y/noNoninteractiveTabindex: la conversation défilante doit rester accessible au clavier.
       tabIndex={0}
-      aria-label={`Conversation : ${conversation.title}`}
+      aria-label={`Conversation de ${conversation.title}`}
       onScroll={(event) => {
         const element = event.currentTarget;
         pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
@@ -652,22 +718,11 @@ export function Transcript({
             {runtime.questions.map((placement) => (
               <QuestionCard key={placement.requestId} conversation={conversationId} question={placement} />
             ))}
-            {question || permission ? (
+            {dockQuestion && (question || permission) ? (
               <div className="agent-chat__question-dock">
-                <AgentQuestionCard
-                  key={`${conversationId}:${lastTurn?.id ?? ""}:${permission?.id ?? ""}`}
-                  question={question}
-                  permission={permission as ApprovalRequest | undefined}
-                  disabled={!permission && runtime.status !== "idle"}
-                  onAnswer={(text) =>
-                    void send(conversationId, { text, attachments: [], contexts: [] }).catch(
-                      report("Message non envoyé"),
-                    )
-                  }
-                  onRespond={(optionId) =>
-                    permission &&
-                    void answerApproval(conversationId, permission.id, optionId).catch(report("Réponse non transmise"))
-                  }
+                <ConversationQuestion
+                  conversation={conversation}
+                  runtime={runtime}
                   onOther={() => focusComposer(scroller.current)}
                 />
               </div>

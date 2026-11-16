@@ -73,7 +73,12 @@ export function MessageActions({
           onClick={() =>
             void navigator.clipboard.writeText(content).then(
               () => notify({ title: "Message copié", tone: "success" }),
-              () => notify({ title: "Copie impossible", tone: "error" }),
+              (error: unknown) =>
+                notify({
+                  title: "Message",
+                  description: error instanceof Error ? error.message : "L’action a échoué.",
+                  tone: "error",
+                }),
             )
           }
         >

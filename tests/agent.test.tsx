@@ -42,7 +42,7 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
   expect(await screen.findByText("Je regarde ce que contient l’espace.")).toBeVisible();
   const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
   expect(within(approval).getByText("ls modules")).toBeVisible();
-  expect(screen.getByText("Accord requis")).toBeVisible();
+  expect(screen.getByText("Autorisation requise")).toBeVisible();
   await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
   await waitFor(() => expect(backend.agent.approvalAnswer).toBe("allow"));
   const response = backend.agent.written.find((message) => message.type === "control_response") as {

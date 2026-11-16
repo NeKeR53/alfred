@@ -27,7 +27,7 @@ export function ReferencePills({
     const offset = Math.max(cursor, Math.min(text.length, reference.offset));
     if (offset > cursor) content.push(text.slice(cursor, offset));
     content.push(
-      <span className="agent-chat__reference-pill" key={reference.id} title={reference.description ?? reference.path}>
+      <span className="agent-chat__reference-pill" key={reference.id} title={reference.description}>
         {referenceDisplayName(reference)}
       </span>,
     );
