@@ -21,8 +21,15 @@ import { NativeSelect } from "../primitives/native-select";
 import { Radio } from "../primitives/radio";
 import { Switch } from "../primitives/switch";
 import { Textarea } from "../primitives/textarea";
+import { useInPage } from "./pageScope";
 
-type FieldContextValue = { controlId: string; messageId?: string; invalid: boolean };
+type FieldContextValue = { controlId: string; messageId?: string; invalid: boolean; stacked: boolean };
+
+/**
+ * Largeur d’un champ : `auto` celle de son contenu (liste déroulante), `xs` 96 px (un nombre, un code), `sm` 160,
+ * `md` 240, `lg` 360, `full` toute la place. Jamais plus large que son conteneur.
+ */
+export type ControlWidth = "auto" | "xs" | "sm" | "md" | "lg" | "full";
 const FormFieldContext = createContext<FieldContextValue | undefined>(undefined);
 
 /** Champ englobant (`FormField`) : identifiant à donner au contrôle, message à lui relier, invalidité. */
@@ -34,15 +41,34 @@ function descriptionIds(existing: string | undefined, messageId: string | undefi
   return [existing, messageId].filter(Boolean).join(" ") || undefined;
 }
 
-export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function TextInput(
-  { className, id, "aria-invalid": invalid, "aria-describedby": describedBy, ...props },
+export type TextInputProps = InputHTMLAttributes<HTMLInputElement> & {
+  /**
+   * Dans une page : `full` par défaut sous un `FormField` empilé (le champ suit la colonne du formulaire), `md`
+   * (240 px) ailleurs (barre d’outils, ligne de réglage, `Row`). Hors page, `full`.
+   */
+  width?: ControlWidth;
+};
+
+/** Largeur effective d’un champ texte : celle demandée, sinon celle du contexte. */
+function useTextWidth(width: ControlWidth | undefined): ControlWidth {
+  const inPage = useInPage();
+  const field = useContext(FormFieldContext);
+  if (width) return width;
+  if (!inPage || field?.stacked) return "full";
+  return "md";
+}
+
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
+  { className, id, width, "aria-invalid": invalid, "aria-describedby": describedBy, ...props },
   ref,
 ) {
   const field = useContext(FormFieldContext);
+  const resolved = useTextWidth(width);
   return (
     <Input
       {...props}
       ref={ref}
+      data-width={resolved}
       id={id ?? field?.controlId}
       aria-invalid={invalid ?? (field?.invalid || undefined)}
       aria-describedby={descriptionIds(describedBy, field?.messageId)}
@@ -51,26 +77,32 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
   );
 });
 
-export const SelectControl = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
-  function SelectControl(
-    { className, id, "aria-invalid": invalid, "aria-describedby": describedBy, children, ...props },
-    ref,
-  ) {
-    const field = useContext(FormFieldContext);
-    return (
-      <NativeSelect
-        {...props}
-        ref={ref}
-        id={id ?? field?.controlId}
-        aria-invalid={invalid ?? (field?.invalid || undefined)}
-        aria-describedby={descriptionIds(describedBy, field?.messageId)}
-        className={cn("ui-select", className)}
-      >
-        {children}
-      </NativeSelect>
-    );
-  },
-);
+export type SelectControlProps = SelectHTMLAttributes<HTMLSelectElement> & {
+  /** Dans une page : `auto` par défaut, la largeur de l’option la plus longue (120 px au moins). Hors page, `full`. */
+  width?: ControlWidth;
+};
+
+export const SelectControl = forwardRef<HTMLSelectElement, SelectControlProps>(function SelectControl(
+  { className, id, width, "aria-invalid": invalid, "aria-describedby": describedBy, children, ...props },
+  ref,
+) {
+  const field = useContext(FormFieldContext);
+  const inPage = useInPage();
+  const resolved = width ?? (inPage ? "auto" : "full");
+  return (
+    <NativeSelect
+      {...props}
+      ref={ref}
+      width={resolved}
+      id={id ?? field?.controlId}
+      aria-invalid={invalid ?? (field?.invalid || undefined)}
+      aria-describedby={descriptionIds(describedBy, field?.messageId)}
+      className={cn("ui-select", className)}
+    >
+      {children}
+    </NativeSelect>
+  );
+});
 
 export type TextAreaVariant = "default" | "composer" | "inline";
 export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -156,7 +188,7 @@ export function FormField({
   const descriptionId = error || hint ? (messageId ?? `${generatedId}-message`) : undefined;
   const invalid = Boolean(error);
   return (
-    <FormFieldContext.Provider value={{ controlId, messageId: descriptionId, invalid }}>
+    <FormFieldContext.Provider value={{ controlId, messageId: descriptionId, invalid, stacked: layout === "stacked" }}>
       <Field
         data-invalid={invalid || undefined}
         data-compound={compound || undefined}

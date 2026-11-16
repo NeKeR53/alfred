@@ -3,8 +3,8 @@
  * rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur d’exécution).
  */
 
-import { emitToShell, onShellEvent, type PageContext, request } from "@alfred/sdk";
-import { EmptyState } from "@alfred/ui";
+import { emitToShell, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
+import { EmptyState, type FrameServices, FrameServicesContext } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { frameShortcut, isShellShortcut } from "../sdk/protocol";
@@ -86,6 +86,31 @@ class Boundary extends Component<{ children: ReactNode }, { error?: unknown }> {
   }
 }
 
+/** Services des gabarits de `@alfred/ui`, branchés sur le pont : un échec d’appel n’interrompt jamais la page. */
+const quiet = (call: () => Promise<unknown>) => {
+  call().catch(() => undefined);
+};
+const services: FrameServices = {
+  notify: (options) => quiet(() => shell.notify(options)),
+  publish: (selection) => quiet(() => shell.publish(selection)),
+  setPanelVisible: (visible) => quiet(() => shell.setPanelVisible(visible)),
+  openExternal: (url) => quiet(() => shell.openExternal(url)),
+  send: (message) => quiet(() => shell.send(message)),
+  onPeer: (handler) => onShellEvent("peer", handler),
+  onSelection: (handler) => {
+    let active = true;
+    void request<PageContext>("shell.context").then(
+      (context) => active && handler(context.selection),
+      () => undefined,
+    );
+    const stop = onShellEvent("context", (payload) => handler((payload as PageContext).selection));
+    return () => {
+      active = false;
+      stop();
+    };
+  },
+};
+
 function Host() {
   const [loaded, setLoaded] = useState<{ Page?: ComponentType; error?: unknown }>();
 
@@ -120,9 +145,11 @@ function Host() {
   }
   const { Page } = loaded;
   return (
-    <Boundary>
-      <Page />
-    </Boundary>
+    <FrameServicesContext.Provider value={services}>
+      <Boundary>
+        <Page />
+      </Boundary>
+    </FrameServicesContext.Provider>
   );
 }
 

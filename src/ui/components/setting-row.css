@@ -48,7 +48,11 @@
   min-width: 0;
 }
 /* Un champ ou une liste à droite garde une largeur confortable. */
-.setting-row__control > [data-slot="native-select-wrapper"],
+/* Une liste à droite s’aligne sur la colonne des contrôles : 240 px, comme un champ. */
+.setting-row__control > [data-slot="native-select-wrapper"][data-width="auto"] {
+  width: min(240px, 36vw);
+  min-width: 0;
+}
 .setting-row__control > .setting-row__field {
   width: min(240px, 36vw);
 }
@@ -82,7 +86,7 @@
   justify-content: flex-end;
   gap: 8px;
 }
-.setting-row__control > .ui-input,
-.setting-row__control > form > .ui-input {
+.setting-row__control > .ui-input:not([data-width]),
+.setting-row__control > form > .ui-input:not([data-width]) {
   width: min(240px, 36vw);
 }

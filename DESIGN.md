@@ -1,122 +1,277 @@
 # Système de design d’Alfred
 
-Ce document s’adresse à l’agent qui écrit une page, un panneau de droite ou un onglet de Réglages. Il dit quoi utiliser et quoi ne jamais faire pour que toutes les pages se ressemblent, quel que soit l’agent qui les écrit. Il décrit Alfred, pas un espace en particulier, et il est recopié en lecture seule dans chaque espace.
+Ce document s’adresse à l’agent qui écrit une page, un panneau de droite ou un onglet de Réglages. Il est recopié en lecture seule dans chaque espace.
 
-Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Une page montre d’abord ce qui demande une action, puis la preuve et le détail. Ce qu’Alfred n’est pas : un tableau de bord décoratif, un mur de cartes identiques, des métriques sans action, des dégradés, des effets de verre, des icônes d’ornement.
+**Vous ne dessinez pas : vous décrivez.** Une page dit quelles données elle montre, de quel type elles sont et quelles actions l’utilisateur peut faire. Un gabarit de `@alfred/ui` décide de tout le reste : la barre d’outils, la place et la forme de chaque bouton (texte, icône ou menu « ⋯ »), le tableau, le format des dates et des montants, les champs d’un formulaire et leur largeur, les états de chargement, d’absence et d’erreur, les confirmations et les notifications. Deux agents qui décrivent la même chose obtiennent la même page, au pixel près.
 
-Il ne décrit que les composants et les props de `@alfred/ui`. Le transpileur ne vérifie pas les types : une prop inventée est ignorée en silence, un composant inexistant fait échouer la page.
+Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Ce qu’Alfred n’est pas : un tableau de bord décoratif, un mur de cartes identiques, des métriques sans action, des dégradés, des effets de verre, des icônes d’ornement.
+
+Le transpileur ne vérifie pas les types : une prop inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne les gabarits ; chaque remarque se corrige.
 
 ## 1. Règles non négociables
 
-1. **Imports.** Une page n’importe que `react`, `lucide-react`, `@alfred/ui`, `@alfred/sdk` et les fichiers de son module par chemin relatif (`./…`). Tout autre import est refusé.
-2. **Racine.** Le fichier exporte son composant par défaut (`export default function …`), et ce composant rend `Page` à la racine dans chacun de ses états.
-3. **Aucun style propre.** Ni attribut `style`, ni balise `<style>`, ni `className`, même sur les composants qui acceptent ces props. Une page ne fixe ni couleur, ni taille de police, ni rayon, ni ombre, ni marge : elle compose les composants de `@alfred/ui` et règle leurs props (`gap`, `tone`, `variant`, `size`, `width`).
-4. **Aucun doublon de la coquille.** Le titre de la section, les onglets, le bouton du panneau, la navigation et les notifications sont dessinés par Alfred.
-5. **Le sens passe par les props et par le texte.** Un état s’exprime par `tone` ou `variant` et par un libellé, jamais par une couleur seule.
-6. **Tous les états sont couverts.** Chargement, absence de données, erreur et succès ont chacun un rendu prévu (section 9).
-7. **Une action principale par groupe.** Un seul `Button variant="primary"` par barre d’outils, formulaire ou état vide. Toute action destructrice est confirmée.
-8. **Français.** Les textes affichés sont en français ; les noms du code restent en anglais ou suivent le vocabulaire du module.
-9. **Un manque se signale.** Si aucun composant ne convient, composer ceux qui existent ou le dire à l’utilisateur. Ne jamais contourner par du HTML stylé.
+1. **Un gabarit d’abord.** Une liste d’objets est une `CollectionPage`, un panneau de droite est un `DetailPanel`, un onglet de Réglages est une `SettingsPage`, une saisie est un `openForm`, une confirmation est une `Action` `danger` (section 2). `Page` composée à la main seulement quand aucun gabarit ne convient (section 5).
+2. **Des actions, pas des boutons.** Toute action se décrit par une `Action` (`{ label, icon, onClick, primary, danger }`, section 3) passée à un gabarit, à `Page actions` ou à `Section actions`. La page ne pose ni `Button`, ni `IconButton`, ni menu dans une barre, un en-tête ou une ligne : le gabarit choisit.
+3. **Imports.** Une page n’importe que `react`, `lucide-react`, `@alfred/ui`, `@alfred/sdk`, ses librairies et les fichiers de son module par chemin relatif (`./…`).
+4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`), qui rend un gabarit (ou `Page`) à la racine, dans tous ses états : le gabarit gère lui-même chargement, vide et erreur.
+5. **Aucun style propre.** Ni `style`, ni `<style>`, ni `className`, ni balise HTML (`<div>`, `<span>`, `<button>`…). Une page ne fixe ni couleur, ni taille, ni marge, ni largeur : elle règle les props des composants.
+6. **Aucun doublon de la coquille.** Le titre de la section, les onglets, le bouton du panneau, la navigation et les notifications sont dessinés par Alfred : la page ne commence pas par un titre.
+7. **Le sens passe par le type et le texte.** Un état est une valeur `status` avec son libellé et son ton, jamais une couleur.
+8. **Français.** Les textes affichés sont en français, avec la typographie française (section 8). Les noms du code suivent le vocabulaire du module.
+9. **Un manque se signale.** Si aucun gabarit ni composant ne convient, le dire à l’utilisateur. Ne jamais contourner par du HTML stylé.
 
-La règle 3 est absolue : l’utilisateur règle le mode clair ou sombre, l’accent, l’icône et la couleur des entrées du menu, et les composants suivent ces réglages. Une couleur écrite dans une page est illisible dans l’un des thèmes, une marge locale rompt l’alignement, et une classe inventée ne correspond à aucune règle de la seule feuille chargée par le cadre.
+La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’accent, l’icône et la couleur des entrées du menu, et les composants suivent ces réglages. Une couleur écrite dans une page est illisible dans l’un des thèmes, une marge locale rompt l’alignement, une classe inventée ne correspond à aucune règle.
 
-Les seules balises HTML admises sont celles qui n’ont ni apparence propre ni composant équivalent : `<form>` (section 7), `<option>` et `<optgroup>` dans un `SelectControl`, et les fragments. Tout texte passe par `Text` ou `Heading`.
-
-## 2. La coquille et les trois gabarits
+## 2. La coquille et le choix du gabarit
 
 ```
 ┌───────────┬──────────────────────────────────────────────────────┐
 │ Espace    │ Titre de la section    [Onglet 1|Onglet 2] cloche  ▯ │ barre du haut : 44 px
 │ Rechercher├───────────────────────────────────┬──────────────────┤
-│ Section A │                                   │                  │
-│ Section B │  page de l’onglet actif           │ panneau de droite│
-│ …         │                                   │ 280 à 900 px     │
-│ Agent     │                                   │ (380 par défaut) │
-│ Réglages  │                                   │                  │
+│ Section A │ [recherche][filtre]   ⟳ ✎ ⋯ [Nouveau] │ Nom    [État] ✎ ⋯│ barre de la page / en-tête de l’objet
+│ Section B ├───────────────────────────────────┤ Fiche            │
+│ …         │  tableau                          │ Blocs            │
+│ Agent     │                                   │ panneau de droite│
+│ Réglages  │                                   │ 280 à 900 px     │
 └───────────┴───────────────────────────────────┴──────────────────┘
-  240 px, ou 52 px replié
 ```
 
-- Une entrée du menu de gauche ouvre une **section**, dont les pages sont les **onglets** de la barre du haut (aucun pour une seule page) : un groupe segmenté calé à droite, comme les rubriques des Réglages de OneApp.
-- Chaque page peut déclarer **un** panneau de droite. Le bouton en bout de barre du haut l’affiche ou le masque ; l’utilisateur le redimensionne de 280 à 900 px, sans dépasser 70 % de la largeur.
-- L’**Agent** et les **Réglages** sont ancrés en bas du menu, l’Agent juste au-dessus ; une page peut s’ajouter aux onglets des Réglages.
-- Le placement d’une page, son titre et l’icône de son entrée de menu se déclarent hors du fichier de la page : voir le guide de l’espace.
+- Une entrée du menu de gauche ouvre une **section**, dont les pages sont les **onglets** de la barre du haut.
+- Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche, masque et redimensionne (280 à 900 px).
+- Une page peut s’ajouter aux onglets des **Réglages**.
+- Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
+- Une page est affichée dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Une modale, un menu ou une infobulle restent dans son cadre. `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas.
 
-Une page est un fichier TSX affiché dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Conséquences pour le design :
+Choisir le gabarit d’après ce que la page montre, sans exception :
 
-- Le titre de la section est déjà dans la barre du haut : la page ne commence pas par un titre qui le répète.
-- Une modale, un menu ou une infobulle ouverts par la page restent à l’intérieur de son cadre.
-- `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas. Utiliser `useConfirm`, et `Link` (dans une phrase) ou `Button` (une action) qui appelle `shell.navigate("module/page")` pour ouvrir une autre page ou `shell.openExternal(url)` pour une adresse web.
-- Une page et son panneau de droite communiquent par la sélection publiée (section 8) et, pour le reste, par `shell.send(message)` d’un côté et `usePeerMessage(handler)` de l’autre (`@alfred/sdk`).
-- La largeur disponible varie avec la fenêtre, le menu et le panneau : rien ne doit dépendre d’une largeur fixe.
+| La page montre… | Gabarit | Placement |
+|---|---|---|
+| Des objets du même genre (tâches, contacts, factures, courriels, fichiers), à chercher, filtrer, ouvrir | `CollectionPage` (4.1) | Onglet d’une section |
+| Le détail de l’objet sélectionné dans la liste de sa page | `DetailPanel` (4.2) | Panneau de droite (`{ "kind": "panel" }`) |
+| Des préférences du module | `SettingsPage` (4.3) | Onglet des Réglages (`{ "kind": "settings" }`) |
+| Une saisie (créer, modifier, renommer, inviter) | `openForm(…)` (4.4), appelé par une `Action` | Modale au-dessus de la page qui l’ouvre |
+| Une confirmation avant d’agir | `Action` avec `danger` et `confirm` (3), ou `confirmAction(…)` | Modale |
+| Autre chose : un texte à lire (note, courriel), une synthèse, un éditeur, un graphique | `Page` composée (section 5) | Onglet |
 
-| Gabarit | Racine | Largeur | Contenu et densité |
+Une page qui liste ET montre le détail est une `CollectionPage` avec `panel`, plus un `DetailPanel` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
+
+## 3. Les actions
+
+Une `Action` décrit ce que fait un bouton ; le gabarit qui la reçoit en fait un bouton principal, une icône avec infobulle ou une entrée du menu « ⋯ ».
+
+```ts
+interface Action {
+  label: string;          // verbe et objet : « Nouvelle tâche », « Modifier », « Exporter en CSV »
+  icon?: ActionIcon;      // icône Lucide, sans l’instancier : icon: Pencil
+  onClick: () => unknown | Promise<unknown>;
+  primary?: boolean;      // l’action principale de l’endroit
+  danger?: boolean;       // supprimer, révoquer, vider
+  confirm?: string;       // question qui nomme l’objet : « Supprimer la tâche « Relancer le client » ? »
+  confirmMessage?: string;// conséquence : « Cette action est définitive. »
+  success?: string;       // notification après réussite : « Tâche supprimée »
+  disabled?: boolean;
+  hidden?: boolean;       // l’action n’existe pas dans cet état (Terminer une tâche terminée)
+}
+```
+
+**Ce que le gabarit fait d’une action** — la page n’a aucun de ces choix à faire :
+
+| Action | Dans une barre de page, un en-tête d’objet | Dans une section | Dans une ligne de tableau |
 |---|---|---|---|
-| Page (onglet d’une section) | `<Page>` pour un tableau ou une vue dense ; `<Page width="text">` pour de la lecture ou un formulaire | Toute la place restante ; `text` limite chaque bloc à 760 px | `PageToolbar` (40 px) en option, puis le contenu. Une liste se pose directement dans `Page`. |
-| Panneau de droite | `<Page>` | 280 à 900 px : concevoir pour 280 px | Une seule colonne : `Heading`, `KeyValueList`, `Section`, `EmptyState size="compact"`, `StatusBadge size="compact"`. Ni `PageToolbar`, ni `Grid`, ni tableau à plus de deux colonnes. Il lit la sélection de sa page (section 8). |
-| Onglet de Réglages | `<Page width="text">` | 760 px au plus | Une `Section` par sujet, et dedans des lignes `SettingRow` réunies dans `SettingRows` : titre et explication à gauche, contrôle à droite, un trait fin entre deux lignes, comme les Réglages intégrés. Un réglage s’applique dès qu’il change ; une saisie libre porte ses boutons sur sa ligne. Ni `FormField` empilés ni `FormActions` en bas de page (exemple en 12.3). |
+| `primary` | Bouton plein en texte, en dernier à droite ; revient dans l’état vide | Bouton plein en texte | Ignoré : icône ou menu |
+| Avec `icon` | Icône avec infobulle (`label`), trois au plus | Icône, deux au plus | Icône, deux au plus, visible au survol |
+| Sans `icon`, ou au-delà du nombre d’icônes | Entrée du menu « ⋯ » | Menu « ⋯ » | Menu « ⋯ » |
+| `danger` | Entrée rouge du menu « ⋯ », sous « Actions définitives », confirmée | Idem | Idem |
 
-`Page` fixe la marge intérieure (16 px), l’espace entre ses enfants directs (24 px), le fond et le défilement.
+**Ce que le gabarit fait quand on clique :** confirmation si `danger` ou `confirm` (le bouton de la confirmation reprend `label`) ; indicateur d’attente tant que la promesse de `onClick` n’est pas résolue ; notification `success` après réussite ; notification d’échec « « Modifier » n’a pas abouti » avec le message de l’erreur, sans rien faire d’autre ; rechargement des données du gabarit et de l’autre cadre (la liste de la page après une action du panneau, le panneau après une action de la page). Une action qui ouvre `openForm` laisse le formulaire faire tout cela.
 
-## 3. Couleurs et thèmes
+Règles d’écriture :
 
-La palette est restreinte : des neutres chauds, un seul accent, et trois couleurs sémantiques réservées aux états. Alfred suit le thème du système ou le choix clair ou sombre de l’utilisateur, et applique lui-même l’accent choisi. Une page ne lit ni n’écrit aucun jeton.
+- **Une seule action `primary` par endroit** : la création (« Nouvelle tâche ») dans une liste, l’action attendue dans un en-tête. Les autres n’en ont pas.
+- **Une icône pour toute action courante**, toujours la même : `Pencil` modifier, `Trash2` supprimer, `Copy` copier ou dupliquer, `Download` exporter ou télécharger, `Upload` importer, `ExternalLink` ouvrir hors d’Alfred, `Send` envoyer, `Archive` archiver, `Check` terminer ou valider, `RotateCcw` rouvrir, `Share2` partager, `Link` copier le lien, `RefreshCw` actualiser (déjà dans `CollectionPage`), `Settings` réglages, `Filter` filtrer, `Plus` ajouter dans une section. Une action rare ou longue à nommer n’a pas d’icône : elle va dans « ⋯ ».
+- **Toute action destructrice est `danger`**, avec un `confirm` qui nomme l’objet et un `success`. Jamais d’icône `Trash2` hors de `danger`.
+- **`label` est complet et court** : verbe à l’infinitif et objet si le contexte ne le donne pas (section 8). Le gabarit le complète pour les lecteurs d’écran (« Modifier : Relancer le client »).
+- **`onClick` rend la promesse de l’écriture** (`() => db.execute(…)`) pour que l’attente, l’échec et le rechargement soient gérés. Il ne notifie pas lui-même, n’attrape pas l’erreur.
 
-Jetons, pour comprendre les composants : `--color-bg` (fond de page, de champ, de modale), `--color-surface` et `--color-surface-strong` (barre d’outils, en-tête de tableau, survol, élément enfoncé, badge neutre), `--color-ink` (texte et bouton principal), `--color-muted` (métadonnées, aides, icônes au repos), `--color-primary` et `--color-primary-strong` (l’accent : focus, sélection, choix actif, jamais une décoration), `--color-success`, `--color-warning`, `--color-danger` et leurs variantes `-ink` et `-bg` (états), `--line` et `--control-border` (séparateurs ; contour des champs à 3:1 au moins).
+```tsx
+const actions: Action[] = [
+  { label: "Nouvelle tâche", primary: true, onClick: () => openForm(formulaireTache) },
+  { label: "Exporter en CSV", icon: Download, onClick: exporter },
+  { label: "Importer un fichier…", onClick: importer },
+  {
+    label: "Supprimer les tâches terminées",
+    danger: true,
+    confirm: "Supprimer les tâches terminées ?",
+    confirmMessage: "Cette action est définitive.",
+    success: "Tâches terminées supprimées",
+    onClick: () => db.execute("DELETE FROM suivi_taches WHERE etat = 'terminee'"),
+  },
+];
+```
 
-Le sens passe toujours par une prop, accompagnée d’un texte :
+## 4. Gabarits
 
-| Ce qu’il faut dire | Comment |
+Tous s’importent de `@alfred/ui`. Ils rendent eux-mêmes `Page` et tous les états ; la page ne les enveloppe dans rien.
+
+### 4.1 `CollectionPage` — une liste d’objets
+
+Barre (recherche, filtres, vues, Actualiser, actions), tableau dense trié au clic, actions de ligne, état vide avec l’action principale, chargement, erreur avec « Réessayer », « Aucun résultat » avec « Effacer les filtres », lien avec le panneau de détail. Exemple complet en 12.1.
+
+| Prop | Rôle |
 |---|---|
-| État d’un objet | `<StatusBadge tone="neutral \| success \| warning \| danger">Libellé</StatusBadge>` |
-| Pastille devant un libellé d’état | `<StatusDot tone="success \| warning \| danger \| neutral \| pending" />` |
-| Texte secondaire ou d’état | `<Text tone="default \| muted \| success \| warning \| danger">` |
-| Message persistant | `<FeedbackBanner tone="danger \| warning \| info">` |
-| Notification | `shell.notify({ tone: "info" \| "success" \| "warning" \| "error" })` |
-| Action principale, action destructrice | `<Button variant="primary">` ; `<Button variant="danger">` ou `<IconButton tone="danger">` |
+| `label: string` | Nom de la collection : « Tâches ». |
+| `load: () => Promise<Row[]>` | Charge toutes les lignes (`db.query`, `functions.call`, un client). Rappelé par Actualiser et après chaque écriture. |
+| `deps?: unknown[]` | Relance `load` quand ces valeurs changent. |
+| `rowKey: (row) => string \| number` | Identifiant stable ; c’est lui que le panneau reçoit. |
+| `columns: Column[]` | Colonnes, l’identité de l’objet en premier ; cinq au plus (voir ci-dessous). |
+| `emptyTitle: string` | « Aucune tâche » (jamais « Pas encore de… »). |
+| `emptyDescription?: string` | À quoi sert la page, une phrase. |
+| `search?: { label; text? }` | Recherche : `label` « Rechercher une tâche » ; `text(row)` le texte où chercher (par défaut, toutes les colonnes). Toujours la fournir au-delà de dix lignes possibles. |
+| `filters?: CollectionFilter[]` | Deux au plus : `{ label: "État", all: "Tous les états", value: (row) => row.etat, options: [{ value, label }] }`. Rendus en listes à la largeur de leur contenu. |
+| `views?: { label; items: { id, label, test(row) }[] }` | Deux à quatre vues prédéfinies (« Ouvertes », « Toutes »), en boutons segmentés ; la première est active. |
+| `actions?: Action[]` | Actions sur toute la collection ; la `primary` revient dans l’état vide. |
+| `rowActions?: (row) => Action[]` | Actions d’une ligne. |
+| `panel?: boolean` | La page a un panneau `DetailPanel` : un clic sur une ligne la sélectionne, publie `{ id: rowKey(row) }` et ouvre le panneau. |
+| `onOpen?: (row) => void` | Autre façon d’ouvrir une ligne (`shell.navigate(…)`) ; remplace `panel`. |
+| `banner?: ReactNode` | Un `FeedbackBanner` qui dure (prérequis manquant, données dégradées). |
 
-L’échec s’écrit `danger` dans tout `@alfred/ui` (`FeedbackBanner` accepte aussi `error`, son synonyme) ; seul `shell.notify` l’écrit `error`. Choisir le ton selon la gravité, jamais selon la couleur souhaitée. Les huit teintes (`steel`, `blue`, `violet`, `pink`, `red`, `orange`, `green`, `teal`) servent à la couleur de chaque entrée du menu, qui ne teinte que son icône, et à l’accent choisi par l’utilisateur, qu’Alfred applique aux jetons primaires avec un contraste d’au moins 4,5:1 : une page ne les nomme jamais.
+`Column<Row>` : `{ key, header, type?, value?, statuses?, currency? }`. `key` est lu dans la ligne, sauf si `value(row)` est donné ; `header` est court (« Échéance ») ; `type` (section 4.5) fixe le format, l’alignement, la largeur et le tri. Pas de largeur, pas de rendu personnalisé : une donnée qui ne rentre dans aucun type se convertit en texte dans `value`.
 
-## 4. Typographie, espacement, densité
+### 4.2 `DetailPanel` — le panneau de droite
 
-Alfred est une application de bureau dense, utilisée à la souris et au clavier. La police et les tailles sont fixées par les composants.
+Il lit lui-même la sélection publiée par la `CollectionPage` de sa page, charge l’objet et couvre les quatre états (rien de sélectionné, chargement, erreur, introuvable). En tête, le nom, l’état et les actions en icônes ; dessous, la fiche, puis les blocs. Exemple complet en 12.2.
 
-Tailles : 12 px pour les métadonnées, aides et en-têtes de tableau (`<Text size="meta">`) ; 13 px pour le texte courant, les cellules, champs et boutons (`<Text>`, `<Heading level={3}>` en gras) ; 14 px pour un titre de section ou de panneau (`<Section title>`, `<Heading level={2}>`, `<Text size="panel">`) ; 18 px pour le nom de l’objet auquel une page entière est consacrée (`<Heading level={1}>`, une fois par page au plus).
+| Prop | Rôle |
+|---|---|
+| `load: (id) => Promise<Item \| null \| undefined>` | Charge l’objet dont l’identifiant a été publié ; `null` ou `undefined` s’il n’existe plus. |
+| `emptyTitle: string` | « Aucune tâche sélectionnée ». |
+| `title: (item) => string` | Le nom de l’objet. |
+| `subtitle?: (item) => string` | Une ligne de contexte : « Attribuée à Léa Martin », « Reçu le 3 mars ». |
+| `status?: { value: (item) => string; statuses: StatusMap }` | État, en badge à côté du nom. |
+| `actions?: (item) => Action[]` | Actions sur l’objet : trois icônes au plus, puis « ⋯ ». |
+| `fields?: (item) => DetailField[]` | La fiche : `{ label, value, type?, statuses?, currency?, hideEmpty? }`, six lignes au plus ; une valeur vide s’affiche « — » (ou disparaît avec `hideEmpty`). |
+| `sections?: (item) => DetailSection[]` | Blocs titrés : `{ title, content, empty?, actions? }`. `content` est un texte (affiché en paragraphe) ou un contenu composé (`List`, `Markdown`, `HtmlContent`, `DataTable` à deux colonnes au plus) ; vide, il affiche `empty` (« Aucune description »). |
+| `notFoundTitle?: string` | « Élément introuvable » par défaut. |
 
-Graisses de `Text` : `normal` (400), `medium` (500), `strong` (600). Un texte long se lit sur 65 à 75 caractères par ligne : c’est le rôle de `Page width="text"`.
+Le panneau ne charge jamais une liste à lui seul et ne remplace pas la page : il montre un objet.
 
-Échelle d’espacement, commune à `Stack`, `Row` et `Grid` :
+### 4.3 `SettingsPage` — un onglet de Réglages
 
-| `gap` | Pixels | Usage |
+Des blocs titrés de lignes de réglage : titre et explication à gauche, contrôle à droite, aligné sur une colonne de 240 px. Chaque réglage s’applique dès qu’il change ; un échec remet la valeur précédente et notifie. Exemple complet en 12.3.
+
+| Prop | Rôle |
+|---|---|
+| `load?: () => Promise<Values>` | Lit les valeurs enregistrées ; chargement et erreur sont affichés par le gabarit. |
+| `sections: (values) => SettingsSection[]` | `{ title, description?, settings: Setting[] }` : un bloc par sujet, deux à six réglages chacun. |
+
+Chaque réglage a `id`, `title` (« Notifier les retards ») et `description?` (une phrase), puis selon son `type` :
+
+| `type` | Contrôle dessiné | Props |
 |---|---|---|
-| `none` | 0 | Lignes déjà séparées par leur hauteur (cases à cocher) |
-| `xs` | 4 | Icône et texte, pastille et libellé, titre et sous-titre |
-| `sm` | 8 | Boutons voisins, éléments d’une même ligne (défaut de `Row`) |
-| `md` | 12 | Champs d’un formulaire, blocs d’une section (défaut de `Stack` et `Grid`) |
-| `lg` | 24 | Entre deux groupes distincts |
+| `switch` | Interrupteur, appliqué au clic | `value: boolean`, `save(value)` |
+| `select` | Boutons segmentés pour trois choix courts au plus, sinon liste | `value: string`, `options: { value, label }[]`, `save(value)` |
+| `text` | Champ de 240 px (96 px pour un nombre) ; Annuler et Enregistrer apparaissent sur la ligne une fois la valeur changée ; Entrée enregistre ; l’erreur remplace l’explication | `value: string`, `save(value)`, `inputType?: "text" \| "number" \| "email" \| "url"`, `placeholder?`, `optional?`, `validate?(value)` |
+| `action` | Bouton texte (rouge et confirmé si `danger`) | `action: Action` |
+| `info` | Valeur en lecture seule, formatée | `value`, `valueType?`, `statuses?`, `currency?` |
 
-Hauteurs fixées par les composants : bouton, champ et liste déroulante 32 px ; zone de texte 72 px au moins ; bouton icône 28 px (24 px en `small`) ; barre d’outils 40 px ; en-tête de tableau 32 px, ligne 36 px environ ; icônes 16 px. Rayons : 6 px pour les contrôles, 8 px pour les surfaces. Les nombres d’une colonne s’alignent à droite.
+`save` rend la promesse de l’écriture et ne notifie pas : le gabarit s’en charge.
 
-## 5. Catalogue des composants
+### 4.4 `openForm` — un formulaire en modale
 
-Tout s’importe de `@alfred/ui`. Les composants qui prolongent un élément natif en acceptent les attributs (`onClick`, `disabled`, `value`, `onChange`, `aria-*`…) ; `className` et `style` restent interdits même là. Types exportés : `DataTableColumn`, `ButtonProps`, `ButtonVariant`, `IconButtonProps`, `ChoiceButtonProps`, `MenuItemProps`, `FeedbackBannerTone`, `ConfirmOptions`, `StatusDotTone`, `TabItem`.
+`openForm(spec)` ouvre une modale dessinée d’après des champs déclarés ; il rend `true` une fois enregistré, `false` si l’utilisateur annule. Rien à rendre dans la page. Il s’appelle depuis le `onClick` d’une `Action`.
 
-### 5.1 Mise en page
+| Champ de `spec` | Rôle |
+|---|---|
+| `title: string` | Verbe et objet : « Nouvelle tâche », « Modifier la tâche », « Inviter un membre ». |
+| `description?: string` | Une phrase sous le titre. |
+| `fields: FormFieldSpec[]` | Les champs, dans l’ordre de saisie ; six au plus (au-delà, découper ou revoir le besoin). |
+| `initial?: object` | Valeurs de départ : l’objet lu en base convient tel quel (`initial: tache`). |
+| `submitLabel: string` | « Créer », « Enregistrer », « Inviter ». |
+| `onSubmit: (values) => Promise<unknown>` | Enregistre. `values` est un objet de textes déjà nettoyés (`""` pour un champ facultatif vide, `"1"` ou `"0"` pour une case). Une erreur levée est notifiée et laisse la saisie ouverte. |
+| `success?: string` | Notification après réussite : « Tâche créée ». |
 
-| Composant | Rôle | Props (défaut) |
+Chaque champ : `{ name, label, type?, options?, optional?, placeholder?, hint?, validate? }`. Tout champ est obligatoire sauf `optional: true`, qui ajoute « (facultatif) » au libellé. `placeholder` est un exemple, sans « Ex. » (ajouté seul). Le type choisit le contrôle, sa largeur et sa vérification :
+
+| `type` | Contrôle | Largeur | Vérification |
+|---|---|---|---|
+| `text` (défaut) | Champ texte | Toute la colonne | Non vide |
+| `email`, `url`, `tel` | Champ texte | Toute la colonne | Adresse de courriel, adresse web complète |
+| `number` | Champ texte numérique | 160 px | Nombre (virgule acceptée) |
+| `date`, `time` | Sélecteur natif | 160 px | Non vide |
+| `textarea` | Zone de plusieurs lignes | Toute la colonne | Non vide |
+| `select` | Liste fermée (`options` obligatoire) ; « Aucun » en tête si `optional` | Celle de l’option la plus longue | Une valeur choisie |
+| `checkbox` | Case à cocher, libellé à droite | — | Aucune |
+
+Deux champs courts consécutifs (`number`, `date`, `time`, `select`) se partagent une ligne. La modale prend 360 px, ou 480 px au-delà de quatre champs ou avec une zone de texte. Messages d’erreur, attente, fermeture et retour du focus sont gérés. `validate(value, values)` ajoute une règle propre : il rend la phrase à afficher (« La date de fin suit la date de début. ») ou rien.
+
+```tsx
+const formulaireTache = (tache?: Tache): FormSpec => ({
+  title: tache ? "Modifier la tâche" : "Nouvelle tâche",
+  fields: [
+    { name: "titre", label: "Titre", placeholder: "Relancer le client" },
+    { name: "responsable", label: "Responsable", optional: true },
+    { name: "echeance", label: "Échéance", type: "date", optional: true },
+    { name: "etat", label: "État", type: "select", options: OPTIONS_ETAT },
+  ],
+  initial: tache,
+  submitLabel: tache ? "Enregistrer" : "Créer",
+  success: tache ? undefined : "Tâche créée",
+  onSubmit: (v) => enregistrerTache(v, tache?.id),
+});
+```
+
+`confirmAction({ title, message?, confirmLabel, tone? })` pose une question hors d’une `Action` et rend `true` ou `false`.
+
+### 4.5 Types de valeurs
+
+Le même `type` sert aux colonnes, aux lignes de fiche et aux réglages `info`. Il fixe le format français, l’alignement, la largeur de colonne et le tri. Une valeur vide s’affiche « — ».
+
+| `type` | Affiché | Colonne |
 |---|---|---|
-| `Page` | Racine obligatoire | `children`, `toolbar?: ReactNode` (un `PageToolbar`, fixe au-dessus du contenu), `width`: `"full" \| "text"` (`"full"`) |
-| `PageToolbar` | Barre d’actions d’une page. Pas dans un panneau, pas sur une page sans données | `start?: ReactNode` (à gauche : recherche, filtres), `children?: ReactNode` (à droite : actions, la principale en dernier) ; accepte les attributs d’un `div` (`aria-*`) |
-| `Section` | Bloc titré ; pas un titre de page | `title: string`, `description?: string`, `actions?: ReactNode` (à droite du titre), `children` |
-| `Stack` | Empile verticalement | `gap` (`"md"`) |
-| `Row` | Aligne horizontalement | `gap` (`"sm"`), `align`: `"start" \| "center" \| "end" \| "stretch" \| "baseline"` (`"center"`), `justify`: `"start" \| "center" \| "end" \| "between"` (`"start"`), `wrap` (`false`) |
-| `Grid` | Colonnes fluides d’au moins `minColumnWidth` pixels | `minColumnWidth` (`240`), `gap` (`"md"`) |
-| `Surface` | Cadre bordé pour un contenu autonome (synthèse, formulaire isolé) | `title?: string`, `children` |
-| `Divider` | Filet entre deux groupes d’une même section, quand un écart `gap="lg"` ne suffit pas | aucune |
+| `text` (défaut) | Le texte | Prend la place restante |
+| `longtext` | Paragraphe | Fiche seulement |
+| `number` | « 1 234,5 » | 110 px, à droite |
+| `money` | « 1 234,50 € » (`currency` pour une autre devise) | 130 px, à droite |
+| `percent` | 0,25 → « 25 % » | 110 px, à droite |
+| `date` | « 20 nov. 2026 » (texte `AAAA-MM-JJ`, ISO, horodatage) | 130 px, à droite |
+| `datetime` | « 20 nov. 2026, 14:30 » | 170 px, à droite |
+| `relative` | « il y a 3 jours », « demain » | 140 px, à droite |
+| `boolean` | « Oui » ou « Non » | 90 px |
+| `status` | Badge coloré d’après `statuses` | 140 px |
+| `email`, `url` | Lien qui s’ouvre hors d’Alfred | Place restante |
+| `code` | Identifiant à chasse fixe | 160 px |
+| `tags` | « a, b, c » | Place restante |
 
-`Surface` n’est pas un décor : ne pas emballer chaque bloc dans une surface, ne pas en imbriquer deux, ne pas aligner une grille de surfaces identiques qui ne contiennent qu’un chiffre. `Page`, `PageToolbar` et `Section` sont illustrés en 12.1 et 12.3.
+`StatusMap` relie chaque valeur enregistrée à son libellé et à son ton : `neutral` (à faire, brouillon), `warning` (en cours, en attente, bientôt dû), `success` (terminé, payé, actif), `danger` (en retard, échec, refusé). Le définir une fois en haut du fichier et le réutiliser dans la colonne, le filtre, le panneau et le formulaire.
 
-### 5.2 Texte
+```tsx
+const ETATS: StatusMap = {
+  a_faire: { label: "À faire", tone: "neutral" },
+  en_cours: { label: "En cours", tone: "warning" },
+  terminee: { label: "Terminée", tone: "success" },
+};
+const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, label: etat.label }));
+```
+
+## 5. Page composée
+
+Seulement quand aucun gabarit ne convient : lire un document, une synthèse de quelques blocs, un éditeur ou un graphique de librairie. La page reste une colonne de blocs, dans cet ordre : bandeau éventuel, objet principal, blocs de détail.
+
+**`Page`** — racine. Props : `actions?: Action[]` (barre du haut : icônes, « ⋯ », action principale, disposées comme en section 3), `search?: { label, value, onChange(value) }` (recherche à gauche de la barre), `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus), `children`. Marge, défilement et espacement des blocs (24 px) sont fixés.
+
+**`Section`** — un bloc titré : `title`, `description?` (une phrase), `actions?: Action[]` (à droite du titre : deux icônes au plus, une action principale en texte s’il le faut, le reste dans « ⋯ »), `children`. Un bloc par sujet ; pas de titre de page au-dessus.
+
+**Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`) encadre un contenu autonome dans une page large ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres.
+
+**Montrer des données** — `KeyValueList` (`items: { label, value }[]`, fiche d’un objet), `List` et `ListItem` (`title`, `description?`, `leading?`, `trailing?`, `onClick?` : quelques éléments hétérogènes), `DataTable` (`columns`, `rows`, `rowKey`, `label` : un tableau secondaire dans un bloc ; une collection principale est une `CollectionPage`), `FormattedValue` (`value`, `options: { type, statuses, currency }` : une valeur formatée hors d’un gabarit), `StatusBadge` (`tone`, `size="compact"`), `StatusDot`.
+
+**Retour** — `FeedbackBanner` (`tone`: `"danger" \| "warning" \| "info"`, `action?` : un état qui dure), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`). Règles en section 9.
+
+**Saisie sur place** — `SearchField` (dans `Page search` de préférence), `InlineEdit` (une valeur isolée modifiable par un clic), `Tabs` (rubriques d’un même objet), `ChoiceGroup` et `ChoiceButton` (deux à quatre choix exclusifs visibles), `Disclosure` (contenu secondaire replié). Un formulaire passe par `openForm`.
+
+**Réservé aux gabarits et à la coquille** — ne s’emploient pas dans une page (`check` signale la plupart) : `PageToolbar`, `ToolbarSeparator`, `SettingRow`, `SettingRows`, `Modal`, `ConfirmDialog`, `useConfirm`, `FormActions`, `AnchoredPanel`, `ObjectHeader`, `PageTopBar`, `PanelToggleButton`, `PanelHeader`, `Dialog`, `Menu`, la prop `toolbar` de `Page`, et des boutons en JSX passés à `actions`. `Button`, `IconButton`, `OverflowMenu` et `MenuButton` ne servent qu’au contenu d’un bloc (« Tester la connexion » sous une explication), jamais pour une action de page, d’objet ou de ligne.
+
+### Texte et contenus venus des données
 
 | Composant | Rôle | Props (défaut) |
 |---|---|---|
@@ -160,337 +315,46 @@ chargent par la pièce jointe du message, les images distantes restent masquées
 />
 ```
 
-### 5.3 Actions
+## 6. Couleurs et thèmes
 
-**`Button`** — action textuelle. Le libellé est visible ; une icône n’y figure que si elle ajoute une information (ouverture hors d’Alfred), jamais pour répéter le verbe.
+La palette est restreinte : des neutres chauds, un seul accent, et trois couleurs sémantiques réservées aux états. Alfred suit le thème du système ou le choix clair ou sombre de l’utilisateur, et applique lui-même l’accent choisi. Une page ne lit ni n’écrit aucun jeton.
 
-Props : `variant`: `"primary" \| "secondary" \| "danger"` (`"secondary"` ; `primary` : plein, une fois par groupe ; `danger` : suppression ou révocation seulement, Annuler restant `secondary`), `loading` (`false` ; indicateur, bouton désactivé), `loadingLabel` (libellé pendant l’opération, « Enregistrement… »), `interaction`: `"press" \| "stable"` (`stable` supprime le retour d’appui), `type` (`"button"` ; `"submit"` dans un `<form>`).
+Jetons, pour comprendre les composants : `--color-bg` (fond de page, de champ, de modale), `--color-surface` et `--color-surface-strong` (barre d’outils, en-tête de tableau, survol, élément enfoncé, badge neutre), `--color-ink` (texte et bouton principal), `--color-muted` (métadonnées, aides, icônes au repos), `--color-primary` et `--color-primary-strong` (l’accent : focus, sélection, choix actif, jamais une décoration), `--color-success`, `--color-warning`, `--color-danger` et leurs variantes `-ink` et `-bg` (états), `--line` et `--control-border` (séparateurs ; contour des champs à 3:1 au moins).
 
-```tsx
-<Row justify="end">
-  <Button onClick={annuler}>Annuler</Button>
-  <Button variant="primary" loading={enCours} loadingLabel="Enregistrement…" onClick={enregistrer}>
-    Enregistrer
-  </Button>
-</Row>
-```
+Le sens passe toujours par une prop, accompagnée d’un texte :
 
-**`IconButton`** — action secondaire courante en icône seule (modifier, copier, supprimer, ouvrir). Garder un `Button` pour l’action principale et pour une action rare ou ambiguë.
+| Ce qu’il faut dire | Comment |
+|---|---|
+| État d’un objet | Valeur de type `status` avec son `StatusMap` (4.5) ; hors gabarit, `<StatusBadge tone="…">Libellé</StatusBadge>` |
+| Pastille devant un libellé d’état | `<StatusDot tone="success \| warning \| danger \| neutral \| pending" />` |
+| Texte secondaire ou d’état | `<Text tone="default \| muted \| success \| warning \| danger">` |
+| Message persistant | `<FeedbackBanner tone="danger \| warning \| info">` |
+| Notification | `shell.notify({ tone: "info" \| "success" \| "warning" \| "error" })` |
+| Action principale, action destructrice | `Action` avec `primary` ; `Action` avec `danger` |
 
-Props : `label: string` (obligatoire, nom accessible contextualisé), `tooltip`: `string \| false` (`label` ; infobulle courte au survol et au focus), `tone`: `"default" \| "primary" \| "danger"`, `size`: `"default" \| "small"` (28 px ; `small` : 24 px dans une ligne dense ; `compact`, ancien alias, vaut `default`), `appearance`: `"default" \| "table"` (`table` dans une cellule), `loading`, `loadingLabel`, `buttonRef?` (référence au bouton, pour y ancrer un volet), `tooltipPlacement`: `"auto" \| "right"` (`"auto"` ; `right` dans une colonne verticale), `tooltipAppearance`: `"default" \| "preview"` (`preview` : infobulle plus large, pour un aperçu de quelques lignes).
+L’échec s’écrit `danger` dans tout `@alfred/ui` (`FeedbackBanner` accepte aussi `error`, son synonyme) ; seul `shell.notify` l’écrit `error`. Choisir le ton selon la gravité, jamais selon la couleur souhaitée. Les huit teintes (`steel`, `blue`, `violet`, `pink`, `red`, `orange`, `green`, `teal`) servent à la couleur de chaque entrée du menu, qui ne teinte que son icône, et à l’accent choisi par l’utilisateur, qu’Alfred applique aux jetons primaires avec un contraste d’au moins 4,5:1 : une page ne les nomme jamais.
 
-```tsx
-<IconButton label="Supprimer la tâche « Relancer le client »" tooltip="Supprimer" tone="danger" onClick={supprimer}>
-  <Trash2 size={16} aria-hidden="true" />
-</IconButton>
-```
+## 7. Typographie, espacement, densité
 
-**`RefreshButton`** — la seule action « Actualiser ». Props : `label` (`"Actualiser"`), `shortcut?: string` (annoncé dans l’infobulle), et celles d’`IconButton` (`loading`, `onClick`, `disabled`).
+Alfred est une application de bureau dense, utilisée à la souris et au clavier. La police, les tailles, les hauteurs et les espacements sont fixés par les gabarits et les composants ; cette section les décrit pour une page composée.
 
-```tsx
-<RefreshButton loading={charge} onClick={recharger} />
-```
+Tailles : 12 px pour les métadonnées, aides et en-têtes de tableau (`<Text size="meta">`) ; 13 px pour le texte courant, les cellules, champs et boutons (`<Text>`, `<Heading level={3}>` en gras) ; 14 px pour un titre de section ou de panneau (`<Section title>`, `<Heading level={2}>`, `<Text size="panel">`) ; 18 px pour le nom de l’objet auquel une page entière est consacrée (`<Heading level={1}>`, une fois par page au plus).
 
-**`OverflowMenu`**, **`MenuButton`**, **`MenuItem`**, **`MenuGroup`** — menus d’actions ancrés à leur bouton. Le composant place le menu (dessous, ou dessus si la place manque), l’ouvre au clic, le ferme sur Échap, Tab, un clic à côté ou après l’action de l’entrée choisie, et rend le focus au bouton. Ne jamais positionner un menu soi-même ; ne pas y cacher l’action principale.
+Graisses de `Text` : `normal` (400), `medium` (500), `strong` (600). Un texte long se lit sur 65 à 75 caractères par ligne : c’est le rôle de `Page width="text"`.
 
-- `OverflowMenu` : bouton « ⋯ » des actions secondaires d’une barre ou d’une ligne. Props : `label: string` (obligatoire, nom du bouton et du menu), `children`, `placement`: `"below" \| "above"` (`"below"`), `align`: `"start" \| "end"` (`"end"`), `icon` (« ⋯ »), `tooltip` (`"Plus"`), `size`: `"default" \| "small"` (`compact`, ancien alias, vaut `default`), `disabled`.
-- `MenuButton` : bouton texte suivi d’un chevron, pour un choix d’actions de même nature (« Exporter », « Nouveau »). Les flèches l’ouvrent aussi. Props : `label: string` (obligatoire, texte du bouton), `menuLabel?` (nom du menu s’il diffère), `variant` (`"secondary"`), `placement` (`"below"`), `align` (`"start"`), `disabled`, `children`.
-- `MenuItem` : bouton natif (`onClick`, `disabled`) ; `tone`: `"default" \| "danger"` pour une entrée destructrice, toujours confirmée. Une icône en tête est affichée à 16 px. `MenuGroup label` regroupe les entrées au-delà de trois.
+Échelle d’espacement, commune à `Stack`, `Row` et `Grid` :
 
-```tsx
-<OverflowMenu label="Autres actions des tâches">
-  <MenuGroup label="Tâches terminées">
-    <MenuItem onClick={archiver}>
-      <Archive size={16} aria-hidden="true" />
-      Archiver
-    </MenuItem>
-    <MenuItem tone="danger" onClick={vider}>
-      <Trash2 size={16} aria-hidden="true" />
-      Supprimer
-    </MenuItem>
-  </MenuGroup>
-</OverflowMenu>
-<MenuButton label="Exporter" menuLabel="Formats d’export">
-  <MenuItem onClick={exporterCsv}>CSV</MenuItem>
-  <MenuItem onClick={exporterJson}>JSON</MenuItem>
-</MenuButton>
-```
-
-**`ChoiceGroup`**, **`ChoiceButton`** — deux à quatre choix exclusifs visibles côte à côte (filtre, mode d’affichage) ; au-delà, `SelectControl`. Le groupe aligne ses boutons et leur transmet son mode : ils deviennent des boutons radio, que les flèches parcourent (le choix suit le focus). Hors d’un groupe, un `ChoiceButton` est une bascule (`aria-pressed`).
-
-Props de `ChoiceGroup` : `label: string` (obligatoire), `appearance`: `"default" \| "segmented"` (`segmented` : choix réunis dans un même cadre, l’actif en relief), `selectionMode`: `"radio" \| "tab"` (`"radio"` ; pour des rubriques, préférer `Tabs`). Props de `ChoiceButton` : `label: string` (obligatoire, identique au texte visible), `selected: boolean` (obligatoire), `variant`: `"icon" \| "label"` (`"icon"`, qui reçoit une infobulle ; `label` pour un texte), `size`: `"default" \| "compact"` (32 ou 28 px), `selectionMode` (celui du groupe, sinon `"toggle"` ; à ne fixer que pour s’en écarter), `loading`.
-
-```tsx
-// filtres = { toutes: "Toutes", ouvertes: "Ouvertes", terminees: "Terminées" }
-<ChoiceGroup label="Filtrer par état" appearance="segmented">
-  {(Object.keys(filtres) as Filtre[]).map((valeur) => (
-    <ChoiceButton
-      key={valeur}
-      variant="label"
-      label={filtres[valeur]}
-      selected={filtre === valeur}
-      onClick={() => setFiltre(valeur)}
-    >
-      {filtres[valeur]}
-    </ChoiceButton>
-  ))}
-</ChoiceGroup>
-```
-
-**`Tabs`** — rubriques d’une même page, quand chacune remplace tout le contenu qui suit (Résumé, Historique). L’onglet actif est souligné (les onglets de la barre du haut, dessinés par Alfred, sont un groupe segmenté) ; flèches gauche et droite, Origine et Fin. Pour une nouvelle vue autonome, créer plutôt une page dans la section. Props : `label: string` (obligatoire), `items: TabItem[]` (`{ id; label; title?; content? }` : `content` remplace le libellé affiché, par exemple une icône, et `title` devient alors obligatoire), `activeId`, `onChange(id)`, `idPrefix?` et `panelId?` (identifiants qui relient l’onglet actif au contenu qu’il affiche, `aria-controls`). Le contenu de la rubrique active suit directement les onglets.
-
-```tsx
-<Tabs
-  label="Rubriques de la tâche"
-  activeId={rubrique}
-  onChange={setRubrique}
-  items={[
-    { id: "resume", label: "Résumé" },
-    { id: "historique", label: "Historique" },
-  ]}
-/>
-```
-
-### 5.4 Formulaires
-
-**`FormField`** — porte le libellé, l’aide et l’erreur d’un champ, et les relie au contrôle. Ne pas y placer `CheckboxControl`, `RadioControl` ni `SwitchControl`, qui ont leur propre libellé : un groupe d’options va dans un `Fieldset`.
-
-Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, que l’erreur remplace), `error?` (message d’erreur ; marque le champ invalide), `layout`: `"stacked" \| "inline"` (`inline` : libellé à gauche, dans une barre d’outils), `children` (un `TextInput`, `TextArea`, `SelectControl` ou une combobox), `htmlFor?` (`id` du contrôle quand ce n’est pas l’enfant direct), `compound` (`false` ; champ qui réunit plusieurs commandes, par exemple une liste et son bouton : passer alors `htmlFor`), `messageId?` (identifiant imposé du message d’aide ou d’erreur). Les autres attributs vont au `label`.
-
-**`TextInput`**, **`TextArea`**, **`SelectControl`** — champs natifs habillés ; ils acceptent les attributs de `<input>`, `<textarea>` et `<select>`. `TextArea` a une prop `variant` (`"default"`, `"composer"`, `"inline"`) : garder `default` dans un formulaire.
-
-**`FormControlGroup`** — aligne un champ et l’action qui lui est liée. `children` : un `FormField` puis un `Button`.
-
-```tsx
-<FormControlGroup>
-  <FormField label="Adresse du calendrier">
-    <TextInput
-      value={adresse}
-      placeholder="Ex. https://exemple.fr/agenda.ics"
-      onChange={(event) => setAdresse(event.target.value)}
-    />
-  </FormField>
-  <Button onClick={tester}>Tester</Button>
-</FormControlGroup>
-```
-
-**`SettingRow`**, **`SettingRows`** — le gabarit des Réglages : une ligne par réglage, titre et explication à gauche, contrôle à droite. `SettingRows` réunit les lignes d’une `Section` et trace un trait fin entre elles ; `label?` en fait un groupe nommé. Props de `SettingRow` : `title: ReactNode` (obligatoire, visible, en graisse normale), `description?` (explication en gris dessous, ou l’erreur de la saisie), `badge?` (une `StatusBadge size="compact"` à côté du titre, seulement pour un état qui demande l’attention), `children` (le contrôle : `SwitchControl` sans libellé visible, `SelectControl`, `ChoiceGroup appearance="segmented"`, un `TextInput` court, un `Button` ou un `OverflowMenu` pour les actions rares). Le titre est visuel : le contrôle porte son nom par `aria-label` (« Notifier les tâches en retard »). Un seul contrôle par ligne de préférence ; les actions occasionnelles vont dans un `OverflowMenu`.
-
-```tsx
-<SettingRows>
-  <SettingRow title="Notifier les retards" description="Une notification quand une tâche dépasse son échéance.">
-    <SwitchControl
-      label=""
-      aria-label="Notifier les tâches en retard"
-      checked={notifier}
-      onChange={(event) => void basculer(event.target.checked)}
-    />
-  </SettingRow>
-</SettingRows>
-```
-
-**`CheckboxControl`**, **`RadioControl`**, **`SwitchControl`** — props : `label: ReactNode` (obligatoire) et les attributs natifs `checked`, `onChange`, `name`, `value`, `disabled`. Case à cocher : option d’un formulaire, validée avec lui. Interrupteur : réglage appliqué immédiatement (exemple en 12.3). Radios : choix exclusif aux libellés longs, avec le même `name` ; pour deux à quatre choix courts, préférer `ChoiceGroup`.
-
-**`Fieldset`** — groupe titré de cases, de radios ou d’interrupteurs : la légende nomme le groupe, l’aide ou l’erreur lui sont reliées. Props : `legend: ReactNode` (obligatoire), `hint?`, `error?`, `layout`: `"stack" \| "row"` (`"stack"` ; `row` pour des options courtes côte à côte), `disabled`, `children`.
-
-```tsx
-<Fieldset legend="Affichage des tâches" error={erreurAffichage}>
-  <CheckboxControl
-    label="Inclure les tâches terminées"
-    checked={inclure}
-    onChange={(event) => setInclure(event.target.checked)}
-  />
-  <RadioControl
-    name="tri"
-    label="Trier par échéance"
-    checked={tri === "echeance"}
-    onChange={() => setTri("echeance")}
-  />
-  <RadioControl
-    name="tri"
-    label="Trier par priorité"
-    checked={tri === "priorite"}
-    onChange={() => setTri("priorite")}
-  />
-</Fieldset>
-```
-
-**`Combobox`**, **`MultiSelectCombobox`**, **`SearchCombobox`** — listes ancrées au champ. Pour une valeur unique dans une liste fermée, utiliser `SelectControl`.
-
-| Composant | Quand | Props propres (défaut) |
+| `gap` | Pixels | Usage |
 |---|---|---|
-| `Combobox` | Saisie libre avec suggestions : reprendre une valeur existante sans interdire une nouvelle | `value: string`, `options: string[]`, `onChange(value)`, `normalize?(value)` |
-| `MultiSelectCombobox` | Plusieurs valeurs d’une liste (filtre, étiquettes) | `label`, `values`, `options`, `onChange(values)`, `formatOption?`, `placeholder` (`"Toutes les valeurs"`), `valueMode`: `"options" \| "custom"` (`"options"`), `normalizeCustomValue?`, `display`: `"compact" \| "all"` (`"compact"` ; `all` dans un formulaire), `searchPlaceholder?` |
-| `SearchCombobox` | Chercher puis choisir une entité ; la page fournit les résultats | `label`, `value` (texte saisi), `options`, `onChange(texte)`, `onSelect(option)`, `getOptionKey`, `getOptionLabel`, `renderOption?`, `isOptionDisabled?`, `closeOnSelect` (`true`), `minQueryLength` (`1`), `loading`, `loadingMessage`, `emptyMessage` |
+| `none` | 0 | Lignes déjà séparées par leur hauteur (cases à cocher) |
+| `xs` | 4 | Icône et texte, pastille et libellé, titre et sous-titre |
+| `sm` | 8 | Boutons voisins, éléments d’une même ligne (défaut de `Row`) |
+| `md` | 12 | Champs d’un formulaire, blocs d’une section (défaut de `Stack` et `Grid`) |
+| `lg` | 24 | Entre deux groupes distincts |
 
-Dans un `FormField`, une combobox est reliée comme un `TextInput` au libellé, à l’aide et à l’erreur, sans `id` ; le `label` de `MultiSelectCombobox` et de `SearchCombobox` ne nomme alors que leurs boutons (« Effacer… »). Hors d’un `FormField`, elles portent leur nom par `label`.
+Hauteurs fixées par les composants : bouton, champ et liste déroulante 32 px ; zone de texte 72 px au moins ; bouton icône 28 px (24 px en `small`) ; barre d’outils 40 px ; en-tête de tableau 32 px, ligne 36 px environ ; icônes 16 px. Rayons : 6 px pour les contrôles, 8 px pour les surfaces. Les nombres d’une colonne s’alignent à droite.
 
-```tsx
-<FormField label="Ville">
-  <Combobox value={ville} options={["Lyon", "Marseille", "Paris"]} onChange={setVille} />
-</FormField>
-<SearchCombobox
-  label="Rechercher un contact"
-  value={requete}
-  options={contacts.data ?? []}
-  loading={contacts.loading}
-  onChange={setRequete}
-  onSelect={(choisi) => {
-    setContact(choisi);
-    setRequete(choisi.nom);
-  }}
-  getOptionKey={(option) => String(option.id)}
-  getOptionLabel={(option) => option.nom}
-/>
-```
-
-**`FormActions`** — actions d’un formulaire, alignées à droite : Annuler puis l’action principale, qui porte l’état d’enregistrement (section 7).
-
-Props : `submitLabel` (sans lui, pas d’action principale), `form` (`id` du `<form>` : le bouton devient `type="submit"`), `onSubmit` (clic, sans `<form>`), `onCancel` (sans lui, pas d’Annuler), `cancelLabel` (`"Annuler"`), `pending` et `pendingLabel` (enregistrement en cours), `disabled`, `cancelDisabled` (`pending`), `submitIcon`, `submitKeyShortcuts`, `children` (actions supplémentaires, avant Annuler).
-
-### 5.5 Données
-
-**`DataTable`** — tableau dense : en-tête fixe, tri au clic sur l’en-tête des colonnes triables (croissant, décroissant, puis ordre d’origine), ligne activable à la souris et au clavier, état vide intégré. Exemple en 12.1.
-
-Props : `columns: DataTableColumn<Row>[]`, `rows: Row[]`, `rowKey: (row) => string \| number` (identifiant stable), `label: string` (nom accessible), toutes obligatoires ; `onRowClick?(row)` (ligne activable au clic, à Entrée et à Espace), `selectedKey?` (ligne mise en évidence), `emptyTitle` (`"Aucune donnée"`), `emptyDescription?` et `emptyAction?` (affichés quand `rows` est vide), `loading` (`false` ; tableau occupé pendant un rechargement).
-
-`DataTableColumn<Row>` : `key: string` (identifiant, et clé lue dans la ligne par défaut), `header: ReactNode` (un texte, ou une icône accompagnée de `headerLabel: string`, son nom pour les lecteurs d’écran), `render?: (row) => ReactNode`, `sortValue?: (row) => string | number | null | undefined`, `sortable?: boolean`, `align?: "start" | "end"`, `width?: string` (`"140px"`, `"30%"`).
-
-Tri : une colonne est triable si elle a un `sortValue` ou si `row[key]` est une valeur simple (texte, nombre, booléen) et renseignée sur au moins une ligne ; sinon son en-tête est un simple texte. Fournir `sortValue` dès que `render` affiche autre chose que `row[key]`, et `sortable: false` pour une colonne qu’il n’a pas de sens de trier. Une ligne activable par `onRowClick` laisse leurs clics et leurs touches aux boutons, liens et champs de ses cellules : une action de ligne y a sa place (`IconButton appearance="table"`, `OverflowMenu size="small"`).
-
-**`StatusBadge`** — état textuel compact. Props : `children` (le libellé), `tone` (`"neutral"`), `size`: `"default" \| "compact"` (`compact` dans une cellule, une fiche ou une liste), `title?`. Ni étiquette décorative, ni compteur.
-
-**`StatusDot`** — pastille de couleur, décorative : elle est toujours suivie du texte de l’état. Prop : `tone` (obligatoire) ; `pending` est une pastille creuse pour ce qui n’a pas commencé.
-
-**`SearchField`** — champ de recherche d’une barre d’outils, avec sa croix d’effacement (exemple en 12.1). Props : `label: string` (obligatoire, nom accessible), `value`, `onChange`, `placeholder`, `onClear?`, `inputRef?`. Le filtrage s’applique pendant la saisie, sans bouton « Rechercher ».
-
-**`List`**, **`ListItem`** — liste simple et dense d’éléments courts ou hétérogènes (pièces jointes, derniers événements, comptes liés). Dès que les éléments partagent des attributs à comparer ou à trier, `DataTable`. `List` : `label?` (nom de la liste), `children`. `ListItem` : `title` (obligatoire), `description?`, `leading?` (icône ou `StatusDot`), `trailing?` (badge, date, `IconButton`), `onClick?` (le titre et la description deviennent un bouton ; l’élément de fin reste à part), `selected`, `disabled`.
-
-```tsx
-<List label="Pièces jointes">
-  {pieces.map((piece) => (
-    <ListItem
-      key={piece.id}
-      title={piece.nom}
-      description={piece.taille}
-      onClick={() => ouvrirPiece(piece.id)}
-      trailing={
-        <IconButton label={`Retirer ${piece.nom}`} tooltip="Retirer" onClick={() => retirerPiece(piece.id)}>
-          <X size={16} aria-hidden="true" />
-        </IconButton>
-      }
-    />
-  ))}
-</List>
-```
-
-**`StepList`** — étapes numérotées d’un parcours guidé ; les étapes passées sont cochées. Pas une navigation entre vues. Props : `label`, `steps: { id; title; hint? }[]`, `current`, `onSelect?(id)` (rend les étapes cliquables), `isAvailable?(id)`.
-
-### 5.6 Retour et états
-
-Les règles d’emploi sont en section 9 ; `EmptyState`, `FeedbackBanner` et `LoadingSkeleton` sont illustrés en 12.1 et 12.2.
-
-| Composant | Rôle | Props (défaut) |
-|---|---|---|
-| `EmptyState` | Ce qui manque et, si elle existe, l’action suivante | `title: string`, `description?: string`, `children?` (actions), `size`: `"default" \| "compact"` (`compact` dans un panneau, une section, une liste imbriquée) |
-| `FeedbackBanner` | Message persistant, visible tant que l’état décrit dure. Pas de ton succès : un succès est une notification | `children`, `tone`: `"danger" \| "warning" \| "info"` (`"error"`, synonyme de `danger`, par défaut : toujours écrire le ton), `action?: ReactNode`. Son cadre convient à une page ; `appearance="bar"` est réservé à la coquille |
-| `LoadingSkeleton` | Premier chargement, dans `Page` ; n’apparaît qu’après 200 ms pour ne pas clignoter | `rows` (`3`), `label` (`"Chargement…"`), `variant`: `"form" \| "page"` (`"form"` ; `page` : blocs plus hauts, pour une page entière) |
-| `Spinner` | Indicateur en ligne de 14 px, à côté d’un texte ; jamais seul au centre d’une vue | `label` (`"Chargement"`) |
-
-**`useConfirm`**, **`ConfirmDialog`** — confirmation modale, à la place de `window.confirm`. Le focus initial est sur Annuler, Échap annule, le focus revient au déclencheur. `useConfirm()` renvoie `{ confirm, confirmDialog }` : `await confirm(options)` vaut `true` ou `false`, et `{confirmDialog}` doit être rendu dans la page.
-
-Options de `confirm` : `title: ReactNode` (obligatoire, la question, qui nomme l’objet), `message?` (la conséquence), `confirmLabel: string` (obligatoire, le verbe de l’action, jamais « OK » ni « Oui »), `cancelLabel` (`"Annuler"`), `tone`: `"danger" \| "default"` (`danger` pour une suppression, un arrêt, une révocation).
-
-`ConfirmDialog` est la forme contrôlée, avec en plus `open`, `busy`, `onConfirm` et `onCancel` , seulement pour garder la modale ouverte pendant l’opération (`busy`).
-
-```tsx
-const { confirm, confirmDialog } = useConfirm();
-const supprimer = async () => {
-  const accepte = await confirm({
-    title: `Supprimer la tâche « ${titre} » ?`,
-    message: "Cette action est définitive.",
-    confirmLabel: "Supprimer",
-    tone: "danger",
-  });
-  if (accepte) await supprimerTache(id);
-};
-return (
-  <>
-    <Button variant="danger" onClick={supprimer}>
-      Supprimer
-    </Button>
-    {confirmDialog}
-  </>
-);
-```
-
-**`AnchoredPanel`** — volet flottant ouvert contre un bouton, sans voile : la page reste visible. Pour quelques réglages contextuels (filtres), pas pour un formulaire long. Il n’a pas de marge intérieure : y placer une seule `Surface`. Props : `anchor: HTMLElement` (obligatoire, le bouton d’ouverture), `label: string` (obligatoire), `onClose` (obligatoire ; Échap, ou clic à côté tant que rien n’a été saisi dans le volet : après une saisie, le clic à côté est refusé d’un court rebond), `placement`: `"below" \| "right"` (`"below"`), `width` en pixels (`440`), `canClose?: () => boolean` (`false` pendant une opération en cours).
-
-```tsx
-const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-const [terminees, setTerminees] = useState(false);
-return (
-  <>
-    <Button aria-expanded={anchor !== null} onClick={(event) => setAnchor(anchor ? null : event.currentTarget)}>
-      Filtrer
-    </Button>
-    {anchor ? (
-      <AnchoredPanel anchor={anchor} label="Filtres des tâches" width={320} onClose={() => setAnchor(null)}>
-        <Surface title="Filtres">
-          <CheckboxControl label="Inclure les terminées" checked={terminees} onChange={() => setTerminees(!terminees)} />
-        </Surface>
-      </AnchoredPanel>
-    ) : null}
-  </>
-);
-```
-
-**`Modal`** — modale d’une page, pour une saisie courte ou une décision qui demande plus qu’une confirmation (renommer, choisir une destination). Une confirmation passe par `useConfirm`, un formulaire long par la page ou le panneau de droite. Elle est pilotée par `open` et `onClose` : Échap, le bouton Fermer et un clic sur le fond appellent `onClose`, sauf ce dernier une fois une saisie commencée. Le focus va au premier champ (ou à l’élément `autoFocus`), puis revient au déclencheur ; le contenu n’est rendu que modale ouverte. Props : `open`, `onClose`, `title: ReactNode` (obligatoire), `description?`, `children` (le corps, avec ses marges, qui défile s’il est long), `actions?` (pied aligné à droite : `FormActions` ou des `Button`), `size`: `"default" \| "wide"` (480 ou 720 px), `dismissOnOutside` (`true`).
-
-```tsx
-const [ouverte, setOuverte] = useState(false);
-const [nom, setNom] = useState("");
-return (
-  <>
-    <Button onClick={() => setOuverte(true)}>Renommer</Button>
-    <Modal
-      open={ouverte}
-      onClose={() => setOuverte(false)}
-      title="Renommer la liste"
-      actions={<FormActions form="renommer" submitLabel="Enregistrer" onCancel={() => setOuverte(false)} />}
-    >
-      <form
-        id="renommer"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          void renommer(nom).then(() => setOuverte(false));
-        }}
-      >
-        <FormField label="Nom">
-          <TextInput value={nom} onChange={(event) => setNom(event.target.value)} />
-        </FormField>
-      </form>
-    </Modal>
-  </>
-);
-```
-
-**`Disclosure`** — contenu secondaire replié (options avancées, détail technique). Ne pas y cacher une information nécessaire à la décision. Props : `label: ReactNode`, `children`, `appearance`: `"default" \| "subtle"` (`subtle` : ligne pleine largeur), `lazy` (`false` ; contenu rendu à la première ouverture), `open` et `onToggle` natifs.
-
-**`InlineEdit`** — valeur modifiable sur place : un clic, F2 ou Entrée ouvre la saisie, Entrée ou un clic à côté enregistre, Échap annule. Pour un titre ou une valeur isolée, pas pour un formulaire. Props : `value` (obligatoire), `label: string` (obligatoire, nom du champ), `onSave(value)` (obligatoire ; peut renvoyer une promesse), `renderEditor(editor)` (obligatoire ; `editor` expose `value`, `setValue`, `commit`, `pending`, `label`), `children` (l’affichage au repos), `mode`: `"line" \| "multiline"` (`"line"` ; en `line`, Maj+Entrée n’enregistre pas ; en `multiline`, Ctrl+Entrée ou Cmd+Entrée enregistre), `disabled`, `editing` et `onEditingChange` (ouverture pilotée). Si `onSave` rejette sa promesse, la saisie reste ouverte : notifier l’échec, puis relancer l’erreur. `renderEditor` rend en général `<TextInput autoFocus aria-label={editor.label} value={editor.value} disabled={editor.pending} onChange={…} />`.
-
-### 5.7 Exports réservés à la coquille
-
-Ces exports existent dans `@alfred/ui` mais ne s’utilisent pas dans une page :
-
-- `PageTopBar`, `PanelToggleButton` : la barre du haut et le bouton du panneau, déjà rendus par Alfred.
-- `PanelHeader` : en-tête de panneau de la coquille. Dans un panneau de droite, le nom de l’objet se donne par `Heading`.
-- `Dialog` : modale native nue de la coquille ; une page utilise `Modal`.
-- `Menu` : liste d’entrées de `MenuButton` et d’`OverflowMenu`, qui ne se positionne pas seule.
-- Les props `className`, `tabClassName` de `Tabs`, `appearance="bar"` de `FeedbackBanner`, et `appearance="navigation" \| "marker"` d’`IconButton`.
-
-## 6. Vocabulaire des actions et libellés
+## 8. Vocabulaire des actions et libellés
 
 Un libellé d’action est un verbe à l’infinitif, suivi de son objet quand le contexte ne le donne pas, avec une seule majuscule et sans point final. Le même verbe désigne la même action partout.
 
@@ -500,13 +364,13 @@ Un libellé d’action est un verbe à l’infinitif, suivi de son objet quand l
 | « Ajouter… » (« Ajouter un membre ») | Insère un élément dans un ensemble qui existe déjà | |
 | « Créer » | Valide un formulaire de création | Action principale du formulaire |
 | « Enregistrer » | Valide les modifications d’un objet existant | Pendant l’opération : « Enregistrement… » |
-| « Modifier » | Ouvre l’édition | Souvent un `IconButton` |
-| « Supprimer » | Efface définitivement | `danger`, toujours après confirmation |
+| « Modifier » | Ouvre l’édition | Icône `Pencil`, ouvre `openForm` |
+| « Supprimer » | Efface définitivement | `danger`, avec `confirm` et `success` |
 | « Retirer » | Enlève une appartenance sans effacer l’objet | Confirmé si l’effet est difficile à défaire |
 | « Archiver » | Masque sans effacer | Sans confirmation |
-| « Annuler » | Abandonne la saisie ou ferme sans effet | `secondary`, avant l’action principale |
-| « Actualiser » | Recharge les données | `RefreshButton` |
-| « Réessayer » | Relance ce qui a échoué | Dans `FeedbackBanner` |
+| « Annuler » | Abandonne la saisie ou ferme sans effet | Posé par `openForm` et les confirmations |
+| « Actualiser » | Recharge les données | Déjà dans `CollectionPage` ; ailleurs, icône `RefreshCw` |
+| « Réessayer » | Relance ce qui a échoué | Posé par les gabarits après un échec de chargement |
 
 - Une confirmation pose une question qui nomme l’objet (« Supprimer la tâche « Relancer le client » ? »), décrit la conséquence dans `message` et reprend le verbe dans `confirmLabel`.
 - Une notification constate un fait : « Tâche supprimée », « La tâche n’a pas été supprimée ». La cause va dans `description`.
@@ -514,318 +378,384 @@ Un libellé d’action est un verbe à l’infinitif, suivi de son objet quand l
 - Typographie française : apostrophe « ’ », guillemets « », espace avant « : », « ? » et « ! ». Dates et nombres passent par `Intl.DateTimeFormat("fr-FR", …)` et `Intl.NumberFormat("fr-FR")`.
 - Nommer les choses comme l’utilisateur les nomme : pas d’identifiant technique, de nom de table ni de message d’erreur brut à la place d’une phrase.
 
-## 7. Formulaires
-
-- **Composition.** Un `<form>` avec `noValidate` et un `onSubmit` qui appelle `event.preventDefault()` (le cadre interdit l’envoi natif), une `Stack gap="md"` de `FormField`, puis `FormActions` reliée par `form`. Entrée dans un champ valide ainsi le formulaire.
-- **Libellés.** Chaque champ a un libellé visible ; le texte d’exemple ne le remplace pas et commence par « Ex. ». Dans un formulaire court, tous les champs sont obligatoires sauf ceux marqués « (facultatif) » dans leur libellé ; un champ obligatoire porte `aria-required="true"`.
-- **Validation.** Elle a lieu à la soumission et s’affiche sous le champ par `FormField.error`, jusqu’à la correction. Elle ne devient ni une notification ni un bandeau. Le message dit quoi faire : « Saisissez le nom de l’équipe. », pas « Champ invalide ».
-- **Actions.** `FormActions` en bas du formulaire, à droite : Annuler, s’il y a quelque chose à abandonner, puis l’action principale. Pendant l’enregistrement, `pending` les désactive et affiche le libellé d’attente. Ne pas répéter ces actions ailleurs.
-- **Résultat.** Un succès est une notification `success` ; un échec est une notification `error` qui laisse la saisie intacte.
-- **Réglages immédiats.** Un interrupteur ou un choix fini s’applique dès qu’il change, sans bouton Enregistrer : il réussit en silence, et un échec remet la valeur précédente et notifie. Une saisie libre garde une validation explicite.
-- **Onglet de Réglages.** Pas de formulaire empilé : chaque réglage est une `SettingRow`. Une saisie libre (un nom, une adresse) garde son champ sur sa ligne ; « Annuler » et « Enregistrer » n’apparaissent sur la ligne qu’une fois la valeur modifiée, Entrée enregistre et l’erreur remplace l’explication. Un formulaire long (création d’un objet, plusieurs champs liés) reste un formulaire, dans une page ou une `Modal`.
-- **Longueur.** Un formulaire long va dans une page ou dans le panneau de droite ; une `Modal` ne porte qu’une saisie courte (trois champs au plus).
-
-## 8. Listes, tableaux et panneau de droite
-
-- **Tableau** (`DataTable`) dès que les éléments partagent les mêmes attributs, qu’il faut les comparer ou les trier, ou qu’une ligne ouvre un détail. C’est le cas général d’une collection.
-- **Fiche** (`KeyValueList`) pour les attributs d’un seul objet.
-- **Liste** (`List`) pour quelques éléments courts ou hétérogènes, avec au plus une action chacun ; un simple `Stack` de `Text` s’ils n’ont ni action ni détail.
-- **Grille de surfaces** seulement pour des contenus hétérogènes et autonomes, jamais pour répéter le même gabarit.
-
-Règles d’une liste :
-
-- Le tableau se pose directement dans `Page`, sous un `PageToolbar` : recherche à gauche ; à droite `RefreshButton`, les actions secondaires (`OverflowMenu` au-delà de deux) et l’action principale en dernier.
-- Le tri appartient au tableau ; la recherche et les filtres appartiennent à la page, qui passe à `rows` les lignes déjà filtrées. Distinguer « aucune donnée » (`EmptyState` de la page, avec l’action de création) de « aucun résultat » (`emptyTitle` du tableau).
-- Une page sans données n’affiche ni barre d’outils, ni filtres, ni compteurs à zéro.
-- Colonnes : l’identité de l’objet en premier, sans largeur ; les colonnes courtes (état, date, nombre) avec une `width` ; nombres et dates alignés à droite. Un état est un `StatusBadge size="compact"`.
-- Au-delà de quelques centaines de lignes, limiter la requête (`LIMIT`, filtre côté données) plutôt que tout afficher.
-
-Lien avec le panneau de droite :
-
-1. La ligne cliquée devient la sélection : la page garde sa clé pour `selectedKey`, publie un identifiant avec `shell.publish({ id })` et affiche le panneau avec `shell.setPanelVisible(true)`.
-2. Le panneau lit `usePageContext()?.selection`, charge lui-même le détail et couvre quatre états : aucune sélection, chargement, erreur, objet introuvable.
-3. Publier un identifiant, pas l’objet entier : le panneau affiche ainsi des données à jour.
-4. La page n’est pas avertie de ce que fait le panneau : après une écriture faite depuis le panneau, sa liste ne se recharge pas seule. Elle garde donc un `RefreshButton`.
-
 ## 9. États : chargement, vide, erreur, notification
 
-`useAsync(charger, deps)` de `@alfred/sdk` renvoie `{ data, error, loading, reload }` : `data` vaut `undefined` jusqu’au premier succès, `error` est renseigné après un échec, `loading` est vrai pendant chaque chargement, rechargement compris.
+Les gabarits rendent chaque état ; une page composée applique le même tableau (`useAsync(charger, deps)` de `@alfred/sdk` rend `{ data, error, loading, reload }`).
 
-| Situation | Rendu obligatoire |
+| Situation | Rendu (posé par le gabarit) |
 |---|---|
-| Premier chargement (`data === undefined`, sans erreur) | `LoadingSkeleton` dans `Page` |
-| Rechargement (`loading` avec des données) | Les données restent affichées ; `loading` sur `DataTable` et `RefreshButton` |
-| Action en cours | `Button loading` ou `FormActions pending` |
-| Opération de fond en cours | `Spinner` à côté d’un `Text` |
-| Collection vide | `EmptyState` : le titre nomme l’absence (« Aucune tâche », jamais « Pas encore de… »), la description dit à quoi sert la page, une seule action `primary`, pas d’icône décorative |
-| Vide dans un panneau, une section, une liste imbriquée | `EmptyState size="compact"` |
-| Échec de chargement | `FeedbackBanner tone="danger"` qui dit ce qui n’a pas été chargé, avec « Réessayer » (`reload`) |
-| Prérequis absent, données dégradées | `FeedbackBanner tone="warning"` ou `"info"`, tant que l’état dure |
-| Champ invalide | `FormField.error` |
-| Résultat d’une action (créé, enregistré, supprimé, copié) | `shell.notify({ title, tone: "success" })` |
-| Échec d’une action | `shell.notify({ title, description, tone: "error" })` |
+| Premier chargement | `LoadingSkeleton`, après 200 ms |
+| Rechargement | Les données restent affichées ; tableau et Actualiser en attente |
+| Action en cours | Indicateur dans le bouton de l’action ; modale bloquée pendant un enregistrement |
+| Collection vide | `EmptyState` : `emptyTitle` nomme l’absence (« Aucune tâche »), `emptyDescription` dit à quoi sert la page, l’action `primary` est proposée ; ni barre d’outils, ni filtres, ni compteurs à zéro |
+| Aucun résultat après recherche ou filtre | « Aucun résultat » avec « Effacer les filtres » |
+| Rien de sélectionné, objet introuvable (panneau) | `EmptyState` compact : `emptyTitle`, `notFoundTitle` |
+| Échec de chargement | `FeedbackBanner tone="danger"` avec « Réessayer » |
+| Prérequis absent, données dégradées | `banner` de `CollectionPage`, ou `FeedbackBanner tone="warning"` ou `"info"` en tête d’une page composée, tant que l’état dure |
+| Champ invalide | Message sous le champ, posé par `openForm` ou la ligne de réglage |
+| Résultat d’une action | Notification `success` d’une `Action` ou d’un `openForm` (`success`) |
+| Échec d’une action | Notification d’erreur posée par le gabarit, avec la cause |
 
-Une **notification** est transitoire : elle s’efface après 5 secondes (une erreur reste jusqu’à sa fermeture) et demeure consultable dans la cloche. Un **bandeau** est persistant : il décrit l’état de la page et disparaît avec lui. Pas de bandeau pour dire « enregistré », pas de notification pour un état qui dure. Un message d’erreur dit d’abord ce qui n’a pas fonctionné, puis la cause.
+Une **notification** est transitoire : elle s’efface après 5 secondes (une erreur reste jusqu’à sa fermeture) et demeure consultable dans la cloche. Un **bandeau** est persistant : il décrit l’état de la page et disparaît avec lui. Pas de bandeau pour dire « enregistré », pas de notification pour un état qui dure. Un réglage appliqué réussit en silence.
 
 ## 10. Icônes
 
 - Les icônes viennent de `lucide-react`, importées par leur nom en PascalCase : `import { Trash2 } from "lucide-react"`.
-- Toujours `size={16}` et `aria-hidden="true"` : le sens est donné par le texte voisin ou par le `label` du bouton.
-- Une icône n’est jamais seule sans nom accessible : une action en icône seule est un `IconButton` avec un `label` contextualisé (« Supprimer la tâche « Relancer le client » ») et une infobulle courte (« Supprimer »).
+- Dans une `Action`, l’icône se passe sans l’instancier (`icon: Pencil`) : taille, nom accessible et infobulle sont posés par le gabarit. Dans une page composée, `size={16}` et `aria-hidden="true"`.
 - Une icône sert une action ou un état. Pas d’icône d’ornement devant un titre, dans un état vide ou pour remplir une surface ; pas d’émoji à la place d’une icône.
-- La même action garde la même icône dans toutes les pages : `Trash2` supprimer, `Pencil` modifier, `Copy` copier, `Download` exporter, `ExternalLink` ouvrir à l’extérieur, `Archive` archiver. « Actualiser » est toujours `RefreshButton`, « Plus » toujours `OverflowMenu`. Même règle dans un `MenuItem`.
+- La même action garde la même icône dans toutes les pages : la liste est en section 3.
 - L’icône d’une entrée du menu de gauche se désigne par son nom Lucide en minuscules et tirets : `list-checks` pour `ListChecks`, `calendar-days` pour `CalendarDays`. Un nom inconnu affiche un carré. La choisir pour ce qu’elle évoque du contenu, distincte de celles des autres entrées.
 
 ## 11. Accessibilité et mouvement
 
 L’objectif est WCAG 2.2 AA. Les composants en portent l’essentiel ; la page ne doit pas le défaire.
 
-- **Clavier.** Tout ce qui se fait à la souris se fait au clavier, dans un ordre logique. Ne jamais rendre cliquable un `Text` ou une `Surface` : une action est un `Button`, un `IconButton`, un `Link`, une entrée de menu, un `ListItem` ou une ligne de `DataTable`.
-- **Focus.** Il est visible sur chaque contrôle et revient au déclencheur à la fermeture d’une modale, d’un menu ou d’un volet. Ne pas le déplacer à la main, sauf `autoFocus` sur le champ d’un `InlineEdit` ou d’une `Modal`.
-- **Noms accessibles.** `label` sur `IconButton`, `DataTable`, `SearchField`, `ChoiceGroup`, `Tabs`, `OverflowMenu`, `MenuButton`, `AnchoredPanel` et `StepList` ; `title` sur `Modal`, `legend` sur `Fieldset`, `alt` sur `Image`, `headerLabel` sur une colonne à en-tête icône ; `FormField` pour chaque champ. Un nom décrit l’action et son objet.
+- **Clavier.** Les gabarits sont entièrement utilisables au clavier. Ne jamais rendre cliquable un `Text` ou une `Surface` : une action est une `Action`, un `Link`, un `ListItem` ou une ligne de tableau.
+- **Focus.** Il est visible sur chaque contrôle et revient au déclencheur à la fermeture d’une modale ou d’un menu. Ne pas le déplacer à la main.
+- **Noms accessibles.** Ils viennent des libellés : `label` d’une `Action`, d’une collection, d’un champ, `title` d’un réglage. Un libellé décrit l’action et son objet.
 - **Couleur.** Un état n’est jamais porté par la couleur seule : `StatusBadge` contient son libellé, `StatusDot` est suivie d’un texte, une erreur de champ est une phrase.
-- **Titres.** `Heading` et `Section` se suivent sans saut de niveau : le contenu d’une `Section` (niveau 2) utilise `Heading level={3}` ou `Surface title`.
+- **Titres.** Dans une page composée, `Heading` et `Section` se suivent sans saut de niveau : le contenu d’une `Section` (niveau 2) utilise `Heading level={3}` ou `Surface title`.
 - **Annonces.** Les composants d’état annoncent déjà leur contenu ; ne pas doubler un message par un second canal.
 - **Texte.** Un libellé long doit pouvoir passer à la ligne.
 - **Mouvement.** Une page n’anime rien. Les transitions des composants sont brèves, expliquent un changement d’état et sont neutralisées quand le système demande un mouvement réduit.
 
 ## 12. Exemples complets
 
-Les trois fichiers ci-dessous sont complets. Ils supposent un module `suivi` avec les tables `suivi_taches` et `suivi_reglages`.
+Un module `suivi` avec les tables `suivi_taches` (`id`, `titre`, `etat`, `echeance`, `responsable`, `description`) et `suivi_reglages` (`cle`, `valeur`). Ce qui sert à plusieurs pages (le type, les états, le formulaire) est écrit une fois dans `lib/`.
 
-### 12.1 Page liste : barre d’outils, tableau, état vide
-
-```tsx
-import { useMemo, useState } from "react";
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  PageToolbar,
-  RefreshButton,
-  SearchField,
-  StatusBadge,
-} from "@alfred/ui";
-import { db, shell, useAsync } from "@alfred/sdk";
-
-interface Tache {
-  id: number;
-  titre: string;
-  etat: "a_faire" | "en_cours" | "terminee";
-  echeance: string | null;
-}
-
-const etats = {
-  a_faire: { label: "À faire", tone: "neutral" },
-  en_cours: { label: "En cours", tone: "warning" },
-  terminee: { label: "Terminée", tone: "success" },
-} as const;
-
-const jour = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" });
-
-const columns: DataTableColumn<Tache>[] = [
-  { key: "titre", header: "Titre" },
-  {
-    key: "etat",
-    header: "État",
-    width: "140px",
-    render: (tache) => (
-      <StatusBadge tone={etats[tache.etat].tone} size="compact">
-        {etats[tache.etat].label}
-      </StatusBadge>
-    ),
-    sortValue: (tache) => etats[tache.etat].label,
-  },
-  {
-    key: "echeance",
-    header: "Échéance",
-    width: "140px",
-    align: "end",
-    render: (tache) => (tache.echeance ? jour.format(new Date(tache.echeance)) : "—"),
-  },
-];
-
-export default function TachesPage() {
-  const taches = useAsync(
-    () => db.query<Tache>("SELECT id, titre, etat, echeance FROM suivi_taches ORDER BY echeance"),
-    [],
-  );
-  const [recherche, setRecherche] = useState("");
-  const [selection, setSelection] = useState<number | null>(null);
-
-  const visibles = useMemo(() => {
-    const requete = recherche.trim().toLocaleLowerCase("fr");
-    return (taches.data ?? []).filter((tache) => tache.titre.toLocaleLowerCase("fr").includes(requete));
-  }, [taches.data, recherche]);
-
-  const ouvrir = (id: number) => {
-    setSelection(id);
-    void shell.publish({ id });
-    void shell.setPanelVisible(true);
-  };
-
-  const creer = async () => {
-    try {
-      const { lastInsertId } = await db.execute("INSERT INTO suivi_taches (titre) VALUES ('Nouvelle tâche')");
-      taches.reload();
-      ouvrir(lastInsertId);
-    } catch {
-      void shell.notify({ title: "La tâche n’a pas été créée", tone: "error" });
-    }
-  };
-
-  const total = taches.data?.length ?? 0;
-
-  return (
-    <Page
-      toolbar={
-        total > 0 ? (
-          <PageToolbar
-            start={
-              <SearchField
-                label="Rechercher une tâche"
-                placeholder="Rechercher…"
-                value={recherche}
-                onChange={(event) => setRecherche(event.target.value)}
-              />
-            }
-          >
-            <RefreshButton loading={taches.loading} onClick={taches.reload} />
-            <Button variant="primary" onClick={creer}>
-              Nouvelle tâche
-            </Button>
-          </PageToolbar>
-        ) : undefined
-      }
-    >
-      {taches.error ? (
-        <FeedbackBanner tone="danger" action={<Button onClick={taches.reload}>Réessayer</Button>}>
-          Les tâches n’ont pas pu être chargées : {taches.error.message}
-        </FeedbackBanner>
-      ) : taches.data === undefined ? (
-        <LoadingSkeleton rows={6} label="Chargement des tâches…" />
-      ) : total === 0 ? (
-        <EmptyState title="Aucune tâche" description="Les tâches créées ici apparaissent dans cette liste.">
-          <Button variant="primary" onClick={creer}>
-            Nouvelle tâche
-          </Button>
-        </EmptyState>
-      ) : (
-        <DataTable
-          label="Tâches"
-          columns={columns}
-          rows={visibles}
-          rowKey={(tache) => tache.id}
-          selectedKey={selection}
-          onRowClick={(tache) => ouvrir(tache.id)}
-          loading={taches.loading}
-          emptyTitle="Aucun résultat"
-          emptyDescription="Aucune tâche ne correspond à cette recherche."
-          emptyAction={<Button onClick={() => setRecherche("")}>Effacer la recherche</Button>}
-        />
-      )}
-    </Page>
-  );
-}
-```
-
-### 12.2 Panneau de droite : détail de la sélection
+### 12.0 Fichier partagé : `modules/suivi/lib/taches.ts`
 
 ```tsx
-import {
-  Button,
-  EmptyState,
-  FeedbackBanner,
-  Heading,
-  KeyValueList,
-  LoadingSkeleton,
-  Page,
-  Section,
-  Stack,
-  StatusBadge,
-  Text,
-} from "@alfred/ui";
-import { db, useAsync, usePageContext } from "@alfred/sdk";
+import { type Action, type FormSpec, type FormValues, type StatusMap } from "@alfred/ui";
+import { db } from "@alfred/sdk";
 
-interface TacheDetail {
+export interface Tache {
   id: number;
   titre: string;
-  etat: "a_faire" | "en_cours" | "terminee";
+  etat: string;
   echeance: string | null;
   responsable: string | null;
   description: string | null;
 }
 
-const etatsDetail = {
+export const ETATS: StatusMap = {
   a_faire: { label: "À faire", tone: "neutral" },
   en_cours: { label: "En cours", tone: "warning" },
   terminee: { label: "Terminée", tone: "success" },
-} as const;
+};
 
-const jourLong = new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" });
+export const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, label: etat.label }));
 
-export default function TacheDetailPanel() {
-  const context = usePageContext();
-  const selection = context?.selection as { id?: number } | null | undefined;
-  const id = selection?.id ?? null;
+function enregistrer(v: FormValues, id?: number) {
+  const valeurs = [v.titre, v.responsable || null, v.echeance || null, v.etat];
+  return id === undefined
+    ? db.execute("INSERT INTO suivi_taches (titre, responsable, echeance, etat) VALUES (?, ?, ?, ?)", valeurs)
+    : db.execute("UPDATE suivi_taches SET titre = ?, responsable = ?, echeance = ?, etat = ? WHERE id = ?", [
+        ...valeurs,
+        id,
+      ]);
+}
 
-  const tache = useAsync(async () => {
-    if (id === null) return null;
-    const rows = await db.query<TacheDetail>(
-      "SELECT id, titre, etat, echeance, responsable, description FROM suivi_taches WHERE id = ?",
-      [id],
-    );
-    return rows[0] ?? null;
-  }, [id]);
+/** Formulaire de création (sans tâche) ou de modification (avec la tâche). */
+export function formulaireTache(tache?: Tache): FormSpec {
+  return {
+    title: tache ? "Modifier la tâche" : "Nouvelle tâche",
+    fields: [
+      { name: "titre", label: "Titre", placeholder: "Relancer le client" },
+      { name: "responsable", label: "Responsable", optional: true },
+      { name: "echeance", label: "Échéance", type: "date", optional: true },
+      { name: "etat", label: "État", type: "select", options: OPTIONS_ETAT },
+    ],
+    initial: tache,
+    submitLabel: tache ? "Enregistrer" : "Créer",
+    success: tache ? undefined : "Tâche créée",
+    onSubmit: (v) => enregistrer(v, tache?.id),
+  };
+}
 
-  const detail = tache.data;
+export function supprimerTache(tache: Tache): Action {
+  return {
+    label: "Supprimer",
+    danger: true,
+    confirm: `Supprimer la tâche « ${tache.titre} » ?`,
+    confirmMessage: "Cette action est définitive.",
+    success: "Tâche supprimée",
+    onClick: () => db.execute("DELETE FROM suivi_taches WHERE id = ?", [tache.id]),
+  };
+}
+```
+
+### 12.1 Liste : `modules/suivi/pages/taches.tsx`
+
+```tsx
+import { Copy, Pencil } from "lucide-react";
+import { CollectionPage, type Column, openForm } from "@alfred/ui";
+import { db } from "@alfred/sdk";
+import { ETATS, formulaireTache, OPTIONS_ETAT, supprimerTache, type Tache } from "../lib/taches";
+
+const colonnes: Column<Tache>[] = [
+  { key: "titre", header: "Titre" },
+  { key: "responsable", header: "Responsable" },
+  { key: "etat", header: "État", type: "status", statuses: ETATS },
+  { key: "echeance", header: "Échéance", type: "date" },
+];
+
+export default function TachesPage() {
   return (
-    <Page>
-      {id === null ? (
-        <EmptyState
-          size="compact"
-          title="Aucune tâche sélectionnée"
-          description="Sélectionner une ligne de la liste pour afficher son détail."
-        />
-      ) : tache.error ? (
-        <FeedbackBanner tone="danger" action={<Button onClick={tache.reload}>Réessayer</Button>}>
-          Le détail de la tâche n’a pas pu être chargé : {tache.error.message}
+    <CollectionPage<Tache>
+      label="Tâches"
+      load={() => db.query<Tache>("SELECT * FROM suivi_taches ORDER BY echeance")}
+      rowKey={(tache) => tache.id}
+      columns={colonnes}
+      panel
+      emptyTitle="Aucune tâche"
+      emptyDescription="Les tâches créées ici apparaissent dans cette liste."
+      search={{ label: "Rechercher une tâche" }}
+      filters={[{ label: "État", all: "Tous les états", value: (tache) => tache.etat, options: OPTIONS_ETAT }]}
+      actions={[{ label: "Nouvelle tâche", primary: true, onClick: () => openForm(formulaireTache()) }]}
+      rowActions={(tache) => [
+        { label: "Modifier", icon: Pencil, onClick: () => openForm(formulaireTache(tache)) },
+        {
+          label: "Dupliquer",
+          icon: Copy,
+          success: "Tâche dupliquée",
+          onClick: () =>
+            db.execute("INSERT INTO suivi_taches (titre, etat) VALUES (?, 'a_faire')", [`${tache.titre} (copie)`]),
+        },
+        supprimerTache(tache),
+      ]}
+    />
+  );
+}
+```
+
+### 12.2 Panneau de droite : `modules/suivi/pages/detail.tsx`
+
+```tsx
+import { Check, Pencil } from "lucide-react";
+import { DetailPanel, openForm } from "@alfred/ui";
+import { db } from "@alfred/sdk";
+import { ETATS, formulaireTache, supprimerTache, type Tache } from "../lib/taches";
+
+export default function TacheDetail() {
+  return (
+    <DetailPanel<Tache>
+      load={async (id) => (await db.query<Tache>("SELECT * FROM suivi_taches WHERE id = ?", [Number(id)]))[0]}
+      emptyTitle="Aucune tâche sélectionnée"
+      notFoundTitle="Tâche introuvable"
+      title={(tache) => tache.titre}
+      subtitle={(tache) => (tache.responsable ? `Attribuée à ${tache.responsable}` : "Non attribuée")}
+      status={{ value: (tache) => tache.etat, statuses: ETATS }}
+      actions={(tache) => [
+        { label: "Modifier", icon: Pencil, onClick: () => openForm(formulaireTache(tache)) },
+        {
+          label: "Terminer",
+          icon: Check,
+          hidden: tache.etat === "terminee",
+          success: "Tâche terminée",
+          onClick: () => db.execute("UPDATE suivi_taches SET etat = 'terminee' WHERE id = ?", [tache.id]),
+        },
+        supprimerTache(tache),
+      ]}
+      fields={(tache) => [
+        { label: "Échéance", value: tache.echeance, type: "date" },
+        { label: "Responsable", value: tache.responsable },
+      ]}
+      sections={(tache) => [
+        {
+          title: "Description",
+          content: tache.description,
+          empty: "Aucune description",
+          actions: [
+            {
+              label: "Modifier la description",
+              icon: Pencil,
+              onClick: () =>
+                openForm({
+                  title: "Modifier la description",
+                  fields: [{ name: "description", label: "Description", type: "textarea", optional: true }],
+                  initial: tache,
+                  submitLabel: "Enregistrer",
+                  onSubmit: (v) =>
+                    db.execute("UPDATE suivi_taches SET description = ? WHERE id = ?", [v.description || null, tache.id]),
+                }),
+            },
+          ],
+        },
+      ]}
+    />
+  );
+}
+```
+
+### 12.3 Onglet de Réglages : `modules/suivi/pages/reglages.tsx`
+
+```tsx
+import { SettingsPage } from "@alfred/ui";
+import { db } from "@alfred/sdk";
+
+const ECRIRE =
+  "INSERT INTO suivi_reglages (cle, valeur) VALUES (?, ?) ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur";
+const ecrire = (cle: string, valeur: string) => db.execute(ECRIRE, [cle, valeur]);
+
+async function lire() {
+  const rows = await db.query<{ cle: string; valeur: string }>("SELECT cle, valeur FROM suivi_reglages");
+  return new Map(rows.map((row) => [row.cle, row.valeur]));
+}
+
+export default function ReglagesSuivi() {
+  return (
+    <SettingsPage
+      load={lire}
+      sections={(valeurs) => [
+        {
+          title: "Nouvelles tâches",
+          description: "Valeurs proposées à la création d’une tâche.",
+          settings: [
+            {
+              id: "equipe",
+              type: "text",
+              title: "Nom de l’équipe",
+              description: "Affiché sur chaque tâche.",
+              value: valeurs.get("equipe") ?? "",
+              save: (valeur) => ecrire("equipe", valeur),
+            },
+            {
+              id: "delai",
+              type: "select",
+              title: "Échéance par défaut",
+              value: valeurs.get("delai") ?? "7",
+              options: [
+                { value: "1", label: "Un jour" },
+                { value: "7", label: "Une semaine" },
+                { value: "30", label: "Un mois" },
+              ],
+              save: (valeur) => ecrire("delai", valeur),
+            },
+            {
+              id: "rappel",
+              type: "text",
+              inputType: "number",
+              title: "Rappel avant l’échéance, en jours",
+              value: valeurs.get("rappel") ?? "2",
+              save: (valeur) => ecrire("rappel", valeur),
+            },
+          ],
+        },
+        {
+          title: "Notifications",
+          settings: [
+            {
+              id: "retards",
+              type: "switch",
+              title: "Tâches en retard",
+              description: "Une notification quand une tâche dépasse son échéance.",
+              value: valeurs.get("notifier_retards") === "1",
+              save: (actif) => ecrire("notifier_retards", actif ? "1" : "0"),
+            },
+          ],
+        },
+        {
+          title: "Données",
+          settings: [
+            {
+              id: "purger",
+              type: "action",
+              title: "Tâches terminées",
+              description: "Les retirer définitivement de la liste.",
+              action: {
+                label: "Supprimer",
+                danger: true,
+                confirm: "Supprimer toutes les tâches terminées ?",
+                confirmMessage: "Cette action est définitive.",
+                success: "Tâches terminées supprimées",
+                onClick: () => db.execute("DELETE FROM suivi_taches WHERE etat = 'terminee'"),
+              },
+            },
+          ],
+        },
+      ]}
+    />
+  );
+}
+```
+
+### 12.4 Page composée : `modules/suivi/pages/semaine.tsx`
+
+Une synthèse de la semaine : aucun gabarit ne convient, la page compose des blocs. Les actions passent quand même par `Page actions` et `Section actions`.
+
+```tsx
+import { useState } from "react";
+import { Download, RefreshCw } from "lucide-react";
+import {
+  Button,
+  EmptyState,
+  FeedbackBanner,
+  FormattedValue,
+  KeyValueList,
+  List,
+  ListItem,
+  LoadingSkeleton,
+  Page,
+  Section,
+} from "@alfred/ui";
+import { db, shell, useAsync } from "@alfred/sdk";
+import { ETATS, type Tache } from "../lib/taches";
+
+export default function SemainePage() {
+  const taches = useAsync(
+    () =>
+      db.query<Tache>(
+        "SELECT * FROM suivi_taches WHERE echeance BETWEEN date('now') AND date('now', '+7 days') ORDER BY echeance",
+      ),
+    [],
+  );
+  const [recherche, setRecherche] = useState("");
+  const liste = (taches.data ?? []).filter((tache) =>
+    tache.titre.toLocaleLowerCase("fr").includes(recherche.trim().toLocaleLowerCase("fr")),
+  );
+  const ouvertes = liste.filter((tache) => tache.etat !== "terminee").length;
+
+  return (
+    <Page
+      width="text"
+      search={{ label: "Rechercher une tâche de la semaine", value: recherche, onChange: setRecherche }}
+      actions={[
+        { label: "Actualiser", icon: RefreshCw, onClick: taches.reload },
+        { label: "Exporter la semaine", icon: Download, onClick: () => shell.navigate("suivi/export") },
+      ]}
+    >
+      {taches.error ? (
+        <FeedbackBanner tone="danger" action={<Button onClick={taches.reload}>Réessayer</Button>}>
+          La semaine n’a pas pu être chargée : {taches.error.message}
         </FeedbackBanner>
-      ) : detail === undefined ? (
-        <LoadingSkeleton rows={3} label="Chargement de la tâche…" />
-      ) : detail === null ? (
-        <EmptyState size="compact" title="Tâche introuvable" description="Elle a peut-être été supprimée." />
+      ) : taches.data === undefined ? (
+        <LoadingSkeleton variant="page" rows={4} label="Chargement de la semaine…" />
       ) : (
         <>
-          <Stack gap="sm">
-            <Heading level={2}>{detail.titre}</Heading>
+          <Section title="En bref">
             <KeyValueList
               items={[
-                {
-                  label: "État",
-                  value: (
-                    <StatusBadge tone={etatsDetail[detail.etat].tone} size="compact">
-                      {etatsDetail[detail.etat].label}
-                    </StatusBadge>
-                  ),
-                },
-                {
-                  label: "Échéance",
-                  value: detail.echeance ? jourLong.format(new Date(detail.echeance)) : "Non définie",
-                },
-                { label: "Responsable", value: detail.responsable ?? "Non attribuée" },
+                { label: "Tâches de la semaine", value: liste.length },
+                { label: "Encore ouvertes", value: ouvertes },
               ]}
             />
-          </Stack>
-          <Section title="Description">
-            {detail.description ? (
-              <Text>{detail.description}</Text>
+          </Section>
+          <Section title="Échéances">
+            {liste.length === 0 ? (
+              <EmptyState size="compact" title="Aucune échéance cette semaine" />
             ) : (
-              <EmptyState size="compact" title="Aucune description" />
+              <List label="Échéances de la semaine">
+                {liste.map((tache) => (
+                  <ListItem
+                    key={tache.id}
+                    title={tache.titre}
+                    description={tache.echeance ? <FormattedValue value={tache.echeance} options={{ type: "date" }} /> : undefined}
+                    trailing={<FormattedValue value={tache.etat} options={{ type: "status", statuses: ETATS }} />}
+                    onClick={() => shell.navigate("suivi/taches")}
+                  />
+                ))}
+              </List>
             )}
           </Section>
         </>
@@ -835,177 +765,12 @@ export default function TacheDetailPanel() {
 }
 ```
 
-### 12.3 Onglet de Réglages : lignes de réglage
-
-```tsx
-import { type FormEvent, useState } from "react";
-import {
-  Button,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  Section,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  SwitchControl,
-  TextInput,
-} from "@alfred/ui";
-import { db, shell, useAsync } from "@alfred/sdk";
-
-interface Reglages {
-  equipe: string;
-  notifierRetards: boolean;
-  delai: string;
-}
-
-const ECRIRE =
-  "INSERT INTO suivi_reglages (cle, valeur) VALUES (?, ?) ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur";
-
-async function lireReglages(): Promise<Reglages> {
-  const rows = await db.query<{ cle: string; valeur: string }>("SELECT cle, valeur FROM suivi_reglages");
-  const valeurs = new Map(rows.map((row) => [row.cle, row.valeur]));
-  return {
-    equipe: valeurs.get("equipe") ?? "",
-    notifierRetards: valeurs.get("notifier_retards") === "1",
-    delai: valeurs.get("delai") ?? "7",
-  };
-}
-
-/** Un réglage appliqué dès qu’il change : en cas d’échec, la valeur précédente revient et l’échec est notifié. */
-async function appliquer(cle: string, valeur: string, annuler: () => void) {
-  try {
-    await db.execute(ECRIRE, [cle, valeur]);
-  } catch (error) {
-    annuler();
-    void shell.notify({
-      title: "Le réglage n’a pas été enregistré",
-      description: error instanceof Error ? error.message : undefined,
-      tone: "error",
-    });
-  }
-}
-
-function ReglagesSuivi({ initial }: { initial: Reglages }) {
-  const [enregistre, setEnregistre] = useState(initial.equipe);
-  const [equipe, setEquipe] = useState(initial.equipe);
-  const [erreur, setErreur] = useState<string>();
-  const [enCours, setEnCours] = useState(false);
-  const [notifier, setNotifier] = useState(initial.notifierRetards);
-  const [delai, setDelai] = useState(initial.delai);
-
-  // Saisie libre : « Annuler » et « Enregistrer » n’apparaissent sur la ligne qu’une fois la valeur modifiée.
-  const enregistrer = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!equipe.trim()) {
-      setErreur("Saisissez le nom de l’équipe.");
-      return;
-    }
-    setEnCours(true);
-    try {
-      await db.execute(ECRIRE, ["equipe", equipe.trim()]);
-      setEnregistre(equipe.trim());
-      void shell.notify({ title: "Équipe enregistrée", tone: "success" });
-    } catch (error) {
-      void shell.notify({
-        title: "L’équipe n’a pas été enregistrée",
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    } finally {
-      setEnCours(false);
-    }
-  };
-
-  return (
-    <Page width="text">
-      <Section title="Suivi des tâches" description="Valeurs appliquées aux nouvelles tâches.">
-        <SettingRows>
-          <SettingRow title="Nom de l’équipe" description={erreur ?? "Affiché sur chaque tâche."}>
-            <form noValidate onSubmit={enregistrer}>
-              <TextInput
-                aria-label="Nom de l’équipe"
-                aria-invalid={erreur ? true : undefined}
-                value={equipe}
-                onChange={(event) => {
-                  setEquipe(event.target.value);
-                  setErreur(undefined);
-                }}
-              />
-              {equipe !== enregistre ? (
-                <>
-                  <Button onClick={() => setEquipe(enregistre)}>Annuler</Button>
-                  <Button type="submit" variant="primary" loading={enCours} loadingLabel="Enregistrement…">
-                    Enregistrer
-                  </Button>
-                </>
-              ) : null}
-            </form>
-          </SettingRow>
-          <SettingRow title="Délai par défaut" description="Échéance proposée pour une nouvelle tâche.">
-            <SelectControl
-              aria-label="Délai par défaut"
-              value={delai}
-              onChange={(event) => {
-                const avant = delai;
-                setDelai(event.target.value);
-                void appliquer("delai", event.target.value, () => setDelai(avant));
-              }}
-            >
-              <option value="1">Un jour</option>
-              <option value="7">Une semaine</option>
-              <option value="30">Un mois</option>
-            </SelectControl>
-          </SettingRow>
-        </SettingRows>
-      </Section>
-      <Section title="Notifications">
-        <SettingRows>
-          <SettingRow title="Tâches en retard" description="Une notification quand une tâche dépasse son échéance.">
-            <SwitchControl
-              label=""
-              aria-label="Notifier les tâches en retard"
-              checked={notifier}
-              onChange={(event) => {
-                const actif = event.target.checked;
-                setNotifier(actif);
-                void appliquer("notifier_retards", actif ? "1" : "0", () => setNotifier(!actif));
-              }}
-            />
-          </SettingRow>
-        </SettingRows>
-      </Section>
-    </Page>
-  );
-}
-
-export default function ReglagesSuiviPage() {
-  const reglages = useAsync(lireReglages, []);
-
-  if (reglages.error) {
-    return (
-      <Page width="text">
-        <FeedbackBanner tone="danger" action={<Button onClick={reglages.reload}>Réessayer</Button>}>
-          Les réglages n’ont pas pu être chargés : {reglages.error.message}
-        </FeedbackBanner>
-      </Page>
-    );
-  }
-  if (reglages.data === undefined) {
-    return (
-      <Page width="text">
-        <LoadingSkeleton rows={4} label="Chargement des réglages…" />
-      </Page>
-    );
-  }
-  return <ReglagesSuivi initial={reglages.data} />;
-}
-```
-
 ## 13. Checklist avant de dire qu’une page est terminée
 
-- [ ] Structure : export par défaut, `Page` à la racine dans tous les états, imports autorisés seulement (règles 1 et 2) ; aucun `style`, `<style>` ni `className` (règle 3) ; chaque composant et chaque prop figurent dans ce document ; rien ne répète la coquille ; le gabarit correspond à l’emplacement (section 2).
-- [ ] Contenu : ce qui demande une action vient en premier, rien ne décore ; une seule action `primary` par groupe ; destruction en `danger`, confirmée par `useConfirm` ; libellés de la section 6 ; dates et nombres formatés en français.
-- [ ] États : premier chargement, rechargement, vide, erreur de chargement et échec d’action ont leur rendu (section 9) ; une page sans données n’affiche ni barre d’outils ni filtres ; un panneau couvre aucune sélection, chargement, erreur, objet introuvable.
-- [ ] Accessibilité : icônes en `size={16}` et `aria-hidden="true"` ; chaque champ, tableau, recherche, groupe, menu et modale est nommé (section 11) ; aucun état porté par la couleur seule ; tout le parcours se fait au clavier.
-- [ ] Vérification : la page s’affiche sans erreur dans Alfred, en clair et en sombre, panneau ouvert et fermé, et a été relue contre la section 12.
+- [ ] Le gabarit correspond à ce que la page montre (section 2) ; une `Page` composée n’est employée que si aucun ne convient.
+- [ ] `check` rend `"ok": true`, sans remarque `design`.
+- [ ] Toutes les actions sont des `Action` : une seule `primary` par endroit, une icône pour chaque action courante (section 3), `danger` avec `confirm` et `success` pour toute destruction ; `onClick` rend la promesse de l’écriture.
+- [ ] Les colonnes, fiches et réglages ont le bon `type` (section 4.5) ; les états ont un `StatusMap` partagé.
+- [ ] Les saisies passent par `openForm`, champs typés, facultatifs marqués `optional`.
+- [ ] Textes : `emptyTitle` nomme l’absence, libellés à l’infinitif (section 8), typographie française.
+- [ ] `page_snapshot` et `page_screenshot` montrent la page attendue, en clair et en sombre, panneau ouvert et fermé.

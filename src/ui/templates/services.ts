@@ -1,0 +1,56 @@
+import { createContext, useContext, useEffect, useRef } from "react";
+
+/**
+ * Ce que les gabarits demandent à Alfred sans que la page s’en charge : notifier, publier la sélection, montrer le
+ * panneau, prévenir l’autre cadre d’un changement. L’hôte du cadre (`src/runtime/pageHost.tsx`) branche ces services
+ * sur `@alfred/sdk` ; ailleurs (tests, coquille), ils ne font rien.
+ */
+export interface FrameServices {
+  notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): void;
+  publish(selection: unknown): void;
+  setPanelVisible(visible: boolean): void;
+  /** Ouvre une adresse web ou `mailto:` hors d’Alfred. */
+  openExternal(url: string): void;
+  /** Message à l’autre cadre de la page (page ↔ panneau). */
+  send(message: unknown): void;
+  /** Abonnement aux messages de l’autre cadre ; renvoie le désabonnement. */
+  onPeer(handler: (message: unknown) => void): () => void;
+  /** Abonnement à la sélection publiée par la page (pour un panneau) ; renvoie le désabonnement. */
+  onSelection(handler: (selection: unknown) => void): () => void;
+}
+
+const none: FrameServices = {
+  notify: () => undefined,
+  publish: () => undefined,
+  setPanelVisible: () => undefined,
+  openExternal: () => undefined,
+  send: () => undefined,
+  onPeer: () => () => undefined,
+  onSelection: () => () => undefined,
+};
+
+export const FrameServicesContext = createContext<FrameServices>(none);
+
+export function useFrameServices() {
+  return useContext(FrameServicesContext);
+}
+
+/** Message qu’un gabarit envoie à l’autre cadre après une écriture : la liste ou le détail se recharge seul. */
+export const CHANGED = { alfred: "changed" } as const;
+
+export function isChanged(message: unknown) {
+  return typeof message === "object" && message !== null && (message as { alfred?: unknown }).alfred === "changed";
+}
+
+/** Recharge quand l’autre cadre signale une écriture. */
+export function useReloadOnPeerChange(reload: () => void) {
+  const services = useFrameServices();
+  const latest = useRef(reload);
+  latest.current = reload;
+  useEffect(() => services.onPeer((message) => isChanged(message) && latest.current()), [services]);
+}
+
+export function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error : undefined;
+}

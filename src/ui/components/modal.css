@@ -1,12 +1,16 @@
 .ui-modal {
   width: min(480px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 32px));
+  max-width: calc(100vw - 16px);
   flex-direction: column;
   overflow: hidden;
   font-size: var(--font-size-body);
 }
 .ui-modal[open] {
   display: flex;
+}
+.ui-modal--small {
+  width: min(360px, calc(100vw - 32px));
 }
 .ui-modal--wide {
   width: min(720px, calc(100vw - 32px));
@@ -51,10 +55,15 @@
 }
 .ui-modal__footer {
   display: flex;
+  flex-wrap: wrap;
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 20px;
   border-top: 1px solid var(--line);
+}
+/* Dans une modale, un formulaire suit la largeur de la modale. */
+.ui-modal .al-form {
+  max-width: none;
 }

@@ -162,6 +162,7 @@ export function Combobox({ value, options, onChange, normalize, id, className, .
     <div ref={containerRef} className={["combobox", className ?? ""].filter(Boolean).join(" ")}>
       <TextInput
         {...props}
+        width="full"
         id={inputId}
         ref={inputRef}
         value={value}
@@ -393,6 +394,7 @@ export function SearchCombobox<Option>({
       <Search className="search-combobox__icon" size={16} aria-hidden="true" />
       <TextInput
         {...inputProps}
+        width="full"
         id={inputId}
         ref={inputRef}
         type="text"
@@ -736,6 +738,7 @@ export function MultiSelectCombobox<Value extends string>({
           ) : null}
           <TextInput
             {...inputProps}
+            width="full"
             id={inputId}
             ref={inputRef}
             className="multi-combobox__input"

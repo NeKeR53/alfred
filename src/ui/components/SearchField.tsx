@@ -34,7 +34,7 @@ export function SearchField({
   return (
     <div className={classes}>
       <Search size={16} aria-hidden="true" />
-      <TextInput {...props} ref={inputRef} type="search" value={value} aria-label={label} />
+      <TextInput {...props} width="full" ref={inputRef} type="search" value={value} aria-label={label} />
       {clear && hasValue ? (
         <IconButton
           label={`Effacer ${label.toLocaleLowerCase()}`}

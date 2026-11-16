@@ -6,6 +6,7 @@ mod badges;
 mod clients;
 mod composer;
 mod conversations;
+mod design_lint;
 mod dispatch;
 mod docs;
 mod error;
