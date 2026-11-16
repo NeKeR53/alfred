@@ -45,6 +45,7 @@ describe("identité du demandeur", () => {
       query: { a: 1 },
       headers: { accept: "json" },
       body: { b: 2 },
+      cache: 60,
       autre: "x",
     });
     expect(native.invoke.mock.calls).toEqual([
@@ -60,6 +61,7 @@ describe("identité du demandeur", () => {
           query: { a: 1 },
           headers: { accept: "json" },
           body: { b: 2 },
+          cache: 60,
         },
       ],
     ]);

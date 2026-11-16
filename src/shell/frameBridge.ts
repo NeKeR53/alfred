@@ -226,7 +226,7 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
     case "clients.request":
       return invoke("frame.clients.request", {
-        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body"]),
+        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body", "cache"]),
         subject,
       });
     case "files.save":
@@ -283,6 +283,8 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       await invoke("frame.files.exportTo", { ...pick(params, ["id"]), path, subject });
       return true;
     }
+    case "clients.clearCache":
+      return invoke("frame.clients.clearCache", { ...pick(params, ["client"]), subject });
     case "clients.instances":
       return invoke("frame.clients.instances", { ...pick(params, ["client"]), subject });
     default:

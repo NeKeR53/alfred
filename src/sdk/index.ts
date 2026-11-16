@@ -307,6 +307,11 @@ export interface ClientRequest {
   headers?: Record<string, string>;
   /** Objet envoyé en JSON, ou chaîne envoyée telle quelle. */
   body?: unknown;
+  /**
+   * Lecture (`GET`, `HEAD`) : garder la réponse réussie ce nombre de secondes (un jour au plus) et la resservir
+   * sans rappeler le service. À défaut, la durée `cache` du besoin dans `module.json`.
+   */
+  cache?: number;
 }
 
 export interface ClientResponse<Body = unknown> {
@@ -315,6 +320,9 @@ export interface ClientResponse<Body = unknown> {
   headers: Record<string, string>;
   /** JSON décodé quand la réponse en est, sinon le texte. */
   body: Body;
+  /** Réponse resservie par le cache d’Alfred, et son âge en secondes. */
+  cached?: boolean;
+  cacheAge?: number;
 }
 
 /** Instance d’un client : un compte ou une installation du service, ajoutée par l’utilisateur dans les Réglages. */
@@ -340,11 +348,14 @@ export function client(id: string, options: ClientOptions = {}) {
     request<ClientResponse<Body>>("clients.request", { client: id, ...call, ...(instance ? { instance } : {}) });
   return {
     request: send,
-    get: <Body = unknown>(path: string, query?: ClientRequest["query"]) => send<Body>({ method: "GET", path, query }),
+    get: <Body = unknown>(path: string, query?: ClientRequest["query"], options: { cache?: number } = {}) =>
+      send<Body>({ method: "GET", path, query, ...options }),
     post: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "POST", path, body }),
     put: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PUT", path, body }),
     patch: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PATCH", path, body }),
     delete: <Body = unknown>(path: string) => send<Body>({ method: "DELETE", path }),
+    /** Oublie les réponses de ce client gardées pour le module (après une écriture, pour relire à jour). */
+    clearCache: () => request<{ cleared: number }>("clients.clearCache", { client: id }),
     /** Instances du client, la première étant celle par défaut. */
     instances: () => request<ClientInstance[]>("clients.instances", { client: id }),
   };

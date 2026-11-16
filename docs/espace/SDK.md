@@ -217,12 +217,13 @@ Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }`
 ```ts
 client(id: string, options?: { instance?: string }): {
   request<Body>(options: ClientRequest): Promise<ClientResponse<Body>>;
-  get<Body>(path: string, query?: Record<string, string | number | boolean>): Promise<ClientResponse<Body>>;
+  get<Body>(path: string, query?: Record<string, string | number | boolean>, options?: { cache?: number }): Promise<ClientResponse<Body>>;
   post<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   put<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   patch<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   delete<Body>(path: string): Promise<ClientResponse<Body>>;
   instances(): Promise<{ id: string; label: string; default: boolean }[]>;
+  clearCache(): Promise<{ cleared: number }>;
 };
 interface ClientRequest {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
@@ -230,13 +231,16 @@ interface ClientRequest {
   query?: Record<string, string | number | boolean>;
   headers?: Record<string, string>;
   body?: unknown;
+  cache?: number; // secondes : voir « Cache des lectures »
 }
-interface ClientResponse<Body> { status: number; ok: boolean; headers: Record<string, string>; body: Body }
+interface ClientResponse<Body> { status: number; ok: boolean; headers: Record<string, string>; body: Body; cached?: boolean; cacheAge?: number }
 ```
 
 Alfred exécute la requête et ajoute l’authentification : la page ne voit jamais le secret. `path` commence par `/` et reste sous l’adresse de base (ni adresse complète, ni `//`, `..` ou `@`). Un `body` objet part en JSON, une chaîne telle quelle. `Authorization`, `Cookie`, `Host`, `Range`, `If-Range` et l’en-tête de la clé sont fixés par Alfred. `body` est décodé si la réponse est du JSON, sinon c’est le texte ; 20 Mo et 60 secondes au plus.
 
 **Un statut HTTP d’erreur ne rejette pas la promesse** : teste `ok` ou `status`. Le rejet signifie que la requête n’a pas abouti : client inconnu ou à valider, secret manquant, accès refusé, chemin refusé, erreur réseau. La première requête d’une page vers un client (et, séparément, de son panneau, ou des fonctions d’un module) demande l’accord de l’utilisateur.
+
+**Cache des lectures** : `cache: 300` (secondes, un jour au plus) sur un `GET` ou un `HEAD` fait garder la réponse réussie (statut 2xx) et la resservir sans rappeler le service, avec `cached: true` et `cacheAge`. Pour tout le module, donne `cache` au besoin dans `module.json` (`"clients": [{ "id": "jira", "label": "Jira", "cache": 300 }]`) ; la requête peut le changer (`cache: 0` pour relire). Le cache est propre au module et à la requête exacte (chemin, paramètres, en-têtes, instance) ; une modification du client le rend caduc ; `clearCache()` l’oublie après une écriture. Réserve-le aux lectures qui changent peu (projets, profils, référentiels) pour ménager les quotas du service, jamais à une donnée que l’utilisateur attend à jour.
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 

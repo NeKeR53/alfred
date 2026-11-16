@@ -4,6 +4,7 @@ mod agents;
 mod app_db;
 mod backups;
 mod badges;
+mod client_cache;
 mod clients;
 mod composer;
 mod conversations;

@@ -335,6 +335,9 @@ pub struct ClientNeed {
     /// configuration le crée tel quel, l’utilisateur n’ajoute que son compte.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<Value>,
+    /// Durée (en secondes) pendant laquelle les lectures réussies de ce service sont gardées, par défaut.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
