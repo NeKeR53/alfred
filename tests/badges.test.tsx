@@ -17,7 +17,7 @@ it("la pastille suit le compteur réglé par la page", async () => {
   backend.badges = { "notes/carnet": 2 };
   const user = userEvent.setup();
   render(<App />);
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace" });
+  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
 
   // Gardé du lancement précédent : la section Notes l’affiche avant même d’être ouverte.
   expect(await within(navigation).findByRole("button", { name: "Notes · 2 nouveautés" })).toBeVisible();

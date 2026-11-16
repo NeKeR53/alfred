@@ -39,8 +39,8 @@ export function PageWindow({
             title="Page introuvable"
             description={
               snapshot
-                ? "Cette page n’est plus dans la navigation de l’espace ouvert. Vous pouvez fermer cette fenêtre."
-                : "Aucun espace n’est ouvert. Ouvrez-en un dans la fenêtre principale d’Alfred."
+                ? "Cette page n’est plus dans la navigation de l’espace de travail ouvert. Vous pouvez fermer cette fenêtre."
+                : "Aucun espace de travail n’est ouvert. Ouvrez-en un dans la fenêtre principale d’Alfred."
             }
           />
         )}

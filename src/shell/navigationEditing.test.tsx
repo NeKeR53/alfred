@@ -134,7 +134,7 @@ const lastLayoutCall = () => {
 };
 
 const sidebarLabels = () =>
-  within(screen.getByRole("navigation", { name: "Sections de l’espace" }))
+  within(screen.getByRole("navigation", { name: "Sections de l’espace de travail" }))
     .getAllByRole("button")
     .map((button) => button.getAttribute("aria-label"))
     .filter((label) => label && !label.startsWith("Actions"));

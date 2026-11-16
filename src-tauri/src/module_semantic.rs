@@ -3,7 +3,7 @@
 //! Alfred calcule pour chaque ligne un vecteur avec un modèle local (multilingual-e5-small, français compris, lancé
 //! en Rust par candle), le range dans la base de l’espace, et compare la question à toutes les lignes.
 //!
-//! Le modèle (environ 470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Espace. Des
+//! Le modèle (environ 470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général. Des
 //! déclencheurs d’Alfred mettent chaque ligne écrite en file ; une boucle de fond calcule les vecteurs en attente.
 
 use std::path::{Path, PathBuf};
@@ -543,7 +543,7 @@ pub fn start(state: Arc<AppState>) {
 
 fn missing_model() -> AppError {
     AppError::new(
-        "La recherche par le sens n’est pas encore installée : l’utilisateur télécharge son modèle dans Réglages → Espace.",
+        "La recherche par le sens n’est pas encore installée : l’utilisateur télécharge son modèle dans Réglages → Général.",
     )
 }
 

@@ -82,6 +82,8 @@ export interface ModuleSummary {
   description: string;
   readOnly: boolean;
   origin: ModuleOrigin | null;
+  /** Publications d’un module développé ici : une par marketplace (adresse git), la dernière version envoyée. */
+  published?: Array<{ marketplace: string; version: string; commit: string }>;
   /** Masqué du menu, avec toutes ses sections et ses pages (dépendance installée d’office, ou choix). */
   hidden: boolean;
   requires: Requirement[];
@@ -109,9 +111,22 @@ export interface ResolvedFunction {
   uses: Uses;
   /** Langage : TypeScript (dans l’interface) ou script lancé par Alfred. */
   runtime: FunctionRuntime;
+  /** Lecture ou écriture chez le service ; absent, la fonction compte comme une écriture. */
+  effect?: FunctionEffect | null;
+  /** Cas de test déclarés avec la fonction. */
+  tests?: FunctionTestCase[];
 }
 
 export type FunctionRuntime = "ts" | "bash" | "pwsh" | "python";
+export type FunctionEffect = "read" | "write";
+
+export interface FunctionTestCase {
+  name: string;
+  input: unknown;
+  /** Test d’écriture : cible que l’utilisateur choisit, placée à `input[field]`. */
+  target?: { field: string; label: string; hint?: string };
+  expect?: unknown;
+}
 
 export interface Snapshot {
   path: string;

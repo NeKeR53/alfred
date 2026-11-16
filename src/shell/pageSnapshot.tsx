@@ -180,7 +180,7 @@ async function askFrame(
   timeout: number,
 ): Promise<{ located: NonNullable<ReturnType<typeof findPage>>; displayed: boolean; answer: Record<string, unknown> }> {
   const located = findPage(useShell.getState().snapshot, reference);
-  if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace.`);
+  if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace de travail.`);
   const visible = [...targets].find((target) => target.reference === reference && !target.hidden);
   let token: string | undefined;
   let target = visible;

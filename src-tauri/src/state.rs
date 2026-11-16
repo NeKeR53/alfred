@@ -79,7 +79,7 @@ impl AppState {
             .read()
             .ok()
             .and_then(|space| space.clone())
-            .ok_or_else(|| AppError::new("Aucun espace n’est ouvert."))
+            .ok_or_else(|| AppError::new("Aucun espace de travail n’est ouvert."))
     }
 
     pub fn try_space(&self) -> Option<Space> {

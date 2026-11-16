@@ -368,7 +368,7 @@ pub fn before_migration(space: &Space, module: &str, file: &str) {
 /// Remet toute la base et tous les fichiers dans l’état d’une copie, après en avoir fait une de l’état actuel.
 pub fn restore_all(space: &Space, id: &str) -> AppResult<BackupInfo> {
     let dir = backup_dir(space, id)?;
-    let safety = create(space, Reason::Restauration, Some("tout l’espace"))?;
+    let safety = create(space, Reason::Restauration, Some("tout l’espace de travail"))?;
     let source = Connection::open(dir.join("data.sqlite"))?;
     let mut target = space_db::open(space)?;
     {

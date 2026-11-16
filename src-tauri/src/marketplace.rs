@@ -25,7 +25,7 @@ const CHANGELOG: &str = "CHANGELOG.md";
 /// Jamais copiés d’un dossier à l’autre : dépôt imbriqué et fichiers que le système d’exploitation sème.
 const SKIPPED: [&str; 3] = [".git", ".DS_Store", "Thumbs.db"];
 
-const COMMANDS: [&str; 14] = [
+const COMMANDS: [&str; 15] = [
     "marketplace.list",
     "marketplace.add",
     "marketplace.remove",
@@ -40,6 +40,7 @@ const COMMANDS: [&str; 14] = [
     "marketplace.uninstall",
     "marketplace.publish",
     "marketplace.suggestVersion",
+    "marketplace.publications",
 ];
 
 /// Une seule opération à la fois : deux commandes ne doivent pas déplacer le même clone, ni écrire deux commits
@@ -53,7 +54,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
     }
     let (state, command, args) = (state.clone(), command.to_string(), args.clone());
     // La liste ne lit que les réglages : elle n’attend pas derrière un rafraîchissement réseau en cours.
-    let _guard = if command == "marketplace.list" { None } else { Some(OPERATIONS.lock().await) };
+    let _guard = if matches!(command.as_str(), "marketplace.list" | "marketplace.publications") { None } else { Some(OPERATIONS.lock().await) };
     // Git et le disque sont bloquants : tout le traitement quitte le fil asynchrone.
     let outcome = tokio::task::spawn_blocking(move || run(&state, &command, &args)).await;
     Some(outcome.unwrap_or_else(|_| Err(AppError::new("L’opération sur les marketplaces a été interrompue."))))
@@ -66,6 +67,7 @@ fn run(state: &Arc<AppState>, command: &str, args: &Value) -> AppResult<Value> {
         "marketplace.remove" => remove(state, &arg::<String>(args, "id")?),
         "marketplace.refresh" => refresh(state, opt_arg::<String>(args, "id")?.as_deref()),
         "marketplace.modules" => modules(state, &arg::<String>(args, "id")?),
+        "marketplace.publications" => publications(state),
         "marketplace.install" => {
             install(state, &arg::<String>(args, "marketplace")?, &arg::<String>(args, "module")?)
         }
@@ -209,6 +211,12 @@ fn add(state: &AppState, url: &str, name: Option<String>) -> AppResult<Value> {
     // Reste d’un marketplace débranché dont le dossier n’a pas pu être supprimé.
     remove_tree(&target)?;
     clone_into(url, &target)?;
+    if target.join(space::SPACE_FILE).exists() {
+        remove_tree(&target)?;
+        return Err(AppError::new(
+            "Cette adresse est celle d’un espace de travail, pas d’un marketplace. Un marketplace est un dépôt git qui contient un dossier par module ; publiez-y vos modules depuis leur fiche.",
+        ));
+    }
 
     let marketplace = Marketplace {
         id,
@@ -221,6 +229,40 @@ fn add(state: &AppState, url: &str, name: Option<String>) -> AppResult<Value> {
     marketplaces.push(marketplace.clone());
     save(state, &marketplaces)?;
     Ok(serde_json::to_value(marketplace)?)
+}
+
+/// Un espace de travail n’est pas un marketplace, et inversement : chacun a sa forme (`alfred.json` et `modules/`
+/// pour l’un, un dossier par module à la racine pour l’autre). Refuse d’ouvrir comme espace de travail un clone de
+/// marketplace d’Alfred, ou un dossier qui a la forme d’un marketplace.
+pub fn refuse_as_workspace(state: &AppState, path: &Path) -> AppResult<()> {
+    let refusal = || {
+        AppError::new(
+            "Ce dossier est un marketplace (un catalogue de modules partagé), pas un espace de travail. Ajoutez son adresse dans Réglages › Marketplaces pour importer ses modules, et choisissez un autre dossier pour l’espace de travail.",
+        )
+    };
+    let clones = state.data_dir.join("marketplaces");
+    let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if canonical(path).starts_with(canonical(&clones)) {
+        return Err(refusal());
+    }
+    if path.join(space::SPACE_FILE).exists() {
+        return Ok(());
+    }
+    if path.join(MODULE_FILE).is_file() || !catalog_ids(path).is_empty() {
+        return Err(refusal());
+    }
+    // Un dépôt git nu (celui d’un marketplace sur un serveur ou un partage) n’a pas de fichiers où ranger un
+    // espace de travail.
+    let bare = !path.join(".git").exists()
+        && path.join("HEAD").is_file()
+        && path.join("objects").is_dir()
+        && path.join("refs").is_dir();
+    if bare {
+        return Err(AppError::new(
+            "Ce dossier est un dépôt git nu, comme celui d’un marketplace : il ne peut pas contenir un espace de travail. S’il s’agit d’un marketplace, ajoutez son adresse dans Réglages › Marketplaces, et choisissez un autre dossier pour l’espace de travail.",
+        ));
+    }
+    Ok(())
 }
 
 fn remove(state: &AppState, id: &str) -> AppResult<Value> {
@@ -817,10 +859,19 @@ fn modules(state: &AppState, id: &str) -> AppResult<Value> {
                 .filter(|origin| !origin.detached && same_url(&origin.marketplace, &marketplace.url))
                 .map(|origin| origin.version.clone())
         });
+        // Module développé dans cet espace de travail et publié sur ce marketplace : c’est le sien, pas un conflit.
+        let own = local.as_ref().filter(|local| local.origin.is_none() || local.origin.as_ref().is_some_and(|o| o.detached)).and_then(|local| {
+            local
+                .published
+                .iter()
+                .find(|publication| same_url(&publication.marketplace, &marketplace.url))
+                .map(|publication| json!({ "version": publication.version, "local": local.version }))
+        });
         let mut entry = describe(&manifest);
         entry["notes"] = json!(notes_since(&clone.join(&module_id), None));
-        // Un module de même identifiant venu d’ailleurs (local, détaché, autre marketplace) bloque l’installation.
-        entry["conflict"] = json!(local.is_some() && installed.is_none());
+        // Un module de même identifiant venu d’ailleurs (local, détaché, autre marketplace) bloque l’importation.
+        entry["conflict"] = json!(local.is_some() && installed.is_none() && own.is_none());
+        entry["own"] = own.unwrap_or(Value::Null);
         match dependency_plan(space.as_ref(), &clone, &marketplace, &manifest) {
             Ok(steps) => entry["dependencies"] = json!(steps),
             Err(error) => {
@@ -899,7 +950,7 @@ fn install(state: &AppState, marketplace_id: &str, module_id: &str) -> AppResult
     }
     if space.module_dir(module_id).exists() {
         return Err(AppError::new(format!(
-            "Un module « {module_id} » existe déjà dans l’espace. Le désinstaller avant d’installer celui-ci."
+            "Un module « {module_id} » existe déjà dans l’espace de travail. Le retirer avant d’importer celui-ci."
         )));
     }
     let manifest = catalog_manifest(&clone, module_id)?;
@@ -910,11 +961,11 @@ fn install(state: &AppState, marketplace_id: &str, module_id: &str) -> AppResult
         commit: last_commit(&clone, module_id),
         ..Origin::default()
     };
-    checkpoint(&space, "l’installation d’un module")?;
+    checkpoint(&space, "l’import d’un module")?;
     apply_dependencies(&space, &clone, &marketplace, &steps)?;
     place_module(&space, &source, module_id, &origin)?;
     let message =
-        format!("Installation du module {} v{}{}", display_name(&manifest), manifest.version, steps_summary(&steps));
+        format!("Import du module {} v{}{}", display_name(&manifest), manifest.version, steps_summary(&steps));
     let commit = git::commit_all(&space.root, &message)?;
     journal(state, &space, module_id, &message);
     state.emit("space:changed", Value::Null);
@@ -933,7 +984,9 @@ struct DependencyStep {
 }
 
 /// Dépendances à installer ou à mettre à jour, depuis le même marketplace, avant `manifest` : les plus profondes
-/// d’abord. L’erreur dit ce qui empêche l’opération (dépendance introuvable, trop ancienne, figée, locale…).
+/// d’abord. Une dépendance déjà là est amenée à la dernière version du marketplace quand celle-ci reste dans sa
+/// version majeure (mineure ou correctif) ; jamais au-delà, car une nouvelle majeure casserait ce qui en dépend.
+/// L’erreur dit ce qui empêche l’opération (dépendance introuvable, d’une autre majeure, figée, locale…).
 fn dependency_plan(
     space: Option<&Space>,
     clone: &Path,
@@ -959,32 +1012,49 @@ fn dependency_plan(
             }
             let who = display_name(manifest).to_string();
             let local = space.and_then(|space| space.module(wanted).ok());
+            let available = catalog_manifest(clone, wanted).ok();
             let action = match &local {
-                Some(local) if requirement.accepts(&local.version) => continue,
                 Some(local) => {
                     let from_here = local
                         .origin
                         .as_ref()
                         .is_some_and(|origin| !origin.detached && same_url(&origin.marketplace, &marketplace.url));
-                    if !from_here {
-                        return Err(AppError::new(format!(
-                            "« {who} » demande le module {}, mais celui de l’espace est en v{} et ne vient pas de ce marketplace : le mettre à jour d’abord.",
-                            requirement.describe(),
-                            local.version
-                        )));
-                    }
-                    if local.origin.as_ref().is_some_and(|origin| origin.pinned) {
-                        return Err(AppError::new(format!(
-                            "« {who} » demande le module {}, figé en v{} : le libérer pour qu’il soit mis à jour.",
-                            requirement.describe(),
-                            local.version
-                        )));
+                    let pinned = local.origin.as_ref().is_some_and(|origin| origin.pinned);
+                    if requirement.accepts(&local.version) {
+                        // Déjà compatible : mise à niveau seulement si elle reste dans la même majeure, sans casser
+                        // un autre module de l’espace de travail ; sinon la dépendance reste telle quelle.
+                        let refresh = available.as_ref().is_some_and(|available| {
+                            from_here
+                                && !pinned
+                                && is_newer(&available.version, &local.version)
+                                && same_major(&available.version, &local.version)
+                                && requirement.accepts(&available.version)
+                                && breaking_dependents(space, wanted, &available.version, path).is_empty()
+                        });
+                        if !refresh {
+                            continue;
+                        }
+                    } else {
+                        if !from_here {
+                            return Err(AppError::new(format!(
+                                "« {who} » demande le module {}, mais celui de l’espace de travail est en v{} et ne vient pas de ce marketplace : le mettre à jour d’abord.",
+                                requirement.describe(),
+                                local.version
+                            )));
+                        }
+                        if pinned {
+                            return Err(AppError::new(format!(
+                                "« {who} » demande le module {}, figé en v{} : le libérer pour qu’il soit mis à jour.",
+                                requirement.describe(),
+                                local.version
+                            )));
+                        }
                     }
                     "update"
                 }
                 None => "install",
             };
-            let available = catalog_manifest(clone, wanted).map_err(|_| {
+            let available = available.ok_or_else(|| {
                 AppError::new(format!(
                     "« {who} » dépend du module {}, que le marketplace « {} » ne propose pas.",
                     requirement.describe(),
@@ -993,11 +1063,17 @@ fn dependency_plan(
             })?;
             if !requirement.accepts(&available.version) {
                 return Err(AppError::new(format!(
-                    "« {who} » dépend du module {}, mais le marketplace « {} » ne propose que la v{}.",
+                    "« {who} » dépend du module {}, mais le marketplace « {} » propose la v{}.",
                     requirement.describe(),
                     marketplace.name,
                     available.version
                 )));
+            }
+            if action == "update" {
+                let broken = breaking_dependents(space, wanted, &available.version, path);
+                if let Some(message) = broken_message(space, wanted, &available.version, &broken) {
+                    return Err(AppError::new(message));
+                }
             }
             visit(space, clone, marketplace, &available, path, steps)?;
             steps.push(DependencyStep {
@@ -1013,6 +1089,53 @@ fn dependency_plan(
     let mut steps = Vec::new();
     visit(space, clone, marketplace, manifest, &mut Vec::new(), &mut steps)?;
     Ok(steps)
+}
+
+fn same_major(left: &str, right: &str) -> bool {
+    matches!((parse_version(left), parse_version(right)), (Some(left), Some(right)) if left[0] == right[0])
+}
+
+/// Modules de l’espace de travail (hors `except`, ceux que l’opération remplace) dont la dépendance envers
+/// `module` n’accepterait pas la version `version`.
+fn breaking_dependents(space: Option<&Space>, module: &str, version: &str, except: &[String]) -> Vec<ModuleManifest> {
+    let Some(space) = space else { return Vec::new() };
+    space
+        .dependents(module)
+        .into_iter()
+        .filter(|id| !except.contains(id))
+        .filter_map(|id| space.module(&id).ok())
+        .filter(|dependent| {
+            dependent.requires.iter().any(|requirement| requirement.module == module && !requirement.accepts(version))
+        })
+        .collect()
+}
+
+/// Pourquoi `module` ne passe pas en `version` : les modules qui demandent une autre version majeure.
+fn broken_message(space: Option<&Space>, module: &str, version: &str, broken: &[ModuleManifest]) -> Option<String> {
+    if broken.is_empty() {
+        return None;
+    }
+    let name = space
+        .and_then(|space| space.module(module).ok())
+        .map(|manifest| display_name(&manifest).to_string())
+        .unwrap_or_else(|| module.to_string());
+    let who: Vec<String> = broken
+        .iter()
+        .map(|dependent| {
+            let wanted = dependent
+                .requires
+                .iter()
+                .find(|requirement| requirement.module == module)
+                .map(|requirement| requirement.describe())
+                .unwrap_or_default();
+            format!("« {} » demande {wanted}", display_name(dependent))
+        })
+        .collect();
+    Some(format!(
+        "{name} v{version} est une nouvelle version majeure : {}. Mettre d’abord à jour {} vers une version qui accepte la v{version}.",
+        who.join(", "),
+        if broken.len() > 1 { "ces modules" } else { "ce module" }
+    ))
 }
 
 /// Pose les dépendances prévues ; une dépendance nouvellement installée ne s’affiche pas dans le menu.
@@ -1086,14 +1209,21 @@ fn installed_module(space: &Space, module_id: &str) -> AppResult<(ModuleManifest
 /// qui a inscrit l’origine actuelle (installation ou dernière mise à jour) ; figer ou libérer le module ne
 /// compte pas comme une modification.
 fn locally_modified(space: &Space, module_id: &str, origin: &Origin) -> bool {
+    changed_since(space, module_id, &origin.commit)
+}
+
+/// Le dossier du module a-t-il changé depuis le commit de l’espace de travail qui a inscrit `marker` (le commit du
+/// marketplace d’une installation ou d’une publication) dans son manifeste ? L’origine et les publications ne
+/// comptent pas.
+fn changed_since(space: &Space, module_id: &str, marker: &str) -> bool {
     let root = &space.root;
     let folder = format!("{MODULES_DIR}/{module_id}");
     let manifest_path = format!("{folder}/{MODULE_FILE}");
     let pending = || git::run(root, &["status", "--porcelain", "--", &folder]).is_ok_and(|output| !output.is_empty());
-    if origin.commit.is_empty() {
+    if marker.is_empty() {
         return pending();
     }
-    let needle = format!("-S{}", origin.commit);
+    let needle = format!("-S{marker}");
     let base = git::run(root, &["log", "-1", "--format=%H", &needle, "--", &manifest_path]).unwrap_or_default();
     if base.is_empty() {
         // Espace repris sans son historique : seul ce qui n’est pas encore enregistré peut être constaté.
@@ -1111,6 +1241,7 @@ fn locally_modified(space: &Space, module_id: &str, origin: &Origin) -> bool {
         let without_origin = |text: &str| {
             serde_json::from_str::<Map<String, Value>>(text).ok().map(|mut map| {
                 map.remove("origin");
+                map.remove("published");
                 map
             })
         };
@@ -1161,9 +1292,13 @@ fn updates(state: &AppState) -> AppResult<Value> {
                 entry["marketplaceName"] = json!(marketplace.name);
                 if is_newer(&available.version, &current) {
                     let clone = clone_dir(state, &marketplace.id);
-                    match dependency_plan(Some(&space), &clone, &marketplace, &available) {
-                        Ok(steps) => entry["dependencies"] = json!(steps),
-                        Err(error) => entry["blocked"] = json!(error.message),
+                    let broken = breaking_dependents(Some(&space), &module_id, &available.version, &[]);
+                    match broken_message(Some(&space), &module_id, &available.version, &broken) {
+                        Some(message) => entry["blocked"] = json!(message),
+                        None => match dependency_plan(Some(&space), &clone, &marketplace, &available) {
+                            Ok(steps) => entry["dependencies"] = json!(steps),
+                            Err(error) => entry["blocked"] = json!(error.message),
+                        },
                     }
                     entry["available"] = json!(available.version);
                     entry["notes"] = json!(notes_since(&dir, Some(&current)));
@@ -1200,6 +1335,10 @@ fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Val
         return Err(AppError::new(format!("Le module « {name} » est déjà à jour (v{current}).")));
     }
     let clone = clone_dir(state, &marketplace.id);
+    let broken = breaking_dependents(Some(space), module_id, &available.version, &[]);
+    if let Some(message) = broken_message(Some(space), module_id, &available.version, &broken) {
+        return Err(AppError::new(message));
+    }
     let steps = dependency_plan(Some(space), &clone, &marketplace, &available)?;
     let new_origin = Origin {
         marketplace: origin.marketplace.clone(),
@@ -1227,8 +1366,9 @@ fn update_all(state: &AppState) -> AppResult<Value> {
     let pending = updates(state)?;
     let (mut updated, mut failed) = (Vec::new(), Vec::new());
     for entry in pending.as_array().into_iter().flatten() {
-        let pinned = entry["pinned"].as_bool().unwrap_or(false);
-        let (Some(module), false, false) = (entry["module"].as_str(), entry["available"].is_null(), pinned) else {
+        // Figée, ou bloquée par un module qui demande l’ancienne version majeure : la mise à jour reste signalée.
+        let held = entry["pinned"].as_bool().unwrap_or(false) || !entry["blocked"].is_null();
+        let (Some(module), false, false) = (entry["module"].as_str(), entry["available"].is_null(), held) else {
             continue;
         };
         match update_one(state, &space, module) {
@@ -1296,13 +1436,13 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
             .map(|name| format!("« {name} »"))
             .collect();
         return Err(AppError::new(format!(
-            "Le module « {} » est utilisé par {} : désinstaller d’abord {}.",
+            "Le module « {} » est utilisé par {} : retirer d’abord {}.",
             display_name(&manifest),
             names.join(", "),
             if names.len() > 1 { "ces modules" } else { "ce module" }
         )));
     }
-    checkpoint(&space, "la désinstallation d’un module")?;
+    checkpoint(&space, "le retrait d’un module")?;
     remove_tree(&space.module_dir(module_id))?;
     crate::permissions::forget_module(state, module_id)?;
 
@@ -1326,7 +1466,7 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
     layout_owner.bindings.retain(|need, _| !need.starts_with(&prefix));
     space.write_manifest(&layout_owner)?;
 
-    let message = format!("Désinstallation du module {}", display_name(&manifest));
+    let message = format!("Retrait du module {}", display_name(&manifest));
     let commit = git::commit_all(&space.root, &message)?;
     journal(state, &space, module_id, &message);
     // La suppression des tables est faite par le module qui tient la base de l’espace, à la réception de ceci.
@@ -1462,7 +1602,7 @@ fn has_known_token(line: &str) -> bool {
 fn scan_line(line: &str, local_paths: &[String]) -> Vec<&'static str> {
     let mut found = Vec::new();
     if local_paths.iter().any(|path| line.contains(path.as_str())) {
-        found.push("Chemin absolu de ce poste (dossier de l’espace ou dossier personnel).");
+        found.push("Chemin absolu de ce poste (dossier de l’espace de travail ou dossier personnel).");
     } else if has_user_path(line) || has_windows_user_path(line) {
         found.push("Chemin absolu d’un poste (/Users/… ou C:\\Users\\…).");
     }
@@ -1654,7 +1794,7 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     let name = display_name(&manifest).to_string();
     if manifest.read_only() {
         return Err(AppError::new(format!(
-            "Le module « {name} » est installé depuis un marketplace : seul un module local ou détaché se publie. Le détacher d’abord."
+            "Le module « {name} » est importé d’un marketplace : seul un module local ou détaché se publie. Le détacher d’abord."
         )));
     }
     let wanted = parse_version(version)
@@ -1663,9 +1803,17 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     let marketplace = find(state, marketplace_id)?;
 
     let source = space.module_dir(module_id);
-    let mut published = read_manifest_map(&source)?;
-    // L’origine décrit l’installation sur ce poste, pas le module : elle ne se publie pas.
+    let mut local_map = read_manifest_map(&source)?;
+    // Une dépendance sans version minimale part avec celle présente ici : qui importe le module reçoit une version
+    // de la même majeure, celle avec laquelle il a été testé.
+    let pinned_requires = pin_requirements(&space, &manifest);
+    if let Some(requires) = &pinned_requires {
+        local_map.insert("requires".to_string(), requires.clone());
+    }
+    let mut published = local_map.clone();
+    // L’origine et les publications décrivent ce poste, pas le module : elles ne se publient pas.
     published.remove("origin");
+    published.remove("published");
     published.insert("id".to_string(), json!(module_id));
     published.insert("version".to_string(), json!(version));
     let mut published_manifest = serde_json::to_string_pretty(&Value::Object(published))?;
@@ -1686,8 +1834,11 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     let clone = clone_dir(state, &marketplace.id);
     sync_clone(&clone, &marketplace.url)?;
     // Qui installe le module doit pouvoir installer ses dépendances depuis le même marketplace.
-    let missing: Vec<Problem> = manifest
-        .requires
+    let requires: Vec<space::Requirement> = match &pinned_requires {
+        Some(requires) => serde_json::from_value(requires.clone()).unwrap_or_else(|_| manifest.requires.clone()),
+        None => manifest.requires.clone(),
+    };
+    let missing: Vec<Problem> = requires
         .iter()
         .filter(|requirement| {
             requirement.module != module_id
@@ -1723,15 +1874,81 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     };
 
     // Le module local porte désormais la version publiée : la prochaine publication proposera la suivante.
+    // Il garde aussi la trace de cette publication : l’espace de travail sait que ce module est le sien, publié.
     checkpoint(&space, "la publication d’un module")?;
     let mut local = read_manifest_map(&source)?;
     local.insert("version".to_string(), json!(version));
+    if let Some(requires) = &pinned_requires {
+        local.insert("requires".to_string(), requires.clone());
+    }
+    let mut publications: Vec<space::Publication> =
+        local.get("published").and_then(|value| serde_json::from_value(value.clone()).ok()).unwrap_or_default();
+    publications.retain(|publication| !same_url(&publication.marketplace, &marketplace.url));
+    publications.push(space::Publication {
+        marketplace: marketplace.url.clone(),
+        version: version.clone(),
+        commit: commit.clone(),
+    });
+    local.insert("published".to_string(), serde_json::to_value(&publications)?);
     space::write_json(&source.join(MODULE_FILE), &Value::Object(local))?;
     let message = format!("Publication du module {name} v{version} sur {}", marketplace.name);
     git::commit_all(&space.root, &message)?;
     journal(state, &space, module_id, &message);
     state.emit("space:changed", Value::Null);
     Ok(json!({ "version": version, "commit": commit }))
+}
+
+/// Modules développés dans l’espace de travail et publiés : sur quel marketplace, en quelle version, et s’ils ont
+/// changé depuis.
+fn publications(state: &AppState) -> AppResult<Value> {
+    let Some(space) = state.try_space() else { return Ok(json!([])) };
+    let marketplaces = load(state)?;
+    let mut entries = Vec::new();
+    for module_id in space.module_ids() {
+        let Ok(manifest) = space.module(&module_id) else { continue };
+        if manifest.read_only() {
+            continue;
+        }
+        for publication in &manifest.published {
+            let marketplace = marketplaces.iter().find(|candidate| same_url(&candidate.url, &publication.marketplace));
+            entries.push(json!({
+                "module": module_id,
+                "marketplace": marketplace.map(|marketplace| marketplace.id.clone()),
+                "marketplaceName": marketplace.map(|marketplace| marketplace.name.clone()),
+                "source": publication.marketplace,
+                "version": publication.version,
+                "modified": changed_since(&space, &module_id, &publication.commit),
+            }));
+        }
+    }
+    Ok(Value::Array(entries))
+}
+
+/// `requires` du manifeste où chaque dépendance sans version minimale reçoit celle présente dans l’espace de
+/// travail ; `None` quand il n’y a rien à compléter.
+fn pin_requirements(space: &Space, manifest: &ModuleManifest) -> Option<Value> {
+    let mut changed = false;
+    let requires: Vec<space::Requirement> = manifest
+        .requires
+        .iter()
+        .map(|requirement| {
+            let mut requirement = requirement.clone();
+            if requirement.min_version.as_deref().is_none_or(|min| min.trim().is_empty()) {
+                if let Ok(local) = space.module(&requirement.module) {
+                    if parse_version(&local.version).is_some() {
+                        requirement.min_version = Some(local.version);
+                        changed = true;
+                    }
+                }
+            }
+            requirement
+        })
+        .collect();
+    if changed {
+        serde_json::to_value(requires).ok()
+    } else {
+        None
+    }
 }
 
 /// Version proposée pour la prochaine publication : la version locale pour une première publication, sinon le
@@ -1895,7 +2112,7 @@ mod tests {
         assert_eq!((origin.marketplace.as_str(), origin.version.as_str()), (remote.as_str(), "1.0.0"));
         assert_eq!(origin.commit, published["commit"].as_str().unwrap());
         assert!(reader_space.page_file("suivi", "tableau").is_file());
-        assert_eq!(last_message(&reader_space), "Installation du module Suivi v1.0.0");
+        assert_eq!(last_message(&reader_space), "Import du module Suivi v1.0.0");
         assert!(std::iter::from_fn(|| events.try_recv().ok()).any(|event| event.name == "space:changed"));
         assert!(reader_space.delete_page("suivi/tableau").is_err(), "pas de modification sur place");
         assert!(call(&reader, "marketplace.install", json!({ "marketplace": "marketplace", "module": "suivi" })).await.is_err());
@@ -2235,7 +2452,7 @@ mod tests {
 
         // Installer « devis » installe « crm », masqué du menu, dans le même enregistrement.
         call(&reader, "marketplace.install", json!({ "marketplace": "marketplace", "module": "devis" })).await.unwrap();
-        assert_eq!(last_message(&reader_space), "Installation du module Devis v1.0.0 (avec CRM v1.0.0)");
+        assert_eq!(last_message(&reader_space), "Import du module Devis v1.0.0 (avec CRM v1.0.0)");
         let snapshot = reader_space.snapshot().unwrap();
         assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
         let crm = snapshot.modules.iter().find(|module| module.id == "crm").unwrap();
@@ -2263,5 +2480,110 @@ mod tests {
         call(&reader, "marketplace.uninstall", json!({ "module": "devis", "deleteData": false })).await.unwrap();
         call(&reader, "marketplace.uninstall", json!({ "module": "crm", "deleteData": false })).await.unwrap();
         assert!(reader_space.manifest().unwrap().layout.overrides.is_empty());
+    }
+    /// Une dépendance suit les versions mineures et correctifs de son marketplace, jamais une nouvelle majeure tant
+    /// qu’un module de l’espace de travail demande l’ancienne ; le module publié reste celui de son auteur.
+    #[tokio::test]
+    async fn dependencies_follow_minor_versions_but_never_cross_a_major_one() {
+        let root = tempfile::tempdir().unwrap();
+        let remote = bare_remote(root.path());
+        let (author, author_space) = desk(root.path(), "auteur");
+        for label in ["CRM", "Devis"] {
+            let page = author_space
+                .place_page("Liste", None, "", &PlaceTarget::Menu { label: label.into(), icon: None, color: None }, None)
+                .unwrap();
+            fs::write(&page.file, PAGE).unwrap();
+        }
+        let mut devis = author_space.module("devis").unwrap();
+        devis.requires = vec![crate::space::Requirement { module: "crm".into(), min_version: None }];
+        author_space.write_module(&devis).unwrap();
+        git::commit_all(&author_space.root, "Dépendance").unwrap();
+        call(&author, "marketplace.add", json!({ "url": remote, "name": "Équipe" })).await.unwrap();
+        let publish = |module: &str, version: &str| {
+            let author = author.clone();
+            let args = json!({ "module": module, "marketplace": "equipe", "version": version, "notes": "" });
+            async move { call(&author, "marketplace.publish", args).await }
+        };
+        publish("crm", "1.0.0").await.unwrap();
+        publish("devis", "1.0.0").await.unwrap();
+
+        // La publication fixe la version de la dépendance testée ici, et l’espace de l’auteur s’en souvient.
+        let devis = author_space.module("devis").unwrap();
+        assert_eq!(devis.requires[0].min_version.as_deref(), Some("1.0.0"));
+        assert_eq!(devis.published.len(), 1);
+        assert_eq!((devis.published[0].marketplace.as_str(), devis.published[0].version.as_str()), (remote.as_str(), "1.0.0"));
+        let shared = fs::read_to_string(clone_dir(&author, "equipe").join("devis").join(MODULE_FILE)).unwrap();
+        assert!(!shared.contains("published"), "les publications ne se publient pas");
+        assert!(shared.contains("\"minVersion\": \"1.0.0\""), "{shared}");
+        let catalog = call(&author, "marketplace.modules", json!({ "id": "equipe" })).await.unwrap();
+        let own = catalog.as_array().unwrap().iter().find(|entry| entry["id"] == "devis").unwrap();
+        assert_eq!(own["conflict"], false, "son propre module n’est pas un conflit");
+        assert_eq!(own["own"]["version"], "1.0.0");
+        let publications = call(&author, "marketplace.publications", json!({})).await.unwrap();
+        let entry = publications.as_array().unwrap().iter().find(|entry| entry["module"] == "devis").unwrap();
+        assert_eq!((entry["marketplace"].as_str(), entry["modified"].as_bool()), (Some("equipe"), Some(false)));
+        fs::write(author_space.page_file("devis", "liste"), format!("{PAGE}// retouche\n")).unwrap();
+        git::commit_all(&author_space.root, "Retouche").unwrap();
+        let publications = call(&author, "marketplace.publications", json!({})).await.unwrap();
+        let entry = publications.as_array().unwrap().iter().find(|entry| entry["module"] == "devis").unwrap();
+        assert_eq!(entry["modified"], true, "modifié depuis sa publication");
+
+        let (reader, reader_space) = desk(root.path(), "lecteur");
+        call(&reader, "marketplace.add", json!({ "url": remote })).await.unwrap();
+        call(&reader, "marketplace.install", json!({ "marketplace": "marketplace", "module": "devis" })).await.unwrap();
+
+        // Un correctif de la dépendance arrive avec la mise à jour du module qui l’utilise.
+        publish("crm", "1.0.1").await.unwrap();
+        publish("devis", "1.0.1").await.unwrap();
+        let updates = call(&reader, "marketplace.updates", json!({ "refresh": true })).await.unwrap();
+        let devis_update = updates.as_array().unwrap().iter().find(|entry| entry["module"] == "devis").unwrap();
+        assert_eq!(devis_update["dependencies"], json!([{ "module": "crm", "name": "CRM", "action": "update", "version": "1.0.1" }]));
+        call(&reader, "marketplace.update", json!({ "module": "devis" })).await.unwrap();
+        assert_eq!(reader_space.module("crm").unwrap().version, "1.0.1");
+
+        // Une nouvelle majeure de la dépendance reste signalée, mais bloquée : « devis » demande la v1.
+        publish("crm", "2.0.0").await.unwrap();
+        let updates = call(&reader, "marketplace.updates", json!({ "refresh": true })).await.unwrap();
+        let crm_update = updates.as_array().unwrap().iter().find(|entry| entry["module"] == "crm").unwrap();
+        assert_eq!(crm_update["available"], "2.0.0");
+        assert!(crm_update["blocked"].as_str().unwrap().contains("« Devis » demande"), "{crm_update}");
+        let refused = call(&reader, "marketplace.update", json!({ "module": "crm" })).await.unwrap_err();
+        assert!(refused.message.contains("nouvelle version majeure"), "{}", refused.message);
+        let all = call(&reader, "marketplace.updateAll", json!({})).await.unwrap();
+        assert_eq!((all["updated"].as_array().unwrap().len(), all["failed"].as_array().unwrap().len()), (0, 0));
+        assert_eq!(reader_space.module("crm").unwrap().version, "1.0.1");
+
+        // Le marketplace ne tient que la dernière version de chaque module : un « devis » pour la v1 ne s’y publie
+        // plus, et le dit.
+        let blocked = publish("devis", "1.0.2").await.unwrap_err();
+        assert!(blocked.message.contains("dépendance"), "{}", blocked.message);
+    }
+
+    /// Un espace de travail ne s’ouvre pas sur un marketplace, et un marketplace ne se branche pas sur un espace.
+    #[tokio::test]
+    async fn a_workspace_and_a_marketplace_stay_apart() {
+        let root = tempfile::tempdir().unwrap();
+        let remote = bare_remote(root.path());
+        let (author, author_space) = desk(root.path(), "auteur");
+        author_module(&author_space);
+        call(&author, "marketplace.add", json!({ "url": remote, "name": "Équipe" })).await.unwrap();
+        call(&author, "marketplace.publish", json!({ "module": "suivi", "marketplace": "equipe", "version": "1.0.0" }))
+            .await
+            .unwrap();
+
+        let clone = clone_dir(&author, "equipe");
+        assert!(refuse_as_workspace(&author, &clone).is_err(), "le clone d’Alfred");
+        let checkout = root.path().join("copie");
+        git::run(root.path(), &["clone", "-q", &remote, &checkout.to_string_lossy()]).unwrap();
+        let refused = refuse_as_workspace(&author, &checkout).unwrap_err();
+        assert!(refused.message.contains("pas un espace de travail"), "{}", refused.message);
+        assert!(refuse_as_workspace(&author, Path::new(&remote)).unwrap_err().message.contains("dépôt git nu"));
+        assert!(refuse_as_workspace(&author, &author_space.root).is_ok());
+        assert!(refuse_as_workspace(&author, &root.path().join("nouveau")).is_ok());
+
+        let space_url = author_space.root.to_string_lossy().to_string();
+        let refused = call(&author, "marketplace.add", json!({ "url": space_url })).await.unwrap_err();
+        assert!(refused.message.contains("espace de travail"), "{}", refused.message);
+        assert_eq!(call(&author, "marketplace.list", json!({})).await.unwrap().as_array().unwrap().len(), 1);
     }
 }

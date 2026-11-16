@@ -33,19 +33,19 @@ export function Welcome() {
         <h1>Bonjour, je suis Alfred</h1>
         <p>
           Dites-moi ce dont vous avez besoin et je le mets en place : pages, onglets, panneaux, réglages. Je range tout
-          ce que nous créons dans un dossier, votre espace. Choisissez un dossier existant pour l’ouvrir, ou un nouvel
-          emplacement pour le créer.
+          ce que nous créons dans un dossier, votre espace de travail. Choisissez un dossier existant pour l’ouvrir, ou
+          un nouvel emplacement pour le créer.
         </p>
         {startupError ? <p role="alert">{startupError}</p> : null}
         <form className="welcome__form" onSubmit={submit}>
           <div className="welcome__path">
-            <FormField label="Dossier de l’espace" error={error ?? undefined}>
+            <FormField label="Dossier de l’espace de travail" error={error ?? undefined}>
               <TextInput value={path} onChange={(event) => setPath(event.target.value)} spellCheck={false} required />
             </FormField>
             {inTauri ? (
               <Button
                 onClick={async () => {
-                  const selected = await pickFolder("Choisir le dossier de l’espace");
+                  const selected = await pickFolder("Choisir le dossier de l’espace de travail");
                   if (selected) setPath(selected);
                 }}
               >
@@ -55,7 +55,7 @@ export function Welcome() {
           </div>
           <div>
             <Button type="submit" variant="primary" loading={busy} disabled={!path.trim()}>
-              Ouvrir l’espace
+              Ouvrir l’espace de travail
             </Button>
           </div>
         </form>

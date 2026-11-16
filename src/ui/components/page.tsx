@@ -1,4 +1,9 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, isValidElement, type ReactNode } from "react";
+import { type Action, ActionBar } from "../templates/actions";
+import { TemplateDialogHost } from "../templates/dialogs";
+import { PageToolbar } from "./PageToolbar";
+import { PageScope } from "./pageScope";
+import { SearchField } from "./SearchField";
 import "./page.css";
 
 type Gap = "none" | "xs" | "sm" | "md" | "lg";
@@ -12,19 +17,129 @@ const gapClass = (gap: Gap) => `al-gap-${gap}`;
 export function Page({
   children,
   toolbar,
+  actions,
+  search,
   width = "full",
 }: {
   children: ReactNode;
-  /** Barre d’actions fixe au-dessus du contenu (`PageToolbar`). */
+  /** Barre fixe au-dessus du contenu, réservée à la coquille et aux gabarits : une page passe `actions` et `search`. */
   toolbar?: ReactNode;
+  /** Actions de la page, disposées par Alfred dans la barre du haut (icônes, « ⋯ », action principale). */
+  actions?: ReadonlyArray<Action>;
+  /** Recherche de la page, à gauche de la barre. */
+  search?: { label: string; value: string; onChange: (value: string) => void };
   /** `text` limite la largeur de lecture ; `full` sert aux tableaux et aux vues denses. */
   width?: "full" | "text";
 }) {
+  const bar =
+    toolbar ??
+    (actions?.length || search ? (
+      <PageToolbar
+        start={
+          search ? (
+            <SearchField
+              label={search.label}
+              placeholder="Rechercher…"
+              value={search.value}
+              onChange={(event) => search.onChange(event.target.value)}
+            />
+          ) : undefined
+        }
+      >
+        {actions ? <ActionBar actions={actions} place="toolbar" /> : null}
+      </PageToolbar>
+    ) : undefined);
   return (
-    <div className="al-page">
-      {toolbar}
-      <div className={`al-page__body${width === "text" ? " al-page__body--text" : ""}`}>{children}</div>
-    </div>
+    <PageScope.Provider value={true}>
+      <div className="al-page">
+        <TemplateDialogHost />
+        {bar}
+        <div className={`al-page__body${width === "text" ? " al-page__body--text" : ""}`}>{children}</div>
+      </div>
+    </PageScope.Provider>
+  );
+}
+
+/**
+ * Formulaire d’une page ou d’une modale : `<form noValidate>` dont l’envoi natif est bloqué, champs empilés à 12 px,
+ * colonne de 560 px au plus (toute la largeur dans une modale). Entrée dans un champ appelle `onSubmit`. Les actions
+ * se posent dessous (`actions`, une `FormActions`), ou dans le pied d’une `Modal` reliées par `id`.
+ */
+export function Form({
+  id,
+  onSubmit,
+  children,
+  actions,
+  width = "default",
+  "aria-label": ariaLabel,
+}: {
+  id?: string;
+  onSubmit: () => void;
+  children: ReactNode;
+  /** `FormActions` posée sous les champs, alignée à droite de la colonne. Dans une `Modal`, la passer à `actions`. */
+  actions?: ReactNode;
+  /** `default` : 560 px au plus ; `full` : toute la largeur, pour un formulaire en deux colonnes (`Grid`). */
+  width?: "default" | "full";
+  "aria-label"?: string;
+}) {
+  return (
+    <form
+      id={id}
+      noValidate
+      aria-label={ariaLabel}
+      className={`al-form${width === "full" ? " al-form--full" : ""}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      {children}
+      {actions}
+    </form>
+  );
+}
+
+/**
+ * En-tête d’un objet, en tête d’un panneau de droite ou d’une page de détail : son nom, son état, une ligne de
+ * contexte, et ses actions en icônes calées en haut à droite (`IconButton`, puis `OverflowMenu` en dernier).
+ */
+export function ObjectHeader({
+  title,
+  description,
+  badge,
+  actions,
+  level = 2,
+}: {
+  title: ReactNode;
+  /** Une ligne de contexte sous le nom (« Créée le 3 mars par Léa »), en gris. */
+  description?: ReactNode;
+  /** `StatusBadge size="compact"` à côté du nom. */
+  badge?: ReactNode;
+  /** `IconButton` et `OverflowMenu`, au plus trois icônes visibles ; le reste dans le menu « ⋯ ». */
+  actions?: ReactNode;
+  /** `1` pour l’objet d’une page entière, `2` dans un panneau (défaut). */
+  level?: 1 | 2;
+}) {
+  const Tag = level === 1 ? "h1" : "h2";
+  return (
+    <header className={`al-object-header al-object-header--${level}`}>
+      <div className="al-object-header__copy">
+        <div className="al-object-header__title">
+          <Tag className={`al-heading al-heading--${level}`}>{title}</Tag>
+          {badge}
+        </div>
+        {description ? <p className="al-object-header__description">{description}</p> : null}
+      </div>
+      {actions ? <div className="al-object-header__actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+function isActionList(value: unknown): value is ReadonlyArray<Action> {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => item && typeof item === "object" && !isValidElement(item) && "onClick" in item)
   );
 }
 
@@ -37,9 +152,15 @@ export function Section({
 }: {
   title: string;
   description?: string;
-  actions?: ReactNode;
+  /** Actions du bloc : une liste d’`Action` (disposée par Alfred), ou des composants. */
+  actions?: ReactNode | ReadonlyArray<Action>;
   children: ReactNode;
 }) {
+  const shown: ReactNode = isActionList(actions) ? (
+    <ActionBar actions={actions} place="section" />
+  ) : (
+    (actions as ReactNode)
+  );
   return (
     <section className="al-section">
       <header className="al-section__header">
@@ -47,7 +168,7 @@ export function Section({
           <h2>{title}</h2>
           {description ? <p>{description}</p> : null}
         </div>
-        {actions ? <div className="al-section__actions">{actions}</div> : null}
+        {shown ? <div className="al-section__actions">{shown}</div> : null}
       </header>
       {children}
     </section>

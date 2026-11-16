@@ -10,6 +10,7 @@ import {
   Palette,
   ScrollText,
   SquareFunction,
+  Store,
   Webhook,
 } from "lucide-react";
 import type { BuiltInTab } from "../../shell/AppShell";
@@ -19,6 +20,7 @@ import { AgentSettings } from "../agentSettings/AgentSettings";
 import { FunctionsSettings } from "../functions/FunctionsSettings";
 import { JobsSettings } from "../jobs/JobsSettings";
 import { JournalSettings } from "../journal/JournalSettings";
+import { MarketplacesSettings } from "../modules/MarketplacesSettings";
 import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
 import { NavigationSettings } from "../navigation/NavigationSettings";
 import { SchedulesSettings } from "../schedules/SchedulesSettings";
@@ -30,16 +32,23 @@ import { WebhooksSettings } from "../webhooks/WebhooksSettings";
 const icon = (Icon: typeof Bot) => <Icon size={15} aria-hidden="true" />;
 
 /**
- * Rubriques des Réglages, dans l’ordre de la barre latérale : les modules et l’agent d’abord, puis l’espace, puis
- * les réglages techniques. Un trait sépare deux groupes ; les pages de l’espace placées dans les Réglages suivent.
+ * Rubriques des Réglages, dans l’ordre de la barre latérale : d’abord celles de l’espace de travail ouvert (ses
+ * modules, son dossier, son apparence, son menu, puis ses réglages techniques), puis celles d’Alfred, communes à
+ * tous les espaces de travail (marketplaces, agent, voix, mots de passe). Un trait sépare deux groupes ; un titre
+ * annonce l’espace de travail et Alfred ; les pages de l’espace de travail placées dans les Réglages suivent.
  */
 export const settingsTabs: BuiltInTab[] = [
-  { id: "modules", label: "Modules", group: "essentiel", icon: icon(Boxes), render: () => <ModulesSettings /> },
-  { id: "agents", label: "Agent", group: "essentiel", icon: icon(Bot), render: () => <AgentSettings /> },
-  { id: "voice", label: "Voix", group: "essentiel", icon: icon(Mic), render: () => <VoiceSettings /> },
+  {
+    id: "modules",
+    label: "Modules",
+    group: "espace",
+    groupTitle: "Espace de travail",
+    icon: icon(Boxes),
+    render: () => <ModulesSettings />,
+  },
   {
     id: "space",
-    label: "Espace",
+    label: "Général",
     group: "espace",
     icon: icon(FolderOpen),
     render: () => <SpaceSettings />,
@@ -50,13 +59,6 @@ export const settingsTabs: BuiltInTab[] = [
     group: "espace",
     icon: icon(Palette),
     render: () => <AppearanceSettings />,
-  },
-  {
-    id: "vault",
-    label: "Mots de passe et clés",
-    group: "espace",
-    icon: icon(KeyRound),
-    render: () => <VaultSettings />,
   },
   {
     id: "navigation",
@@ -82,6 +84,23 @@ export const settingsTabs: BuiltInTab[] = [
   },
   { id: "jobs", label: "Tâches de fond", group: "avancé", icon: icon(ListChecks), render: () => <JobsSettings /> },
   { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), render: () => <JournalSettings /> },
+  {
+    id: "marketplaces",
+    label: "Marketplaces",
+    group: "alfred",
+    groupTitle: "Alfred",
+    icon: icon(Store),
+    render: () => <MarketplacesSettings />,
+  },
+  { id: "agents", label: "Agent", group: "alfred", icon: icon(Bot), render: () => <AgentSettings /> },
+  { id: "voice", label: "Voix", group: "alfred", icon: icon(Mic), render: () => <VoiceSettings /> },
+  {
+    id: "vault",
+    label: "Mots de passe et clés",
+    group: "alfred",
+    icon: icon(KeyRound),
+    render: () => <VaultSettings />,
+  },
 ];
 
 /** Ouvre les Réglages sur une rubrique. */

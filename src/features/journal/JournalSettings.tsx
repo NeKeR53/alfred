@@ -318,7 +318,7 @@ export function JournalSettings() {
       {entries.length === 0 ? (
         <EmptyState
           title={kind === "all" ? "Aucune exécution" : `Aucune exécution de type « ${kindLabel} »`}
-          description="Chaque appel de fonction, webhook, client, IA, planification, tâche de fond, événement ou agent fait par l’espace s’inscrit ici, avec sa durée et son résultat."
+          description="Chaque appel de fonction, webhook, client, IA, planification, tâche de fond, événement, commande ou agent fait par l’espace de travail s’inscrit ici, avec sa durée et son résultat."
         />
       ) : (
         <>

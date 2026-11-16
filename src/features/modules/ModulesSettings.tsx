@@ -4,8 +4,6 @@ import {
   ChoiceGroup,
   EmptyState,
   FeedbackBanner,
-  FormControlGroup,
-  FormField,
   MenuItem,
   OverflowMenu,
   Page,
@@ -17,21 +15,21 @@ import {
   StatusBadge,
   SwitchControl,
   Text,
-  TextInput,
   useConfirm,
 } from "@alfred/ui";
 import { ArrowLeft, Boxes, ChevronRight } from "lucide-react";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { NamedIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
-import { isModuleHidden, setModuleHidden } from "../../shell/navigationLayout";
+import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import type { ClientNeedItem } from "../clients/api";
 import { ServiceBlock, serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
+import { ModuleFunctions } from "../functions/ModuleFunctions";
 import { remainingSummary, SETUP_FOCUS } from "../setup/api";
 import { SetupFlow } from "../setup/SetupFlow";
 import { useModuleSetup } from "../setup/useModuleSetup";
@@ -40,6 +38,7 @@ import {
   catalogAccesses,
   errorMessage,
   type Marketplace,
+  type ModulePublication,
   type ModuleUpdate,
   marketplaceApi,
 } from "./api";
@@ -65,17 +64,10 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
 }
 
-function checkedAt(iso: string | null) {
-  if (!iso) return "Jamais vérifié";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "Jamais vérifié";
-  return `Vérifié le ${date.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}`;
-}
-
 type Screen =
   | { kind: "list" }
   | { kind: "module"; id: string }
-  | { kind: "add" }
+  | { kind: "import" }
   /** Parcours de configuration : `intro` juste après l’installation, `resume` pour le reprendre. */
   | { kind: "setup"; id: string; start: "intro" | "resume" };
 type Filter = "all" | "attention" | "updates" | "off";
@@ -91,11 +83,31 @@ const fold = (text: string) =>
 export const MODULE_FOCUS = "réglages:module";
 export { SETUP_FOCUS } from "../setup/api";
 
-/** D’où vient un module : créé ici, installé (et depuis où), ou détaché de son marketplace. */
-function originLabel(module: ModuleSummary, update: ModuleUpdate | undefined) {
-  if (!module.origin) return "Créé ici";
-  if (module.origin.detached) return `Détaché de ${module.origin.marketplace} (v${module.origin.version})`;
-  return `Installé depuis ${update?.marketplaceName ?? module.origin.marketplace}`;
+/** Ouvre la rubrique Marketplaces des Réglages, où Alfred gère ses marketplaces pour tous les espaces de travail. */
+export function openMarketplaces() {
+  useShell.getState().setActiveTab(SETTINGS_SECTION, "marketplaces");
+}
+
+/**
+ * D’où vient un module : importé d’un marketplace, développé ici (et publié, et où), ou détaché de son
+ * marketplace.
+ */
+function originLabel(
+  module: ModuleSummary,
+  update: ModuleUpdate | undefined,
+  published: ModulePublication[],
+  nameOf: (url: string) => string,
+) {
+  if (module.origin && !module.origin.detached)
+    return `Importé de ${update?.marketplaceName ?? nameOf(module.origin.marketplace)}`;
+  const base = module.origin?.detached
+    ? `Détaché de ${nameOf(module.origin.marketplace)} (v${module.origin.version})`
+    : "Développé ici";
+  if (published.length === 0) return base;
+  const where = published
+    .map((publication) => `${publication.marketplaceName ?? publication.source} en v${publication.version}`)
+    .join(", ");
+  return `${base} · publié sur ${where}`;
 }
 
 /**
@@ -108,8 +120,9 @@ function MenuAction({ onSelect, children }: { onSelect: () => void; children: Re
 }
 
 /**
- * Onglet « Modules » des Réglages : chaque module avec son interrupteur, ses pages, ses services et leurs comptes ;
- * puis les dépôts de modules et ce qu’ils proposent.
+ * Onglet « Modules » des Réglages : chaque module de l’espace de travail avec son interrupteur, ses pages, ses
+ * services et leurs comptes ; l’import de modules depuis un marketplace, et la publication des modules développés
+ * ici. Les marketplaces eux-mêmes se gèrent dans la rubrique Marketplaces (`MarketplacesSettings`).
  */
 export function ModulesSettings() {
   const modules = useShell((state) => state.snapshot?.modules) ?? NO_MODULES;
@@ -122,13 +135,11 @@ export function ModulesSettings() {
   const [selected, setSelected] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<CatalogModule[] | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [url, setUrl] = useState("");
-  const [addError, setAddError] = useState<string | null>(null);
-  /** Opération en cours, pour désactiver ce qui la doublerait : `add`, `all`, `refresh:<id>`, `module:<id>`. */
+  const [publications, setPublications] = useState<ModulePublication[]>([]);
+  /** Opération en cours, pour désactiver ce qui la doublerait : `all`, `module:<id>`. */
   const [busy, setBusy] = useState<string | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
   const { confirm, confirmDialog } = useConfirm();
-  const addErrorId = useId();
   const snapshot = useShell((state) => state.snapshot);
   const services = useClients();
   // Relu avec les services et l’espace : ce sont eux qui font avancer la configuration des modules.
@@ -138,7 +149,7 @@ export function ModulesSettings() {
     if (services.overview || snapshot) void reloadSetups();
   }, [services.overview, snapshot, reloadSetups]);
   const [editingService, setEditingService] = useState<ServiceEditing>();
-  /** Vue affichée : la liste des modules, la fiche d’un module, ou l’ajout de modules (dépôts et catalogue). */
+  /** Vue affichée : la liste des modules, la fiche d’un module, ou l’import depuis un marketplace. */
   const [screen, setScreen] = useState<Screen>({ kind: "list" });
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -167,9 +178,17 @@ export function ModulesSettings() {
       setMarketplaces(await marketplaceApi.list());
     } catch (failure) {
       setMarketplaces([]);
-      notify({ title: "Dépôts de modules illisibles", description: errorMessage(failure), tone: "error" });
+      notify({ title: "Marketplaces illisibles", description: errorMessage(failure), tone: "error" });
     }
   }, []);
+
+  const loadPublications = useCallback(async () => {
+    setPublications(await marketplaceApi.publications().catch(() => []));
+  }, []);
+  // Relu à chaque changement de l’espace de travail : une retouche rend un module « modifié depuis sa publication ».
+  useEffect(() => {
+    if (snapshot) void loadPublications();
+  }, [snapshot, loadPublications]);
 
   const catalogRequest = useRef(0);
   const loadCatalog = useCallback(async (id: string | null) => {
@@ -274,7 +293,7 @@ export function ModulesSettings() {
     const accepted = await confirm({
       title: `Détacher ${module.name} ?`,
       message:
-        "Le module devient le vôtre et modifiable. Il garde la trace de son origine, mais ne recevra plus aucune mise à jour de son dépôt.",
+        "Le module devient le vôtre et modifiable. Il garde la trace de son origine, mais ne recevra plus aucune mise à jour de son marketplace.",
       confirmLabel: "Détacher",
     });
     if (!accepted) return;
@@ -288,62 +307,6 @@ export function ModulesSettings() {
       "Détachement impossible",
     );
   };
-
-  const addMarketplace = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!url.trim()) return;
-    setBusy("add");
-    setAddError(null);
-    try {
-      const added = await marketplaceApi.add(url.trim());
-      setUrl("");
-      setSelected(added.id);
-      await Promise.all([loadMarketplaces(), loadUpdates(false).catch(() => undefined)]);
-      notify({ title: `Dépôt ${added.name} ajouté`, tone: "success" });
-    } catch (failure) {
-      setAddError(errorMessage(failure));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const removeMarketplace = async (marketplace: Marketplace) => {
-    const installed = updates.filter((update) => update.marketplace === marketplace.id).length;
-    const accepted = await confirm({
-      title: `Retirer ${marketplace.name} ?`,
-      message:
-        installed > 0
-          ? `${plural(installed, "module installé", "modules installés")} depuis ce dépôt ${installed > 1 ? "restent" : "reste"} dans l’espace : plus de mise à jour tant qu’il n’est pas ajouté de nouveau.`
-          : "Ses modules ne seront plus proposés. Aucun de vos modules n’en vient.",
-      confirmLabel: "Retirer",
-      tone: "danger",
-    });
-    if (!accepted) return;
-    await run(
-      `refresh:${marketplace.id}`,
-      async () => {
-        await marketplaceApi.remove(marketplace.id);
-        await Promise.all([loadMarketplaces(), loadUpdates(false).catch(() => undefined)]);
-        notify({ title: `Dépôt ${marketplace.name} retiré` });
-      },
-      "Retrait impossible",
-    );
-  };
-
-  const refreshMarketplace = (marketplace: Marketplace) =>
-    run(
-      `refresh:${marketplace.id}`,
-      async () => {
-        try {
-          await marketplaceApi.refresh(marketplace.id);
-        } finally {
-          // L’échec aussi s’inscrit sur le marketplace : la liste doit le montrer.
-          await Promise.all([loadMarketplaces(), loadUpdates(false).catch(() => undefined)]);
-        }
-        notify({ title: `${marketplace.name} est à jour`, tone: "success" });
-      },
-      `Rafraîchissement de ${marketplace.name} impossible`,
-    );
 
   const openedUpdate = opened?.kind === "update" ? updateOf.get(opened.module) : undefined;
 
@@ -407,15 +370,21 @@ export function ModulesSettings() {
     );
   };
 
+  const marketplaceName = (url: string) =>
+    marketplaces?.find((marketplace) => marketplace.url.replace(/(\.git)?\/?$/, "") === url.replace(/(\.git)?\/?$/, ""))
+      ?.name ?? url;
+  const publishedOf = (module: ModuleSummary) => publications.filter((publication) => publication.module === module.id);
+
   /** Résumé en mots simples : d’où vient le module, ce qu’il contient. */
   const moduleSummary = (module: ModuleSummary, withVersion: boolean) => {
     const update = updateOf.get(module.id);
     const installed = module.origin !== null && !module.origin.detached;
     const serviceCount = needs.filter((need) => need.module === module.id).length;
     return [
-      originLabel(module, update),
+      originLabel(module, update, publishedOf(module), marketplaceName),
       withVersion ? `version ${module.version}` : null,
       plural(module.pages, "page"),
+      module.functions > 0 ? plural(module.functions, "fonction") : null,
       serviceCount > 0 ? plural(serviceCount, "service") : null,
       installed ? "lecture seule" : null,
     ]
@@ -435,8 +404,19 @@ export function ModulesSettings() {
           </StatusBadge>
         ) : null}
         {update?.available ? (
-          <StatusBadge tone="warning" size="compact">
-            Mise à jour disponible : v{update.available}
+          update.blocked ? (
+            <StatusBadge size="compact" title={update.blocked}>
+              v{update.available} bloquée
+            </StatusBadge>
+          ) : (
+            <StatusBadge tone="warning" size="compact">
+              Mise à jour disponible : v{update.available}
+            </StatusBadge>
+          )
+        ) : null}
+        {publishedOf(module).some((publication) => publication.modified) ? (
+          <StatusBadge size="compact" title="Le module a changé depuis sa dernière publication.">
+            Modifié depuis la publication
           </StatusBadge>
         ) : null}
         {update?.pinned ? <StatusBadge size="compact">Figé</StatusBadge> : null}
@@ -446,13 +426,13 @@ export function ModulesSettings() {
           </StatusBadge>
         ) : null}
         {update?.sourceMissing ? (
-          <StatusBadge tone="danger" size="compact" title={`Dépôt d’origine : ${update.source}`}>
-            Sans dépôt
+          <StatusBadge tone="danger" size="compact" title={`Marketplace d’origine : ${update.source}`}>
+            Sans marketplace
           </StatusBadge>
         ) : null}
         {update?.withdrawn ? (
           <StatusBadge tone="danger" size="compact">
-            Retiré de son dépôt
+            Retiré de son marketplace
           </StatusBadge>
         ) : null}
       </>
@@ -496,7 +476,7 @@ export function ModulesSettings() {
             </>
           )}
           <MenuAction onSelect={() => setOpened({ kind: "uninstall", module })}>
-            {installed ? "Désinstaller…" : "Supprimer…"}
+            {installed ? "Retirer de l’espace de travail…" : "Supprimer…"}
           </MenuAction>
         </OverflowMenu>
       </div>
@@ -554,8 +534,8 @@ export function ModulesSettings() {
         ) : null}
         {update?.sourceMissing ? (
           <Text size="meta" tone="muted">
-            Son dépôt ({update.source}) n’est plus ajouté : l’ajouter de nouveau pour recevoir les mises à jour, ou
-            détacher le module.
+            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplaces
+            pour recevoir les mises à jour, ou détacher le module.
           </Text>
         ) : null}
         {hidden ? (
@@ -573,6 +553,7 @@ export function ModulesSettings() {
           </div>
           {snapshot ? <ModulePages snapshot={snapshot} module={module.id} disabled={hidden} /> : null}
         </div>
+        <ModuleFunctions module={module} clientLabels={module.clients.map((need) => need.label || need.id)} />
         <div className="module-part">
           <div className="module-part__head">
             {single ? (
@@ -643,8 +624,8 @@ export function ModulesSettings() {
   const listScreen = (
     <>
       <Section
-        title="Mes modules"
-        description="Chaque module apporte des pages et peut avoir besoin de services (une messagerie, Jira…). Ouvrez un module pour choisir ses pages et connecter ses services."
+        title="Modules de l’espace de travail"
+        description="Chaque module apporte des pages et peut avoir besoin de services (une messagerie, Jira…). Ouvrez un module pour choisir ses pages et connecter ses services. Ceux que vous développez ici se publient sur un marketplace depuis leur menu « … »."
         actions={
           <>
             {checking ? <Spinner label="Vérification des mises à jour" /> : null}
@@ -654,8 +635,8 @@ export function ModulesSettings() {
                 Tout mettre à jour ({pending})
               </Button>
             ) : null}
-            <Button variant="primary" onClick={() => setScreen({ kind: "add" })}>
-              Ajouter des modules
+            <Button variant="primary" onClick={() => setScreen({ kind: "import" })}>
+              Importer des modules
             </Button>
           </>
         }
@@ -664,7 +645,7 @@ export function ModulesSettings() {
           <EmptyState
             size="compact"
             title="Aucun module"
-            description="Demandez une page à l’agent : il crée un module pour vous. Vous pouvez aussi en installer depuis un dépôt, avec « Ajouter des modules »."
+            description="Demandez une page à l’agent : il crée un module pour vous. Vous pouvez aussi en importer depuis un marketplace, avec « Importer des modules »."
           />
         ) : (
           <div className="module-list-view">
@@ -712,7 +693,7 @@ export function ModulesSettings() {
                 description="Changez la recherche ou le filtre."
               />
             ) : (
-              <ul className="module-rows" aria-label="Modules de l’espace">
+              <ul className="module-rows" aria-label="Modules de l’espace de travail">
                 {shown.map(moduleRow)}
               </ul>
             )}
@@ -790,99 +771,33 @@ export function ModulesSettings() {
     (entry) => !foldedCatalog || fold(`${entry.name} ${entry.description ?? ""} ${entry.id}`).includes(foldedCatalog),
   );
 
-  const addScreen = (
-    <>
-      <Section
-        title="Où trouver des modules"
-        description="Un dépôt est un dossier partagé (git) où une équipe range ses modules. Ajoutez celui de votre équipe pour installer ses modules ou y publier les vôtres. Alfred s’y connecte avec les accès git déjà réglés sur ce poste."
-        actions={back}
-      >
-        <form onSubmit={addMarketplace}>
-          <FormControlGroup>
-            <FormField label="Adresse du dépôt">
-              <TextInput
-                value={url}
-                onChange={(event) => {
-                  setUrl(event.target.value);
-                  setAddError(null);
-                }}
-                placeholder="git@exemple.fr:equipe/modules.git"
-                spellCheck={false}
-                autoCapitalize="off"
-                disabled={busy === "add"}
-                aria-invalid={addError ? true : undefined}
-                aria-describedby={addError ? addErrorId : undefined}
-              />
-            </FormField>
-            <Button
-              type="submit"
-              loading={busy === "add"}
-              loadingLabel="Ajout…"
-              disabled={!url.trim() || busy !== null}
-            >
-              Ajouter
-            </Button>
-          </FormControlGroup>
-          {/* Sous le groupe entier : le bouton reste aligné sur le champ quand le message apparaît. */}
-          {addError ? (
-            <p id={addErrorId} role="alert" className="modules-list__meta modules-list__meta--danger modules-add-error">
-              {addError}
-            </p>
-          ) : null}
-        </form>
-        {marketplaces === null ? (
-          <Spinner label="Chargement des dépôts" />
-        ) : marketplaces.length === 0 ? (
-          <EmptyState
-            size="compact"
-            title="Aucun dépôt ajouté"
-            description="Ajoutez l’adresse du dépôt de votre équipe pour installer ses modules ou y publier les vôtres."
-          />
-        ) : (
-          <ul className="modules-list" aria-label="Dépôts de modules">
-            {marketplaces.map((marketplace) => (
-              <li key={marketplace.id}>
-                <div className="modules-list__main">
-                  <div className="modules-list__title">
-                    <span>{marketplace.name}</span>
-                    {marketplace.error ? (
-                      <StatusBadge tone="danger" size="compact">
-                        Inaccessible
-                      </StatusBadge>
-                    ) : null}
-                  </div>
-                  <p className="modules-list__meta">
-                    {marketplace.url} · {checkedAt(marketplace.lastChecked)}
-                  </p>
-                  {marketplace.error ? (
-                    <p className="modules-list__meta modules-list__meta--danger">{marketplace.error}</p>
-                  ) : null}
-                </div>
-                <div className="modules-list__actions">
-                  <RefreshButton
-                    label={`Rafraîchir ${marketplace.name}`}
-                    loading={busy === `refresh:${marketplace.id}`}
-                    disabled={busy !== null}
-                    onClick={() => void refreshMarketplace(marketplace)}
-                  />
-                  <Button disabled={busy !== null} onClick={() => void removeMarketplace(marketplace)}>
-                    Retirer
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      {current ? (
-        <Section
-          title={`Modules disponibles — ${current.name}`}
-          description="Ce que propose ce dépôt, avec ce que contient chaque module et ce à quoi il demande accès."
-          actions={
-            marketplaces && marketplaces.length > 1 ? (
+  const importScreen = (
+    <Section
+      title="Importer des modules"
+      description="Choisissez dans un marketplace les modules à ajouter à cet espace de travail. Un module importé arrive avec les modules dont il dépend, reste en lecture seule et reçoit les mises à jour de son marketplace."
+      actions={
+        <>
+          <Button onClick={openMarketplaces}>Gérer les marketplaces</Button>
+          {back}
+        </>
+      }
+    >
+      {marketplaces === null ? (
+        <Spinner label="Chargement des marketplaces" />
+      ) : !current ? (
+        <EmptyState
+          size="compact"
+          title="Aucun marketplace"
+          description="Un marketplace est le catalogue de modules partagé de votre équipe. Ajoutez-le dans Réglages › Marketplaces : il servira à tous vos espaces de travail."
+        >
+          <Button onClick={openMarketplaces}>Ajouter un marketplace</Button>
+        </EmptyState>
+      ) : (
+        <div className="module-list-view">
+          <div className="module-list-view__tools">
+            {marketplaces.length > 1 ? (
               <SelectControl
-                aria-label="Dépôt affiché"
+                aria-label="Marketplace affiché"
                 value={current.id}
                 onChange={(event) => setSelected(event.target.value)}
               >
@@ -892,93 +807,108 @@ export function ModulesSettings() {
                   </option>
                 ))}
               </SelectControl>
-            ) : undefined
-          }
-        >
+            ) : (
+              <Text size="meta" tone="muted">
+                Marketplace {current.name}
+              </Text>
+            )}
+            {(catalog?.length ?? 0) > 5 ? (
+              <SearchField
+                label="Rechercher un module à importer"
+                placeholder="Rechercher un module…"
+                value={catalogQuery}
+                onChange={(event) => setCatalogQuery(event.target.value)}
+              />
+            ) : null}
+          </div>
+          {current.error ? (
+            <FeedbackBanner tone="error" appearance="contained">
+              {current.error}
+            </FeedbackBanner>
+          ) : null}
           {catalogError ? (
             <FeedbackBanner tone="error" appearance="contained">
               {catalogError}
             </FeedbackBanner>
           ) : catalog === null ? (
-            <Spinner label="Chargement des modules disponibles" />
+            <Spinner label="Chargement des modules proposés" />
           ) : catalog.length === 0 ? (
             <EmptyState
               size="compact"
-              title="Aucun module dans ce dépôt"
+              title="Aucun module dans ce marketplace"
               description="Publiez l’un de vos modules (menu « … » de sa fiche) pour le partager ici."
             />
           ) : (
-            <div className="module-list-view">
-              {catalog.length > 5 ? (
-                <div className="module-list-view__tools">
-                  <SearchField
-                    label="Rechercher un module disponible"
-                    placeholder="Rechercher un module…"
-                    value={catalogQuery}
-                    onChange={(event) => setCatalogQuery(event.target.value)}
-                  />
-                </div>
-              ) : null}
-              <ul className="modules-list" aria-label={`Modules proposés par ${current.name}`}>
-                {catalogShown.map((entry) => {
-                  const accesses = catalogAccesses(entry);
-                  return (
-                    <li key={entry.id}>
-                      <div className="modules-list__main">
-                        <div className="modules-list__title">
-                          <span>{entry.name}</span>
-                          {entry.version ? <span className="modules-list__version">v{entry.version}</span> : null}
-                          {entry.installed ? (
-                            <StatusBadge tone="success" size="compact">
-                              Installé{entry.installed !== entry.version ? ` (v${entry.installed})` : ""}
-                            </StatusBadge>
-                          ) : null}
-                        </div>
-                        {entry.error ? (
-                          <p className="modules-list__meta modules-list__meta--danger">{entry.error}</p>
-                        ) : (
-                          <>
-                            {entry.description ? <p className="modules-list__meta">{entry.description}</p> : null}
+            <ul className="modules-list" aria-label={`Modules proposés par ${current.name}`}>
+              {catalogShown.map((entry) => {
+                const accesses = catalogAccesses(entry);
+                return (
+                  <li key={entry.id}>
+                    <div className="modules-list__main">
+                      <div className="modules-list__title">
+                        <span>{entry.name}</span>
+                        {entry.version ? <span className="modules-list__version">v{entry.version}</span> : null}
+                        {entry.installed ? (
+                          <StatusBadge tone="success" size="compact">
+                            Importé{entry.installed !== entry.version ? ` (v${entry.installed})` : ""}
+                          </StatusBadge>
+                        ) : null}
+                        {entry.own ? (
+                          <StatusBadge tone="success" size="compact">
+                            Votre module
+                          </StatusBadge>
+                        ) : null}
+                      </div>
+                      {entry.error ? (
+                        <p className="modules-list__meta modules-list__meta--danger">{entry.error}</p>
+                      ) : (
+                        <>
+                          {entry.description ? <p className="modules-list__meta">{entry.description}</p> : null}
+                          <p className="modules-list__meta">
+                            {plural(entry.pages?.length ?? 0, "page")}
+                            {accesses.length > 0
+                              ? ` · demande ${accesses.map((access) => access.label).join(", ")}`
+                              : ""}
+                          </p>
+                          {entry.own ? (
                             <p className="modules-list__meta">
-                              {plural(entry.pages?.length ?? 0, "page")}
-                              {accesses.length > 0
-                                ? ` · demande ${accesses.map((access) => access.label).join(", ")}`
-                                : ""}
+                              Développé dans cet espace de travail, publié ici en v{entry.own.version}
+                              {entry.own.local !== entry.own.version ? ` (v${entry.own.local} sur place)` : ""}.
                             </p>
-                            {entry.conflict ? (
-                              <p className="modules-list__meta">
-                                Un module « {entry.id} » existe déjà dans l’espace sans venir de ce dépôt : le supprimer
-                                pour installer celui-ci.
-                              </p>
-                            ) : null}
-                          </>
-                        )}
-                      </div>
-                      <div className="modules-list__actions">
-                        {entry.error || entry.installed ? null : (
-                          <Button
-                            disabled={busy !== null || entry.conflict}
-                            onClick={() => setOpened({ kind: "install", module: entry })}
-                          >
-                            Installer
-                          </Button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+                          ) : null}
+                          {entry.conflict ? (
+                            <p className="modules-list__meta">
+                              Un autre module « {entry.id} » existe déjà dans cet espace de travail : le supprimer pour
+                              importer celui-ci.
+                            </p>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                    <div className="modules-list__actions">
+                      {entry.error || entry.installed || entry.own ? null : (
+                        <Button
+                          disabled={busy !== null || entry.conflict}
+                          onClick={() => setOpened({ kind: "install", module: entry })}
+                        >
+                          Importer
+                        </Button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        </Section>
-      ) : null}
-    </>
+        </div>
+      )}
+    </Section>
   );
 
   return (
     <Page>
-      {screen.kind === "add"
-        ? addScreen
+      {screen.kind === "import"
+        ? importScreen
         : screen.kind === "setup" && setupScreen
           ? setupScreen
           : screen.kind === "module" && moduleScreen
@@ -1010,7 +940,7 @@ export function ModulesSettings() {
             setOpened(null);
             await afterSpaceChange();
             notify({
-              title: `${opened.module.name} retiré de l’espace`,
+              title: `${opened.module.name} retiré de l’espace de travail`,
               description: deleteData ? "Ses données sont supprimées." : "Ses données sont conservées.",
               tone: "success",
             });
@@ -1021,6 +951,10 @@ export function ModulesSettings() {
         <PublishDialog
           module={opened.module}
           marketplaces={marketplaces ?? []}
+          onManage={() => {
+            setOpened(null);
+            openMarketplaces();
+          }}
           onClose={() => setOpened(null)}
           onPublished={(version, marketplace) => {
             setOpened(null);
@@ -1030,6 +964,7 @@ export function ModulesSettings() {
               tone: "success",
             });
             void afterSpaceChange();
+            void loadPublications();
             void loadCatalog(currentId);
           }}
         />
@@ -1044,7 +979,7 @@ export function ModulesSettings() {
             setOpened(null);
             await afterSpaceChange();
             await setups.load();
-            notify({ title: `${opened.module.name} installé`, tone: "success" });
+            notify({ title: `${opened.module.name} importé`, tone: "success" });
             // Juste après l’installation : le parcours guidé présente le module et demande ce qui lui manque.
             setScreen({ kind: "setup", id: opened.module.id, start: "intro" });
           }}
@@ -1060,7 +995,7 @@ export function ModulesSettings() {
             void afterSpaceChange();
             notify({
               title: `${opened.module.name} fusionné dans ${target.name}`,
-              description: "Annulable depuis l’historique de l’espace.",
+              description: "Annulable depuis l’historique de l’espace de travail.",
               tone: "success",
             });
           }}
@@ -1076,7 +1011,7 @@ export function ModulesSettings() {
             void afterSpaceChange();
             notify({
               title: `Module ${name} créé`,
-              description: `Pages reprises de ${opened.module.name}. Annulable depuis l’historique de l’espace.`,
+              description: `Pages reprises de ${opened.module.name}. Annulable depuis l’historique de l’espace de travail.`,
               tone: "success",
             });
           }}

@@ -77,7 +77,7 @@ function moduleName(snapshot: Snapshot, id: string): string {
 
 /**
  * Sauvegardes des données des modules (base et fichiers, hors de l’historique git) : réglages, liste des copies,
- * restauration de tout l’espace ou d’un module, export et import des données d’un module.
+ * restauration de tout l’espace de travail ou d’un module, export et import des données d’un module.
  */
 export function BackupsSection({
   snapshot,
@@ -396,7 +396,7 @@ export function BackupsSection({
         />
       ) : (
         <DataTable
-          label="Sauvegardes de l’espace"
+          label="Sauvegardes de l’espace de travail"
           columns={columns}
           rows={backups}
           rowKey={(backup) => backup.id}

@@ -402,7 +402,7 @@ describe("relevé", () => {
       />,
     );
     const summary = screen.getByRole("region", { name: "Bilan des modifications" });
-    expect(within(summary).getByText("4 fichiers de l’espace modifiés")).toBeInTheDocument();
+    expect(within(summary).getByText("4 fichiers de l’espace de travail modifiés")).toBeInTheDocument();
     expect(within(summary).getAllByText("—")).toHaveLength(2);
     expect(within(summary).getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
     fireEvent.click(within(summary).getByRole("button", { name: "Afficher 1 fichier de plus" }));

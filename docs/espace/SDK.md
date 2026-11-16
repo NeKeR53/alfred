@@ -11,13 +11,13 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | `client(id)` |
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
-| `alert`, `confirm`, `prompt` | bloqués | `useConfirm`, `Dialog` de `@alfred/ui` |
+| `alert`, `confirm`, `prompt` | bloqués | Une `Action` avec `danger` et `confirm`, `confirmAction` (une confirmation), `openForm` (une saisie) de `@alfred/ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
 | `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
-| `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, 5.2) |
+| `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, section 5) |
 | un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |
 
-Le cadre d’une page est recréé quand l’utilisateur change d’onglet et chaque fois que l’espace change : un état React ne dure pas. Ce qui doit durer va en base.
+Le cadre d’une page est recréé quand l’utilisateur change d’onglet et chaque fois que l’espace de travail change : un état React ne dure pas. Ce qui doit durer va en base.
 
 ## 2. Contrat d’une page et d’une fonction
 
@@ -97,7 +97,53 @@ alfred db.query '{"sql":"SELECT count(*) AS n FROM compta_lignes"}'
 
 Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
 
-## 3. Charger des données : `useAsync`
+## 3. Charger des données : les gabarits, ou `useAsync`
+
+Les gabarits de `@alfred/ui` chargent eux-mêmes : `CollectionPage` et `SettingsPage` prennent `load`, `DetailPanel` prend `load(id)`. Ils affichent chargement, erreur et absence, rechargent après chaque `Action` et après une écriture faite dans l’autre cadre (page ou panneau). C’est le cas général :
+
+```tsx
+import { Pencil } from "lucide-react";
+import { db } from "@alfred/sdk";
+import { CollectionPage, openForm } from "@alfred/ui";
+
+interface Note {
+  id: number;
+  texte: string;
+  creee: string;
+}
+
+const formulaire = (note?: Note) => ({
+  title: note ? "Modifier la note" : "Nouvelle note",
+  fields: [{ name: "texte", label: "Texte", type: "textarea" as const }],
+  initial: note,
+  submitLabel: note ? "Enregistrer" : "Créer",
+  onSubmit: (v: Record<string, string>) =>
+    note
+      ? db.execute("UPDATE carnet_notes SET texte = ? WHERE id = ?", [v.texte, note.id])
+      : db.execute("INSERT INTO carnet_notes (texte) VALUES (?)", [v.texte]),
+});
+
+export default function NotesPage() {
+  return (
+    <CollectionPage<Note>
+      label="Notes"
+      load={() => db.query<Note>("SELECT id, texte, creee FROM carnet_notes ORDER BY id DESC LIMIT 200")}
+      rowKey={(note) => note.id}
+      columns={[
+        { key: "texte", header: "Note" },
+        { key: "creee", header: "Créée", type: "relative" },
+      ]}
+      emptyTitle="Aucune note"
+      emptyDescription="Les notes ajoutées ici restent dans l’espace."
+      search={{ label: "Rechercher une note" }}
+      actions={[{ label: "Nouvelle note", primary: true, onClick: () => openForm(formulaire()) }]}
+      rowActions={(note) => [{ label: "Modifier", icon: Pencil, onClick: () => openForm(formulaire(note)) }]}
+    />
+  );
+}
+```
+
+Une page composée (DESIGN.md, section 5) charge avec `useAsync` :
 
 ```ts
 function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>): {
@@ -108,75 +154,7 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 };
 ```
 
-`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()` : rien ne se recharge seul.
-
-```tsx
-import { db, shell, useAsync } from "@alfred/sdk";
-import { Button, EmptyState, FeedbackBanner, LoadingSkeleton, Page, Stack, Text } from "@alfred/ui";
-
-export default function NotesPage() {
-  const notes = useAsync(
-    () => db.query<{ id: number; texte: string }>("SELECT id, texte FROM carnet_notes ORDER BY id DESC LIMIT 200"),
-    [],
-  );
-
-  const ajouter = async () => {
-    try {
-      await db.execute("INSERT INTO carnet_notes (texte) VALUES (?)", ["Nouvelle note"]);
-      notes.reload();
-    } catch (error) {
-      void shell.notify({
-        title: "La note n’a pas été ajoutée",
-        description: error instanceof Error ? error.message : undefined,
-        tone: "error",
-      });
-    }
-  };
-  const nouvelle = (
-    <Button variant="primary" onClick={ajouter}>
-      Nouvelle note
-    </Button>
-  );
-
-  if (notes.error) {
-    return (
-      <Page>
-        <FeedbackBanner tone="error" appearance="contained" action={<Button onClick={notes.reload}>Réessayer</Button>}>
-          Les notes n’ont pas pu être chargées : {notes.error.message}
-        </FeedbackBanner>
-      </Page>
-    );
-  }
-  if (notes.data === undefined) {
-    return (
-      <Page>
-        <LoadingSkeleton rows={4} label="Chargement des notes…" />
-      </Page>
-    );
-  }
-  if (notes.data.length === 0) {
-    return (
-      <Page>
-        <EmptyState title="Aucune note" description="Les notes ajoutées ici restent dans l’espace.">
-          {nouvelle}
-        </EmptyState>
-      </Page>
-    );
-  }
-  return (
-    <Page>
-      {nouvelle}
-      <Stack gap="sm">
-        {notes.data.map((note) => (
-          <Text key={note.id}>{note.texte}</Text>
-        ))}
-      </Stack>
-    </Page>
-  );
-}
-```
-
-Liste complète (barre d’outils, tableau, recherche) : DESIGN.md, section 12.1.
+`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. Exemple complet : DESIGN.md, section 12.4.
 
 ## 4. Base de données : `db`
 
@@ -192,7 +170,7 @@ db.execute(sql: string, params?: SqlValue[]): Promise<{ changes: number; lastIns
 - Seules les tables du module sont accessibles (sinon « Requête refusée… ») : leur nom commence par l’identifiant du module, tirets remplacés par des soulignés, suivi de `_`. Un module `x-ajouts` lit aussi celles de `x` (et pas celles d’un autre module `x-…`), sans y écrire ; l’écran d’installation l’annonce comme un accès. Les clés étrangères sont actives, et ne visent que des tables du module. Le catalogue (`sqlite_master`) n’est pas lisible : la structure se lit avec `db_schema`.
 - Ni `CREATE`, `ALTER`, `DROP`, `PRAGMA`, `ATTACH` ni vue hors migration. Chaque appel est indépendant : aucune transaction ne couvre deux appels.
 
-Sauvegardes : la base et les fichiers des modules sont hors de l’historique git. Alfred les copie chaque jour et juste avant d’appliquer une migration d’un module qui a déjà des tables ; l’utilisateur restaure tout l’espace ou un seul module, et exporte ou importe les données d’un module (JSON), dans Réglages → Espace. Une migration qui transforme des données n’a donc pas besoin de garder elle-même une copie des anciennes tables.
+Sauvegardes : la base et les fichiers des modules sont hors de l’historique git. Alfred les copie chaque jour et juste avant d’appliquer une migration d’un module qui a déjà des tables ; l’utilisateur restaure tout l’espace ou un seul module, et exporte ou importe les données d’un module (JSON), dans Réglages → Général. Une migration qui transforme des données n’a donc pas besoin de garder elle-même une copie des anciennes tables.
 
 Migrations (`modules/<module>/migrations/NNNN_nom.sql`) : appliquées dans l’ordre des noms, dès qu’elles apparaissent et à chaque `check`. Un fichier est une transaction ouverte et close par Alfred : `BEGIN`, `COMMIT` ou `ROLLBACK` y sont refusés. Une clé étrangère vers la table d’un autre module est refusée. Une erreur annule le fichier et bloque les suivants du module. Un fichier appliqué ne repasse jamais.
 
@@ -239,9 +217,27 @@ export async function compter() {
 }
 ```
 
+### Passer par le connecteur d’un service
+
+Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires`), jamais `client()` directement. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
+
+```tsx
+import { functions, useAsync } from "@alfred/sdk";
+
+// Module « sprint », avec `"requires": [{ "module": "jira" }]`.
+const tickets = useAsync(
+  () => functions.call<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", { projet: "ALF" }),
+  [],
+);
+```
+
+Seules les fonctions du connecteur écrivent `client("jira")`. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect` et ses tests (AGENTS.md, « Tests d’une fonction »), puis la page l’appelle.
+
 Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }` (corps JSON décodé, sinon texte ; en-têtes d’authentification retirés). Sa valeur de retour part en JSON à l’émetteur si elle arrive en moins de 25 secondes ; sinon l’émetteur reçoit `202` et la fonction continue. Planifiée, elle reçoit le `input` de sa planification. Webhooks et planifications se déclarent avec les outils `declare_webhook` et `declare_schedule` (AGENTS.md).
 
 ## 6. Clients : `client(id)`
+
+`client()` s’écrit dans les fonctions du module connecteur du service (voir § 5) ; les autres modules passent par ces fonctions.
 
 ```ts
 client(id: string, options?: { instance?: string }): {
@@ -380,7 +376,7 @@ ai.startAgent<Result>(options: {
 }): Promise<{ conversationId: string; message: string; result?: Result }>;
 ```
 
-Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. L’agent est en autonomie stricte (chaque action lui est demandée à l’utilisateur) et n’agit que sur le module : `check`, `db_schema`, `db_query` et `call_function` sur ce module, rien qui change la structure de l’espace. Les `functions` (`"fonction"` ou `"module/fonction"`) deviennent des outils de cet agent ; celle d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot`.
+Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. L’agent est en autonomie stricte (chaque action lui est demandée à l’utilisateur) et n’agit que sur le module : `check`, `db_schema`, `db_query` et `call_function` sur ce module, rien qui change la structure de l’espace de travail. Les `functions` (`"fonction"` ou `"module/fonction"`) deviennent des outils de cet agent ; celle d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot`.
 
 ```tsx
 import { ai } from "@alfred/sdk";
@@ -482,45 +478,9 @@ interface PageContext {
 }
 ```
 
-Page et panneau : la page publie l’identifiant de la ligne choisie (pas l’objet) et ouvre son panneau ; le panneau lit la sélection et charge lui-même le détail. Pour qu’une écriture faite dans le panneau rafraîchisse la page, le panneau envoie un message que la page écoute. Un lien vers le web est un `Button` qui appelle `shell.openExternal(url)`. La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
+Page et panneau : `CollectionPage` avec `panel` publie `{ id }` de la ligne choisie et ouvre le panneau ; `DetailPanel` lit cette sélection, charge l’objet et, après une action, prévient la page, qui recharge sa liste (DESIGN.md, sections 4.1 et 4.2). Ces appels ne servent donc qu’à une page composée : `shell.publish({ id })` et `shell.setPanelVisible(true)` côté page, `usePageContext()?.selection` côté panneau, `shell.send(message)` et `usePeerMessage(handler)` pour se prévenir d’une écriture.
 
-```tsx
-import { db, shell, useAsync, usePageContext, usePeerMessage } from "@alfred/sdk";
-import { Button, Page, Text } from "@alfred/ui";
-
-// Côté page.
-export function useNotesEtPanneau() {
-  const notes = useAsync(() => db.query<{ id: number; texte: string }>("SELECT id, texte FROM carnet_notes"), []);
-  usePeerMessage((message) => {
-    if ((message as { type?: string } | null)?.type === "note-modifiee") notes.reload();
-  });
-  const ouvrir = (id: number) => {
-    void shell.publish({ id });
-    void shell.setPanelVisible(true);
-  };
-  return { notes, ouvrir };
-}
-
-// Côté panneau.
-export default function NotePanneau() {
-  const id = (usePageContext()?.selection as { id?: number } | null | undefined)?.id ?? null;
-  const archiver = async () => {
-    if (id === null) return;
-    await db.execute("UPDATE carnet_notes SET texte = '[archivée] ' || texte WHERE id = ?", [id]);
-    await shell.send({ type: "note-modifiee", id });
-  };
-  return (
-    <Page>
-      <Text>{id === null ? "Aucune note sélectionnée." : `Note n° ${id}`}</Text>
-      <Button onClick={archiver} disabled={id === null}>
-        Archiver
-      </Button>
-    </Page>
-  );
-}
-```
-
-Le panneau complet (aucune sélection, chargement, erreur, objet introuvable) est dans DESIGN.md, section 12.2.
+Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou une valeur de type `url` ou `email`, qui le fait seule). La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
 
 ### Notifications et compteur : `shell.notify`, `badge`
 
@@ -785,7 +745,7 @@ interface Change { id: number; table: string; key: string | null; op: "insert" |
 
 - `key` : la clé primaire de la ligne (en texte : `key: 12` et `key: "12"` se valent), ou son `rowid` si la clé porte sur plusieurs colonnes.
 - `actor` : `page:module/page` (le panneau compte pour sa page), `function:module/fonction`, `agent` (requête de l’agent), `alfred` (import, restauration), suivi de « (annulation) » pour une remise en arrière.
-- `revert` remet **toute la ligne** dans son état d’avant ce changement : une insertion est retirée, une modification annulée, une suppression rétablie. La remise est un changement à son tour, qu’on peut annuler. Des modifications faites après celle qu’on annule sont écrasées : montre la ligne `before` et demande confirmation (`useConfirm`).
+- `revert` remet **toute la ligne** dans son état d’avant ce changement : une insertion est retirée, une modification annulée, une suppression rétablie. La remise est un changement à son tour, qu’on peut annuler. Des modifications faites après celle qu’on annule sont écrasées : montre la ligne `before` et demande confirmation (`confirmAction` de `@alfred/ui`).
 - Alfred garde 90 jours et 10 000 changements par table. Les colonnes ajoutées par une migration sont suivies dès qu’elle passe. Une table absente apparaît dans `check` (`migrations`, « module.json (history …) »).
 
 ```tsx
@@ -798,7 +758,7 @@ export function useHistoriqueContact(id: number) {
 
 ## 15. Recherche par le sens : `semantic`
 
-Pour retrouver des lignes par leur sens et non par leurs mots (« dépenses d’énergie » trouve « Facture EDF de mars »), déclare un index sémantique. Alfred calcule pour chaque ligne un vecteur avec un modèle de langue local (multilingual-e5-small, français compris) : rien ne quitte l’ordinateur. Le modèle (470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Espace → Recherche par le sens.
+Pour retrouver des lignes par leur sens et non par leurs mots (« dépenses d’énergie » trouve « Facture EDF de mars »), déclare un index sémantique. Alfred calcule pour chaque ligne un vecteur avec un modèle de langue local (multilingual-e5-small, français compris) : rien ne quitte l’ordinateur. Le modèle (470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général → Recherche par le sens.
 
 ```json
 "semantic": [{ "id": "notes", "table": "carnet_notes", "key": "id", "columns": ["titre", "texte"] }]

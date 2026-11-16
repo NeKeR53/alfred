@@ -86,7 +86,7 @@ function Harness() {
 it("liste les sauvegardes, en fait une et restaure un seul module après confirmation", async () => {
   const user = userEvent.setup();
   render(<Harness />);
-  const table = await screen.findByRole("table", { name: "Sauvegardes de l’espace" });
+  const table = await screen.findByRole("table", { name: "Sauvegardes de l’espace de travail" });
   expect(within(table).getByText("Quotidienne")).toBeInTheDocument();
   expect(within(table).getByText("2 Ko")).toBeInTheDocument();
 

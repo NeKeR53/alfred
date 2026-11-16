@@ -134,7 +134,7 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
             "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-03-26"),
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "alfred", "title": "Alfred", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace avant de s’en servir.",
+            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace de travail avant de s’en servir.",
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools(state, conversation) })),
@@ -236,7 +236,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let mut list = vec![
         tool(
             "space_overview",
-            "État de l’espace : sections et leurs onglets, panneaux, pages des Réglages, modules, fonctions, clients déclarés et problèmes détectés. À appeler avant de créer ou de modifier quoi que ce soit.",
+            "État de l’espace de travail : sections et leurs onglets, panneaux, pages des Réglages, modules, fonctions, clients déclarés et problèmes détectés. À appeler avant de créer ou de modifier quoi que ce soit.",
             json!({}),
             &[],
         ),
@@ -270,6 +270,42 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "tool": { "type": "boolean", "description": "Proposer la fonction aux agents comme outil." },
                 "runtime": { "enum": ["ts", "bash", "pwsh", "python"], "description": "Langage : `ts` (par défaut), ou un script `bash` (.sh), `pwsh` (.ps1) ou `python` (.py)." },
                 "uses": { "type": "object", "properties": { "clients": { "type": "array", "items": { "type": "string" } } } },
+                "effect": { "enum": ["read", "write"], "description": "`read` : la fonction ne fait que lire (ses tests se lancent d’office, dans `check` et « Tout vérifier ») ; `write` : elle crée, modifie, envoie ou supprime (ses tests attendent l’accord de l’utilisateur). Toujours le préciser ; omis, gardé à la redéclaration." },
+                "tests": {
+                    "type": "array",
+                    "description": "Cas de test, écrits avec la fonction (au moins un) : une entrée d’exemple réaliste et ce que la sortie doit montrer. Omis, les tests déjà déclarés sont gardés.",
+                    "items": {
+                        "type": "object",
+                        "required": ["name", "input"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "name": { "type": "string", "description": "Ce que vérifie le test, en mots simples (« Liste les tickets ouverts ») ; unique dans la fonction." },
+                            "input": { "description": "Entrée passée à la fonction." },
+                            "target": {
+                                "type": "object",
+                                "description": "Test d’écriture : la cible que l’utilisateur choisit (un ticket de test…) remplace `input[field]`.",
+                                "required": ["field", "label"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "field": { "type": "string", "description": "Chemin dans l’entrée (`issue`, `filter.project`)." },
+                                    "label": { "type": "string", "description": "Ce que l’utilisateur saisit (« Ticket de test »)." },
+                                    "hint": { "type": "string", "description": "Aide : « clé d’un ticket jetable, ex. TEST-1 »." },
+                                },
+                            },
+                            "expect": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "description": "Chemins `issues.0.key` ; `\"\"` désigne la sortie elle-même.",
+                                "properties": {
+                                    "schema": { "type": "boolean", "description": "Sortie conforme au schéma `output` (vrai par défaut)." },
+                                    "has": { "type": "array", "items": { "type": "string" }, "description": "Chemins présents et non nuls." },
+                                    "nonEmpty": { "type": "array", "items": { "type": "string" }, "description": "Chemins vers une liste, un texte ou un objet non vide." },
+                                    "equals": { "type": "object", "description": "Valeur attendue par chemin." },
+                                },
+                            },
+                        },
+                    },
+                },
             }),
             &["module", "id", "description"],
         ),
@@ -328,7 +364,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "vault_store",
-            "Crée ou met à jour une entrée du coffre (trousseau du système). Chaque champ secret vient de `secrets` (valeur donnée par l’utilisateur ou que tu as obtenue) ou, de préférence, de `fromCommand` : Alfred exécute la commande dans l’espace et range sa sortie standard sans jamais te la renvoyer (ex. `gog auth token`, `pbpaste`). Types : `token` (champ secret `value`), `basic` (meta `username`, secret `password`), `oauth2` (meta `clientId`, secret facultatif `clientSecret`), `clientCredentials` (meta `clientId`, secret `clientSecret`). Ne renvoie jamais la valeur.",
+            "Crée ou met à jour une entrée du coffre (trousseau du système). Chaque champ secret vient de `secrets` (valeur donnée par l’utilisateur ou que tu as obtenue) ou, de préférence, de `fromCommand` : Alfred exécute la commande dans l’espace de travail et range sa sortie standard sans jamais te la renvoyer (ex. `gog auth token`, `pbpaste`). Types : `token` (champ secret `value`), `basic` (meta `username`, secret `password`), `oauth2` (meta `clientId`, secret facultatif `clientSecret`), `clientCredentials` (meta `clientId`, secret `clientSecret`). Ne renvoie jamais la valeur.",
             json!({
                 "id": { "type": "string", "description": "Entrée existante à mettre à jour ; omis, Alfred en crée une d’après le libellé." },
                 "label": { "type": "string" },
@@ -436,7 +472,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "check",
-            "Vérifie l’espace : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
+            "Vérifie l’espace de travail : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, tests de lecture des fonctions (ceux qui ne sont pas réussis dans l’état actuel de la fonction ; `tests.failed` donne le message et la sortie reçue), et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
             json!({ "module": { "type": "string", "description": "Limiter la vérification à un module." } }),
             &[],
         ),
@@ -468,7 +504,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "db_schema",
-            "Tables de la base de l’espace, leurs colonnes et leur nombre de lignes.",
+            "Tables de la base de l’espace de travail, leurs colonnes et leur nombre de lignes.",
             json!({ "module": { "type": "string" } }),
             &[],
         ),
@@ -484,7 +520,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "call_function",
-            "Exécute une fonction de l’espace avec une entrée et renvoie sa sortie. Sert à essayer une fonction qu’on vient d’écrire.",
+            "Exécute une fonction de l’espace de travail avec une entrée et renvoie sa sortie. Sert à essayer une fonction qu’on vient d’écrire.",
             json!({ "function": { "type": "string", "description": "« module/fonction »." }, "input": { "type": "object" } }),
             &["function"],
         ),
@@ -515,7 +551,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             list.push(json!({
                 "name": function_tool_name(&function.reference),
                 "description": if function.description.is_empty() {
-                    format!("Fonction {} de l’espace.", function.reference)
+                    format!("Fonction {} de l’espace de travail.", function.reference)
                 } else {
                     function.description.clone()
                 },
@@ -581,6 +617,20 @@ fn script_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
 
 /// Compile les `.ts`/`.tsx` d’un module qui ne sont ni une page ni une fonction déclarée (`lib/`, composants
 /// partagés…), avec la même règle d’imports : aucun ne sort du module.
+/// Déclaration enregistrée de la fonction `module/fonction` que `declare_function` vient d’écrire.
+fn declared_function(space: &crate::space::Space, declared: &Value) -> Option<crate::space::FunctionDecl> {
+    let (module, id) = declared["reference"].as_str()?.split_once('/')?;
+    space.module(module).ok()?.functions.into_iter().find(|function| function.id == id)
+}
+
+fn declared_effect(space: &crate::space::Space, declared: &Value) -> Option<crate::space::Effect> {
+    declared_function(space, declared).and_then(|function| function.effect)
+}
+
+fn declared_tests(space: &crate::space::Space, declared: &Value) -> usize {
+    declared_function(space, declared).map_or(0, |function| function.tests.len())
+}
+
 fn module_files(space: &crate::space::Space, snapshot: &Snapshot, keep: &impl Fn(&str) -> bool) -> Vec<Value> {
     let mut problems = Vec::new();
     for summary in snapshot.modules.iter().filter(|module| keep(&module.id)) {
@@ -810,9 +860,16 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "file": declared["file"],
                 "runtime": runtime,
                 "next": if runtime.is_script() {
-                    "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` et l’essayer avec `call_function`."
+                    "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
                 } else {
-                    "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` et l’essayer avec `call_function`."
+                    "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
+                },
+                "warning": if args.get("effect").is_none() && declared_effect(&space, &declared).is_none() {
+                    Some("`effect` absent : la fonction compte comme une écriture et ses tests ne se lancent pas d’office. Redéclarer avec `effect: \"read\"` si elle ne fait que lire.")
+                } else if declared_tests(&space, &declared) == 0 {
+                    Some("Aucun test : redéclarer avec `tests` (une entrée d’exemple et ce que la sortie doit montrer).")
+                } else {
+                    None
                 },
             }))
         }
@@ -902,7 +959,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let manifest = space.module(&module)?;
             if manifest.read_only() {
                 return Err(AppError::new(format!(
-                    "Le module « {} » est installé depuis un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
+                    "Le module « {} » est importé d’un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
                     manifest.name
                 )));
             }
@@ -937,6 +994,13 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     );
                 } else if !page.errors.is_empty() {
                     pages.push(json!({ "page": page.reference, "errors": page.errors }));
+                } else if !page.read_only {
+                    // Une page qui compile est relue contre DESIGN.md : chaque remarque est à corriger.
+                    let source = std::fs::read_to_string(space.page_file(&page.module, &page.id)).unwrap_or_default();
+                    let design = crate::design_lint::lint(&source);
+                    if !design.is_empty() {
+                        pages.push(json!({ "page": page.reference, "design": design }));
+                    }
                 }
             };
             for section in &snapshot.sections {
@@ -963,6 +1027,8 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 })
                 .collect();
             let files = module_files(&space, &snapshot, &keep);
+            // Tests de lecture des fonctions : ceux qui ne sont pas réussis dans l’état actuel de leur fonction.
+            let tests = crate::function_tests::check(state, &snapshot, module.as_deref()).await?;
             let (webhooks, schedules) = trigger_problems(&snapshot, &keep);
             let events = crate::module_events::problems(&space, module.as_deref());
             // Les clients appartiennent à l’espace, pas à un module : ils ne sont vérifiés qu’à la vérification
@@ -985,6 +1051,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 && events.is_empty()
                 && clients.is_empty()
                 && migrations.is_empty()
+                && tests["failed"].as_array().is_none_or(Vec::is_empty)
                 && snapshot.problems.is_empty()
                 && runtime.as_array().is_none_or(Vec::is_empty);
             Ok(json!({
@@ -992,6 +1059,8 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "pages": pages,
                 "functions": functions,
                 "files": files,
+                "tests": tests,
+                "testsNote": "`tests.failed` : tests de lecture en échec, avec la sortie reçue ; corriger la fonction (ou le test s’il se trompe) avant de rendre la main. Les tests d’écriture ne se lancent qu’avec l’accord de l’utilisateur (Réglages → Modules, « Tout vérifier »).",
                 "webhooks": webhooks,
                 "schedules": schedules,
                 "events": events,
@@ -1007,7 +1076,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let reference: String = arg(args, "page")?;
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace.")))?;
+                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."
@@ -1031,7 +1100,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let full_page = opt_arg::<bool>(args, "fullPage")?.unwrap_or(false);
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace.")))?;
+                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."
@@ -1202,6 +1271,34 @@ mod tests {
         assert_eq!(tool.expect("outil proposé")["inputSchema"]["required"], json!(["nom"]));
         let output = call(&state, "fn__outils__saluer", json!({ "nom": "Zoé" })).await.unwrap();
         assert_eq!(output, json!({ "message": "Bonjour Zoé" }));
+
+        // Sans effet ni test, la déclaration le signale ; un test de lecture en échec empêche `check` d’être propre.
+        assert!(declared["warning"].as_str().unwrap_or_default().contains("effect"), "{declared:#}");
+        let redeclared = call(&state, "declare_function", json!({
+            "module": "outils", "id": "saluer", "description": "Salue quelqu’un.", "runtime": "bash", "tool": true,
+            "effect": "read",
+            "tests": [{ "name": "Salue Zoé", "input": { "nom": "Zoé" }, "expect": { "equals": { "message": "Salut Zoé" } } }],
+        }))
+        .await
+        .unwrap();
+        assert!(redeclared["warning"].is_null(), "{redeclared:#}");
+        let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
+        assert_eq!(checked["ok"], json!(false));
+        assert!(mentions(&checked["tests"]["failed"], "function", "outils/saluer", "Bonjour Zoé"), "{checked:#}");
+        // Redéclarer sans `tests` garde les tests ; les corriger remet `check` au propre.
+        call(&state, "declare_function", json!({ "module": "outils", "id": "saluer", "description": "Salue.", "runtime": "bash", "tool": true }))
+            .await
+            .unwrap();
+        assert_eq!(space.module("outils").unwrap().functions[0].tests.len(), 1);
+        call(&state, "declare_function", json!({
+            "module": "outils", "id": "saluer", "description": "Salue.", "runtime": "bash", "tool": true,
+            "tests": [{ "name": "Salue Zoé", "input": { "nom": "Zoé" }, "expect": { "equals": { "message": "Bonjour Zoé" } } }],
+        }))
+        .await
+        .unwrap();
+        let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
+        assert_eq!(checked["tests"]["failed"], json!([]), "{checked:#}");
+        assert_eq!(checked["tests"]["ran"], json!(1));
 
         if crate::scripts::interpreter(crate::space::Runtime::Python).is_some() {
             let declared = call(&state, "declare_function", json!({

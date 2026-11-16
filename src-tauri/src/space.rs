@@ -75,6 +75,10 @@ pub struct ModuleManifest {
     /// Présent quand le module vient d’un marketplace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
+    /// Publications d’un module développé dans cet espace de travail : une par marketplace, la dernière version
+    /// envoyée. Comme `origin`, elles décrivent ce poste et ne partent jamais dans le marketplace.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<Publication>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<SectionDecl>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -185,6 +189,17 @@ pub struct Origin {
     pub pinned: bool,
 }
 
+/// Dernière publication d’un module développé ici sur un marketplace.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Publication {
+    /// Adresse git du marketplace.
+    pub marketplace: String,
+    pub version: String,
+    /// Commit du marketplace qui a reçu cette version.
+    pub commit: String,
+}
+
 impl ModuleManifest {
     pub fn read_only(&self) -> bool {
         self.origin.as_ref().is_some_and(|origin| !origin.detached)
@@ -208,20 +223,25 @@ pub struct Requirement {
 }
 
 impl Requirement {
-    /// La version `version` convient-elle ? Une version illisible ne convient qu’à une dépendance sans minimum.
+    /// La version `version` convient-elle ? Il faut au moins `min_version`, dans la même version majeure : une
+    /// nouvelle majeure change ce dont le module dépend (fonctions, clients, tables), elle ne le remplace pas. Une
+    /// version illisible ne convient qu’à une dépendance sans minimum.
     pub fn accepts(&self, version: &str) -> bool {
         match self.min_version.as_deref().map(str::trim).filter(|min| !min.is_empty()) {
             None => true,
             Some(min) => match (parse_version(version), parse_version(min)) {
-                (Some(version), Some(min)) => version >= min,
+                (Some(version), Some(min)) => version >= min && version[0] == min[0],
                 _ => false,
             },
         }
     }
 
     pub fn describe(&self) -> String {
-        match self.min_version.as_deref().filter(|min| !min.trim().is_empty()) {
-            Some(min) => format!("« {} » v{} ou plus", self.module, min.trim()),
+        match self.min_version.as_deref().map(str::trim).filter(|min| !min.is_empty()) {
+            Some(min) => {
+                let major = parse_version(min).map(|parts| parts[0].to_string()).unwrap_or_else(|| min.to_string());
+                format!("« {} » v{min} ou plus (v{major}.x)", self.module)
+            }
             None => format!("« {} »", self.module),
         }
     }
@@ -312,6 +332,67 @@ pub struct FunctionDecl {
     /// Langage : TypeScript (par défaut, exécuté dans l’interface) ou un script (bash, pwsh, python) lancé par Rust.
     #[serde(skip_serializing_if = "Runtime::is_ts")]
     pub runtime: Runtime,
+    /// Ce que fait la fonction chez le service : lire (`read`) ou modifier (`write`). Absent, elle compte comme
+    /// une écriture : ses tests ne se lancent jamais d’office.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
+    /// Cas de test : une entrée d’exemple et ce que la sortie doit montrer.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<FunctionTest>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Effect {
+    Read,
+    Write,
+}
+
+/// Cas de test d’une fonction. Ceux d’une fonction de lecture se lancent d’office (bouton « Tout vérifier »,
+/// outil `check`) ; ceux d’une écriture attendent l’accord de l’utilisateur, sur la cible qu’il choisit.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FunctionTest {
+    /// Ce que vérifie le test, en mots simples ; identifie le test dans la fonction.
+    pub name: String,
+    pub input: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<TestTarget>,
+    pub expect: Expect,
+}
+
+/// Cible d’un test d’écriture : l’utilisateur la saisit (un ticket de test…) et elle remplace `input[field]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TestTarget {
+    /// Chemin dans l’entrée (`issue`, `filter.project`).
+    pub field: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub hint: String,
+}
+
+/// Ce que la sortie doit montrer. Les chemins s’écrivent `issues.0.key` ; `""` désigne la sortie elle-même.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Expect {
+    /// Conforme au schéma `output` de la fonction (vrai par défaut).
+    pub schema: bool,
+    /// Chemins présents et non nuls.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub has: Vec<String>,
+    /// Chemins vers une liste, un texte ou un objet non vide.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub non_empty: Vec<String>,
+    /// Valeurs attendues, chemin par chemin.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub equals: BTreeMap<String, Value>,
+}
+
+impl Default for Expect {
+    fn default() -> Self {
+        Expect { schema: true, has: Vec::new(), non_empty: Vec::new(), equals: BTreeMap::new() }
+    }
 }
 
 impl FunctionDecl {
@@ -442,6 +523,7 @@ pub struct ModuleSummary {
     pub description: String,
     pub read_only: bool,
     pub origin: Option<Origin>,
+    pub published: Vec<Publication>,
     /// Masqué par l’utilisateur (ou installé comme dépendance) : ses sections et ses pages quittent le menu.
     pub hidden: bool,
     pub requires: Vec<Requirement>,
@@ -470,6 +552,8 @@ pub struct ResolvedFunction {
     pub errors: Vec<Diagnostic>,
     pub uses: Uses,
     pub runtime: Runtime,
+    pub effect: Option<Effect>,
+    pub tests: Vec<FunctionTest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -631,7 +715,7 @@ impl Space {
     pub fn manifest(&self) -> AppResult<SpaceManifest> {
         let text = fs::read_to_string(self.root.join(SPACE_FILE))?;
         serde_json::from_str(&text)
-            .map_err(|error| AppError::new(format!("Le fichier {SPACE_FILE} de l’espace est illisible : {error}")))
+            .map_err(|error| AppError::new(format!("Le fichier {SPACE_FILE} de l’espace de travail est illisible : {error}")))
     }
 
     pub fn write_manifest(&self, manifest: &SpaceManifest) -> AppResult<()> {
@@ -673,7 +757,7 @@ impl Space {
         let manifest = self.module(id)?;
         if manifest.read_only() {
             return Err(AppError::new(format!(
-                "Le module « {} » est installé depuis un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
+                "Le module « {} » est importé d’un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
                 manifest.name
             )));
         }
@@ -1122,6 +1206,8 @@ impl Space {
                     errors,
                     uses: function.uses.clone(),
                     runtime: function.runtime,
+                    effect: function.effect,
+                    tests: function.tests.clone(),
                 });
             }
         }
@@ -1141,6 +1227,7 @@ impl Space {
                     description: module.description.clone(),
                     read_only: module.read_only(),
                     origin: module.origin.clone(),
+                    published: module.published.clone(),
                     hidden: module_hidden(&module.id),
                     requires: module.requires.clone(),
                     required_by: modules
@@ -1182,7 +1269,7 @@ fn dependency_problems(modules: &[ModuleManifest]) -> Vec<Problem> {
             } else {
                 match find(&requirement.module) {
                     None => Some(format!(
-                        "Le module dépend de {}, absent de l’espace : l’installer ou retirer la dépendance de `requires`.",
+                        "Le module dépend de {}, absent de l’espace de travail : l’installer ou retirer la dépendance de `requires`.",
                         requirement.describe()
                     )),
                     Some(required) if !requirement.accepts(&required.version) => Some(format!(

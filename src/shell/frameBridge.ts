@@ -120,7 +120,9 @@ function badgeTarget(identity: FrameIdentity, page: unknown): string {
     reference = identity.host ?? identity.reference;
   }
   if (!isKnownPage(useShell.getState().snapshot, reference))
-    throw new AlfredError({ message: `Compteur refusé : la page « ${reference} » n’existe pas dans l’espace.` });
+    throw new AlfredError({
+      message: `Compteur refusé : la page « ${reference} » n’existe pas dans l’espace de travail.`,
+    });
   return reference;
 }
 

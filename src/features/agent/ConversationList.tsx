@@ -237,7 +237,7 @@ function SpaceChanges({ conversation }: { conversation: Conversation }) {
     <div className="agent-changes">
       <div className="agent-changes__summary">
         <FileDiff size={14} aria-hidden="true" />
-        <span className="agent-changes__name">Enregistrées dans l’espace</span>
+        <span className="agent-changes__name">Enregistrées dans l’espace de travail</span>
         <span className="agent-changes__totals">
           {counted.length ? <LineCounts {...totals} /> : `${files.length} fichier${files.length > 1 ? "s" : ""}`}
         </span>

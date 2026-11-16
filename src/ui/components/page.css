@@ -210,3 +210,95 @@
     animation: none;
   }
 }
+.al-form {
+  width: 100%;
+  max-width: 560px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.al-form--full {
+  max-width: none;
+}
+/* Les actions sous les champs ferment la colonne, à droite, après un écart. */
+.al-form > .form-actions {
+  margin-top: 4px;
+}
+.al-object-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.al-object-header__copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.al-object-header__title {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+.al-object-header__description {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+/* Les icônes d’action se calent sur la première ligne du titre et se serrent (4 px). */
+.al-object-header__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: -4px;
+}
+.al-object-header--1 .al-object-header__actions {
+  margin-top: -2px;
+}
+.al-section__actions {
+  flex: 0 0 auto;
+}
+.page-toolbar-separator {
+  border: 0;
+  width: 1px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0 4px;
+  background: var(--line);
+}
+.al-action-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+/* L’action principale se détache des icônes. */
+.al-action-bar > .ui-button:last-child,
+.al-action-bar > button:not(.icon-button):last-child {
+  margin-left: 4px;
+}
+.al-action-bar--row {
+  justify-content: flex-end;
+  gap: 2px;
+}
+/* Actions d’une ligne : visibles au survol, au focus, sur la ligne sélectionnée et pendant qu’un menu est ouvert. */
+@media (hover: hover) {
+  .al-table
+    tbody
+    tr:not(:hover, :focus-within, [aria-selected="true"])
+    .al-action-bar--row:not(:has([aria-expanded="true"], [aria-busy="true"])) {
+    opacity: 0;
+  }
+}
+.al-table td:has(> .al-action-bar--row) {
+  padding-block: 4px;
+}

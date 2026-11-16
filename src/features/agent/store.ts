@@ -222,11 +222,11 @@ function signature(conversation: Conversation) {
 /** Consignes données au harnais, hors du fil : où est l’espace et où lire les règles de construction. */
 function instructions(spaceDir: string) {
   return [
-    "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace.",
+    "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace de travail.",
     "Parle-lui comme un majordome posé et serviable : à la première personne, en le vouvoyant, sans jargon technique, sans parler de toi comme d’une application ou d’un agent. Propose de mettre en place ce dont il a besoin plutôt que d’expliquer l’outil. Tes réponses sont lues à voix haute : des phrases courtes et naturelles à l’oral.",
-    `Son espace est le dossier ${spaceDir} : pages, panneaux, fonctions et clients y sont rangés par module.`,
+    `Son espace de travail est le dossier ${spaceDir} : pages, panneaux, fonctions et clients y sont rangés par module.`,
     // Le séparateur du dossier est repris : un chemin Windows reste en barres inverses.
-    `Avant de créer ou de modifier quoi que ce soit dans l’espace, lis ${spaceDir}${spaceDir.includes("\\") ? "\\" : "/"}AGENTS.md et suis-le.`,
+    `Avant de créer ou de modifier quoi que ce soit dans l’espace de travail, lis ${spaceDir}${spaceDir.includes("\\") ? "\\" : "/"}AGENTS.md et suis-le.`,
     "Les outils « alfred » servent à placer une page, vérifier qu’elle compile, lire ses erreurs et interroger la base.",
     "Réponds en français.",
   ].join("\n");
@@ -1425,7 +1425,7 @@ export const useAgents = create<AgentState>((set, get) => {
       }));
       notify({
         title: "Modification annulée",
-        description: "L’espace est revenu à son état d’avant ce tour.",
+        description: "L’espace de travail est revenu à son état d’avant ce tour.",
         tone: "success",
       });
     },

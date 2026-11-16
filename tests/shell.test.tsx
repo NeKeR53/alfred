@@ -11,23 +11,23 @@ import { App } from "../src/App";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 
-it("de l’accueil à un espace construit : navigation, Réglages, palette et accord d’accès", async () => {
+it("de l’accueil à un espace de travail construit : navigation, Réglages, palette et accord d’accès", async () => {
   const backend = new FakeBackend().install();
   const user = userEvent.setup();
   render(<App />);
 
   // Accueil : aucun espace mémorisé, le dossier proposé est dans le dossier personnel.
   expect(await screen.findByRole("heading", { name: "Bonjour, je suis Alfred" })).toBeVisible();
-  const folder = screen.getByRole("textbox", { name: "Dossier de l’espace" });
+  const folder = screen.getByRole("textbox", { name: "Dossier de l’espace de travail" });
   expect(folder).toHaveValue("/Users/lea/Alfred");
   await user.clear(folder);
   await user.type(folder, "/Users/lea/Maison");
-  await user.click(screen.getByRole("button", { name: "Ouvrir l’espace" }));
+  await user.click(screen.getByRole("button", { name: "Ouvrir l’espace de travail" }));
 
   // Espace ouvert, encore vide : la page Agent invite à construire.
   expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
   expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison" });
-  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace" });
+  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
   expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
 
   // L’agent construit dans le dossier : le backend signale le changement, la navigation se relit.
@@ -76,28 +76,36 @@ it("de l’accueil à un espace construit : navigation, Réglages, palette et ac
       .map((item) => item.textContent),
   ).toEqual([
     "Modules",
-    "Agent",
-    "Voix",
-    "Espace",
+    "Général",
     "Apparence",
-    "Mots de passe et clés",
     "Ordre du menu",
     "Fonctions",
     "Webhooks",
     "Tâches planifiées",
     "Tâches de fond",
     "Journal",
+    "Marketplaces",
+    "Agent",
+    "Voix",
+    "Mots de passe et clés",
     "Préférences du suivi",
   ]);
-  // Les modules d’abord, en liste ; « Ajouter des modules » mène aux sources.
-  expect(await within(settings).findByRole("list", { name: "Modules de l’espace" })).toBeVisible();
-  await user.click(within(settings).getByRole("button", { name: "Ajouter des modules" }));
-  expect((await within(settings).findAllByText("Où trouver des modules"))[0]).toBeVisible();
+  // L’espace de travail d’abord, puis Alfred : deux groupes titrés.
+  expect(
+    within(nav)
+      .getAllByText(/^(Espace de travail|Alfred|Pages de l’espace de travail)$/)
+      .map((title) => title.textContent),
+  ).toEqual(["Espace de travail", "Alfred", "Pages de l’espace de travail"]);
+  // Les modules d’abord, en liste ; « Importer des modules » mène au catalogue des marketplaces.
+  expect(await within(settings).findByRole("list", { name: "Modules de l’espace de travail" })).toBeVisible();
+  await user.click(within(settings).getByRole("button", { name: "Importer des modules" }));
+  expect((await within(settings).findAllByText("Importer des modules"))[0]).toBeVisible();
   await user.click(within(settings).getByRole("button", { name: "Tous les modules" }));
 
   const expected: Record<string, string> = {
     Agent: "Harnais par défaut",
-    Espace: "Historique",
+    Général: "Historique",
+    Marketplaces: "Aucun marketplace",
     Apparence: "Couleur d’accent",
     "Mots de passe et clés": "Aucun mot de passe ni clé",
     "Ordre du menu": "Pages des Réglages",

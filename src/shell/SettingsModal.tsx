@@ -1,6 +1,6 @@
 /**
- * Fenêtre des Réglages, posée par-dessus l’app : une barre latérale (recherche, rubriques groupées avec leur icône,
- * pages de l’espace placées dans les Réglages) et la rubrique choisie à droite. Échap ou la croix la ferment.
+ * Fenêtre des Réglages, posée par-dessus l’app : une barre latérale (recherche, rubriques de l’espace de travail
+ * puis d’Alfred, groupées avec leur icône, pages de l’espace de travail placées dans les Réglages) et la rubrique choisie à droite. Échap ou la croix la ferment.
  *
  * Ce n’est pas un `<dialog>` natif : ses menus déroulants (rendus dans `body`) et les notifications doivent
  * passer au-dessus d’elle, et ses propres modales natives s’ouvrent par-dessus dans la couche supérieure.
@@ -25,10 +25,11 @@ interface Entry {
   id: string;
   label: string;
   group: string;
+  groupTitle?: string;
   icon: React.ReactNode;
 }
 
-const SPACE_PAGES = "Pages de l’espace";
+const SPACE_PAGES = "Pages de l’espace de travail";
 
 export function SettingsModal({
   tabs,
@@ -37,7 +38,7 @@ export function SettingsModal({
   onClose,
 }: {
   tabs: BuiltInTab[];
-  /** Pages de l’espace placées dans les Réglages. */
+  /** Pages de l’espace de travail placées dans les Réglages. */
   pages: ResolvedPage[];
   onPageMenu?: (reference: string, anchor: MenuAnchor, returnFocus: HTMLElement | null) => void;
   onClose: () => void;
@@ -51,7 +52,13 @@ export function SettingsModal({
 
   const visiblePages = pages.filter((page) => !page.hidden);
   const entries: Entry[] = [
-    ...tabs.map((tab) => ({ id: tab.id, label: tab.label, group: tab.group ?? "", icon: tab.icon })),
+    ...tabs.map((tab) => ({
+      id: tab.id,
+      label: tab.label,
+      group: tab.group ?? "",
+      groupTitle: tab.groupTitle,
+      icon: tab.icon,
+    })),
     ...visiblePages.map((page) => ({
       id: page.reference,
       label: page.title,
@@ -66,12 +73,21 @@ export function SettingsModal({
 
   const folded = fold(query.trim());
   const shown = entries.filter((entry) => !folded || fold(entry.label).includes(folded));
-  const groups = shown.reduce<Array<{ name: string; entries: Entry[] }>>((all, entry) => {
+  const groups = shown.reduce<Array<{ name: string; title?: string; entries: Entry[] }>>((all, entry) => {
     const last = all[all.length - 1];
     if (last && last.name === entry.group) last.entries.push(entry);
     else all.push({ name: entry.group, entries: [entry] });
     return all;
   }, []);
+  // Le titre d’un groupe suit le groupe, même quand la recherche en masque la première entrée.
+  const titles = new Map(entries.filter((entry) => entry.groupTitle).map((entry) => [entry.group, entry.groupTitle]));
+  titles.set(SPACE_PAGES, SPACE_PAGES);
+  let lastTitle: string | undefined;
+  for (const group of groups) {
+    const title = titles.get(group.name);
+    if (title && title !== lastTitle) group.title = title;
+    if (title) lastTitle = title;
+  }
 
   // Le focus entre dans la fenêtre à l’ouverture et revient au déclencheur à la fermeture.
   useEffect(() => {
@@ -125,7 +141,7 @@ export function SettingsModal({
             {groups.map((group, index) => (
               <Fragment key={group.entries[0]?.id}>
                 {index > 0 ? <hr className="settings-modal__separator" /> : null}
-                {group.name === SPACE_PAGES ? <p className="settings-modal__group">{SPACE_PAGES}</p> : null}
+                {group.title ? <p className="settings-modal__group">{group.title}</p> : null}
                 <ul className="settings-modal__list">
                   {group.entries.map((entry) => (
                     <li key={entry.id}>

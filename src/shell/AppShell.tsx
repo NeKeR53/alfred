@@ -52,6 +52,8 @@ export interface BuiltInTab {
   icon?: ReactNode;
   /** Réglages : groupe de l’entrée ; un trait sépare deux groupes. */
   group?: string;
+  /** Réglages : titre affiché au-dessus du groupe, porté par sa première entrée (« Espace de travail », « Alfred »). */
+  groupTitle?: string;
 }
 
 /** Contenu d’une page de l’espace : son cadre, ou l’état qui explique pourquoi il n’y a encore rien à afficher. */
@@ -512,8 +514,8 @@ export function AppShell({
             onClear={() => setQuery("")}
           />
         </div>
-        <nav aria-label="Sections de l’espace">
-          {sections.length > 0 ? <p className="sidebar__section">Espace</p> : null}
+        <nav aria-label="Sections de l’espace de travail">
+          {sections.length > 0 ? <p className="sidebar__section">Espace de travail</p> : null}
           {drag.orderedItems.map(({ section }) => {
             if (!matches(section.label)) return null;
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;

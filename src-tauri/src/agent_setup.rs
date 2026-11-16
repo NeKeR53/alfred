@@ -176,12 +176,12 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     };
     let subject = if name == "*" {
         if !snapshot.modules.iter().any(|known| known.id == module) {
-            return Err(AppError::new(format!("Le module « {module} » n’existe pas dans l’espace.")));
+            return Err(AppError::new(format!("Le module « {module} » n’existe pas dans l’espace de travail.")));
         }
         format!("function:{to}")
     } else {
         if crate::mcp::find_page(&snapshot, &to).is_none() {
-            return Err(AppError::new(format!("La page « {to} » n’existe pas dans l’espace.")));
+            return Err(AppError::new(format!("La page « {to} » n’existe pas dans l’espace de travail.")));
         }
         format!("page:{to}")
     };
@@ -227,12 +227,12 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         }
         (Some(client), None) => {
             let loaded = clients::load(&space, &client)?
-                .ok_or_else(|| AppError::new(format!("Le client « {client} » n’existe pas dans cet espace.")))?;
+                .ok_or_else(|| AppError::new(format!("Le client « {client} » n’existe pas dans cet espace de travail.")))?;
             (format!("client:{client}"), format!("le client « {} »", loaded.label))
         }
         (None, Some(function)) => {
             if !snapshot.functions.iter().any(|known| known.reference == function) {
-                return Err(AppError::new(format!("La fonction « {function} » n’existe pas dans l’espace.")));
+                return Err(AppError::new(format!("La fonction « {function} » n’existe pas dans l’espace de travail.")));
             }
             (format!("function:{function}"), format!("la fonction {function}"))
         }
@@ -262,7 +262,7 @@ pub async fn connect_client(state: &Arc<AppState>, args: &Value) -> AppResult<Va
     let instance: Option<String> = opt_arg(args, "instance")?;
     let space = state.space()?;
     let client = clients::load(&space, &id)?
-        .ok_or_else(|| AppError::new(format!("Le client « {id} » n’existe pas dans cet espace.")))?
+        .ok_or_else(|| AppError::new(format!("Le client « {id} » n’existe pas dans cet espace de travail.")))?
         .effective(instance.as_deref())?;
     let url = crate::oauth::begin(state, &client).await?;
     if !cfg!(test) {

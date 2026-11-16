@@ -170,18 +170,18 @@ function SpaceSection({ snapshot }: { snapshot: Snapshot }) {
     event.preventDefault();
     const next = name.trim();
     if (!next) {
-      setNameError("Saisissez le nom de l’espace.");
+      setNameError("Saisissez le nom de l’espace de travail.");
       return;
     }
     setNameError(undefined);
     if (next === snapshot.name) return;
     setSaving(true);
     try {
-      await invoke("space.updateLayout", { name: next, message: `Renommage de l’espace en « ${next} »` });
+      await invoke("space.updateLayout", { name: next, message: `Renommage de l’espace de travail en « ${next} »` });
       await useShell.getState().refresh();
-      notify({ title: "Espace renommé", tone: "success" });
+      notify({ title: "Espace de travail renommé", tone: "success" });
     } catch (failure) {
-      notify({ title: "L’espace n’a pas été renommé", description: errorMessage(failure), tone: "error" });
+      notify({ title: "L’espace de travail n’a pas été renommé", description: errorMessage(failure), tone: "error" });
     } finally {
       setSaving(false);
     }
@@ -197,12 +197,12 @@ function SpaceSection({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <Section
-      title="Espace"
-      description="L’espace rassemble tout ce que vous construisez avec l’agent, dans un dossier."
+      title="Espace de travail"
+      description="L’espace de travail rassemble tout ce que vous construisez avec l’agent, dans un dossier."
     >
       <SettingRows>
         <SettingRow
-          title="Nom de l’espace"
+          title="Nom de l’espace de travail"
           description={
             nameError ? <span className="setting-row__error">{nameError}</span> : "Affiché en haut du menu de gauche."
           }
@@ -211,7 +211,7 @@ function SpaceSection({ snapshot }: { snapshot: Snapshot }) {
             <TextInput
               id={nameId}
               className="setting-row__field"
-              aria-label="Nom de l’espace"
+              aria-label="Nom de l’espace de travail"
               aria-invalid={nameError ? true : undefined}
               value={name}
               aria-required="true"
@@ -274,42 +274,46 @@ function SwitchSpaceSection({
     try {
       await openSpace(path);
     } catch (failure) {
-      notify({ title: "L’espace n’a pas pu être ouvert", description: errorMessage(failure), tone: "error" });
+      notify({
+        title: "L’espace de travail n’a pas pu être ouvert",
+        description: errorMessage(failure),
+        tone: "error",
+      });
     } finally {
       setOpening(null);
     }
   };
 
   const openOther = async () => {
-    const path = await pickFolder("Choisir le dossier de l’espace");
+    const path = await pickFolder("Choisir le dossier de l’espace de travail");
     if (path) await open(path);
   };
 
   const close = async () => {
     const confirmed = await confirm({
-      title: `Fermer l’espace « ${snapshot.name} » ?`,
+      title: `Fermer l’espace de travail « ${snapshot.name} » ?`,
       message:
-        "Alfred revient à l’accueil pour ouvrir ou créer un autre espace. Rien n’est supprimé : cet espace se rouvre depuis l’accueil ou depuis cette liste.",
-      confirmLabel: "Fermer l’espace",
+        "Alfred revient à l’accueil pour ouvrir ou créer un autre espace de travail. Rien n’est supprimé : cet espace de travail se rouvre depuis l’accueil ou depuis cette liste.",
+      confirmLabel: "Fermer l’espace de travail",
     });
     if (!confirmed) return;
     try {
       await closeSpace();
     } catch (failure) {
-      notify({ title: "L’espace n’a pas été fermé", description: errorMessage(failure), tone: "error" });
+      notify({ title: "L’espace de travail n’a pas été fermé", description: errorMessage(failure), tone: "error" });
     }
   };
 
   return (
     <Section
-      title="Changer d’espace"
-      description="Passez d’un espace à l’autre. Chaque espace garde ses modules, ses pages et son historique."
+      title="Changer d’espace de travail"
+      description="Passez d’un espace de travail à l’autre. Chaque espace de travail garde ses modules, ses pages et son historique."
     >
-      <SettingRows label="Espaces récents">
+      <SettingRows label="Espaces de travail récents">
         {others.map((space) => (
           <SettingRow key={space.path} title={space.name} description={<span title={space.path}>{space.path}</span>}>
             <Button
-              aria-label={`Ouvrir l’espace ${space.name}`}
+              aria-label={`Ouvrir l’espace de travail ${space.name}`}
               loading={opening === space.path}
               disabled={opening !== null}
               onClick={() => void open(space.path)}
@@ -330,7 +334,7 @@ function SwitchSpaceSection({
         {inTauri ? (
           <SettingRow
             title="Un autre dossier"
-            description="Ouvrir un espace qui n’est pas dans la liste, ou en créer un."
+            description="Ouvrir un espace de travail qui n’est pas dans la liste, ou en créer un."
           >
             <Button disabled={opening !== null} onClick={() => void openOther()}>
               Choisir un dossier…
@@ -338,11 +342,11 @@ function SwitchSpaceSection({
           </SettingRow>
         ) : null}
         <SettingRow
-          title="Fermer l’espace"
-          description="Revenir à l’accueil d’Alfred. Rien n’est supprimé : l’espace se rouvre depuis cette liste."
+          title="Fermer l’espace de travail"
+          description="Revenir à l’accueil d’Alfred. Rien n’est supprimé : l’espace de travail se rouvre depuis cette liste."
         >
           <Button disabled={opening !== null} onClick={() => void close()}>
-            Fermer l’espace
+            Fermer l’espace de travail
           </Button>
         </SettingRow>
       </SettingRows>
@@ -500,7 +504,7 @@ function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["c
   return (
     <Section
       title="Historique"
-      description="Chaque tour d’agent et chaque réglage de l’espace est enregistré. Annuler une modification la défait sans effacer l’historique."
+      description="Chaque tour d’agent et chaque réglage de l’espace de travail est enregistré. Annuler une modification la défait sans effacer l’historique."
       actions={<RefreshButton label="Actualiser l’historique" loading={history.loading} onClick={history.reload} />}
     >
       {history.error ? (
@@ -520,11 +524,11 @@ function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["c
         <EmptyState
           size="compact"
           title="Aucune modification enregistrée"
-          description="Les modifications de l’espace apparaissent ici dès que l’agent ou un réglage le change."
+          description="Les modifications de l’espace de travail apparaissent ici dès que l’agent ou un réglage le change."
         />
       ) : (
         <DataTable
-          label="Historique de l’espace"
+          label="Historique de l’espace de travail"
           columns={columns}
           rows={history.items}
           rowKey={(commit) => commit.id}
@@ -663,14 +667,17 @@ export function SpaceSettings() {
   if (snapshot === undefined) {
     return (
       <Page width="text">
-        <LoadingSkeleton label="Chargement de l’espace…" />
+        <LoadingSkeleton label="Chargement de l’espace de travail…" />
       </Page>
     );
   }
   if (snapshot === null) {
     return (
       <Page width="text">
-        <EmptyState title="Aucun espace ouvert" description="Ouvrez ou créez un espace depuis l’accueil d’Alfred." />
+        <EmptyState
+          title="Aucun espace de travail ouvert"
+          description="Ouvrez ou créez un espace de travail depuis l’accueil d’Alfred."
+        />
       </Page>
     );
   }

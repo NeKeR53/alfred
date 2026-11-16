@@ -69,10 +69,10 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
 
   // Fin de tour : la réponse finale, la nouvelle entrée du menu, et le tour enregistré dans un commit.
   expect(await screen.findByText("cuisine/recettes")).toBeVisible();
-  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace" });
+  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
   expect(await within(navigation).findByRole("button", { name: "Cuisine" })).toBeVisible();
   const summary = await screen.findByRole("region", { name: "Bilan des modifications" });
-  expect(within(summary).getByText("2 fichiers de l’espace modifiés")).toBeVisible();
+  expect(within(summary).getByText("2 fichiers de l’espace de travail modifiés")).toBeVisible();
   expect(backend.lastCall("space.commit")?.message).toMatch(/recettes/i);
   expect(backend.commits.at(-1)?.files).toEqual(["modules/cuisine/module.json", "modules/cuisine/pages/recettes.tsx"]);
   await waitFor(() => {
