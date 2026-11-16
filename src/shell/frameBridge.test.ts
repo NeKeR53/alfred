@@ -165,11 +165,13 @@ describe("documents", () => {
       payload: { id: 1 },
       to: "x",
     });
+    await handleFrameRequest(page, "commands.run", { program: "git", args: ["status"], cwd: "/", env: { X: "1" } });
     expect(native.invoke.mock.calls).toEqual([
       ["frame.documents.pdf", { subject: own, name: "r", title: "T", blocks: [] }],
       ["frame.documents.extractText", { subject: own, id: "abc" }],
       ["frame.search.query", { subject: own, index: "notes", text: "été", limit: 5 }],
       ["frame.events.publish", { subject: own, event: "note-creee", payload: { id: 1 } }],
+      ["frame.commands.run", { subject: own, program: "git", args: ["status"] }],
     ]);
   });
 });

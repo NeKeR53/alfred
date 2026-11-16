@@ -64,20 +64,28 @@ async fn call_script(
 ) -> AppResult<Value> {
     let reference = format!("{}/{}", manifest.id, declared.id);
     let started = std::time::Instant::now();
+    // Pont du SDK : un jeton propre à cet appel, qui cesse de valoir à la fin du script.
+    let bridge = crate::script_sdk::grant(&manifest.id, &declared.id);
+    let mut env = vec![
+        ("ALFRED_MODULE".to_string(), manifest.id.clone()),
+        ("ALFRED_FUNCTION".to_string(), declared.id.clone()),
+        ("ALFRED_CALLER".to_string(), caller.to_string()),
+        ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
+        ("ALFRED_SDK_TOKEN".to_string(), bridge.token.clone()),
+    ];
+    if let Some(url) = crate::script_sdk::url(state) {
+        env.push(("ALFRED_SDK_URL".to_string(), url));
+    }
     let result = scripts::run(ScriptCall {
         runtime: declared.runtime,
         file: space.function_path(&manifest.id, declared),
         dir: space.module_dir(&manifest.id),
-        env: vec![
-            ("ALFRED_MODULE".to_string(), manifest.id.clone()),
-            ("ALFRED_FUNCTION".to_string(), declared.id.clone()),
-            ("ALFRED_CALLER".to_string(), caller.to_string()),
-            ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
-        ],
+        env,
         input,
         timeout: scripts::TIMEOUT,
     })
     .await;
+    drop(bridge);
     let duration = Some(started.elapsed().as_millis() as u64);
     match &result {
         Ok(_) => journal(state, "function", &reference, true, duration, &format!("Appelée par {caller}"), Some(&json!({ "caller": caller }))),

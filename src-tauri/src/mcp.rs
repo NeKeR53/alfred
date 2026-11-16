@@ -347,7 +347,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "grant_access",
-            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) ou `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* »). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
+            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* ») ou `command` (nom d’un programme du poste lancé par `commands.run`, par exemple « ffmpeg »). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
             json!({
                 "to": { "type": "string" },
                 "client": { "type": "string" },
@@ -355,6 +355,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "agent": { "type": "boolean" },
                 "host": { "type": "string" },
                 "event": { "type": "string" },
+                "command": { "type": "string" },
             }),
             &["to"],
         ),
@@ -491,7 +492,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "read_journal",
             "Dernières exécutions enregistrées : fonctions, webhooks, requêtes des clients, appels IA, avec leur durée et leur erreur éventuelle.",
             json!({
-                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "job", "event", "agent"] },
+                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "job", "event", "command", "agent"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
             }),
             &[],

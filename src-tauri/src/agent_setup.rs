@@ -168,6 +168,7 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let agent = opt_arg::<bool>(args, "agent")?.unwrap_or(false);
     let host: Option<String> = opt_arg::<String>(args, "host")?.map(|host| host.trim().to_ascii_lowercase());
     let event: Option<String> = opt_arg(args, "event")?;
+    let command: Option<String> = opt_arg(args, "command")?;
     let space = state.space()?;
     let snapshot = space.snapshot()?;
     let Some((module, name)) = to.split_once('/') else {
@@ -188,12 +189,20 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         + usize::from(function.is_some())
         + usize::from(agent)
         + usize::from(host.is_some())
-        + usize::from(event.is_some());
+        + usize::from(event.is_some())
+        + usize::from(command.is_some());
     if given != 1 {
-        return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent`, `host` ou `event`."));
+        return Err(AppError::new(
+            "Donner une seule ressource : `client`, `function`, `agent`, `host`, `event` ou `command`.",
+        ));
     }
     let (resource, label) = match (client, function) {
         _ if agent => ("agent".to_string(), "un agent".to_string()),
+        _ if command.is_some() => {
+            let program = command.unwrap_or_default();
+            let path = crate::commands::resolve(&program)?;
+            (format!("command:{program}"), format!("le lancement du programme « {program} » ({})", path.display()))
+        }
         _ if event.is_some() => {
             let event = event.unwrap_or_default();
             if name != "*" {
@@ -227,7 +236,11 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             }
             (format!("function:{function}"), format!("la fonction {function}"))
         }
-        _ => return Err(AppError::new("Donner une seule ressource : `client`, `function`, `agent`, `host` ou `event`.")),
+        _ => {
+            return Err(AppError::new(
+                "Donner une seule ressource : `client`, `function`, `agent`, `host`, `event` ou `command`.",
+            ))
+        }
     };
     {
         let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;

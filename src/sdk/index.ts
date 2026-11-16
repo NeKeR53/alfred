@@ -231,6 +231,34 @@ export const search = {
   },
 };
 
+// --- Commandes du poste ---------------------------------------------------------------------------------------
+
+export interface CommandResult {
+  /** Code de sortie (`null` si le programme a été tué par un signal). */
+  code: number | null;
+  /** Vrai si le code vaut 0. */
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  /** La sortie standard dépassait 1 Mo : elle est coupée. */
+  truncated: boolean;
+}
+
+/**
+ * Programmes installés sur l’ordinateur (`git`, `ffmpeg`, `pandoc`…), lancés sans shell dans le dossier du module.
+ * L’utilisateur accorde chaque programme une fois.
+ */
+export const commands = {
+  /** Lance `program` (son nom seul) avec `args` tels quels ; un code non nul ne rejette pas la promesse. */
+  run(
+    program: string,
+    args: string[] = [],
+    options: { input?: string; timeout?: number } = {},
+  ): Promise<CommandResult> {
+    return request("commands.run", { program, args, ...options });
+  },
+};
+
 // --- Recherche par le sens ------------------------------------------------------------------------------------
 
 /**

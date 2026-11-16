@@ -103,6 +103,7 @@ export function describeResource(resource: string, snapshot: Snapshot | null | u
     const [module, item] = reference.split("/");
     return `Fonction « ${item ?? reference} » (module ${moduleName(snapshot, module)})`;
   }
+  if (kind === "command") return `Programme « ${reference} »`;
   if (kind === "event") {
     const [module, item] = reference.split("/");
     return `Événement « ${item ?? reference} » (module ${moduleName(snapshot, module)})`;

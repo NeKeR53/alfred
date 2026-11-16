@@ -625,6 +625,7 @@ pub fn docx_text(bytes: &[u8]) -> AppResult<String> {
 /// Option de ligne de commande : le processus lit un PDF sur stdin et écrit ses pages en JSON sur stdout.
 pub const EXTRACT_PDF_FLAG: &str = "--alfred-extraire-pdf";
 /// Temps laissé à l’extraction d’un PDF.
+#[cfg(not(test))]
 const EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Texte d’un PDF, page par page, dans ce processus. La bibliothèque peut paniquer sur un PDF mal formé ; en

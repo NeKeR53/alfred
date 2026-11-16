@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `documents`, `events`, `history`, `jobs`, `search`, `semantic`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `commands`, `documents`, `events`, `history`, `jobs`, `search`, `semantic`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -42,7 +42,8 @@ Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichi
 - **Entrée** : le JSON de l’entrée sur stdin.
 - **Sortie** : stdout. S’il contient du JSON, c’est la valeur rendue ; sinon, le texte sans ses blancs finaux ; vide, `null`. Au plus 1 Mo.
 - **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
-- **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER` et `ALFRED_SPACE`. Pas de `@alfred/sdk` : ni base, ni client, ni secret. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
+- **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER`, `ALFRED_SPACE`, et le pont du SDK (`ALFRED_SDK_URL`, `ALFRED_SDK_TOKEN`, ci-dessous). Jamais de secret : un service passe par `clients.request`. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
+- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
 - **Interpréteur** : cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
 
 ```bash
@@ -64,6 +65,34 @@ entree = json.load(sys.stdin)
 if not entree.get("nombres"):
     sys.exit("Aucun nombre fourni.")  # message d’erreur, code 1
 print(json.dumps({"somme": sum(entree["nombres"])}))
+```
+
+```python
+# functions/importer.py : lit un CSV du module et remplit sa table par le pont du SDK.
+import csv, io, json, os, sys, urllib.error, urllib.request
+
+def alfred(methode, **parametres):
+    requete = urllib.request.Request(
+        f"{os.environ['ALFRED_SDK_URL']}/{methode}",
+        data=json.dumps(parametres).encode(),
+        headers={"Authorization": f"Bearer {os.environ['ALFRED_SDK_TOKEN']}", "Content-Type": "application/json"},
+    )
+    try:
+        return json.load(urllib.request.urlopen(requete))["ok"]
+    except urllib.error.HTTPError as erreur:
+        sys.exit(json.load(erreur)["error"]["message"])
+
+entree = json.load(sys.stdin)
+texte = alfred("files.readText", id=entree["fichier"])
+for ligne in csv.DictReader(io.StringIO(texte), delimiter=";"):
+    alfred("db.execute", sql="INSERT INTO compta_lignes (libelle, montant) VALUES (?, ?)", params=[ligne["libelle"], float(ligne["montant"])])
+print(json.dumps({"ok": True}))
+```
+
+```bash
+# Le même pont en bash, avec curl.
+alfred() { curl -s -X POST "$ALFRED_SDK_URL/$1" -H "Authorization: Bearer $ALFRED_SDK_TOKEN" -H 'Content-Type: application/json' -d "$2"; }
+alfred db.query '{"sql":"SELECT count(*) AS n FROM compta_lignes"}'
 ```
 
 Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
@@ -801,5 +830,30 @@ export function useNotesProches(question: string) {
     );
     return results.map((resultat) => ({ ...lignes.find((ligne) => ligne.id === resultat.key), score: resultat.score }));
   }, [question]);
+}
+```
+
+## 16. Commandes du poste : `commands`
+
+Une page ou une fonction TypeScript lance un programme installé sur l’ordinateur et lit sa sortie : convertir une vidéo (`ffmpeg`), un document (`pandoc`), lire l’état d’un dépôt (`git`).
+
+```ts
+commands.run(program: string, args?: string[], options?: { input?: string; timeout?: number }):
+  Promise<{ code: number | null; ok: boolean; stdout: string; stderr: string; truncated: boolean }>;
+```
+
+- `program` : le nom seul (« git », « ffmpeg »), cherché dans le PATH ; ni chemin, ni ligne de shell. `args` passent tels quels, sans shell : ni `|`, ni `>`, ni `$VAR`, ni jokers (`*.pdf`). Pour un enchaînement, écris une fonction en script (section 2).
+- Lancé dans le dossier du module, avec l’environnement réduit des scripts ; `input` arrive sur stdin. `timeout` en secondes (60 par défaut, 120 au plus), après quoi le programme et ce qu’il a lancé sont arrêtés et la promesse rejetée.
+- **Un code de sortie non nul ne rejette pas la promesse** : teste `ok`, `code` et lis `stderr`. Le rejet signifie que le programme n’a pas pu tourner : nom invalide, introuvable, accès refusé, délai dépassé. stdout est coupé au-delà de 1 Mo (`truncated`).
+- La première fois, l’utilisateur accorde le programme à la page (ou aux fonctions du module) : la question montre son chemin. Accorde-le d’avance avec `grant_access` (`command` : « ffmpeg ») pour ce que tu construis. Les fichiers du module (section 9) sont hors du dossier du module : pour qu’un programme les traite, passe par une fonction en script et le pont du SDK.
+- Chaque lancement va au journal (`kind: "command"`).
+
+```ts
+import { commands } from "@alfred/sdk";
+
+export async function versionDePandoc() {
+  const resultat = await commands.run("pandoc", ["--version"]);
+  if (!resultat.ok) throw new Error(resultat.stderr || `pandoc a rendu le code ${resultat.code}.`);
+  return resultat.stdout.split("\n")[0];
 }
 ```

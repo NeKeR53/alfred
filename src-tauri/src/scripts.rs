@@ -157,10 +157,10 @@ pub struct ScriptCall {
     pub timeout: Duration,
 }
 
-struct Slot;
+pub(crate) struct Slot;
 
 impl Slot {
-    fn take() -> AppResult<Self> {
+    pub(crate) fn take() -> AppResult<Self> {
         if ACTIVE.fetch_add(1, Ordering::SeqCst) >= MAX_ACTIVE {
             ACTIVE.fetch_sub(1, Ordering::SeqCst);
             return Err(AppError::new("Trop d’appels de fonctions en cours : une fonction s’appelle peut-être en boucle."));
@@ -186,7 +186,7 @@ pub async fn run(call: ScriptCall) -> AppResult<Value> {
 
 /// Environnement réduit : de quoi trouver les programmes et le dossier de l’utilisateur, rien d’autre de la
 /// session d’Alfred.
-fn base_env() -> Vec<(String, String)> {
+pub(crate) fn base_env() -> Vec<(String, String)> {
     let mut env = vec![("PATH".to_string(), crate::agents::search_path().to_string())];
     let kept: &[&str] = if cfg!(windows) {
         &[
@@ -271,28 +271,47 @@ fn kill_group(pid: u32) {
     }
 }
 
-fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
-    let interpreter = interpreter(call.runtime).ok_or_else(|| AppError::new(call.runtime.missing_message()))?;
-    if !call.file.is_file() {
-        return Err(AppError::new("La fonction n’est pas encore écrite."));
-    }
-    let mut command = Command::new(&interpreter.program);
+/// Un programme à lancer, sans shell : le programme et ses arguments tels quels.
+pub struct Process {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub dir: PathBuf,
+    /// Variables ajoutées à l’environnement réduit.
+    pub env: Vec<(String, String)>,
+    pub input: Vec<u8>,
+    pub timeout: Duration,
+    /// Message quand le délai est dépassé et que le programme a été arrêté.
+    pub timeout_message: String,
+}
+
+/// Ce que le programme a rendu.
+pub struct ProcessOutput {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    /// La sortie standard dépassait 1 Mo : elle est coupée.
+    pub overflow: bool,
+}
+
+/// Lance un programme dans son propre groupe de processus (arrêté en entier au délai dépassé), avec
+/// l’environnement réduit, et attend sa fin.
+pub fn execute(process: &Process) -> AppResult<ProcessOutput> {
+    let mut command = Command::new(&process.program);
     command
-        .args(&interpreter.args)
-        .arg(&call.file)
-        .current_dir(&call.dir)
+        .args(&process.args)
+        .current_dir(&process.dir)
         .env_clear()
         .envs(base_env())
-        .envs(call.env.iter().cloned())
+        .envs(process.env.iter().cloned())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Un groupe de processus à lui : on arrête aussi ce que le script a lancé en arrière-plan.
+    // Un groupe de processus à lui : on arrête aussi ce que le programme a lancé en arrière-plan.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    let (mut child, owned) = process_tree::spawn(&mut command).map_err(|error| {
-        AppError::new(format!("Impossible de lancer {} : {error}", interpreter.program.display()))
-    })?;
+    let (mut child, owned) = process_tree::spawn(&mut command)
+        .map_err(|error| AppError::new(format!("Impossible de lancer {} : {error}", process.program.display())))?;
     let pid = child.id();
     #[cfg(not(unix))]
     let _ = pid;
@@ -302,10 +321,10 @@ fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
         kill_group(pid);
     };
 
-    let input = serde_json::to_vec(&call.input)?;
+    let input = process.input.clone();
     if let Some(mut stdin) = child.stdin.take() {
         std::thread::spawn(move || {
-            // Un script qui ne lit pas son entrée ferme le tube : l’erreur d’écriture est sans importance.
+            // Un programme qui ne lit pas son entrée ferme le tube : l’erreur d’écriture est sans importance.
             let _ = stdin.write_all(&input);
         });
     }
@@ -322,22 +341,19 @@ fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
         });
     }
 
-    let deadline = Instant::now() + call.timeout;
+    let deadline = Instant::now() + process.timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
                 stop();
                 let _ = child.wait();
-                return Err(AppError::new(format!(
-                    "La fonction n’a pas répondu en {} s : elle a été arrêtée.",
-                    call.timeout.as_secs()
-                )));
+                return Err(AppError::new(process.timeout_message.clone()));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(error) => {
                 stop();
-                return Err(AppError::new(format!("Attente du script impossible : {error}")));
+                return Err(AppError::new(format!("Attente du programme impossible : {error}")));
             }
         }
     };
@@ -352,8 +368,32 @@ fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
     let (stderr, _) = collect(&err_rx).unwrap_or_default();
     #[cfg(unix)]
     kill_group(pid);
-    let stdout = String::from_utf8_lossy(&stdout);
-    let stderr = String::from_utf8_lossy(&stderr);
+    Ok(ProcessOutput {
+        success: status.success(),
+        code: status.code(),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+        overflow,
+    })
+}
+
+fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
+    let interpreter = interpreter(call.runtime).ok_or_else(|| AppError::new(call.runtime.missing_message()))?;
+    if !call.file.is_file() {
+        return Err(AppError::new("La fonction n’est pas encore écrite."));
+    }
+    let mut args = interpreter.args.clone();
+    args.push(call.file.to_string_lossy().to_string());
+    let output = execute(&Process {
+        program: interpreter.program.clone(),
+        args,
+        dir: call.dir.clone(),
+        env: call.env.clone(),
+        input: serde_json::to_vec(&call.input)?,
+        timeout: call.timeout,
+        timeout_message: format!("La fonction n’a pas répondu en {} s : elle a été arrêtée.", call.timeout.as_secs()),
+    })?;
+    let stderr = output.stderr.as_str();
     let detail = |extra: Value| {
         let mut detail = json!({ "stderr": stderr.trim_end() });
         if let (Some(object), Value::Object(extra)) = (detail.as_object_mut(), extra) {
@@ -362,18 +402,18 @@ fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
         detail
     };
 
-    if !status.success() {
-        let code = status.code().map(|code| code.to_string()).unwrap_or_else(|| "signal".to_string());
-        let message = stderr_message(&stderr).unwrap_or_else(|| format!("Le script s’est terminé avec le code {code}."));
-        return Err(AppError::with_detail(message, detail(json!({ "exitCode": status.code() }))));
+    if !output.success {
+        let code = output.code.map(|code| code.to_string()).unwrap_or_else(|| "signal".to_string());
+        let message = stderr_message(stderr).unwrap_or_else(|| format!("Le script s’est terminé avec le code {code}."));
+        return Err(AppError::with_detail(message, detail(json!({ "exitCode": output.code }))));
     }
-    if overflow {
+    if output.overflow {
         return Err(AppError::with_detail(
             format!("La sortie du script dépasse {} Mo.", MAX_STDOUT / (1024 * 1024)),
             detail(Value::Null),
         ));
     }
-    Ok(parse_output(&stdout))
+    Ok(parse_output(&output.stdout))
 }
 
 #[cfg(test)]

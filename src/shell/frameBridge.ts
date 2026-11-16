@@ -246,6 +246,8 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.history.revert", { ...pick(params, ["id"]), subject });
     case "events.publish":
       return invoke("frame.events.publish", { ...pick(params, ["event", "payload"]), subject });
+    case "commands.run":
+      return invoke("frame.commands.run", { ...pick(params, ["program", "args", "input", "timeout"]), subject });
     case "semantic.search":
       return invoke("frame.semantic.search", { ...pick(params, ["index", "text", "limit"]), subject });
     case "semantic.status":

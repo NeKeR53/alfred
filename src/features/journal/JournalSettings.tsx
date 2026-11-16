@@ -47,6 +47,7 @@ export const JOURNAL_KINDS = [
   { value: "schedule", label: "Planification" },
   { value: "job", label: "Tâches de fond" },
   { value: "event", label: "Événements" },
+  { value: "command", label: "Commandes" },
   { value: "agent", label: "Agents" },
 ] as const;
 
@@ -61,6 +62,7 @@ const KIND_LABEL: Record<string, string> = {
   schedule: "Planification",
   job: "Tâche de fond",
   event: "Événement",
+  command: "Commande",
   agent: "Agent",
   module: "Module",
 };
