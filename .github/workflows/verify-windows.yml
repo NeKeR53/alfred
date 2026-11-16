@@ -1,0 +1,37 @@
+# Vérification temporaire : Codex et OpenCode lancés depuis la vraie fenêtre d'Alfred, sous Windows.
+name: Verif Windows agents
+on:
+  push:
+    branches: [verif-windows-agents]
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: npm install -g @openai/codex opencode-ai
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --features verify --no-bundle --config '{\"identifier\":\"app.alfred.verifybench\",\"productName\":\"AlfredVerify\"}'
+      - name: Lancer Alfred et vérifier les agents
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release -Filter *.exe | Where-Object { $_.Name -match 'alfred' } | Select-Object -First 1
+          Write-Host "Lancement de $($exe.FullName)"
+          Start-Process $exe.FullName
+          $file = Join-Path $env:APPDATA 'app.alfred.verifybench\verify.json'
+          for ($i = 0; $i -lt 90 -and -not (Test-Path $file); $i++) { Start-Sleep 1 }
+          if (-not (Test-Path $file)) { Get-ChildItem $env:APPDATA, $env:LOCALAPPDATA -Directory | Select-Object -First 50; throw "verify.json absent" }
+          Start-Sleep 10
+          $bench = Get-Content $file | ConvertFrom-Json
+          $script = Get-Content -Raw .github/verify/agents-channel.js
+          $body = @{ script = $script; timeoutMs = 280000 } | ConvertTo-Json -Compress
+          $result = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$($bench.port)/__verify/eval" -Headers @{ Authorization = "Bearer $($bench.token)" } -ContentType 'application/json' -Body $body -TimeoutSec 300
+          $result | ConvertTo-Json -Depth 10

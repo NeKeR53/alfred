@@ -318,15 +318,29 @@ fn claude_arguments(
     Ok(args)
 }
 
-fn emit(state: &AppState, session: &str, payload: Value) {
+/// Destination des sorties d’un agent. Dans la fenêtre, comme dans OneApp, un `Channel` Tauri propre à la session :
+/// rapide et sans perte. Le bus d’événements commun, borné, jette les messages quand la fenêtre prend du retard,
+/// ce qui arrive sous Windows avec un CLI bavard comme Codex ; il ne sert plus qu’au pont de développement.
+#[derive(Clone)]
+pub enum Output {
+    Events,
+    Channel(tauri::ipc::Channel<Value>),
+}
+
+fn emit(state: &AppState, output: &Output, session: &str, payload: Value) {
     let mut payload = payload;
     if let Some(object) = payload.as_object_mut() {
         object.insert("session".to_string(), Value::String(session.to_string()));
     }
-    state.emit("agent:output", payload);
+    match output {
+        Output::Events => state.emit("agent:output", payload),
+        Output::Channel(channel) => {
+            let _ = channel.send(payload);
+        }
+    }
 }
 
-fn forward_stdout(state: Arc<AppState>, session: String, stdout: impl Read) {
+fn forward_stdout(state: Arc<AppState>, output: Output, session: String, stdout: impl Read) {
     let mut reader = BufReader::new(stdout);
     let mut line = Vec::new();
     loop {
@@ -337,23 +351,23 @@ fn forward_stdout(state: Arc<AppState>, session: String, stdout: impl Read) {
                 while matches!(line.last(), Some(b'\n' | b'\r')) {
                     line.pop();
                 }
-                emit(&state, &session, json!({ "kind": "stdout", "line": String::from_utf8_lossy(&line) }));
+                emit(&state, &output, &session, json!({ "kind": "stdout", "line": String::from_utf8_lossy(&line) }));
             }
         }
     }
 }
 
-fn forward_stderr(state: Arc<AppState>, session: String, mut stderr: impl Read) {
+fn forward_stderr(state: Arc<AppState>, output: Output, session: String, mut stderr: impl Read) {
     let mut buffer = [0_u8; 8192];
     while let Ok(count) = stderr.read(&mut buffer) {
         if count == 0 {
             return;
         }
-        emit(&state, &session, json!({ "kind": "stderr", "chunk": String::from_utf8_lossy(&buffer[..count]) }));
+        emit(&state, &output, &session, json!({ "kind": "stderr", "chunk": String::from_utf8_lossy(&buffer[..count]) }));
     }
 }
 
-fn spawn(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+pub fn spawn(state: &Arc<AppState>, args: &Value, output: Output) -> AppResult<Value> {
     let provider: Provider = arg(args, "provider")?;
     let cwd: String = arg(args, "cwd")?;
     checked_dir(&cwd)?;
@@ -425,12 +439,12 @@ fn spawn(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     );
 
     let reader = stdout.map(|stdout| {
-        let (state, session) = (state.clone(), id.clone());
-        std::thread::spawn(move || forward_stdout(state, session, stdout))
+        let (state, output, session) = (state.clone(), output.clone(), id.clone());
+        std::thread::spawn(move || forward_stdout(state, output, session, stdout))
     });
     if let Some(stderr) = stderr {
-        let (state, session) = (state.clone(), id.clone());
-        std::thread::spawn(move || forward_stderr(state, session, stderr));
+        let (state, output, session) = (state.clone(), output.clone(), id.clone());
+        std::thread::spawn(move || forward_stderr(state, output, session, stderr));
     }
     let (state, session) = (state.clone(), id.clone());
     std::thread::spawn(move || {
@@ -440,7 +454,7 @@ fn spawn(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         }
         let code = child.wait().ok().and_then(|status| status.code());
         forget(&state, &session);
-        emit(&state, &session, json!({ "kind": "closed", "code": code }));
+        emit(&state, &output, &session, json!({ "kind": "closed", "code": code }));
     });
     Ok(json!({ "session": id }))
 }
@@ -523,7 +537,7 @@ async fn probe(args: &Value) -> AppResult<Value> {
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     Some(match command {
         "agents.probe" => probe(args).await,
-        "agents.spawn" => spawn(state, args),
+        "agents.spawn" => spawn(state, args, Output::Events),
         "agents.write" => write(args),
         "agents.kill" => kill(args).await,
         _ => return None,

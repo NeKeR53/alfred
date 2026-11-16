@@ -28,7 +28,7 @@ declare global {
 
 export const inTauri = typeof window !== "undefined" && window.__TAURI_INTERNALS__ !== undefined;
 
-function toError(error: unknown): AlfredError {
+export function toError(error: unknown): AlfredError {
   if (error instanceof AlfredError) return error;
   if (error && typeof error === "object" && "message" in error) return new AlfredError(error as NativeError);
   return new AlfredError({ message: typeof error === "string" ? error : "Erreur inattendue." });

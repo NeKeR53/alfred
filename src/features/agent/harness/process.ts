@@ -1,5 +1,5 @@
 /** Processus d’un harnais, lancé par Rust : l’interface n’en reçoit que les lignes et n’y écrit que du texte. */
-import { invoke, onNativeEvent } from "../../../lib/native";
+import { inTauri, invoke, onNativeEvent, toError } from "../../../lib/native";
 import type { Provider } from "./types";
 
 export interface HarnessProcess {
@@ -108,10 +108,27 @@ function listen() {
   onNativeEvent("agent:output", (payload) => deliver(payload as Output));
 }
 
+/**
+ * Lance la session. Dans la fenêtre, comme dans OneApp, ses sorties arrivent par un `Channel` Tauri qui lui est
+ * propre : le bus d’événements commun perd des messages quand la fenêtre prend du retard (Codex sous Windows). Le
+ * navigateur de test passe par ce bus, à travers le pont de développement.
+ */
+async function spawnSession(args: Record<string, unknown>): Promise<{ session: string }> {
+  if (!inTauri) return invoke<{ session: string }>("agents.spawn", args);
+  const { Channel, invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  const channel = new Channel<Output>();
+  channel.onmessage = deliver;
+  try {
+    return await tauriInvoke<{ session: string }>("alfred_agent_spawn", { args, onEvent: channel });
+  } catch (error) {
+    throw toError(error);
+  }
+}
+
 export async function spawnProcess(provider: Provider, options: SpawnOptions): Promise<HarnessProcess> {
   listen();
   await releaseOrphans();
-  const { session } = await invoke<{ session: string }>("agents.spawn", { provider, ...options });
+  const { session } = await spawnSession({ provider, ...options });
   own(session);
   const listeners: Listeners = { stdout: new Set(), stderr: new Set(), close: new Set() };
   processes.set(session, listeners);

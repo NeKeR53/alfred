@@ -54,6 +54,16 @@ async fn alfred_invoke(
     dispatch::dispatch(state.inner().clone(), &command, args.unwrap_or(Value::Null)).await
 }
 
+/// Lance un agent dont les sorties arrivent par `on_event`, un canal propre à la session (voir `agents::Output`).
+#[tauri::command]
+async fn alfred_agent_spawn(
+    state: tauri::State<'_, Arc<AppState>>,
+    args: Value,
+    on_event: tauri::ipc::Channel<Value>,
+) -> Result<Value, AppError> {
+    agents::spawn(state.inner(), &args, agents::Output::Channel(on_event))
+}
+
 /// Réaction du cœur à ses propres événements, avant leur envoi à la fenêtre.
 fn on_core_event(state: &AppState, event: &events::AppEvent) {
     // Désinstallation avec suppression des données : les tables du module partent avec lui.
@@ -69,13 +79,19 @@ fn on_core_event(state: &AppState, event: &events::AppEvent) {
 /// Commandes de la fenêtre ; le banc de vérification ajoute la sienne, absente des versions normales.
 #[cfg(not(feature = "verify"))]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![alfred_invoke, page_windows::alfred_open_window, system_notifications::alfred_notify_system]
+    tauri::generate_handler![
+        alfred_invoke,
+        alfred_agent_spawn,
+        page_windows::alfred_open_window,
+        system_notifications::alfred_notify_system
+    ]
 }
 
 #[cfg(feature = "verify")]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         alfred_invoke,
+        alfred_agent_spawn,
         page_windows::alfred_open_window,
         system_notifications::alfred_notify_system,
         verify::verify_result
