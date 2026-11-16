@@ -362,6 +362,16 @@ export class FakeBackend {
   #beforeChanges: SpaceState | undefined;
 
   private readonly handlers: Record<string, (args: Json) => unknown> = {
+    // Dossier de travail d’une conversation : dépôt propre, ouvertures sans effet.
+    "agentWorkspace.gitSummary": (args) => ({
+      root: String(args.path),
+      files: [],
+      additions: 0,
+      deletions: 0,
+      truncated: false,
+    }),
+    "agentWorkspace.openEditor": () => null,
+    "agentWorkspace.openExplorer": () => null,
     "badges.list": () => (this.space ? { ...this.badges } : {}),
     "frame.badges.update": (args) => {
       const page = String(args.page);

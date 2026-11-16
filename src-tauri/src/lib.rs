@@ -1,4 +1,5 @@
 mod agent_setup;
+mod agent_workspace;
 mod agents;
 mod app_db;
 mod badges;

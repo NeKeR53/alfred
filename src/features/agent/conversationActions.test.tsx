@@ -80,7 +80,7 @@ beforeEach(() => {
 });
 
 describe("conversations d’agent", () => {
-  it("renomme, marque comme non lue, archive (avec annulation) puis retrouve et désarchive", async () => {
+  it("renomme, marque comme non lue, archive (avec annulation) puis retrouve et restaure", async () => {
     render(
       <>
         <AgentPage />
@@ -112,14 +112,14 @@ describe("conversations d’agent", () => {
     fireEvent.click(within(toast).getByRole("button", { name: "Annuler" }));
     await waitFor(() => expect(database.c2.archived).toBe(false));
 
-    // Archiver depuis sa ligne de la liste, puis la retrouver dans les Réglages et la désarchiver.
+    // Archiver depuis sa ligne de la liste, puis la retrouver dans les Réglages et la restaurer.
     const panel = await screen.findByLabelText("Suivi des conversations");
     fireEvent.click(await within(panel).findByRole("button", { name: "Archiver Notes" }));
     await waitFor(() => expect(database.c2.archived).toBe(true));
     const settings = render(<ArchivedConversations />);
     const list = await settings.findByRole("list", { name: "Conversations archivées" });
     expect(within(list).getByText("Notes")).toBeTruthy();
-    fireEvent.click(within(list).getByRole("button", { name: "Désarchiver Notes" }));
+    fireEvent.click(within(list).getByRole("button", { name: "Restaurer Notes" }));
     await waitFor(() => expect(database.c2.archived).toBe(false));
     await settings.findByText("Aucune conversation archivée");
   });

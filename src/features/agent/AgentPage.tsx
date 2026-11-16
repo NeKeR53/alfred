@@ -1,5 +1,7 @@
 import {
+  Button,
   EmptyState,
+  FeedbackBanner,
   IconButton,
   InlineEdit,
   MenuItem,
@@ -8,20 +10,32 @@ import {
   TextInput,
   useConfirm,
 } from "@alfred/ui";
-import { Archive, Bot, Trash2 } from "lucide-react";
+import { Archive, Bot, Code2, FolderOpen, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { invoke } from "../../lib/native";
 import { NotificationBell } from "../../shell/NotificationCenter";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
-import { ConversationList, useConversationListPanel } from "./ConversationList";
+import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
 import { PROVIDER_LABEL } from "./harness";
 import type { ConversationRuntime } from "./model";
+import { usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
 import { Transcript } from "./Transcript";
 import "./agent.css";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
+
+/**
+ * État d’enregistrement exposé par le magasin des conversations (lot du moteur) : lu seulement s’il existe, pour les
+ * bandeaux repris de OneApp.
+ */
+type Persistence = { loadError?: string; saveError?: string; retrySave?: () => Promise<void> };
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+const noFolder = "Aucun dossier de travail";
 
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
@@ -41,20 +55,55 @@ export function AgentPage() {
   const archive = useAgents((state) => state.archive);
   const unarchive = useAgents((state) => state.unarchive);
   const markUnread = useAgents((state) => state.markUnread);
+  const loadError = useAgents((state) => (state as Persistence).loadError);
+  const saveError = useAgents((state) => (state as Persistence).saveError);
+  const retrySave = useAgents((state) => (state as Persistence).retrySave);
   const [renaming, setRenaming] = useState(false);
   const { confirm, confirmDialog } = useConfirm();
+  const git = useWorkspaceGit(conversation);
+  const { textEditor } = usePreferences();
+
+  /** Sans état d’erreur dans le magasin, l’échec reste signalé par une notification. */
+  const reportLoad = (error: unknown) => {
+    if (!(useAgents.getState() as Persistence).loadError)
+      notify({ title: "Conversations non chargées", description: errorText(error), tone: "error" });
+  };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: les conversations sont celles de l’espace ouvert.
   useEffect(() => {
     bindAgentQuestions();
-    void load().catch((error) =>
-      notify({
-        title: "Conversations non chargées",
-        description: error instanceof Error ? error.message : String(error),
-        tone: "error",
-      }),
-    );
+    void load().catch(reportLoad);
   }, [load, spacePath]);
+
+  // F2 renomme la conversation ouverte, comme « Renommer {titre} » dans OneApp.
+  useEffect(() => {
+    if (!conversation?.started || renaming) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "F2" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      setRenaming(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [conversation?.started, renaming]);
+
+  const openInEditor = async () => {
+    if (!conversation?.cwd || !textEditor) return;
+    try {
+      await invoke("agentWorkspace.openEditor", { command: textEditor.command, path: conversation.cwd });
+    } catch (error) {
+      notify({ title: "Ouverture dans l’éditeur impossible", description: errorText(error), tone: "error" });
+    }
+  };
+  const openInExplorer = async () => {
+    if (!conversation?.cwd) return;
+    try {
+      await invoke("agentWorkspace.openExplorer", { path: conversation.cwd });
+    } catch (error) {
+      notify({ title: "Ouverture impossible", description: errorText(error), tone: "error" });
+    }
+  };
 
   const visible = useMemo(() => headers.filter((header) => !header.archived && header.started), [headers]);
 
@@ -131,6 +180,32 @@ export function AgentPage() {
         >
           <Bot size={16} aria-hidden="true" />
         </IconButton>
+        {conversation ? (
+          <>
+            <IconButton
+              label="Ouvrir le dossier dans l’éditeur"
+              tooltip={
+                !conversation.cwd
+                  ? noFolder
+                  : textEditor
+                    ? `Ouvrir dans l’éditeur · ${conversation.cwd}`
+                    : "Choisissez un éditeur dans les réglages"
+              }
+              disabled={!conversation.cwd || !textEditor}
+              onClick={() => void openInEditor()}
+            >
+              <Code2 size={15} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              label="Ouvrir le dossier dans l’explorateur"
+              tooltip={conversation.cwd ? `Ouvrir dans l’explorateur · ${conversation.cwd}` : noFolder}
+              disabled={!conversation.cwd}
+              onClick={() => void openInExplorer()}
+            >
+              <FolderOpen size={15} aria-hidden="true" />
+            </IconButton>
+          </>
+        ) : null}
         {conversation?.started ? (
           <IconButton
             label={`Archiver ${conversation.title}`}
@@ -142,7 +217,13 @@ export function AgentPage() {
         ) : null}
         {conversation?.started ? (
           <OverflowMenu label="Autres actions sur la conversation">
-            <MenuItem onClickCapture={() => setRenaming(true)}>Renommer</MenuItem>
+            <MenuItem
+              onClickCapture={() => setRenaming(true)}
+              aria-keyshortcuts="F2"
+              title={`Renommer ${conversation.title} (F2)`}
+            >
+              Renommer
+            </MenuItem>
             <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
           </OverflowMenu>
         ) : null}
@@ -169,7 +250,13 @@ export function AgentPage() {
       {confirmDialog}
       <div className="agents-page__body">
         <section className="agents-page__main" aria-label="Conversation et saisie">
-          {conversation ? (
+          {loadError ? (
+            <div className="agents-page__state">
+              <FeedbackBanner action={<Button onClick={() => void load().catch(reportLoad)}>Réessayer</Button>}>
+                L’historique des agents n’a pas pu être chargé.
+              </FeedbackBanner>
+            </div>
+          ) : conversation ? (
             <>
               {conversation.turns.length === 0 ? (
                 <div className="agents-page__state">
@@ -186,7 +273,20 @@ export function AgentPage() {
                 />
               )}
               <div className="agents-page__footer">
+                {saveError ? (
+                  <FeedbackBanner
+                    className="agents-page__save-error"
+                    action={
+                      retrySave ? (
+                        <Button onClick={() => void retrySave().catch(() => undefined)}>Réessayer la sauvegarde</Button>
+                      ) : undefined
+                    }
+                  >
+                    {saveError}
+                  </FeedbackBanner>
+                ) : null}
                 <Composer conversation={conversation} responding={runtime.status !== "idle"} />
+                <GitSummaryPill git={git} />
               </div>
             </>
           ) : null}
@@ -197,6 +297,7 @@ export function AgentPage() {
             activeId={activeId}
             active={conversation}
             panel={panel}
+            git={git}
             onArchive={(header) => void archiveConversation(header.id, header.title)}
           />
         )}
