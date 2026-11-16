@@ -622,13 +622,96 @@ pub fn docx_text(bytes: &[u8]) -> AppResult<String> {
     Ok(text.trim_end().to_string())
 }
 
-/// Texte d’un PDF, page par page. Un PDF scanné (des images, sans texte) rend des pages vides.
-pub fn pdf_pages(bytes: &[u8]) -> AppResult<Vec<String>> {
-    // La bibliothèque peut paniquer sur un PDF mal formé : l’erreur reste une erreur pour la page.
+/// Option de ligne de commande : le processus lit un PDF sur stdin et écrit ses pages en JSON sur stdout.
+pub const EXTRACT_PDF_FLAG: &str = "--alfred-extraire-pdf";
+/// Temps laissé à l’extraction d’un PDF.
+const EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Texte d’un PDF, page par page, dans ce processus. La bibliothèque peut paniquer sur un PDF mal formé ; en
+/// production Alfred s’arrête sur une panique (`panic = "abort"`) : on n’appelle donc ceci que dans un processus
+/// à part (`pdf_pages`) ou dans les tests.
+pub fn pdf_pages_in_process(bytes: &[u8]) -> AppResult<Vec<String>> {
     let bytes = bytes.to_vec();
     std::panic::catch_unwind(move || pdf_extract::extract_text_from_mem_by_pages(&bytes))
         .map_err(|_| AppError::new("Ce PDF n’a pas pu être lu."))?
         .map_err(|error| AppError::new(format!("Ce PDF n’a pas pu être lu : {error}")))
+}
+
+/// Point d’entrée du processus d’extraction : rend le code de sortie.
+pub fn extract_pdf_from_stdin() -> i32 {
+    let mut bytes = Vec::new();
+    if std::io::stdin().read_to_end(&mut bytes).is_err() {
+        return 2;
+    }
+    match pdf_pages_in_process(&bytes) {
+        Ok(pages) => {
+            println!("{}", serde_json::to_string(&pages).unwrap_or_else(|_| "[]".into()));
+            0
+        }
+        Err(error) => {
+            eprintln!("{}", error.message);
+            1
+        }
+    }
+}
+
+/// Texte d’un PDF, page par page, extrait dans un processus à part : un PDF piégé ou mal formé ne peut ni arrêter
+/// Alfred ni le bloquer. Un PDF scanné (des images, sans texte) rend des pages vides.
+#[cfg(not(test))]
+pub fn pdf_pages(bytes: &[u8]) -> AppResult<Vec<String>> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let unreadable = || AppError::new("Ce PDF n’a pas pu être lu.");
+    let exe = std::env::current_exe().map_err(|_| unreadable())?;
+    let mut child = Command::new(exe)
+        .arg(EXTRACT_PDF_FLAG)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| AppError::new(format!("Ce PDF n’a pas pu être lu : {error}")))?;
+    let mut stdin = child.stdin.take().ok_or_else(unreadable)?;
+    let input = bytes.to_vec();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let mut stdout = child.stdout.take().ok_or_else(unreadable)?;
+    let mut stderr = child.stderr.take().ok_or_else(unreadable)?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
+    let errors = std::thread::spawn(move || {
+        let mut out = String::new();
+        let _ = stderr.read_to_string(&mut out);
+        out
+    });
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > EXTRACT_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::new("Ce PDF est trop long à lire : extraction arrêtée après 90 secondes."));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let _ = writer.join();
+    let output = reader.join().unwrap_or_default();
+    let message = errors.join().unwrap_or_default();
+    if !status.success() {
+        let message = message.trim();
+        return Err(if message.is_empty() { unreadable() } else { AppError::new(message.to_string()) });
+    }
+    serde_json::from_slice(&output).map_err(|_| unreadable())
+}
+
+#[cfg(test)]
+pub fn pdf_pages(bytes: &[u8]) -> AppResult<Vec<String>> {
+    pdf_pages_in_process(bytes)
 }
 
 pub fn extract_text(info: &FileInfo, bytes: &[u8]) -> AppResult<Value> {
@@ -636,7 +719,7 @@ pub fn extract_text(info: &FileInfo, bytes: &[u8]) -> AppResult<Value> {
     let (text, pages) = if info.mime == "application/pdf" || lower.ends_with(".pdf") || bytes.starts_with(b"%PDF") {
         let pages = pdf_pages(bytes)?;
         let count = pages.len();
-        (pages.join("\n\u{c}"), Some(count))
+        (pages.join("\n\u{c}").trim().to_string(), Some(count))
     } else if lower.ends_with(".docx") || info.mime.contains("wordprocessingml") {
         (docx_text(bytes)?, None)
     } else if info.mime.starts_with("text/") || matches!(info.mime.as_str(), "application/json" | "application/xml") {

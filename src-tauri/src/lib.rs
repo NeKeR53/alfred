@@ -109,6 +109,16 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     ]
 }
 
+/// Processus d’extraction de PDF (voir `documents::pdf_pages`) : lit stdin, écrit stdout, rend le code de sortie.
+#[doc(hidden)]
+pub fn extract_pdf_from_stdin() -> i32 {
+    documents::extract_pdf_from_stdin()
+}
+
+/// L’option qui lance ce processus à la place de l’application.
+#[doc(hidden)]
+pub const EXTRACT_PDF_FLAG: &str = documents::EXTRACT_PDF_FLAG;
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
