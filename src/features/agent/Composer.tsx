@@ -391,7 +391,7 @@ export function Composer({
   };
 
   // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, Ctrl/⌘+Entrée met le message en file.
-  const queueShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↩" : "Ctrl+↩";
+  const queueShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↩︎" : "Ctrl+↩︎";
   const filled = hasDraft(draft);
   // Comme dans OneApp : après une erreur ou une interruption, envoyer sans rien écrire relance le dernier message.
   const canResume = !responding && (lastStatus === "error" || lastStatus === "cancelled");
@@ -635,7 +635,7 @@ export function Composer({
             type="submit"
             className="agent-composer__send"
             label={sendLabel}
-            tooltip={responding ? `Envoyer maintenant · ↩ (${queueShortcut} pour mettre en file)` : sendLabel}
+            tooltip={responding ? `Envoyer maintenant · ↩︎ (${queueShortcut} pour mettre en file)` : sendLabel}
             disabled={locked || attaching || (!filled && !canResume)}
             loading={attaching}
           >
@@ -644,7 +644,7 @@ export function Composer({
         </div>
       </form>
       {responding ? (
-        <p className="agent-composer__hint">↩ pour envoyer maintenant, {queueShortcut} pour mettre en file</p>
+        <p className="agent-composer__hint">↩︎ pour envoyer maintenant, {queueShortcut} pour mettre en file</p>
       ) : null}
       {compact ? null : <ConversationOptions conversation={conversation} locked={responding || locked} />}
     </div>
