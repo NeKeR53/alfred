@@ -7,12 +7,14 @@ function NativeSelect({
   density = "default",
   multiple,
   size,
+  width = "full",
   ...props
-}: React.ComponentProps<"select"> & { density?: "sm" | "default" }) {
+}: React.ComponentProps<"select"> & { density?: "sm" | "default"; width?: string }) {
   return (
     <div
-      className="group/native-select relative w-full min-w-0 has-[select:disabled]:opacity-50"
+      className="group/native-select relative min-w-0 max-w-full has-[select:disabled]:opacity-50"
       data-slot="native-select-wrapper"
+      data-width={width}
     >
       <select
         data-slot="native-select"

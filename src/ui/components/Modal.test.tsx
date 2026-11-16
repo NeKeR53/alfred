@@ -45,6 +45,27 @@ function Example() {
   );
 }
 
+function Busy() {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      <Button>Dehors</Button>
+      <Modal
+        open={open}
+        busy
+        size="small"
+        onClose={() => setOpen(false)}
+        title="Envoyer"
+        actions={<Button variant="primary">Envoyer</Button>}
+      >
+        <FormField label="Objet">
+          <TextInput />
+        </FormField>
+      </Modal>
+    </>
+  );
+}
+
 describe("Modal", () => {
   it("s’ouvre sur son premier champ, enregistre, puis rend le focus au déclencheur", async () => {
     const user = userEvent.setup();
@@ -72,5 +93,26 @@ describe("Modal", () => {
     pressEscapeInDialog(screen.getByRole("dialog") as HTMLDialogElement);
     expect(await screen.findByRole("button", { name: "Renommer" })).toHaveFocus();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("garde Tab dans la modale et refuse de se fermer pendant une opération", async () => {
+    const user = userEvent.setup();
+    render(<Busy />);
+    const dialog = screen.getByRole("dialog", { name: "Envoyer" });
+    expect(dialog).toHaveClass("ui-modal--small");
+    expect(dialog).toHaveAttribute("aria-busy", "true");
+    const field = screen.getByRole("textbox", { name: "Objet" });
+    const send = screen.getByRole("button", { name: "Envoyer" });
+    // jsdom ne calcule pas la mise en page : les éléments sont réputés visibles.
+    for (const element of [field, send]) element.getClientRects = () => [new DOMRect(0, 0, 10, 10)] as never;
+    expect(field).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Fermer" })).toBeDisabled();
+    send.focus();
+    await user.tab();
+    expect(field).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(send).toHaveFocus();
+    pressEscapeInDialog(dialog as HTMLDialogElement);
+    expect(screen.getByRole("dialog", { name: "Envoyer" })).toBeInTheDocument();
   });
 });

@@ -21,13 +21,16 @@ export { Fieldset } from "./components/Fieldset";
 export { FormActions } from "./components/FormActions";
 export {
   CheckboxControl,
+  type ControlWidth,
   FormControlGroup,
   FormField,
   RadioControl,
   SelectControl,
+  type SelectControlProps,
   SwitchControl,
   TextArea,
   TextInput,
+  type TextInputProps,
 } from "./components/FormControls";
 export { HtmlContent, type HtmlContentProps } from "./components/HtmlContent";
 export { InlineEdit } from "./components/InlineEdit";
@@ -39,10 +42,23 @@ export { Menu, MenuGroup, MenuItem, type MenuItemProps } from "./components/Menu
 export { MenuButton } from "./components/MenuButton";
 export { Modal } from "./components/Modal";
 export { OverflowMenu } from "./components/OverflowMenu";
-export { PageToolbar } from "./components/PageToolbar";
+export { PageToolbar, ToolbarSeparator } from "./components/PageToolbar";
 export { PageTopBar, PanelToggleButton } from "./components/PageTopBar";
 export { PanelHeader } from "./components/PanelHeader";
-export { Grid, Heading, KeyValueList, Page, Row, Section, Spinner, Stack, Surface, Text } from "./components/page";
+export {
+  Form,
+  Grid,
+  Heading,
+  KeyValueList,
+  ObjectHeader,
+  Page,
+  Row,
+  Section,
+  Spinner,
+  Stack,
+  Surface,
+  Text,
+} from "./components/page";
 export { RefreshButton } from "./components/RefreshButton";
 export { SearchField } from "./components/SearchField";
 export { SettingRow, SettingRows } from "./components/SettingRow";

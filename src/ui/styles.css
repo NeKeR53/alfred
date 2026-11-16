@@ -371,6 +371,46 @@ input[type="radio"] {
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
+/* Largeur des champs (`width` de `TextInput` et `SelectControl`) : jamais plus large que le conteneur. */
+[data-slot="native-select-wrapper"][data-width="full"] {
+  width: 100%;
+}
+[data-slot="native-select-wrapper"][data-width="auto"] {
+  width: max-content;
+  min-width: 120px;
+  flex: 0 0 auto;
+}
+:is([data-slot="native-select-wrapper"], .ui-input)[data-width="xs"] {
+  width: 96px;
+  flex: 0 0 auto;
+}
+:is([data-slot="native-select-wrapper"], .ui-input)[data-width="sm"] {
+  width: 160px;
+  flex: 0 1 auto;
+}
+:is([data-slot="native-select-wrapper"], .ui-input)[data-width="md"] {
+  width: 240px;
+  flex: 0 1 auto;
+}
+:is([data-slot="native-select-wrapper"], .ui-input)[data-width="lg"] {
+  width: 360px;
+  flex: 0 1 auto;
+}
+.ui-input[data-width="full"] {
+  width: 100%;
+}
+.ui-input[data-width="auto"] {
+  width: 240px;
+  flex: 0 1 auto;
+}
+:is([data-slot="native-select-wrapper"], .ui-input)[data-width] {
+  max-width: 100%;
+}
+/* Un champ empilé ne s’étire pas en largeur : il prend celle de son contrôle, et le contrôle `full` celle de la colonne. */
+.form-field > [data-slot="native-select-wrapper"]:not([data-width="full"]),
+.form-field > .ui-input:not([data-width="full"]) {
+  justify-self: start;
+}
 .form-field {
   min-width: 0;
   display: grid;

@@ -11,7 +11,7 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | `client(id)` |
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
-| `alert`, `confirm`, `prompt` | bloqués | `useConfirm`, `Dialog` de `@alfred/ui` |
+| `alert`, `confirm`, `prompt` | bloqués | `useConfirm` (une confirmation), `Modal` (une saisie) de `@alfred/ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, 5.2) |
 | un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |

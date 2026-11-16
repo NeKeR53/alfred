@@ -10,7 +10,7 @@ Il ne décrit que les composants et les props de `@alfred/ui`. Le transpileur ne
 
 1. **Imports.** Une page n’importe que `react`, `lucide-react`, `@alfred/ui`, `@alfred/sdk` et les fichiers de son module par chemin relatif (`./…`). Tout autre import est refusé.
 2. **Racine.** Le fichier exporte son composant par défaut (`export default function …`), et ce composant rend `Page` à la racine dans chacun de ses états.
-3. **Aucun style propre.** Ni attribut `style`, ni balise `<style>`, ni `className`, même sur les composants qui acceptent ces props. Une page ne fixe ni couleur, ni taille de police, ni rayon, ni ombre, ni marge : elle compose les composants de `@alfred/ui` et règle leurs props (`gap`, `tone`, `variant`, `size`, `width`).
+3. **Aucun style propre.** Ni attribut `style`, ni balise `<style>`, ni `className`, même sur les composants qui acceptent ces props. Une page ne fixe ni couleur, ni taille de police, ni rayon, ni ombre, ni marge : elle compose les composants de `@alfred/ui` et règle leurs props (`gap`, `tone`, `variant`, `size`, `width`). L’outil `check` relit chaque page et signale, sous `design`, un `style`, un `className`, une balise HTML, un champ étiré dans une barre ou un bouton texte là où une icône suffit : chaque remarque se corrige.
 4. **Aucun doublon de la coquille.** Le titre de la section, les onglets, le bouton du panneau, la navigation et les notifications sont dessinés par Alfred.
 5. **Le sens passe par les props et par le texte.** Un état s’exprime par `tone` ou `variant` et par un libellé, jamais par une couleur seule.
 6. **Tous les états sont couverts.** Chargement, absence de données, erreur et succès ont chacun un rendu prévu (section 9).
@@ -20,7 +20,7 @@ Il ne décrit que les composants et les props de `@alfred/ui`. Le transpileur ne
 
 La règle 3 est absolue : l’utilisateur règle le mode clair ou sombre, l’accent, l’icône et la couleur des entrées du menu, et les composants suivent ces réglages. Une couleur écrite dans une page est illisible dans l’un des thèmes, une marge locale rompt l’alignement, et une classe inventée ne correspond à aucune règle de la seule feuille chargée par le cadre.
 
-Les seules balises HTML admises sont celles qui n’ont ni apparence propre ni composant équivalent : `<form>` (section 7), `<option>` et `<optgroup>` dans un `SelectControl`, et les fragments. Tout texte passe par `Text` ou `Heading`.
+Les seules balises HTML admises sont celles qui n’ont ni apparence propre ni composant équivalent : `<form>` (préférer `Form`, section 7), `<option>` et `<optgroup>` dans un `SelectControl`, et les fragments. Tout texte passe par `Text` ou `Heading`.
 
 ## 2. La coquille et les trois gabarits
 
@@ -53,10 +53,36 @@ Une page est un fichier TSX affiché dans un cadre isolé, sans réseau ni disqu
 | Gabarit | Racine | Largeur | Contenu et densité |
 |---|---|---|---|
 | Page (onglet d’une section) | `<Page>` pour un tableau ou une vue dense ; `<Page width="text">` pour de la lecture ou un formulaire | Toute la place restante ; `text` limite chaque bloc à 760 px | `PageToolbar` (40 px) en option, puis le contenu. Une liste se pose directement dans `Page`. |
-| Panneau de droite | `<Page>` | 280 à 900 px : concevoir pour 280 px | Une seule colonne : `Heading`, `KeyValueList`, `Section`, `EmptyState size="compact"`, `StatusBadge size="compact"`. Ni `PageToolbar`, ni `Grid`, ni tableau à plus de deux colonnes. Il lit la sélection de sa page (section 8). |
+| Panneau de droite | `<Page>` | 280 à 900 px : concevoir pour 280 px | Une seule colonne : `ObjectHeader`, `KeyValueList`, `Section`, `EmptyState size="compact"`, `StatusBadge size="compact"`. Ni `PageToolbar`, ni `Grid`, ni tableau à plus de deux colonnes. Il lit la sélection de sa page (section 8). |
 | Onglet de Réglages | `<Page width="text">` | 760 px au plus | Une `Section` par sujet, et dedans des lignes `SettingRow` réunies dans `SettingRows` : titre et explication à gauche, contrôle à droite, un trait fin entre deux lignes, comme les Réglages intégrés. Un réglage s’applique dès qu’il change ; une saisie libre porte ses boutons sur sa ligne. Ni `FormField` empilés ni `FormActions` en bas de page (exemple en 12.3). |
 
 `Page` fixe la marge intérieure (16 px), l’espace entre ses enfants directs (24 px), le fond et le défilement.
+
+### 2.1 Placer les éléments
+
+Chaque chose a une seule place, donnée par un composant : on ne la recrée pas avec des `Row` et des `Stack`. Une page bien placée se lit de haut en bas et de gauche à droite : ce qui agit sur toute la vue en haut, l’objet ensuite, le détail enfin.
+
+| Ce qu’il faut placer | Page (onglet) | Panneau de droite | Onglet de Réglages |
+|---|---|---|---|
+| Recherche, filtres de la vue | `PageToolbar start` : `SearchField` puis filtres (`ChoiceGroup appearance="segmented"`, `SelectControl` à sa largeur) | Pas de barre : un filtre propre au panneau va dans `Section actions` | Aucun |
+| Actions sur toute la vue | `PageToolbar` à droite : icônes (`RefreshButton`, `IconButton`), `OverflowMenu`, puis **une** action principale en texte, en dernier | `ObjectHeader actions` : trois icônes au plus, puis `OverflowMenu` | Une action rare d’une ligne : `OverflowMenu` dans la `SettingRow` |
+| Nom et état de l’objet affiché | `ObjectHeader level={1}` sur une page de détail | `ObjectHeader` (niveau 2), en premier | — |
+| Actions d’un bloc | `Section actions` : icônes, ou un `Button` texte s’il ajoute au bloc (« Ajouter un membre ») | `Section actions`, icônes seulement | — |
+| Action d’une ligne | `IconButton appearance="table"` ou `OverflowMenu size="small"` dans une colonne de fin ; `ListItem trailing` | `ListItem trailing` | Le contrôle de la `SettingRow` |
+| Formulaire | `Form` dans `Page width="text"`, ou dans une `Modal` (trois champs au plus) | `Form` court, `FormActions` dessous | Pas de formulaire : une `SettingRow` par valeur |
+| Validation d’un formulaire | `Form actions` : `FormActions` à droite sous les champs | Idem | Sur la ligne de la saisie (12.3) |
+| Une décision ou une saisie courte à part | `Modal` ouverte par un bouton | `Modal` (elle s’affiche dans le cadre du panneau : `size="small"`) | `Modal` ouverte par un `Button` de la ligne |
+
+Règles de placement, sans exception :
+
+1. **Icône ou texte.** Une action secondaire courante, reconnue par son icône, est un `IconButton` avec `label` contextualisé et `tooltip` court : modifier (`Pencil`), supprimer (`Trash2`), copier (`Copy`), exporter ou télécharger (`Download`), ouvrir à l’extérieur (`ExternalLink`), fermer (`X`), filtrer (`Filter`), partager (`Share2`), réglages (`Settings`) ; « Actualiser » est `RefreshButton`, « Plus » est `OverflowMenu`. Un `Button` texte est réservé à l’action principale (`variant="primary"`), à une action sans icône évidente (« Tester la connexion », « Ajouter un membre »), au pied d’une `Modal`, à `FormActions`, à un `EmptyState` et à « Réessayer ». Dans une barre, une ligne, un en-tête ou `Section actions`, `check` signale un bouton texte « Modifier », « Supprimer », « Copier »…
+2. **Une barre, un ordre.** `PageToolbar` : à gauche la recherche puis les filtres ; à droite, de gauche à droite, les icônes, l’`OverflowMenu`, puis l’action principale. `ToolbarSeparator` sépare deux groupes d’icônes de nature différente (affichage | actions). Au-delà de trois icônes, le reste passe dans l’`OverflowMenu`.
+3. **Largeur intrinsèque.** Dans une page, `SelectControl` prend la largeur de son option la plus longue et `TextInput` 240 px hors d’un formulaire empilé : ne pas les élargir. Une liste ou un champ ne s’étirent jamais sur toute une barre ou toute une ligne (`width="full"` seulement dans un `FormField` empilé, ce qui est déjà le défaut pour `TextInput`). Un nombre ou un code court : `width="xs"`.
+4. **Un filtre est près de ce qu’il filtre.** Il est dans la barre de la page (ou dans `Section actions` du bloc qu’il filtre), jamais au milieu du contenu, jamais dans une `Surface`.
+5. **Grouper par l’écart, pas par le cadre.** Deux éléments liés : `gap="xs"` ou `"sm"` ; deux groupes : `gap="lg"` ou une nouvelle `Section`. Pas de `Surface` pour grouper, pas de `Divider` entre chaque bloc.
+6. **Aligner sur un bord.** Le contenu s’aligne à gauche, les actions à droite (`Row justify="end"`, `FormActions`). Rien n’est centré, sauf `EmptyState`, qui se centre seul. Les chiffres d’une colonne s’alignent à droite (`align: "end"`).
+7. **Densité.** Pas de `Surface` autour d’un tableau ou d’une liste, pas de titre qui répète la section, pas d’`Heading` au-dessus d’une `Section`, pas de texte d’introduction qui décrit la page. Un `Text tone="muted"` explicatif tient en une phrase.
+8. **Panneau étroit.** À 280 px : une colonne, des icônes plutôt que du texte dans les en-têtes, `KeyValueList` plutôt qu’un tableau, `Modal size="small"`.
 
 ## 3. Couleurs et thèmes
 
@@ -106,8 +132,10 @@ Tout s’importe de `@alfred/ui`. Les composants qui prolongent un élément nat
 | Composant | Rôle | Props (défaut) |
 |---|---|---|
 | `Page` | Racine obligatoire | `children`, `toolbar?: ReactNode` (un `PageToolbar`, fixe au-dessus du contenu), `width`: `"full" \| "text"` (`"full"`) |
-| `PageToolbar` | Barre d’actions d’une page. Pas dans un panneau, pas sur une page sans données | `start?: ReactNode` (à gauche : recherche, filtres), `children?: ReactNode` (à droite : actions, la principale en dernier) ; accepte les attributs d’un `div` (`aria-*`) |
-| `Section` | Bloc titré ; pas un titre de page | `title: string`, `description?: string`, `actions?: ReactNode` (à droite du titre), `children` |
+| `PageToolbar` | Barre d’actions d’une page. Pas dans un panneau, pas sur une page sans données | `start?: ReactNode` (à gauche : recherche, filtres), `children?: ReactNode` (à droite : icônes, `OverflowMenu`, puis l’action principale en dernier) ; accepte les attributs d’un `div` (`aria-*`) |
+| `ToolbarSeparator` | Trait vertical entre deux groupes d’une barre d’outils | aucune |
+| `ObjectHeader` | Nom de l’objet affiché, en tête d’un panneau de droite ou d’une page de détail, avec ses actions en icônes calées en haut à droite | `title: ReactNode`, `description?` (une ligne de contexte en gris), `badge?` (`StatusBadge size="compact"`), `actions?` (`IconButton`, puis `OverflowMenu` en dernier ; trois icônes au plus), `level`: `1 \| 2` (`2` ; `1` pour une page entière) |
+| `Section` | Bloc titré ; pas un titre de page | `title: string`, `description?: string`, `actions?: ReactNode` (à droite du titre : icônes, ou un `Button` d’ajout), `children` |
 | `Stack` | Empile verticalement | `gap` (`"md"`) |
 | `Row` | Aligne horizontalement | `gap` (`"sm"`), `align`: `"start" \| "center" \| "end" \| "stretch" \| "baseline"` (`"center"`), `justify`: `"start" \| "center" \| "end" \| "between"` (`"start"`), `wrap` (`false`) |
 | `Grid` | Colonnes fluides d’au moins `minColumnWidth` pixels | `minColumnWidth` (`240`), `gap` (`"md"`) |
@@ -175,7 +203,7 @@ Props : `variant`: `"primary" \| "secondary" \| "danger"` (`"secondary"` ; `prim
 </Row>
 ```
 
-**`IconButton`** — action secondaire courante en icône seule (modifier, copier, supprimer, ouvrir). Garder un `Button` pour l’action principale et pour une action rare ou ambiguë.
+**`IconButton`** — action secondaire courante en icône seule (modifier, copier, supprimer, ouvrir). Garder un `Button` pour l’action principale et pour une action rare ou ambiguë. Le choix entre les deux suit la règle 1 de la section 2.1 ; dans une barre, une ligne ou un en-tête, c’est presque toujours une icône.
 
 Props : `label: string` (obligatoire, nom accessible contextualisé), `tooltip`: `string \| false` (`label` ; infobulle courte au survol et au focus), `tone`: `"default" \| "primary" \| "danger"`, `size`: `"default" \| "small"` (28 px ; `small` : 24 px dans une ligne dense ; `compact`, ancien alias, vaut `default`), `appearance`: `"default" \| "table"` (`table` dans une cellule), `loading`, `loadingLabel`, `buttonRef?` (référence au bouton, pour y ancrer un volet), `tooltipPlacement`: `"auto" \| "right"` (`"auto"` ; `right` dans une colonne verticale), `tooltipAppearance`: `"default" \| "preview"` (`preview` : infobulle plus large, pour un aperçu de quelques lignes).
 
@@ -258,6 +286,30 @@ Props de `ChoiceGroup` : `label: string` (obligatoire), `appearance`: `"default"
 Props : `label: ReactNode` (obligatoire, visible), `hint?` (aide sous le champ, que l’erreur remplace), `error?` (message d’erreur ; marque le champ invalide), `layout`: `"stacked" \| "inline"` (`inline` : libellé à gauche, dans une barre d’outils), `children` (un `TextInput`, `TextArea`, `SelectControl` ou une combobox), `htmlFor?` (`id` du contrôle quand ce n’est pas l’enfant direct), `compound` (`false` ; champ qui réunit plusieurs commandes, par exemple une liste et son bouton : passer alors `htmlFor`), `messageId?` (identifiant imposé du message d’aide ou d’erreur). Les autres attributs vont au `label`.
 
 **`TextInput`**, **`TextArea`**, **`SelectControl`** — champs natifs habillés ; ils acceptent les attributs de `<input>`, `<textarea>` et `<select>`. `TextArea` a une prop `variant` (`"default"`, `"composer"`, `"inline"`) : garder `default` dans un formulaire.
+
+`TextInput` et `SelectControl` ont une prop `width` : `"auto" \| "xs" \| "sm" \| "md" \| "lg" \| "full"` (contenu, 96, 160, 240, 360 px, toute la place ; jamais plus que le conteneur). Le défaut est le bon dans presque tous les cas, ne le fixer que pour un besoin précis :
+
+| Contrôle | Défaut dans une page | Quand changer |
+|---|---|---|
+| `SelectControl` | `auto` : la largeur de l’option la plus longue, 120 px au moins (240 px dans une `SettingRow`, alignée sur la colonne des contrôles) | `full` dans un formulaire de deux colonnes où tous les champs s’alignent ; jamais dans une barre ou une ligne |
+| `TextInput` dans un `FormField` empilé | `full` : la largeur de la colonne du `Form` (560 px au plus) | `xs` pour un nombre, un code postal ; `sm` pour une date ou un court identifiant |
+| `TextInput` ailleurs (barre, `Row`, `SettingRow`, `FormField layout="inline"`) | `md` : 240 px | `sm` ou `lg` selon la longueur attendue |
+
+```tsx
+<PageToolbar
+  start={
+    <>
+      <SearchField label="Rechercher une facture" placeholder="Rechercher…" value={recherche} onChange={…} />
+      <SelectControl aria-label="Période" value={periode} onChange={(event) => setPeriode(event.target.value)}>
+        <option value="mois">Ce mois-ci</option>
+        <option value="annee">Cette année</option>
+      </SelectControl>
+    </>
+  }
+>
+  …
+</PageToolbar>
+```
 
 **`FormControlGroup`** — aligne un champ et l’action qui lui est liée. `children` : un `FormField` puis un `Button`.
 
@@ -343,6 +395,8 @@ Dans un `FormField`, une combobox est reliée comme un `TextInput` au libellé, 
   getOptionLabel={(option) => option.nom}
 />
 ```
+
+**`Form`** — le formulaire d’une page, d’un panneau ou d’une modale : un `<form noValidate>` dont l’envoi natif est bloqué, champs empilés à 12 px, colonne de 560 px au plus (toute la largeur dans une `Modal`). Entrée dans un champ appelle `onSubmit`. Props : `onSubmit: () => void` (obligatoire), `id?` (pour relier un `FormActions form={id}` placé dans le pied d’une `Modal`), `actions?` (une `FormActions` posée sous les champs), `width`: `"default" \| "full"` (`full` pour deux colonnes de champs dans un `Grid`), `aria-label?`, `children` (des `FormField`, un `Fieldset`, un `Grid` de champs courts).
 
 **`FormActions`** — actions d’un formulaire, alignées à droite : Annuler puis l’action principale, qui porte l’état d’enregistrement (section 7).
 
@@ -445,36 +499,13 @@ return (
 );
 ```
 
-**`Modal`** — modale d’une page, pour une saisie courte ou une décision qui demande plus qu’une confirmation (renommer, choisir une destination). Une confirmation passe par `useConfirm`, un formulaire long par la page ou le panneau de droite. Elle est pilotée par `open` et `onClose` : Échap, le bouton Fermer et un clic sur le fond appellent `onClose`, sauf ce dernier une fois une saisie commencée. Le focus va au premier champ (ou à l’élément `autoFocus`), puis revient au déclencheur ; le contenu n’est rendu que modale ouverte. Props : `open`, `onClose`, `title: ReactNode` (obligatoire), `description?`, `children` (le corps, avec ses marges, qui défile s’il est long), `actions?` (pied aligné à droite : `FormActions` ou des `Button`), `size`: `"default" \| "wide"` (480 ou 720 px), `dismissOnOutside` (`true`).
+**`Modal`** — modale d’une page, ouverte par un bouton : une saisie courte (renommer, inviter, choisir une destination), un aperçu, une décision qui demande plus qu’une confirmation. Une confirmation passe par `useConfirm`, un formulaire long par la page ou le panneau de droite. Elle s’affiche dans le cadre de la page qui l’ouvre (au-dessus de l’onglet, ou du seul panneau de droite).
 
-```tsx
-const [ouverte, setOuverte] = useState(false);
-const [nom, setNom] = useState("");
-return (
-  <>
-    <Button onClick={() => setOuverte(true)}>Renommer</Button>
-    <Modal
-      open={ouverte}
-      onClose={() => setOuverte(false)}
-      title="Renommer la liste"
-      actions={<FormActions form="renommer" submitLabel="Enregistrer" onCancel={() => setOuverte(false)} />}
-    >
-      <form
-        id="renommer"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          void renommer(nom).then(() => setOuverte(false));
-        }}
-      >
-        <FormField label="Nom">
-          <TextInput value={nom} onChange={(event) => setNom(event.target.value)} />
-        </FormField>
-      </form>
-    </Modal>
-  </>
-);
-```
+Elle est pilotée par `open` et `onClose` : Échap, le bouton Fermer de l’en-tête et un clic sur le fond appellent `onClose` (le clic sur le fond est refusé d’un court rebond une fois une saisie commencée). À l’ouverture, le focus va à l’élément `autoFocus`, sinon au premier champ, sinon à la première action ; Tab et Maj+Tab restent dans la modale ; à la fermeture, le focus revient au bouton qui l’a ouverte. Le contenu n’est rendu que modale ouverte : une saisie abandonnée repart de zéro.
+
+Props : `open: boolean`, `onClose: () => void`, `title: ReactNode` (obligatoire : le verbe et l’objet, « Renommer la liste »), `description?` (une phrase sous le titre), `children` (le corps : un `Form`, une `KeyValueList`, un `Text`… ; il défile seul s’il est long, en-tête et pied restent visibles), `actions?` (le pied, aligné à droite : `FormActions form="…"` reliée au `Form` du corps, ou des `Button`, Annuler puis l’action principale), `size`: `"small" \| "default" \| "wide"` (360, 480 ou 720 px, jamais plus que le cadre ; `small` pour un champ, `wide` pour un tableau ou un aperçu), `busy` (`false` ; pendant l’enregistrement, rien ne ferme la modale et Fermer est désactivé), `dismissOnOutside` (`true`).
+
+Règles : un seul niveau de modale (jamais une `Modal` dans une `Modal`, ni un `useConfirm` depuis une `Modal` ouverte) ; pas de bouton Fermer ni de titre ajouté dans le corps ; les actions vont dans `actions`, jamais au bas de `children` ; l’action principale garde la modale ouverte jusqu’à la réussite (`busy` puis `onClose`), un échec est notifié et laisse la saisie intacte. Exemple complet en 12.4.
 
 **`Disclosure`** — contenu secondaire replié (options avancées, détail technique). Ne pas y cacher une information nécessaire à la décision. Props : `label: ReactNode`, `children`, `appearance`: `"default" \| "subtle"` (`subtle` : ligne pleine largeur), `lazy` (`false` ; contenu rendu à la première ouverture), `open` et `onToggle` natifs.
 
@@ -516,7 +547,7 @@ Un libellé d’action est un verbe à l’infinitif, suivi de son objet quand l
 
 ## 7. Formulaires
 
-- **Composition.** Un `<form>` avec `noValidate` et un `onSubmit` qui appelle `event.preventDefault()` (le cadre interdit l’envoi natif), une `Stack gap="md"` de `FormField`, puis `FormActions` reliée par `form`. Entrée dans un champ valide ainsi le formulaire.
+- **Composition.** Un `Form` (qui bloque l’envoi natif et empile ses champs), des `FormField`, puis `FormActions` dans `actions` ; dans une `Modal`, `FormActions form={id}` va dans le pied. Entrée dans un champ valide ainsi le formulaire. Deux champs courts liés (prénom et nom, début et fin) peuvent partager une ligne : `Grid minColumnWidth={160}` dans un `Form width="full"`.
 - **Libellés.** Chaque champ a un libellé visible ; le texte d’exemple ne le remplace pas et commence par « Ex. ». Dans un formulaire court, tous les champs sont obligatoires sauf ceux marqués « (facultatif) » dans leur libellé ; un champ obligatoire porte `aria-required="true"`.
 - **Validation.** Elle a lieu à la soumission et s’affiche sous le champ par `FormField.error`, jusqu’à la correction. Elle ne devient ni une notification ni un bandeau. Le message dit quoi faire : « Saisissez le nom de l’équipe. », pas « Champ invalide ».
 - **Actions.** `FormActions` en bas du formulaire, à droite : Annuler, s’il y a quelque chose à abandonner, puis l’action principale. Pendant l’enregistrement, `pending` les désactive et affiche le libellé d’attente. Ne pas répéter ces actions ailleurs.
@@ -582,7 +613,7 @@ L’objectif est WCAG 2.2 AA. Les composants en portent l’essentiel ; la page 
 
 - **Clavier.** Tout ce qui se fait à la souris se fait au clavier, dans un ordre logique. Ne jamais rendre cliquable un `Text` ou une `Surface` : une action est un `Button`, un `IconButton`, un `Link`, une entrée de menu, un `ListItem` ou une ligne de `DataTable`.
 - **Focus.** Il est visible sur chaque contrôle et revient au déclencheur à la fermeture d’une modale, d’un menu ou d’un volet. Ne pas le déplacer à la main, sauf `autoFocus` sur le champ d’un `InlineEdit` ou d’une `Modal`.
-- **Noms accessibles.** `label` sur `IconButton`, `DataTable`, `SearchField`, `ChoiceGroup`, `Tabs`, `OverflowMenu`, `MenuButton`, `AnchoredPanel` et `StepList` ; `title` sur `Modal`, `legend` sur `Fieldset`, `alt` sur `Image`, `headerLabel` sur une colonne à en-tête icône ; `FormField` pour chaque champ. Un nom décrit l’action et son objet.
+- **Noms accessibles.** `aria-label` sur un `SelectControl` ou un `TextInput` hors d’un `FormField` ; `label` sur `IconButton`, `DataTable`, `SearchField`, `ChoiceGroup`, `Tabs`, `OverflowMenu`, `MenuButton`, `AnchoredPanel` et `StepList` ; `title` sur `Modal`, `legend` sur `Fieldset`, `alt` sur `Image`, `headerLabel` sur une colonne à en-tête icône ; `FormField` pour chaque champ. Un nom décrit l’action et son objet.
 - **Couleur.** Un état n’est jamais porté par la couleur seule : `StatusBadge` contient son libellé, `StatusDot` est suivie d’un texte, une erreur de champ est une phrase.
 - **Titres.** `Heading` et `Section` se suivent sans saut de niveau : le contenu d’une `Section` (niveau 2) utilise `Heading level={3}` ou `Surface title`.
 - **Annonces.** Les composants d’état annoncent déjà leur contenu ; ne pas doubler un message par un second canal.
@@ -591,7 +622,7 @@ L’objectif est WCAG 2.2 AA. Les composants en portent l’essentiel ; la page 
 
 ## 12. Exemples complets
 
-Les trois fichiers ci-dessous sont complets. Ils supposent un module `suivi` avec les tables `suivi_taches` et `suivi_reglages`.
+Les quatre fichiers ci-dessous sont complets. Ils supposent un module `suivi` avec les tables `suivi_taches` et `suivi_reglages`.
 
 ### 12.1 Page liste : barre d’outils, tableau, état vide
 
@@ -608,6 +639,7 @@ import {
   PageToolbar,
   RefreshButton,
   SearchField,
+  SelectControl,
   StatusBadge,
 } from "@alfred/ui";
 import { db, shell, useAsync } from "@alfred/sdk";
@@ -655,12 +687,15 @@ export default function TachesPage() {
     [],
   );
   const [recherche, setRecherche] = useState("");
+  const [etat, setEtat] = useState<Tache["etat"] | "toutes">("toutes");
   const [selection, setSelection] = useState<number | null>(null);
 
   const visibles = useMemo(() => {
     const requete = recherche.trim().toLocaleLowerCase("fr");
-    return (taches.data ?? []).filter((tache) => tache.titre.toLocaleLowerCase("fr").includes(requete));
-  }, [taches.data, recherche]);
+    return (taches.data ?? []).filter(
+      (tache) => (etat === "toutes" || tache.etat === etat) && tache.titre.toLocaleLowerCase("fr").includes(requete),
+    );
+  }, [taches.data, recherche, etat]);
 
   const ouvrir = (id: number) => {
     setSelection(id);
@@ -686,12 +721,26 @@ export default function TachesPage() {
         total > 0 ? (
           <PageToolbar
             start={
-              <SearchField
-                label="Rechercher une tâche"
-                placeholder="Rechercher…"
-                value={recherche}
-                onChange={(event) => setRecherche(event.target.value)}
-              />
+              <>
+                <SearchField
+                  label="Rechercher une tâche"
+                  placeholder="Rechercher…"
+                  value={recherche}
+                  onChange={(event) => setRecherche(event.target.value)}
+                />
+                <SelectControl
+                  aria-label="Filtrer par état"
+                  value={etat}
+                  onChange={(event) => setEtat(event.target.value as Tache["etat"] | "toutes")}
+                >
+                  <option value="toutes">Tous les états</option>
+                  {(Object.keys(etats) as Tache["etat"][]).map((cle) => (
+                    <option key={cle} value={cle}>
+                      {etats[cle].label}
+                    </option>
+                  ))}
+                </SelectControl>
+              </>
             }
           >
             <RefreshButton loading={taches.loading} onClick={taches.reload} />
@@ -725,7 +774,16 @@ export default function TachesPage() {
           loading={taches.loading}
           emptyTitle="Aucun résultat"
           emptyDescription="Aucune tâche ne correspond à cette recherche."
-          emptyAction={<Button onClick={() => setRecherche("")}>Effacer la recherche</Button>}
+          emptyAction={
+            <Button
+              onClick={() => {
+                setRecherche("");
+                setEtat("toutes");
+              }}
+            >
+              Effacer les filtres
+            </Button>
+          }
         />
       )}
     </Page>
@@ -736,20 +794,24 @@ export default function TachesPage() {
 ### 12.2 Panneau de droite : détail de la sélection
 
 ```tsx
+import { Check } from "lucide-react";
 import {
   Button,
   EmptyState,
   FeedbackBanner,
-  Heading,
+  IconButton,
   KeyValueList,
   LoadingSkeleton,
+  MenuItem,
+  ObjectHeader,
+  OverflowMenu,
   Page,
   Section,
-  Stack,
   StatusBadge,
   Text,
+  useConfirm,
 } from "@alfred/ui";
-import { db, useAsync, usePageContext } from "@alfred/sdk";
+import { db, shell, useAsync, usePageContext } from "@alfred/sdk";
 
 interface TacheDetail {
   id: number;
@@ -781,6 +843,24 @@ export default function TacheDetailPanel() {
     );
     return rows[0] ?? null;
   }, [id]);
+  const { confirm, confirmDialog } = useConfirm();
+
+  const terminer = async () => {
+    await db.execute("UPDATE suivi_taches SET etat = 'terminee' WHERE id = ?", [id]);
+    tache.reload();
+  };
+  const supprimer = async (titre: string) => {
+    const accepte = await confirm({
+      title: `Supprimer la tâche « ${titre} » ?`,
+      message: "Cette action est définitive.",
+      confirmLabel: "Supprimer",
+      tone: "danger",
+    });
+    if (!accepte) return;
+    await db.execute("DELETE FROM suivi_taches WHERE id = ?", [id]);
+    void shell.notify({ title: "Tâche supprimée", tone: "success" });
+    tache.reload();
+  };
 
   const detail = tache.data;
   return (
@@ -801,26 +881,38 @@ export default function TacheDetailPanel() {
         <EmptyState size="compact" title="Tâche introuvable" description="Elle a peut-être été supprimée." />
       ) : (
         <>
-          <Stack gap="sm">
-            <Heading level={2}>{detail.titre}</Heading>
-            <KeyValueList
-              items={[
-                {
-                  label: "État",
-                  value: (
-                    <StatusBadge tone={etatsDetail[detail.etat].tone} size="compact">
-                      {etatsDetail[detail.etat].label}
-                    </StatusBadge>
-                  ),
-                },
-                {
-                  label: "Échéance",
-                  value: detail.echeance ? jourLong.format(new Date(detail.echeance)) : "Non définie",
-                },
-                { label: "Responsable", value: detail.responsable ?? "Non attribuée" },
-              ]}
-            />
-          </Stack>
+          <ObjectHeader
+            title={detail.titre}
+            badge={
+              <StatusBadge tone={etatsDetail[detail.etat].tone} size="compact">
+                {etatsDetail[detail.etat].label}
+              </StatusBadge>
+            }
+            description={detail.responsable ? `Attribuée à ${detail.responsable}` : "Non attribuée"}
+            actions={
+              <>
+                {detail.etat !== "terminee" ? (
+                  <IconButton label={`Terminer la tâche « ${detail.titre} »`} tooltip="Terminer" onClick={terminer}>
+                    <Check size={16} aria-hidden="true" />
+                  </IconButton>
+                ) : null}
+                <OverflowMenu label={`Autres actions de la tâche « ${detail.titre} »`}>
+                  <MenuItem tone="danger" onClick={() => void supprimer(detail.titre)}>
+                    Supprimer
+                  </MenuItem>
+                </OverflowMenu>
+              </>
+            }
+          />
+          <KeyValueList
+            items={[
+              {
+                label: "Échéance",
+                value: detail.echeance ? jourLong.format(new Date(detail.echeance)) : "Non définie",
+              },
+              { label: "Responsable", value: detail.responsable ?? "Non attribuée" },
+            ]}
+          />
           <Section title="Description">
             {detail.description ? (
               <Text>{detail.description}</Text>
@@ -830,6 +922,7 @@ export default function TacheDetailPanel() {
           </Section>
         </>
       )}
+      {confirmDialog}
     </Page>
   );
 }
@@ -1002,8 +1095,121 @@ export default function ReglagesSuiviPage() {
 }
 ```
 
+### 12.4 Modale : un formulaire court ouvert par un bouton
+
+Une page « Équipe » invite un membre depuis le bouton de sa barre. Le formulaire est dans le corps, ses actions dans le pied ; pendant l’envoi, la modale ne se ferme pas.
+
+```tsx
+import { useState } from "react";
+import {
+  Button,
+  Form,
+  FormActions,
+  FormField,
+  Modal,
+  SelectControl,
+  TextArea,
+  TextInput,
+} from "@alfred/ui";
+import { db, shell } from "@alfred/sdk";
+
+export function InviterMembre({ onInvite }: { onInvite: () => void }) {
+  const [ouverte, setOuverte] = useState(false);
+  const [adresse, setAdresse] = useState("");
+  const [role, setRole] = useState("lecteur");
+  const [message, setMessage] = useState("");
+  const [erreur, setErreur] = useState<string>();
+  const [envoi, setEnvoi] = useState(false);
+
+  const fermer = () => {
+    setOuverte(false);
+    setAdresse("");
+    setMessage("");
+    setErreur(undefined);
+  };
+  const inviter = async () => {
+    if (!/^[^@\s]+@[^@\s]+$/.test(adresse.trim())) {
+      setErreur("Saisissez une adresse de courriel, par exemple lea@exemple.fr.");
+      return;
+    }
+    setEnvoi(true);
+    try {
+      await db.execute("INSERT INTO equipe_invitations (adresse, role, message) VALUES (?, ?, ?)", [
+        adresse.trim(),
+        role,
+        message.trim() || null,
+      ]);
+      void shell.notify({ title: "Invitation envoyée", tone: "success" });
+      fermer();
+      onInvite();
+    } catch (error) {
+      void shell.notify({
+        title: "L’invitation n’a pas été envoyée",
+        description: error instanceof Error ? error.message : undefined,
+        tone: "error",
+      });
+    } finally {
+      setEnvoi(false);
+    }
+  };
+
+  return (
+    <>
+      <Button variant="primary" onClick={() => setOuverte(true)}>
+        Inviter un membre
+      </Button>
+      <Modal
+        open={ouverte}
+        onClose={fermer}
+        busy={envoi}
+        title="Inviter un membre"
+        description="La personne reçoit un courriel pour rejoindre l’équipe."
+        actions={
+          <FormActions
+            form="inviter-membre"
+            submitLabel="Inviter"
+            pending={envoi}
+            pendingLabel="Envoi…"
+            onCancel={fermer}
+          />
+        }
+      >
+        <Form id="inviter-membre" onSubmit={() => void inviter()}>
+          <FormField label="Adresse de courriel" error={erreur}>
+            <TextInput
+              type="email"
+              aria-required="true"
+              placeholder="Ex. lea@exemple.fr"
+              value={adresse}
+              onChange={(event) => {
+                setAdresse(event.target.value);
+                setErreur(undefined);
+              }}
+            />
+          </FormField>
+          <FormField label="Rôle">
+            <SelectControl value={role} onChange={(event) => setRole(event.target.value)}>
+              <option value="lecteur">Lecteur</option>
+              <option value="editeur">Éditeur</option>
+              <option value="admin">Administrateur</option>
+            </SelectControl>
+          </FormField>
+          <FormField label="Message (facultatif)">
+            <TextArea value={message} onChange={(event) => setMessage(event.target.value)} />
+          </FormField>
+        </Form>
+      </Modal>
+    </>
+  );
+}
+```
+
+C’est l’action principale de la page « Équipe » : le composant se pose en dernier à droite de sa `PageToolbar` (`<PageToolbar start={…}><RefreshButton … /><InviterMembre onInvite={membres.reload} /></PageToolbar>`), ou dans l’`EmptyState` quand l’équipe est vide.
+
 ## 13. Checklist avant de dire qu’une page est terminée
 
+- [ ] `check` ne rend aucune remarque `design` pour la page.
+- [ ] Placement (section 2.1) : chaque action est à sa place (barre, `ObjectHeader`, `Section actions`, fin de ligne, pied de `Modal`) ; les actions secondaires courantes sont des icônes avec infobulle ; aucune liste ni aucun champ étiré sur toute une barre ou une ligne.
 - [ ] Structure : export par défaut, `Page` à la racine dans tous les états, imports autorisés seulement (règles 1 et 2) ; aucun `style`, `<style>` ni `className` (règle 3) ; chaque composant et chaque prop figurent dans ce document ; rien ne répète la coquille ; le gabarit correspond à l’emplacement (section 2).
 - [ ] Contenu : ce qui demande une action vient en premier, rien ne décore ; une seule action `primary` par groupe ; destruction en `danger`, confirmée par `useConfirm` ; libellés de la section 6 ; dates et nombres formatés en français.
 - [ ] États : premier chargement, rechargement, vide, erreur de chargement et échec d’action ont leur rendu (section 9) ; une page sans données n’affiche ni barre d’outils ni filtres ; un panneau couvre aucune sélection, chargement, erreur, objet introuvable.
