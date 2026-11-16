@@ -1,0 +1,176 @@
+<!doctype html>
+<!--
+  Source de l’icône d’Alfred : scène three.js (majordome en smoking sur tuile terre cuite), rendue en 1024 × 1024.
+  Pour la régénérer : servir ce dossier (avec un serveur qui accepte le POST de `window.save(nom)`, ou copier le
+  PNG depuis `renderer.domElement.toDataURL()`), puis `pnpm tauri icon <rendu>.png` et `public/favicon.png` (64 px).
+-->
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#888}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.169.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.169.0/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+const SIZE = 1024;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, stencil: true });
+renderer.setPixelRatio(1);
+renderer.setSize(SIZE, SIZE);
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.VSMShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.45;
+
+// Coordonnées du dessin d’origine (0..1024, y vers le bas) → scène (centrée, y vers le haut).
+const P = (x, y) => new THREE.Vector2(x - 512, 512 - y);
+
+const R = 230, INSET = 36;
+function roundedRect(inset, r) {
+  const s = new THREE.Shape();
+  const a = inset, b = 1024 - inset, rr = r - inset;
+  s.moveTo(...P(a + rr, a).toArray());
+  s.lineTo(...P(b - rr, a).toArray());
+  s.absarc(b - rr - 512, 512 - (a + rr), rr, Math.PI / 2, 0, true);
+  s.lineTo(...P(b, b - rr).toArray());
+  s.absarc(b - rr - 512, 512 - (b - rr), rr, 0, -Math.PI / 2, true);
+  s.lineTo(...P(a + rr, b).toArray());
+  s.absarc(a + rr - 512, 512 - (b - rr), rr, -Math.PI / 2, -Math.PI, true);
+  s.lineTo(...P(a, a + rr).toArray());
+  s.absarc(a + rr - 512, 512 - (a + rr), rr, Math.PI, Math.PI / 2, true);
+  return s;
+}
+
+function extrude(shape, depth, bevel, z, material, cast = true, size = 0.9) {
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel * size, bevelSegments: 16, curveSegments: 64,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.z = z;
+  mesh.castShadow = cast;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+const path = (points) => {
+  const s = new THREE.Shape();
+  points.forEach(([x, y], i) => (i ? s.lineTo(...P(x, y).toArray()) : s.moveTo(...P(x, y).toArray())));
+  s.closePath();
+  return s;
+};
+
+// Tuile
+const tileMat = new THREE.MeshPhysicalMaterial({ color: 0xbb5426, roughness: 0.48, clearcoat: 0.6, clearcoatRoughness: 0.3 });
+const tileBevel = 34;
+extrude(roundedRect(tileBevel, R), 60, tileBevel, -60 - tileBevel, tileMat, false);
+// Léger dégradé : un voile plus sombre en bas, comme l’icône d’origine.
+{
+  const g = new THREE.PlaneGeometry(1024, 1024);
+  const canvas = document.createElement("canvas"); canvas.width = 4; canvas.height = 256;
+  const c = canvas.getContext("2d"); const grad = c.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, "rgba(255,210,170,0.10)"); grad.addColorStop(1, "rgba(60,15,0,0.30)");
+  c.fillStyle = grad; c.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+  const veil = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(tileBevel, R), 48), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  // UV de ShapeGeometry = coordonnées brutes : on les ramène à 0..1.
+  const uv = veil.geometry.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) + 512) / 1024, (uv.getY(i) + 512) / 1024);
+  veil.position.z = 0.6; scene.add(veil);
+}
+
+// Veste : large, coupée par le cadre de la tuile (masque au pochoir).
+const jacketShape = (() => {
+  const s = new THREE.Shape();
+  const m = (x, y) => s.moveTo(...P(x, y).toArray());
+  const l = (x, y) => s.lineTo(...P(x, y).toArray());
+  const q = (cx, cy, x, y) => s.quadraticCurveTo(...P(cx, cy).toArray(), ...P(x, y).toArray());
+  m(150, 1200); l(150, 720); q(150, 480, 400, 408); l(512, 380); l(624, 408); q(874, 480, 874, 720); l(874, 1200);
+  s.closePath();
+  return s;
+})();
+const mask = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(30, R), 64), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, stencilWrite: true, stencilRef: 1, stencilZPass: THREE.ReplaceStencilOp }));
+mask.position.z = 0.8; mask.renderOrder = -1; scene.add(mask);
+const clipped = (material) => Object.assign(material, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc });
+const jacketMat = new THREE.MeshPhysicalMaterial({ color: 0x1b1e24, roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.35, sheenColor: 0x5a6070, envMapIntensity: 0.6 });
+clipped(jacketMat);
+extrude(jacketShape, 4, 56, 0, jacketMat, true, 0.75);
+
+// Plastron
+const shirtMat = new THREE.MeshPhysicalMaterial({ color: 0xf3eee5, roughness: 0.55, sheen: 0.3, sheenColor: 0xffffff });
+extrude(path([[432, 396], [592, 396], [512, 880]]), 6, 8, 58, shirtMat);
+
+// Revers en satin
+const satin = new THREE.MeshPhysicalMaterial({ color: 0x2f333b, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12 });
+extrude(path([[414, 410], [508, 870], [398, 640], [318, 566], [392, 524]]), 12, 10, 60, satin);
+extrude(path([[610, 410], [516, 870], [626, 640], [706, 566], [632, 524]]), 12, 10, 60, satin);
+
+// Col cassé
+const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.4, clearcoat: 0.3 });
+extrude(path([[512, 452], [432, 398], [460, 474]]), 4, 6, 80, white);
+extrude(path([[512, 452], [592, 398], [564, 474]]), 4, 6, 80, white);
+
+// Nœud papillon
+const silk = new THREE.MeshPhysicalMaterial({ color: 0x16181d, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15, sheen: 0.6, sheenColor: 0x50566a });
+const lobe = (dir) => {
+  const s = new THREE.Shape();
+  s.moveTo(...P(512, 474).toArray());
+  s.lineTo(...P(512 + dir * 112, 418).toArray());
+  s.quadraticCurveTo(...P(512 + dir * 136, 474).toArray(), ...P(512 + dir * 112, 530).toArray());
+  s.closePath();
+  return s;
+};
+extrude(lobe(-1), 10, 16, 88, silk);
+extrude(lobe(1), 10, 16, 88, silk);
+const knot = new THREE.Mesh(new RoundedBoxGeometry(60, 60, 44, 6, 16), silk);
+knot.position.set(0, 512 - 474, 126); knot.castShadow = true; scene.add(knot);
+
+// Boutons
+for (const y of [610, 712]) {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(15, 32, 16), silk);
+  b.scale.z = 0.5; b.position.set(0, 512 - y, 78); b.castShadow = true; scene.add(b);
+}
+
+// Lumières
+const key = new THREE.DirectionalLight(0xfff3e6, 2.4);
+key.position.set(-400, 700, 1300);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -700, right: 700, top: 700, bottom: -700, near: 10, far: 4000 });
+key.shadow.radius = 14; key.shadow.blurSamples = 25; key.shadow.bias = -0.0004;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xffc49a, 0.9); rim.position.set(800, -200, 500); scene.add(rim);
+scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+
+// Ombre portée douce sous la tuile.
+{
+  const c = document.createElement("canvas"); c.width = c.height = 512;
+  const x = c.getContext("2d"); x.filter = "blur(26px)"; x.fillStyle = "rgba(0,0,0,0.55)";
+  x.beginPath(); x.roundRect(86, 96, 340, 340, 80); x.fill();
+  const tex = new THREE.CanvasTexture(c);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1536, 1536), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  shadow.position.set(0, -26, -120); shadow.renderOrder = -2; scene.add(shadow);
+}
+// Caméra : la tuile occupe ~80 % du cadre, comme les icônes macOS.
+const camera = new THREE.PerspectiveCamera(16, 1, 10, 20000);
+const frame = 1024 / 0.80;
+const distance = frame / 2 / Math.tan(THREE.MathUtils.degToRad(8));
+camera.position.set(0, 0, distance);
+camera.lookAt(0, 0, 0);
+// La tuile est un peu remontée pour laisser l’ombre en bas.
+scene.position.y = 14;
+
+renderer.render(scene, camera);
+window.done = true;
+window.save = async (name) => {
+  const url = renderer.domElement.toDataURL("image/png");
+  await fetch("http://127.0.0.1:14790/" + name, { method: "POST", body: url });
+  return url.length;
+};
+</script>
+</body></html>
