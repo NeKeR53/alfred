@@ -11,7 +11,7 @@ import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 
 async function finishTurn(user: ReturnType<typeof userEvent.setup>, turns = 1) {
-  const approval = await screen.findByRole("region", { name: "Accord demandé : Exécuter une commande" });
+  const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
   await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
   const card = await screen.findByRole("form", { name: "Emplacement de la nouvelle page" });
   await user.click(within(card).getByRole("radio", { name: "Nouvelle entrée du menu de gauche" }));

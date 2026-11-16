@@ -1,0 +1,60 @@
+/* Aperçu d’un PDF cité par l’agent, repris de OneApp. */
+.pdf-preview {
+  height: max(480px, calc(100dvh - 140px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+.pdf-preview__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-bg);
+  font-size: var(--font-size-secondary);
+}
+.pdf-preview__position {
+  margin-right: auto;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pdf-preview__zoom {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-preview__pages {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* « safe » : une page plus large que la zone (zoom) reste défilable jusqu’à son bord gauche. */
+  align-items: safe center;
+  gap: 12px;
+  padding: 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.pdf-preview__pages.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.pdf-preview__page {
+  flex: none;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+@media (forced-colors: active) {
+  .pdf-preview,
+  .pdf-preview__bar {
+    border-color: CanvasText;
+  }
+  .pdf-preview__page {
+    outline: 1px solid CanvasText;
+  }
+}

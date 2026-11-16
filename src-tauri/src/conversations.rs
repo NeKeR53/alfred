@@ -311,8 +311,57 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             let encoded = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&path)?);
             Ok(json!({ "dataUrl": format!("data:{mime};base64,{encoded}") }))
         })(),
+        // Aperçu d’un document cité par l’agent (PDF) : contenu borné à 20 Mo.
+        "files.read" => (|| {
+            let reference: String = arg(args, "path")?;
+            let base: Option<String> = opt_arg(args, "base")?;
+            let path = resolve_path(&reference, base.as_deref());
+            let bytes = read_bounded(&path)?;
+            Ok(json!({ "base64": base64::engine::general_purpose::STANDARD.encode(bytes) }))
+        })(),
+        // « Enregistrer une copie » : le fichier cité, ou une image en ligne, écrit à l’emplacement choisi.
+        "files.saveCopy" => (|| {
+            let destination: String = arg(args, "destination")?;
+            let bytes = match opt_arg::<String>(args, "base64")? {
+                Some(encoded) => base64::engine::general_purpose::STANDARD
+                    .decode(encoded.as_bytes())
+                    .map_err(|_| AppError::new("Contenu de fichier illisible."))?,
+                None => {
+                    let reference: String = arg(args, "path")?;
+                    let base: Option<String> = opt_arg(args, "base")?;
+                    read_bounded(&resolve_path(&reference, base.as_deref()))?
+                }
+            };
+            save_copy(Path::new(&destination), &bytes)?;
+            Ok(Value::Null)
+        })(),
         _ => return None,
     })
+}
+
+/// Contenu d’un fichier cité, refusé au-delà de 20 Mo ou s’il s’agit d’un dossier.
+fn read_bounded(path: &Path) -> AppResult<Vec<u8>> {
+    let metadata =
+        std::fs::metadata(path).map_err(|_| AppError::new(format!("Fichier introuvable : {}", path.display())))?;
+    if metadata.is_dir() {
+        return Err(AppError::new("Ce chemin est un dossier."));
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(AppError::new("Ce fichier dépasse 20 Mo."));
+    }
+    Ok(std::fs::read(path)?)
+}
+
+/// Écrit la copie choisie par l’utilisateur ; le dossier de destination doit exister.
+fn save_copy(destination: &Path, bytes: &[u8]) -> AppResult<()> {
+    if !destination.is_absolute() {
+        return Err(AppError::new("Emplacement d’enregistrement invalide."));
+    }
+    if destination.is_dir() {
+        return Err(AppError::new("Choisissez un nom de fichier, pas un dossier."));
+    }
+    std::fs::write(destination, bytes)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -340,6 +389,22 @@ mod tests {
         assert_eq!(file_url_path("file://serveur/partage/note%C3%A9.md").as_deref(), Some("//serveur/partage/noteé.md"));
         assert_eq!(file_url_path("file:///tmp/100%.txt").as_deref(), Some("/tmp/100%.txt"));
         assert_eq!(file_url_path("C:\\Users\\a.pdf"), None);
+    }
+
+    /// Copie d’un fichier cité : lecture bornée, refus d’un dossier, destination absolue.
+    #[test]
+    fn saves_a_copy_of_a_cited_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("rapport.pdf");
+        std::fs::write(&source, b"%PDF-1.7").unwrap();
+        assert_eq!(read_bounded(&source).unwrap(), b"%PDF-1.7");
+        assert!(read_bounded(dir.path()).is_err(), "un dossier n’est pas lu");
+        assert!(read_bounded(&dir.path().join("absent.pdf")).is_err());
+        let copy = dir.path().join("copie.pdf");
+        save_copy(&copy, b"%PDF-1.7").unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"%PDF-1.7");
+        assert!(save_copy(Path::new("relatif.pdf"), b"x").is_err());
+        assert!(save_copy(dir.path(), b"x").is_err());
     }
 
     /// Un lien d’agent vers un script ou une application ne l’exécute pas : le fichier est seulement montré.
