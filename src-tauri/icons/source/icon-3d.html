@@ -14,6 +14,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
 const SIZE = 1024;
+let parent;
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, stencil: true });
 renderer.setPixelRatio(1);
 renderer.setSize(SIZE, SIZE);
@@ -26,6 +27,7 @@ renderer.shadowMap.type = THREE.VSMShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+parent = scene;
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.45;
@@ -57,7 +59,7 @@ function extrude(shape, depth, bevel, z, material, cast = true, size = 0.9) {
   mesh.position.z = z;
   mesh.castShadow = cast;
   mesh.receiveShadow = true;
-  scene.add(mesh);
+  parent.add(mesh);
   return mesh;
 }
 const path = (points) => {
@@ -85,72 +87,69 @@ extrude(roundedRect(tileBevel, R), 60, tileBevel, -60 - tileBevel, tileMat, fals
   veil.position.z = 0.6; scene.add(veil);
 }
 
-// Veste : large, coupée par le cadre de la tuile (masque au pochoir).
-const jacketShape = (() => {
-  const s = new THREE.Shape();
-  const m = (x, y) => s.moveTo(...P(x, y).toArray());
-  const l = (x, y) => s.lineTo(...P(x, y).toArray());
-  const q = (cx, cy, x, y) => s.quadraticCurveTo(...P(cx, cy).toArray(), ...P(x, y).toArray());
-  // Épaules jusqu’au col, puis une encolure creusée qui passe sous le col blanc : pas de pointe au-dessus.
-  const c = (x1, y1, x2, y2, x, y) => s.bezierCurveTo(...P(x1, y1).toArray(), ...P(x2, y2).toArray(), ...P(x, y).toArray());
-  m(150, 1200); l(150, 720);
-  c(150, 520, 300, 432, 440, 424);
-  c(470, 422, 486, 448, 512, 448);
-  c(538, 448, 554, 422, 584, 424);
-  c(724, 432, 874, 520, 874, 720);
-  l(874, 1200);
-  s.closePath();
-  return s;
-})();
+// Buste. Le chanfrein d’une extrusion élargit la forme de ~0,75 × son épaisseur : chaque forme est dessinée en
+// retrait pour que les bords visibles se rejoignent au même point du cou (NL 430,440 et NR 594,440).
+const bust = new THREE.Group();
+scene.add(bust);
+parent = bust;
+const clipped = (material) => Object.assign(material, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc });
 const mask = new THREE.Mesh(new THREE.ShapeGeometry(roundedRect(30, R), 64), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, stencilWrite: true, stencilRef: 1, stencilZPass: THREE.ReplaceStencilOp }));
 mask.position.z = 0.8; mask.renderOrder = -1; scene.add(mask);
-const clipped = (material) => Object.assign(material, { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc });
-const jacketMat = new THREE.MeshPhysicalMaterial({ color: 0x1b1e24, roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.35, sheenColor: 0x5a6070, envMapIntensity: 0.6 });
-clipped(jacketMat);
-extrude(jacketShape, 4, 56, 0, jacketMat, true, 0.75);
-
-// Plastron
-const shirtMat = new THREE.MeshPhysicalMaterial({ color: 0xf3eee5, roughness: 0.55, sheen: 0.3, sheenColor: 0xffffff });
-extrude(path([[432, 396], [592, 396], [512, 880]]), 6, 8, 58, shirtMat);
-
-// Revers en satin
-const satin = new THREE.MeshPhysicalMaterial({ color: 0x2f333b, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12 });
-extrude(path([[414, 410], [508, 870], [398, 640], [318, 566], [392, 524]]), 12, 10, 60, satin);
-extrude(path([[610, 410], [516, 870], [626, 640], [706, 566], [632, 524]]), 12, 10, 60, satin);
-
-// Col de chemise : bande arrondie qui ferme l’encolure.
-{
-  const band = new THREE.Shape();
-  band.moveTo(...P(436, 424).toArray());
-  band.bezierCurveTo(...P(440, 382).toArray(), ...P(584, 382).toArray(), ...P(588, 424).toArray());
-  band.bezierCurveTo(...P(560, 460).toArray(), ...P(464, 460).toArray(), ...P(436, 424).toArray());
-  extrude(band, 4, 8, 60, shirtMat);
-}
-// Col cassé
-const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.4, clearcoat: 0.3 });
-extrude(path([[512, 452], [432, 398], [460, 474]]), 4, 6, 80, white);
-extrude(path([[512, 452], [592, 398], [564, 474]]), 4, 6, 80, white);
-
-// Nœud papillon
-const silk = new THREE.MeshPhysicalMaterial({ color: 0x16181d, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15, sheen: 0.6, sheenColor: 0x50566a });
-const lobe = (dir) => {
+const shapeOf = (draw) => {
   const s = new THREE.Shape();
-  s.moveTo(...P(512, 474).toArray());
-  s.lineTo(...P(512 + dir * 112, 418).toArray());
-  s.quadraticCurveTo(...P(512 + dir * 136, 474).toArray(), ...P(512 + dir * 112, 530).toArray());
+  const api = {
+    m: (x, y) => s.moveTo(...P(x, y).toArray()),
+    l: (x, y) => s.lineTo(...P(x, y).toArray()),
+    c: (x1, y1, x2, y2, x, y) => s.bezierCurveTo(...P(x1, y1).toArray(), ...P(x2, y2).toArray(), ...P(x, y).toArray()),
+  };
+  draw(api);
   s.closePath();
   return s;
 };
-extrude(lobe(-1), 10, 16, 88, silk);
-extrude(lobe(1), 10, 16, 88, silk);
-const knot = new THREE.Mesh(new RoundedBoxGeometry(60, 60, 44, 6, 16), silk);
-knot.position.set(0, 512 - 474, 126); knot.castShadow = true; scene.add(knot);
+
+// Veste : épaules arrondies, bord du col à plat (caché par le col et les revers).
+const jacketMat = new THREE.MeshPhysicalMaterial({ color: 0x1b1e24, roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.35, sheenColor: 0x5a6070, envMapIntensity: 0.6 });
+clipped(jacketMat);
+extrude(shapeOf(({ m, l, c }) => {
+  m(176, 1200); l(176, 820); c(184, 610, 300, 500, 440, 482); l(584, 482); c(724, 500, 840, 610, 848, 820); l(848, 1200);
+}), 4, 56, 0, jacketMat, true, 0.75);
+
+// Plastron : le V entre les deux points du cou.
+const shirtMat = new THREE.MeshPhysicalMaterial({ color: 0xf3eee5, roughness: 0.55, sheen: 0.3, sheenColor: 0xffffff });
+extrude(path([[437, 446], [587, 446], [512, 852]]), 6, 8, 58, shirtMat);
+
+// Revers en satin : chacun part du point du cou et longe le plastron.
+const satin = new THREE.MeshPhysicalMaterial({ color: 0x2f333b, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12 });
+extrude(path([[439, 449], [506, 844], [404, 646], [338, 574], [414, 530]]), 12, 10, 60, satin);
+extrude(path([[585, 449], [518, 844], [620, 646], [686, 574], [610, 530]]), 12, 10, 60, satin);
+
+// Col blanc : bande qui ferme le haut, pointes cassées sous le nœud.
+const white = new THREE.MeshPhysicalMaterial({ color: 0xfbf8f2, roughness: 0.42, clearcoat: 0.3 });
+extrude(shapeOf(({ m, l, c }) => {
+  m(430, 450); c(434, 404, 590, 404, 594, 450); l(556, 486); l(512, 466); l(468, 486);
+}), 4, 8, 76, white);
+
+// Nœud papillon
+const silk = new THREE.MeshPhysicalMaterial({ color: 0x16181d, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15, sheen: 0.6, sheenColor: 0x50566a });
+const NECK = 466;
+const lobe = (dir) => shapeOf(({ m, l, c }) => {
+  m(512, NECK); l(512 + dir * 104, NECK - 50); c(512 + dir * 128, NECK - 20, 512 + dir * 128, NECK + 20, 512 + dir * 104, NECK + 50);
+});
+extrude(lobe(-1), 10, 16, 90, silk);
+extrude(lobe(1), 10, 16, 90, silk);
+const knot = new THREE.Mesh(new RoundedBoxGeometry(56, 56, 44, 6, 16), silk);
+knot.position.set(0, 512 - NECK, 128); knot.castShadow = true; bust.add(knot);
 
 // Boutons
-for (const y of [610, 712]) {
-  const b = new THREE.Mesh(new THREE.SphereGeometry(15, 32, 16), silk);
-  b.scale.z = 0.5; b.position.set(0, 512 - y, 78); b.castShadow = true; scene.add(b);
+for (const y of [604, 700]) {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(14, 32, 16), silk);
+  b.scale.z = 0.5; b.position.set(0, 512 - y, 72); b.castShadow = true; bust.add(b);
 }
+
+// Buste agrandi depuis le centre, remonté pour que le col tombe au tiers haut.
+bust.scale.set(1.16, 1.16, 1);
+bust.position.y = 4;
+parent = scene;
 
 // Lumières
 const key = new THREE.DirectionalLight(0xfff3e6, 2.4);
