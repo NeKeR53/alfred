@@ -139,6 +139,29 @@ export async function pickFile(title: string): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/** Fait choisir un ou plusieurs fichiers ; liste vide s’il annule. `extensions` filtre (« pdf », « png »…). */
+export async function pickFiles(
+  title: string,
+  options: { multiple?: boolean; extensions?: string[] } = {},
+): Promise<string[]> {
+  if (!inTauri) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const filters = options.extensions?.length
+    ? [{ name: "Fichiers acceptés", extensions: options.extensions }]
+    : undefined;
+  const selected = await open({ directory: false, multiple: Boolean(options.multiple), title, filters });
+  if (Array.isArray(selected)) return selected;
+  return typeof selected === "string" ? [selected] : [];
+}
+
+/** Fait choisir où enregistrer un fichier ; `null` s’il annule. Hors de la fenêtre Tauri, aucun sélecteur natif. */
+export async function pickSaveFile(title: string, defaultPath?: string): Promise<string | null> {
+  if (!inTauri) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({ title, defaultPath });
+  return typeof selected === "string" ? selected : null;
+}
+
 /**
  * Notification du système pour une notification d’Alfred : Rust ne l’envoie que si aucune fenêtre d’Alfred n’a le
  * focus (sinon la surimpression suffit). Dit si elle est partie ; hors de la fenêtre Tauri, jamais.

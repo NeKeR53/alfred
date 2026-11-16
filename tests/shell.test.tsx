@@ -82,6 +82,7 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
     "Fonctions",
     "Webhooks",
     "Tâches planifiées",
+    "Tâches de fond",
     "Journal",
     "Marketplaces",
     "Agent",

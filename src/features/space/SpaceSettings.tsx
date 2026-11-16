@@ -24,6 +24,8 @@ import { inTauri, invoke, onNativeEvent, pickFolder } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { BackupsSection } from "./BackupsSection";
+import { SemanticSection } from "./SemanticSection";
 
 export interface Grant {
   /** `page:module/page`, `function:module/fonction` ou `function:module/*`. */
@@ -100,6 +102,11 @@ export function describeResource(resource: string, snapshot: Snapshot | null | u
   if (kind === "function") {
     const [module, item] = reference.split("/");
     return `Fonction « ${item ?? reference} » (module ${moduleName(snapshot, module)})`;
+  }
+  if (kind === "command") return `Programme « ${reference} »`;
+  if (kind === "event") {
+    const [module, item] = reference.split("/");
+    return `Événement « ${item ?? reference} » (module ${moduleName(snapshot, module)})`;
   }
   return resource;
 }
@@ -680,6 +687,8 @@ export function SpaceSettings() {
       <SpaceSection snapshot={snapshot} />
       <SwitchSpaceSection snapshot={snapshot} confirm={confirm} />
       <HistorySection confirm={confirm} />
+      <BackupsSection snapshot={snapshot} confirm={confirm} />
+      <SemanticSection />
       <GrantsSection snapshot={snapshot} confirm={confirm} />
       {confirmDialog}
     </Page>

@@ -45,6 +45,9 @@ export const JOURNAL_KINDS = [
   { value: "client", label: "Clients" },
   { value: "ai", label: "IA" },
   { value: "schedule", label: "Planification" },
+  { value: "job", label: "Tâches de fond" },
+  { value: "event", label: "Événements" },
+  { value: "command", label: "Commandes" },
   { value: "agent", label: "Agents" },
 ] as const;
 
@@ -57,6 +60,9 @@ const KIND_LABEL: Record<string, string> = {
   client: "Client",
   ai: "IA",
   schedule: "Planification",
+  job: "Tâche de fond",
+  event: "Événement",
+  command: "Commande",
   agent: "Agent",
   module: "Module",
 };
@@ -312,7 +318,7 @@ export function JournalSettings() {
       {entries.length === 0 ? (
         <EmptyState
           title={kind === "all" ? "Aucune exécution" : `Aucune exécution de type « ${kindLabel} »`}
-          description="Chaque appel de fonction, webhook, client, IA, planification ou agent fait par l’espace de travail s’inscrit ici, avec sa durée et son résultat."
+          description="Chaque appel de fonction, webhook, client, IA, planification, tâche de fond, événement, commande ou agent fait par l’espace de travail s’inscrit ici, avec sa durée et son résultat."
         />
       ) : (
         <>

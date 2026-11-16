@@ -37,7 +37,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "net", "fs"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "json"] }
-rusqlite = { version = "0.37", features = ["bundled", "serde_json", "hooks"] }
+rusqlite = { version = "0.37", features = ["bundled", "serde_json", "hooks", "backup", "functions"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 oxc = { version = "=0.152.0", features = ["transformer", "codegen", "semantic", "ast_visit"] }
 include_dir = "0.7"
@@ -54,6 +54,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # Voix : capture du micro, réglages repris d’Argos.
 cpal = "0.18"
 toml = "1"
+rust_xlsxwriter = { version = "0.93", default-features = false }
+pdf-extract = "0.12.1"
+zip = { version = "7", default-features = false, features = ["deflate"] }
+candle-core = { version = "0.11", default-features = false }
+candle-nn = { version = "0.11", default-features = false }
+candle-transformers = { version = "0.11", default-features = false }
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -383,13 +383,15 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "grant_access",
-            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent) ou `host` (ouvrir des liens vers cet hôte). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
+            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* ») ou `command` (nom d’un programme du poste lancé par `commands.run`, par exemple « ffmpeg »). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
             json!({
                 "to": { "type": "string" },
                 "client": { "type": "string" },
                 "function": { "type": "string" },
                 "agent": { "type": "boolean" },
                 "host": { "type": "string" },
+                "event": { "type": "string" },
+                "command": { "type": "string" },
             }),
             &["to"],
         ),
@@ -526,7 +528,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "read_journal",
             "Dernières exécutions enregistrées : fonctions, webhooks, requêtes des clients, appels IA, avec leur durée et leur erreur éventuelle.",
             json!({
-                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "agent"] },
+                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "job", "event", "command", "agent"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
             }),
             &[],
@@ -1028,6 +1030,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             // Tests de lecture des fonctions : ceux qui ne sont pas réussis dans l’état actuel de leur fonction.
             let tests = crate::function_tests::check(state, &snapshot, module.as_deref()).await?;
             let (webhooks, schedules) = trigger_problems(&snapshot, &keep);
+            let events = crate::module_events::problems(&space, module.as_deref());
             // Les clients appartiennent à l’espace, pas à un module : ils ne sont vérifiés qu’à la vérification
             // complète.
             let (clients, user_actions) = if module.is_none() {
@@ -1045,6 +1048,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 && files.is_empty()
                 && webhooks.is_empty()
                 && schedules.is_empty()
+                && events.is_empty()
                 && clients.is_empty()
                 && migrations.is_empty()
                 && tests["failed"].as_array().is_none_or(Vec::is_empty)
@@ -1059,6 +1063,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "testsNote": "`tests.failed` : tests de lecture en échec, avec la sortie reçue ; corriger la fonction (ou le test s’il se trompe) avant de rendre la main. Les tests d’écriture ne se lancent qu’avec l’accord de l’utilisateur (Réglages → Modules, « Tout vérifier »).",
                 "webhooks": webhooks,
                 "schedules": schedules,
+                "events": events,
                 "clients": clients,
                 "migrations": migrations,
                 "structure": snapshot.problems,
@@ -1160,7 +1165,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                         .collect()
                 })
                 .unwrap_or_default();
-            space_db::run(&space, &module, &sql, &parameters, true)
+            space_db::run_as(&space, &module, "agent", &sql, &parameters, true)
         }
         "call_function" => {
             let reference: String = arg(args, "function")?;

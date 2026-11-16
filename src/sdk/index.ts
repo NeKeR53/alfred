@@ -84,6 +84,300 @@ export const db = {
   },
 };
 
+// --- Fichiers du module ---------------------------------------------------------------------------------------
+
+/** Fichier rangé par Alfred pour le module (pièce jointe, PDF, image, document généré). */
+export interface FileInfo {
+  id: string;
+  name: string;
+  mime: string;
+  /** Taille en octets. */
+  size: number;
+  sha256: string;
+  createdAt: string;
+}
+
+/**
+ * Fichiers du module, rangés par Alfred hors de l’espace versionné et copiés avec les sauvegardes. Chaque module
+ * ne voit que les siens ; 50 Mo par fichier.
+ */
+export const files = {
+  /** Range un contenu : `data` en base64 (une adresse `data:` est acceptée) ou `text`. */
+  save(options: { name: string; data?: string; text?: string; mime?: string }): Promise<FileInfo> {
+    return request("files.save", options);
+  },
+  /** Fichiers du module, du plus récent au plus ancien ; `prefix` filtre sur le nom. */
+  list(options: { prefix?: string; limit?: number } = {}): Promise<FileInfo[]> {
+    return request("files.list", options);
+  },
+  get(id: string): Promise<FileInfo> {
+    return request("files.get", { id });
+  },
+  /** Contenu en base64. */
+  read(id: string): Promise<{ info: FileInfo; data: string }> {
+    return request("files.read", { id });
+  },
+  /** Contenu lu comme du texte UTF-8. */
+  readText(id: string): Promise<string> {
+    return request("files.readText", { id });
+  },
+  remove(id: string): Promise<void> {
+    return request<void>("files.remove", { id });
+  },
+  /** Ouvre le fichier avec l’application du système (page ou panneau seulement). */
+  open(id: string): Promise<void> {
+    return request<void>("files.open", { id });
+  },
+  /** Fait choisir des fichiers à l’utilisateur sur son disque et les copie dans le module ; `[]` s’il annule. */
+  pick(options: { accept?: string[]; multiple?: boolean } = {}): Promise<FileInfo[]> {
+    return request("files.pick", options);
+  },
+  /** « Enregistrer sous… » : l’utilisateur choisit où copier le fichier ; `false` s’il annule. */
+  export(id: string): Promise<boolean> {
+    return request("files.export", { id });
+  },
+  /** Adresse `data:` d’une image du module (5 Mo au plus), pour `<Image src>`. */
+  dataUrl(id: string): Promise<string> {
+    return request("files.dataUrl", { id });
+  },
+};
+
+// --- Historique des données ----------------------------------------------------------------------------------
+
+/** Un changement d’une ligne, gardé pour une table nommée dans `history` du module. */
+export interface Change<Row = Record<string, unknown>> {
+  id: number;
+  table: string;
+  /** Clé de la ligne (sa clé primaire, en texte), ou son rowid si la clé n’est pas une seule colonne. */
+  key: string | null;
+  op: "insert" | "update" | "delete";
+  /** La ligne avant le changement (`null` pour une insertion) ; un BLOB s’écrit `{ $blob: "<hex>" }`. */
+  before: Row | null;
+  /** La ligne après le changement (`null` pour une suppression). */
+  after: Row | null;
+  /** Qui : « page:module/page », « function:module/fonction », « agent », « alfred », suivi de « (annulation) ». */
+  actor: string;
+  at: string;
+}
+
+/** Historique des tables déclarées dans `history` de `module.json` : qui a changé quoi, et retour en arrière. */
+export const history = {
+  /** Changements, les plus récents d’abord ; `table` et `key` les limitent à une table et à une ligne. */
+  list<Row = Record<string, unknown>>(
+    options: { table?: string; key?: string | number; limit?: number } = {},
+  ): Promise<Change<Row>[]> {
+    return request("history.list", options);
+  },
+  /** Remet la ligne dans l’état d’avant ce changement ; rend le changement annulé. */
+  revert(id: number): Promise<Change> {
+    return request("history.revert", { id });
+  },
+};
+
+// --- Événements entre modules ---------------------------------------------------------------------------------
+
+/** Ce que reçoit la fonction abonnée à un événement. */
+export interface ModuleEvent<Payload = unknown> {
+  /** « module/événement ». */
+  event: string;
+  /** Module qui l’a publié. */
+  from: string;
+  payload: Payload;
+  publishedAt: string;
+}
+
+/**
+ * Événements du module : il publie ceux qu’il déclare dans `events.publishes` ; les fonctions des modules abonnés
+ * (`events.subscribes`) les reçoivent, sans que le module qui publie les connaisse.
+ */
+export const events = {
+  /** Publie l’événement `event` (identifiant local) ; rend le nombre d’abonnés qui le recevront. */
+  publish(event: string, payload: unknown = null): Promise<{ event: string; subscribers: number }> {
+    return request("events.publish", { event, payload });
+  },
+};
+
+// --- Recherche plein texte ------------------------------------------------------------------------------------
+
+export interface SearchResult<Key = string | number> {
+  /** Valeur de la colonne `key` de l’index : l’identifiant de la ligne trouvée. */
+  key: Key;
+  /** Pertinence : plus grand = meilleur. */
+  score: number;
+  /** Extrait du texte autour des mots trouvés. */
+  snippet: string;
+  /** Le même extrait en morceaux, `match` pour les mots trouvés (à mettre en gras). */
+  parts: { text: string; match: boolean }[];
+}
+
+export interface SearchOptions {
+  /** 20 par défaut, 200 au plus. */
+  limit?: number;
+  offset?: number;
+  /** Chaque mot peut n’être qu’un début de mot (vrai par défaut : recherche pendant la frappe). */
+  prefix?: boolean;
+  /** Le texte est une requête FTS5 (`"mot exact"`, `OR`, `NOT`, `NEAR`, `colonne:mot`) au lieu de mots libres. */
+  raw?: boolean;
+}
+
+/** Recherche plein texte dans un index déclaré par le module (`search` de `module.json`). */
+export const search = {
+  query<Key = string | number>(
+    index: string,
+    text: string,
+    options: SearchOptions = {},
+  ): Promise<{ total: number; results: SearchResult<Key>[] }> {
+    return request("search.query", { index, text, ...options });
+  },
+};
+
+// --- Commandes du poste ---------------------------------------------------------------------------------------
+
+export interface CommandResult {
+  /** Code de sortie (`null` si le programme a été tué par un signal). */
+  code: number | null;
+  /** Vrai si le code vaut 0. */
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  /** La sortie standard dépassait 1 Mo : elle est coupée. */
+  truncated: boolean;
+}
+
+/**
+ * Programmes installés sur l’ordinateur (`git`, `ffmpeg`, `pandoc`…), lancés sans shell dans le dossier du module.
+ * L’utilisateur accorde chaque programme une fois.
+ */
+export const commands = {
+  /** Lance `program` (son nom seul) avec `args` tels quels ; un code non nul ne rejette pas la promesse. */
+  run(
+    program: string,
+    args: string[] = [],
+    options: { input?: string; timeout?: number } = {},
+  ): Promise<CommandResult> {
+    return request("commands.run", { program, args, ...options });
+  },
+};
+
+// --- Recherche par le sens ------------------------------------------------------------------------------------
+
+/**
+ * Recherche sémantique dans un index déclaré par le module (`semantic` de `module.json`) : les lignes dont le sens
+ * est le plus proche de la question, même sans mot en commun. Le modèle tourne sur l’ordinateur.
+ */
+export const semantic = {
+  /** `score` : similarité de -1 à 1, plus grand = plus proche. `pending` : lignes pas encore calculées. */
+  search<Key = string | number>(
+    index: string,
+    text: string,
+    options: { limit?: number } = {},
+  ): Promise<{ pending: number; results: { key: Key; score: number }[] }> {
+    return request("semantic.search", { index, text, ...options });
+  },
+  /** Lignes calculées et en attente ; `model` : « ready », « missing » (pas téléchargé) ou « downloading ». */
+  status(index: string): Promise<{ indexed: number; pending: number; model: "ready" | "missing" | "downloading" }> {
+    return request("semantic.status", { index });
+  },
+};
+
+// --- Tâches de fond -------------------------------------------------------------------------------------------
+
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+export interface Job<Result = unknown> {
+  id: string;
+  module: string;
+  function: string;
+  title: string;
+  input: unknown;
+  /** Nombre d’étapes faites. */
+  step: number;
+  status: JobStatus;
+  /** De 0 à 1, telle que la dernière étape l’a donnée. */
+  progress: number | null;
+  message: string | null;
+  result: Result | null;
+  error: string | null;
+  attempts: number;
+  cancelRequested: boolean;
+  startedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+/** Ce que reçoit la fonction d’une tâche de fond, à chaque étape. */
+export interface JobStep<Input = unknown, State = unknown> {
+  input: Input;
+  /** État rendu par l’étape précédente ; `null` à la première. */
+  state: State | null;
+  /** Numéro de l’étape, à partir de 0. */
+  step: number;
+  job: { id: string; title: string };
+}
+
+/**
+ * Travail long, découpé en étapes : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`,
+ * en lui passant l’état laissé par l’étape précédente. Une tâche reprend après une fermeture d’Alfred, s’annule
+ * entre deux étapes, et l’utilisateur la suit dans Réglages → Tâches de fond.
+ */
+export const jobs = {
+  /** Lance la fonction `fonction` du module en tâche de fond ; rend la tâche, qui attend son tour. */
+  start(fonction: string, input: unknown = {}, options: { title?: string } = {}): Promise<Job> {
+    return request("jobs.start", { function: fonction, input, ...options });
+  },
+  get<Result = unknown>(id: string): Promise<Job<Result>> {
+    return request("jobs.get", { id });
+  },
+  /** Tâches du module, les plus récentes d’abord. */
+  list(options: { status?: JobStatus; limit?: number } = {}): Promise<Job[]> {
+    return request("jobs.list", options);
+  },
+  /** Annule tout de suite une tâche qui attend, après l’étape en cours une tâche qui tourne. */
+  cancel(id: string): Promise<Job> {
+    return request("jobs.cancel", { id });
+  },
+  /** Reprend une tâche en échec ou annulée, à l’étape où elle s’était arrêtée. */
+  resume(id: string): Promise<Job> {
+    return request("jobs.resume", { id });
+  },
+};
+
+// --- Documents ------------------------------------------------------------------------------------------------
+
+type CellValue = string | number | boolean | null;
+
+/** Bloc d’un PDF produit par `documents.pdf`. */
+export type DocumentBlock =
+  | { type: "heading"; text: string; level?: 1 | 2 | 3 }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[]; ordered?: boolean }
+  | { type: "table"; columns: string[]; rows: CellValue[][]; widths?: number[] }
+  | { type: "pageBreak" };
+
+/** Produit des documents (rangés comme fichiers du module) et lit le texte de ceux qu’on reçoit. */
+export const documents = {
+  /** PDF A4 : titre facultatif, puis les blocs dans l’ordre ; pages numérotées. */
+  pdf(options: { name: string; title?: string; blocks: DocumentBlock[] }): Promise<FileInfo> {
+    return request("documents.pdf", options);
+  },
+  /** CSV en UTF-8, séparé par `;` par défaut (Excel en français l’ouvre tel quel). */
+  csv(options: { name: string; columns?: string[]; rows: CellValue[][]; separator?: string }): Promise<FileInfo> {
+    return request("documents.csv", options);
+  },
+  /** Classeur Excel (.xlsx) : une feuille par entrée, en-têtes en gras. */
+  xlsx(options: {
+    name: string;
+    sheets: { name?: string; columns?: string[]; rows: CellValue[][] }[];
+  }): Promise<FileInfo> {
+    return request("documents.xlsx", options);
+  },
+  /** Texte d’un fichier du module : PDF (pages séparées par un saut de page `\f`), Word (.docx) ou texte. */
+  extractText(id: string): Promise<{ text: string; pages: number | null; truncated: boolean }> {
+    return request("documents.extractText", { id });
+  },
+};
+
 // --- Clients déclarés ------------------------------------------------------------------------------------------
 
 export interface ClientRequest {
@@ -94,6 +388,11 @@ export interface ClientRequest {
   headers?: Record<string, string>;
   /** Objet envoyé en JSON, ou chaîne envoyée telle quelle. */
   body?: unknown;
+  /**
+   * Lecture (`GET`, `HEAD`) : garder la réponse réussie ce nombre de secondes (un jour au plus) et la resservir
+   * sans rappeler le service. À défaut, la durée `cache` du besoin dans `module.json`.
+   */
+  cache?: number;
 }
 
 export interface ClientResponse<Body = unknown> {
@@ -102,6 +401,9 @@ export interface ClientResponse<Body = unknown> {
   headers: Record<string, string>;
   /** JSON décodé quand la réponse en est, sinon le texte. */
   body: Body;
+  /** Réponse resservie par le cache d’Alfred, et son âge en secondes. */
+  cached?: boolean;
+  cacheAge?: number;
 }
 
 /** Instance d’un client : un compte ou une installation du service, ajoutée par l’utilisateur dans les Réglages. */
@@ -127,11 +429,14 @@ export function client(id: string, options: ClientOptions = {}) {
     request<ClientResponse<Body>>("clients.request", { client: id, ...call, ...(instance ? { instance } : {}) });
   return {
     request: send,
-    get: <Body = unknown>(path: string, query?: ClientRequest["query"]) => send<Body>({ method: "GET", path, query }),
+    get: <Body = unknown>(path: string, query?: ClientRequest["query"], options: { cache?: number } = {}) =>
+      send<Body>({ method: "GET", path, query, ...options }),
     post: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "POST", path, body }),
     put: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PUT", path, body }),
     patch: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PATCH", path, body }),
     delete: <Body = unknown>(path: string) => send<Body>({ method: "DELETE", path }),
+    /** Oublie les réponses de ce client gardées pour le module (après une écriture, pour relire à jour). */
+    clearCache: () => request<{ cleared: number }>("clients.clearCache", { client: id }),
     /** Instances du client, la première étant celle par défaut. */
     instances: () => request<ClientInstance[]>("clients.instances", { client: id }),
   };

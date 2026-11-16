@@ -134,6 +134,19 @@ beforeEach(() => {
           ...history,
         ];
         return { commit: "c3" };
+      case "backups.list":
+        return [];
+      case "backups.settings":
+        return { keep: 14 };
+      case "semantic.model":
+        return {
+          model: "intfloat/multilingual-e5-small",
+          sizeMb: 470,
+          status: "missing",
+          received: null,
+          total: null,
+          error: null,
+        };
       case "files.reveal":
       case "settings.set":
       case "space.close":

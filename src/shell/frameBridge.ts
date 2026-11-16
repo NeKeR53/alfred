@@ -3,7 +3,15 @@
  * du cadre qui a émis le message, jamais par le contenu du message : une page ne peut pas se faire passer pour une
  * autre.
  */
-import { AlfredError, invoke, notifySystem, openExternal, openPageWindow } from "../lib/native";
+import {
+  AlfredError,
+  invoke,
+  notifySystem,
+  openExternal,
+  openPageWindow,
+  pickFiles,
+  pickSaveFile,
+} from "../lib/native";
 import { isKnownPage } from "./badges";
 import { notify } from "./notifications";
 import { useShell } from "./store";
@@ -220,9 +228,75 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
     case "clients.request":
       return invoke("frame.clients.request", {
-        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body"]),
+        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body", "cache"]),
         subject,
       });
+    case "files.save":
+      return invoke("frame.files.save", { ...pick(params, ["name", "data", "text", "mime"]), subject });
+    case "files.list":
+      return invoke("frame.files.list", { ...pick(params, ["prefix", "limit"]), subject });
+    case "files.get":
+    case "files.read":
+    case "files.readText":
+    case "files.remove":
+    case "files.open":
+    case "files.dataUrl":
+      return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "history.list":
+      return invoke("frame.history.list", { ...pick(params, ["table", "key", "limit"]), subject });
+    case "history.revert":
+      return invoke("frame.history.revert", { ...pick(params, ["id"]), subject });
+    case "events.publish":
+      return invoke("frame.events.publish", { ...pick(params, ["event", "payload"]), subject });
+    case "commands.run":
+      return invoke("frame.commands.run", { ...pick(params, ["program", "args", "input", "timeout"]), subject });
+    case "semantic.search":
+      return invoke("frame.semantic.search", { ...pick(params, ["index", "text", "limit"]), subject });
+    case "semantic.status":
+      return invoke("frame.semantic.status", { ...pick(params, ["index"]), subject });
+    case "search.query":
+      return invoke("frame.search.query", {
+        ...pick(params, ["index", "text", "limit", "offset", "raw", "prefix"]),
+        subject,
+      });
+    case "jobs.start":
+      return invoke("frame.jobs.start", { ...pick(params, ["function", "input", "title"]), subject });
+    case "jobs.list":
+      return invoke("frame.jobs.list", { ...pick(params, ["status", "limit"]), subject });
+    case "jobs.get":
+    case "jobs.cancel":
+    case "jobs.resume":
+      return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "documents.pdf":
+      return invoke("frame.documents.pdf", { ...pick(params, ["name", "title", "blocks"]), subject });
+    case "documents.csv":
+      return invoke("frame.documents.csv", { ...pick(params, ["name", "columns", "rows", "separator"]), subject });
+    case "documents.xlsx":
+      return invoke("frame.documents.xlsx", { ...pick(params, ["name", "sheets"]), subject });
+    case "documents.extractText":
+      return invoke("frame.documents.extractText", { ...pick(params, ["id"]), subject });
+    case "files.pick": {
+      // Le sélecteur est montré par la coquille : la page ne nomme jamais un chemin du disque.
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction ne peut pas ouvrir de fenêtre : faites-le depuis une page." });
+      const extensions = Array.isArray(params.accept)
+        ? params.accept.map((item) => String(item).replace(/^\./, "")).filter(Boolean)
+        : undefined;
+      const paths = await pickFiles("Choisir un fichier", { multiple: Boolean(params.multiple), extensions });
+      if (paths.length === 0) return [];
+      return invoke("frame.files.importPaths", { paths, subject });
+    }
+    case "files.export": {
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction ne peut pas ouvrir de fenêtre : faites-le depuis une page." });
+      const info = await invoke<{ name: string }>("frame.files.get", { ...pick(params, ["id"]), subject });
+      const path = await pickSaveFile("Enregistrer le fichier", info.name);
+      if (!path) return false;
+      await invoke("frame.files.exportTo", { ...pick(params, ["id"]), path, subject });
+      return true;
+    }
+    case "clients.clearCache":
+      return invoke("frame.clients.clearCache", { ...pick(params, ["client"]), subject });
     case "clients.instances":
       return invoke("frame.clients.instances", { ...pick(params, ["client"]), subject });
     default:

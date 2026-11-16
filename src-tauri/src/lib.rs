@@ -2,20 +2,30 @@ mod agent_setup;
 mod agent_workspace;
 mod agents;
 mod app_db;
+mod backups;
 mod badges;
+mod client_cache;
 mod clients;
+mod commands;
 mod composer;
 mod conversations;
 mod design_lint;
 mod dispatch;
+mod documents;
 mod docs;
 mod error;
 mod events;
 mod function_tests;
 mod functions;
 mod git;
+mod jobs;
 mod libraries;
 mod marketplace;
+mod module_events;
+mod module_files;
+mod module_history;
+mod module_search;
+mod module_semantic;
 mod mcp;
 mod oauth;
 mod page_windows;
@@ -24,6 +34,7 @@ mod permissions;
 mod process_tree;
 mod reorganize;
 mod schedules;
+mod script_sdk;
 mod scripts;
 mod server;
 mod setup;
@@ -102,6 +113,16 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     ]
 }
 
+/// Processus d’extraction de PDF (voir `documents::pdf_pages`) : lit stdin, écrit stdout, rend le code de sortie.
+#[doc(hidden)]
+pub fn extract_pdf_from_stdin() -> i32 {
+    documents::extract_pdf_from_stdin()
+}
+
+/// L’option qui lance ce processus à la place de l’application.
+#[doc(hidden)]
+pub const EXTRACT_PDF_FLAG: &str = documents::EXTRACT_PDF_FLAG;
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -163,6 +184,10 @@ pub fn run() {
             #[cfg(feature = "verify")]
             verify::attach(app.handle(), &data_dir, state.server()?.port)?;
             let _runtime = tauri::async_runtime::handle().inner().enter();
+            backups::start(state.clone());
+            jobs::start(state.clone());
+            module_events::start(state.clone());
+            module_semantic::start(state.clone());
             schedules::start(state);
             Ok(())
         })

@@ -82,6 +82,17 @@ function bind() {
     const notice = payload as { title: string; description?: string };
     notify({ title: notice.title, description: notice.description, tone: "info", source: "Agent" });
   });
+  // Une tâche de fond se termine pendant que l’utilisateur fait autre chose : il en est prévenu.
+  onNativeEvent("jobs:finished", (payload) => {
+    const job = payload as { title: string; status: "done" | "failed"; error?: string; module: string };
+    const module = useShell.getState().snapshot?.modules.find((candidate) => candidate.id === job.module)?.name;
+    notify({
+      title: job.status === "done" ? `Tâche terminée : ${job.title}` : `Tâche en échec : ${job.title}`,
+      description: job.status === "done" ? module : job.error,
+      tone: job.status === "done" ? "success" : "error",
+      source: module ?? job.module,
+    });
+  });
   onNativeEvent("permission:ask", (payload) => {
     const request = payload as PermissionRequest;
     if (permissionListeners.size === 0) waitingPermissions.push(request);

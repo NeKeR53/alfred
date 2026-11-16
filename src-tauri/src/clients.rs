@@ -1380,10 +1380,46 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
         journal(state, &space, &client, &call, requester, started, (None, "accès refusé".to_string()));
         return Err(error);
     }
+    // Cache demandé par la requête (`cache`, en secondes) ou par le besoin du module : lectures seulement.
+    let ttl = match opt_arg::<u64>(args, "cache")? {
+        Some(ttl) => ttl,
+        None => space
+            .module(&subject.module)
+            .ok()
+            .and_then(|manifest| manifest.clients.iter().find(|need| need.id == name).and_then(|need| need.cache))
+            .unwrap_or(0),
+    }
+    .min(crate::client_cache::MAX_TTL);
+    let cache_key = (ttl > 0 && matches!(call.method, Method::GET | Method::HEAD)).then(|| {
+        let fingerprint = format!("{}#{}", serde_json::to_string(&client).unwrap_or_default(), client.instance);
+        crate::client_cache::key(&subject.module, &fingerprint, call.method.as_str(), call.path, call.query, call.headers)
+    });
     let started = Instant::now();
+    if let Some(key) = &cache_key {
+        if let Some(cached) = crate::client_cache::get(&space, key)? {
+            let status = cached.get("status").and_then(Value::as_u64);
+            journal(state, &space, &client, &call, requester, started, (status, "réponse en cache".to_string()));
+            return Ok(cached);
+        }
+    }
     let result = perform(state, &client, &call).await;
     journal(state, &space, &client, &call, requester, started, outcome_of(&result));
+    if let (Some(key), Ok(response)) = (&cache_key, &result) {
+        if let Err(error) = crate::client_cache::put(&space, key, &subject.module, &client.id, ttl, response) {
+            log::error!("cache du client {} : {}", client.id, error.message);
+        }
+    }
     result
+}
+
+/// Oublie les réponses gardées d’un client pour le module qui le demande.
+fn frame_clear_cache(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let subject: Subject = arg(args, "subject")?;
+    let name: String = arg(args, "client")?;
+    let space = state.space()?;
+    let def = resolve(&space, &subject.module, &name)?;
+    let cleared = crate::client_cache::clear(&space, &subject.module, &def.id)?;
+    Ok(json!({ "cleared": cleared }))
 }
 
 /// Instances d’un client, pour qu’une page propose de choisir : identifiant et nom seulement, jamais l’adresse ni
@@ -2058,6 +2094,7 @@ fn test_outcome(result: AppResult<Value>, path: &str, duration: u64) -> Value {
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     let result = match command {
         "frame.clients.request" => frame_request(state, args).await,
+        "frame.clients.clearCache" => frame_clear_cache(state, args),
         "frame.clients.instances" => frame_instances(state, args),
         "clients.test" => test_client(state, args).await,
         "clients.connect" => match state.space().and_then(|space| require_instance(&space, args)) {
@@ -2432,6 +2469,40 @@ mod tests {
             let error = invoke(&state, "clients.save", json!({ "client": wrong })).await.unwrap_err();
             assert!(error.message.contains("Chemin de test invalide"), "{path} : {}", error.message);
         }
+    }
+
+    /// Une lecture demandée avec `cache` est servie par Alfred pendant sa durée, sans rappeler le service ; une
+    /// écriture, une autre page de requête ou un autre module passent toujours par le service.
+    #[tokio::test]
+    async fn a_cached_read_spares_the_service() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let base = format!("{}/api", remote.origin);
+        let subject = page_subject("crm");
+        let other = page_subject("suivi");
+        let client = json!({ "id": "public", "label": "Public", "baseUrl": base, "auth": { "type": "none" } });
+        assert_eq!(save_client(&state, client).await["status"], json!("ready"));
+        grant(&state, &subject, "public");
+        grant(&state, &other, "public");
+        let calls = || remote.state.seen.lock().unwrap().len();
+
+        let first = request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
+        assert!(first.get("cached").is_none());
+        let again = request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
+        assert_eq!(again["cached"], json!(true));
+        assert_eq!(again["body"], first["body"]);
+        assert_eq!(calls(), 1);
+
+        request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 2 }, "cache": 60 })).await.unwrap();
+        request(&state, &other, "public", json!({ "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
+        request(&state, &subject, "public", json!({ "method": "POST", "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
+        request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 1 } })).await.unwrap();
+        assert_eq!(calls(), 5, "autre requête, autre module, écriture, sans cache : le service est appelé");
+
+        let cleared = invoke(&state, "frame.clients.clearCache", json!({ "subject": subject, "client": "public" })).await.unwrap();
+        assert_eq!(cleared["cleared"], json!(2));
+        request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
+        assert_eq!(calls(), 6);
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ import {
   CalendarClock,
   FolderOpen,
   KeyRound,
+  ListChecks,
   ListOrdered,
   Mic,
   Palette,
@@ -17,6 +18,7 @@ import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { useShell } from "../../shell/store";
 import { AgentSettings } from "../agentSettings/AgentSettings";
 import { FunctionsSettings } from "../functions/FunctionsSettings";
+import { JobsSettings } from "../jobs/JobsSettings";
 import { JournalSettings } from "../journal/JournalSettings";
 import { MarketplacesSettings } from "../modules/MarketplacesSettings";
 import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
@@ -80,6 +82,7 @@ export const settingsTabs: BuiltInTab[] = [
     icon: icon(CalendarClock),
     render: () => <SchedulesSettings />,
   },
+  { id: "jobs", label: "Tâches de fond", group: "avancé", icon: icon(ListChecks), render: () => <JobsSettings /> },
   { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), render: () => <JournalSettings /> },
   {
     id: "marketplaces",

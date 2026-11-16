@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, function_tests, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
+    delegate!(vault, agent_workspace, clients, space_db, function_tests, backups, module_files, documents, jobs, module_search, module_events, module_history, module_semantic, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -183,12 +183,19 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     crate::marketplace::refuse_as_workspace(state, path)?;
     let space = Space::open_or_create(path, name)?;
     crate::docs::materialize(&space)?;
+    // La copie du jour passe avant les migrations en attente, qui feraient sinon la leur.
+    if let Err(error) = crate::backups::ensure_daily(&space) {
+        log::error!("sauvegarde quotidienne impossible : {}", error.message);
+    }
     // Les migrations écrites pendant qu’Alfred était fermé passent dès l’ouverture : les pages trouvent leurs tables.
     // Une migration en échec n’empêche pas d’ouvrir l’espace ; `check` la signale.
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
     git::commit_all(&space.root, "Ouverture de l’espace de travail")?;
+    // Les tâches de fond et les livraisons d’événements interrompues à la fermeture reprennent.
+    crate::jobs::kick();
+    crate::module_events::kick();
     let root = space.root.clone();
     state.set_space(Some(space));
     {

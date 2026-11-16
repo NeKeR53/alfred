@@ -94,6 +94,75 @@ pub struct ModuleManifest {
     /// Parcours de configuration proposé après l’installation (texte d’accueil).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup: Option<SetupDecl>,
+    /// Index de recherche plein texte, tenus à jour par Alfred.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub search: Vec<IndexDecl>,
+    /// Index de recherche par le sens (vecteurs calculés par un modèle local).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub semantic: Vec<IndexDecl>,
+    /// Tables dont Alfred garde l’historique des modifications (qui, quand, avant et après).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<String>,
+    /// Événements que le module publie, et ceux d’autres modules auxquels ses fonctions s’abonnent.
+    #[serde(skip_serializing_if = "EventsDecl::is_empty")]
+    pub events: EventsDecl,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EventsDecl {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub publishes: Vec<EventDecl>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subscribes: Vec<SubscriptionDecl>,
+}
+
+impl EventsDecl {
+    pub fn is_empty(&self) -> bool {
+        self.publishes.is_empty() && self.subscribes.is_empty()
+    }
+}
+
+/// Événement publié par le module (« ticket-cree »), avec la forme de ce qu’il transmet.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EventDecl {
+    pub id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Schéma JSON du contenu, pour les modules qui s’y abonnent.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub schema: Value,
+}
+
+/// Abonnement : la fonction du module appelée à chaque publication de l’événement.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubscriptionDecl {
+    /// « module/événement », ou « événement » pour un événement du module lui-même.
+    pub event: String,
+    /// Fonction du module, sans préfixe.
+    pub function: String,
+}
+
+/// Index déclaré sur une table du module : Alfred le crée, le tient à jour à chaque écriture et le reconstruit
+/// quand la déclaration ou la table change.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct IndexDecl {
+    pub id: String,
+    pub table: String,
+    /// Colonne qui identifie la ligne, rendue avec chaque résultat (`id` par défaut).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// Colonnes de texte indexées.
+    pub columns: Vec<String>,
+}
+
+impl IndexDecl {
+    pub fn key(&self) -> &str {
+        if self.key.is_empty() { "id" } else { &self.key }
+    }
 }
 
 /// Ce que le module dit à l’utilisateur au début du parcours de configuration. Les étapes suivent l’ordre de
@@ -353,6 +422,9 @@ pub struct ClientNeed {
     /// configuration le crée tel quel, l’utilisateur n’ajoute que son compte.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<Value>,
+    /// Durée (en secondes) pendant laquelle les lectures réussies de ce service sont gardées, par défaut.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
