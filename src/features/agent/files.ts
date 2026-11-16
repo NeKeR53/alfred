@@ -4,6 +4,59 @@ import { notify } from "../../shell/notifications";
 import { isAgentFileReference } from "./lib/agentFileLinks";
 import type { Attachment } from "./model";
 
+/** Comme OneApp : 16 pièces jointes au plus par message, 20 Mo chacune. */
+export const MAX_ATTACHMENTS = 16;
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const ATTACHMENT_LIMIT_MESSAGE = "Joignez au plus 16 fichiers de 20 Mo chacun.";
+/** Une vignette plus lourde que 2 Mo n’est pas gardée : le nom du fichier suffit. */
+const MAX_PREVIEW_LENGTH = 2 * 1024 * 1024;
+
+/** Refuse un lot qui dépasse les limites, avant toute copie. */
+export function checkAttachmentLimits(files: readonly { size: number | null }[]) {
+  if (files.length > MAX_ATTACHMENTS || files.some((file) => (file.size ?? 0) > MAX_ATTACHMENT_BYTES))
+    throw new Error(ATTACHMENT_LIMIT_MESSAGE);
+}
+
+/** Pièce jointe de la saisie, avec la vignette d’une image. */
+export type PreparedAttachment = Attachment & { preview?: string };
+
+/** Vignette WebP d’une image, réduite à 1 600 px de côté, comme OneApp ; `undefined` si elle n’a pas pu être faite. */
+export async function imagePreview(blob: Blob): Promise<string | undefined> {
+  if (blob.size > MAX_ATTACHMENT_BYTES || typeof createImageBitmap !== "function") return undefined;
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return undefined;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL("image/webp", 0.85);
+    return url.length <= MAX_PREVIEW_LENGTH && /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/.test(url)
+      ? url
+      : undefined;
+  } finally {
+    bitmap.close();
+  }
+}
+
+/** Ajoute la vignette des images qui n’en ont pas ; une image illisible garde son nom seul. */
+export async function prepareAttachments(attachments: PreparedAttachment[]): Promise<PreparedAttachment[]> {
+  return Promise.all(
+    attachments.map(async (attachment) => {
+      if (attachment.preview || !isImage(attachment.path) || /\.svg$/i.test(attachment.path)) return attachment;
+      try {
+        const dataUrl = await loadImage(attachment.path, "");
+        const preview = await imagePreview(await (await fetch(dataUrl)).blob());
+        return preview ? { ...attachment, preview } : attachment;
+      } catch {
+        return attachment;
+      }
+    }),
+  );
+}
+
 interface FileStat {
   path: string;
   name: string | null;
@@ -22,13 +75,21 @@ function toBase64(buffer: ArrayBuffer): string {
 }
 
 /** Enregistre un contenu sans chemin (image collée, fichier déposé depuis le navigateur) dans le dossier d’échange. */
-export async function saveBlob(conversation: string, file: File): Promise<Attachment> {
+export async function saveBlob(conversation: string, file: File): Promise<PreparedAttachment> {
+  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(ATTACHMENT_LIMIT_MESSAGE);
   const saved = await invoke<{ path: string; name: string }>("files.saveExchange", {
     conversation,
     name: file.name || `collage-${Date.now()}.png`,
     base64: toBase64(await file.arrayBuffer()),
   });
-  return { path: saved.path, name: saved.name, mimeType: file.type || undefined };
+  const preview = file.type.startsWith("image/") ? await imagePreview(file).catch(() => undefined) : undefined;
+  return { path: saved.path, name: saved.name, mimeType: file.type || undefined, ...(preview ? { preview } : {}) };
+}
+
+/** Enregistre plusieurs contenus d’un coup, après avoir vérifié les limites du lot. */
+export async function saveBlobs(conversation: string, files: File[]): Promise<PreparedAttachment[]> {
+  checkAttachmentLimits(files);
+  return Promise.all(files.map((file) => saveBlob(conversation, file)));
 }
 
 export async function attachmentFromPath(path: string): Promise<Attachment | undefined> {
@@ -37,14 +98,28 @@ export async function attachmentFromPath(path: string): Promise<Attachment | und
   return { path: stat.path, name: stat.name ?? path, mimeType: stat.mimeType };
 }
 
-/** Fait choisir des fichiers à joindre ; hors de la fenêtre Tauri, l’appelant passe par un champ de fichier. */
-export async function pickAttachments(): Promise<Attachment[]> {
+/** Fichiers déposés depuis le système : 16 au plus, 20 Mo chacun, vignettes comprises. */
+export async function attachmentsFromPaths(paths: readonly string[]): Promise<PreparedAttachment[]> {
+  if (paths.length > MAX_ATTACHMENTS) throw new Error(ATTACHMENT_LIMIT_MESSAGE);
+  const stats = await Promise.all(paths.map((path) => invoke<FileStat>("files.stat", { path })));
+  const files = stats.filter((stat) => stat.exists && !stat.isDirectory);
+  checkAttachmentLimits(files);
+  return prepareAttachments(
+    files.map((stat) => ({ path: stat.path, name: stat.name ?? stat.path, mimeType: stat.mimeType })),
+  );
+}
+
+/**
+ * Fait choisir des fichiers à joindre ; hors de la fenêtre Tauri, l’appelant passe par un champ de fichier. Comme
+ * OneApp, seuls les 16 premiers fichiers choisis sont gardés.
+ */
+export async function pickAttachments(): Promise<PreparedAttachment[]> {
   if (!inTauri) return [];
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({ multiple: true, title: "Joindre des fichiers" });
-  const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+  const paths = (Array.isArray(selected) ? selected : selected ? [selected] : []).slice(0, MAX_ATTACHMENTS);
   const attachments = await Promise.all(paths.map((path) => attachmentFromPath(path)));
-  return attachments.filter((attachment): attachment is Attachment => attachment !== undefined);
+  return prepareAttachments(attachments.filter((attachment): attachment is Attachment => attachment !== undefined));
 }
 
 /** Suit un lien d’un message : une adresse web s’ouvre dans le navigateur, un fichier cité dans son application. */

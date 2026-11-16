@@ -62,6 +62,40 @@
   background: var(--color-surface);
   font-size: var(--font-size-secondary);
 }
+.agent-composer__file .agent-composer__remove {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+}
+/* Vignette d’une image jointe ; le « × » apparaît au survol, en haut à droite. */
+.agent-composer__thumb {
+  position: relative;
+}
+.agent-composer__thumb-image {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  object-fit: cover;
+}
+.agent-composer__thumb .agent-composer__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--color-bg);
+  opacity: 0;
+}
+.agent-composer__thumb:hover .agent-composer__remove,
+.agent-composer__thumb:focus-within .agent-composer__remove {
+  opacity: 1;
+}
 .agent-composer__file > span {
   max-width: 200px;
   overflow: hidden;
@@ -125,30 +159,77 @@
   margin-top: 2px;
 }
 
-/* Champ de saisie : une ligne de 20 px dans 28 px, centrée sur les boutons « + » et envoi (reference-composer de OneApp). */
+/* Champ de saisie : une ligne de 20 px dans 28 px, centrée sur les boutons « + » et envoi (reference-composer de OneApp).
+   Élément éditable : le texte défile au-delà de 240 px, l’indication s’affiche tant qu’il est vide. */
 .agent-composer__input {
+  display: block;
   min-width: 0;
   flex: 1;
   min-height: 28px;
   max-height: 240px;
   padding: 4px;
-  border: 0;
+  overflow-y: auto;
   outline: 0;
-  resize: none;
-  field-sizing: content;
   background: transparent;
   color: var(--color-ink);
   font: inherit;
   font-size: var(--font-size-panel);
   line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
 }
-.agent-composer__input::placeholder {
+.agent-composer__input:empty::before {
   color: var(--color-muted);
+  content: attr(data-placeholder);
+  pointer-events: none;
 }
-.agent-composer__file .agent-composer__remove {
+.agent-composer__input[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+/* Pastille d’une référence (`/`, `$`, `@`) : non éditable, retirée par son « × ». */
+.reference-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(100%, 32ch);
+  min-height: 20px;
+  margin: 0 2px;
+  padding: 0 7px;
+  overflow: hidden;
+  vertical-align: baseline;
+  border-radius: 999px;
+  background: var(--color-surface-strong);
+  color: var(--color-ink);
+  font-size: var(--font-size-secondary);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reference-pill--editable {
+  user-select: all;
+}
+.reference-pill > button {
+  display: inline-grid;
   width: 20px;
   height: 20px;
-  min-width: 20px;
+  margin: 0 -5px 0 2px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  cursor: default;
+}
+.reference-pill > button:hover {
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+.reference-pill > button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 .agent-composer__folder > svg {
   flex: none;
@@ -206,8 +287,8 @@
   color: var(--color-muted);
   text-align: left;
 }
-/* Messages écrits pendant une réponse, en attente de la fin du tour. */
-.agent-composer__queue {
+/* Messages écrits pendant une réponse, en attente de la fin du tour : une ligne chacun, réordonnable. */
+.agent-composer__queue ol {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -226,9 +307,24 @@
   background: var(--color-surface);
   font-size: var(--font-size-secondary);
 }
-.agent-composer__queued > svg {
+/* Même largeur que la poignée (20 px) : le texte ne bouge pas quand la file passe à plusieurs messages. */
+.agent-composer__queued-mark {
   flex: none;
+  margin: 0 4px;
   color: var(--color-muted);
+}
+.agent-composer__queue .agent-composer__handle {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 20px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.agent-composer__queue .agent-composer__handle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
 }
 .agent-composer__queued-text {
   flex: 1;
@@ -237,7 +333,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-composer__queued-state {
+.agent-composer__queued-text .reference-pill {
+  min-height: 18px;
+  line-height: 18px;
+}
+.agent-composer__queued-actions {
+  display: flex;
   flex: none;
   color: var(--color-muted);
 }
