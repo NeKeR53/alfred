@@ -57,7 +57,10 @@ export function isLongChatText(text: string): boolean {
 /** Actions du store ajoutées par le moteur des conversations ; le relevé ne montre leurs boutons que si elles existent. */
 type TurnActions = {
   resend?: (conversationId: string, turnId: string) => Promise<unknown>;
-  fork?: (conversationId: string, turnId: string) => Promise<unknown>;
+  /** `"user"` : historique jusqu’avant ce tour ; `"reply"` : jusqu’à ce tour compris. */
+  fork?: (conversationId: string, turnId: string, from?: "user" | "reply") => Promise<unknown>;
+  /** Compteur des envois de l’utilisateur par conversation : le relevé se recolle en bas à chaque envoi. */
+  follow?: Record<string, number>;
 };
 
 type Block = { key: string; message?: string; activities?: Activity[] };
@@ -128,9 +131,12 @@ export function conversationModelLabel(conversation: Pick<Conversation, "model" 
 
 /** En-tête « Depuis {origine} · {date} », avec le modèle en infobulle, repris de la page Agents de OneApp. */
 export function TranscriptHeader({ conversation }: { conversation: Conversation }) {
+  // Une reprise (« Repartir d’ici ») vient de la conversation d’origine.
+  const forkedFrom = (conversation as Conversation & { forkedFrom?: { title: string } }).forkedFrom;
+  const origin = conversation.origin?.title ?? forkedFrom?.title;
   return (
     <p className="agents-page__context" title={conversationModelLabel(conversation)}>
-      {conversation.origin ? `Depuis ${conversation.origin.title} · ` : ""}
+      {origin ? `Depuis ${origin} · ` : ""}
       {formatDateTimeShort(conversation.createdAt)}
     </p>
   );
@@ -433,16 +439,18 @@ const TurnView = memo(function TurnView({
     () => (resend ? () => void resend(conversationId, turn.id).catch(report("Message non relancé")) : undefined),
     [resend, conversationId, turn.id],
   );
-  const onFork = useMemo(
-    () => (fork ? () => void fork(conversationId, turn.id).catch(report("Reprise impossible")) : undefined),
+  const forkFrom = useCallback(
+    (from: "user" | "reply") => fork && void fork(conversationId, turn.id, from).catch(report("Reprise impossible")),
     [fork, conversationId, turn.id],
   );
+  const onForkUser = useMemo(() => (fork ? () => forkFrom("user") : undefined), [fork, forkFrom]);
+  const onFork = useMemo(() => (fork ? () => forkFrom("reply") : undefined), [fork, forkFrom]);
   const images = useMemo(() => (running ? [] : producedImages(turn)), [running, turn]);
   const files = useMemo(() => (running ? [] : producedFiles(turn)), [running, turn]);
   const entryProps = { cwd, onQuote, onFork, onOpenFile };
   return (
     <>
-      <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onFork} />
+      <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onForkUser} />
       <li className="agent-chat__work">
         {running ? (
           <>
@@ -539,6 +547,7 @@ export function Transcript({
   const answerApproval = useAgents((state) => state.answerApproval);
   const resend = useAgents((state) => (state as unknown as TurnActions).resend);
   const fork = useAgents((state) => (state as unknown as TurnActions).fork);
+  const sent = useAgents((state) => (state as unknown as TurnActions).follow?.[conversation.id] ?? 0);
   const { id: conversationId, cwd, turns } = conversation;
 
   // Une longue conversation s’ouvre sur ses derniers échanges ; les précédents suivent en transition, interruptible,
@@ -557,6 +566,15 @@ export function Transcript({
   const question = agentQuestion(conversation, runtime);
   const permission = runtime.approvals[0];
   const growth = `${visibleTurns.length}:${lastTurn?.items.length}:${lastItem?.kind === "message" ? lastItem.content.length : 0}:${runtime.approvals.length}:${runtime.questions.length}:${question ? 1 : 0}`;
+
+  // Après un envoi de l’utilisateur, le relevé se recolle en bas, même s’il était remonté.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `sent` change à chaque envoi.
+  useLayoutEffect(() => {
+    if (!sent) return;
+    pinned.current = true;
+    const element = scroller.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [sent]);
 
   // Le relevé suit la réponse tant que l’utilisateur est resté en bas ; s’il remonte, on ne le ramène pas.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `growth` résume ce qui allonge le relevé.

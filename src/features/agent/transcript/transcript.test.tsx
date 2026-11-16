@@ -153,6 +153,7 @@ describe("présentation d’un tour", () => {
     expect(conversationModelLabel({ model: "gpt-5", effort: "high" })).toBe("gpt-5 · Élevé");
     expect(conversationModelLabel({})).toBeUndefined();
     expect(activityStatusLabel("cancelled")).toBe("Arrêté");
+    expect(activityStatusLabel("stopped")).toBe("Arrêté");
   });
 
   it("trouve les images citées hors des images insérées et des blocs de code, 8 au plus", () => {
@@ -249,8 +250,11 @@ describe("relevé", () => {
     render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
     fireEvent.click(screen.getByRole("button", { name: "Relancer le message" }));
     expect(resend).toHaveBeenCalledWith("c1", "t1");
-    fireEvent.click(screen.getAllByRole("button", { name: "Repartir d’ici" })[1]);
-    expect(fork).toHaveBeenCalledWith("c1", "t1");
+    const [fromUser, fromReply] = screen.getAllByRole("button", { name: "Repartir d’ici" });
+    fireEvent.click(fromUser);
+    expect(fork).toHaveBeenLastCalledWith("c1", "t1", "user");
+    fireEvent.click(fromReply);
+    expect(fork).toHaveBeenLastCalledWith("c1", "t1", "reply");
     useAgents.setState({ resend: undefined, fork: undefined } as never);
   });
 
@@ -444,5 +448,18 @@ describe("limite d’erreur", () => {
       </ErrorBoundary>,
     );
     expect(screen.getByText("Conversation")).toBeInTheDocument();
+  });
+});
+
+describe("en-tête d’une reprise", () => {
+  it("indique la conversation d’origine", () => {
+    render(
+      <Transcript
+        conversation={{ ...conversation([turn("t1")]), forkedFrom: { id: "c0", title: "Factures" } } as Conversation}
+        runtime={idle}
+        header
+      />,
+    );
+    expect(screen.getByText(/^Depuis Factures · /)).toBeInTheDocument();
   });
 });

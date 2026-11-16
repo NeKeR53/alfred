@@ -47,19 +47,19 @@ export function hasActivityOutput(activity: Activity): boolean {
   );
 }
 
-/** Statut lu d’une activité ; « Arrêté » pour une activité interrompue (`cancelled`, ajouté par le harnais). */
+/** Statut lu d’une activité ; « Arrêté » pour une activité interrompue (`cancelled` ou `stopped`, selon le harnais). */
 export function activityStatusLabel(status: string): string {
   return status === "failed"
     ? "Échec"
     : status === "completed"
       ? "Terminé"
-      : status === "cancelled"
+      : status === "cancelled" || status === "stopped"
         ? "Arrêté"
         : "En cours";
 }
 
 function isRunning(activity: Activity): boolean {
-  return !["completed", "failed", "cancelled"].includes(activity.status);
+  return !["completed", "failed", "cancelled", "stopped"].includes(activity.status);
 }
 
 function ActivityLabel({ activity }: { activity: Activity }) {
