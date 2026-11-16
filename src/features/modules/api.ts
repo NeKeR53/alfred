@@ -170,7 +170,9 @@ export function catalogAccesses(module: CatalogModule): ModuleAccess[] {
       kind: "module" as const,
       id: requirement.module,
       label: `fonctions et clients du module « ${requirement.module} »${
-        requirement.minVersion ? ` v${requirement.minVersion} ou plus` : ""
+        requirement.minVersion
+          ? ` v${requirement.minVersion} ou plus (v${requirement.minVersion.trim().replace(/^v/, "").split(".")[0]}.x)`
+          : ""
       }`,
     })),
     ...(module.clients ?? []).map((client) => ({

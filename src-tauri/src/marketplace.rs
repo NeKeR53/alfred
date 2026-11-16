@@ -251,6 +251,17 @@ pub fn refuse_as_workspace(state: &AppState, path: &Path) -> AppResult<()> {
     if path.join(MODULE_FILE).is_file() || !catalog_ids(path).is_empty() {
         return Err(refusal());
     }
+    // Un dépôt git nu (celui d’un marketplace sur un serveur ou un partage) n’a pas de fichiers où ranger un
+    // espace de travail.
+    let bare = !path.join(".git").exists()
+        && path.join("HEAD").is_file()
+        && path.join("objects").is_dir()
+        && path.join("refs").is_dir();
+    if bare {
+        return Err(AppError::new(
+            "Ce dossier est un dépôt git nu, comme celui d’un marketplace : il ne peut pas contenir un espace de travail. S’il s’agit d’un marketplace, ajoutez son adresse dans Réglages › Marketplaces, et choisissez un autre dossier pour l’espace de travail.",
+        ));
+    }
     Ok(())
 }
 
@@ -2566,6 +2577,7 @@ mod tests {
         git::run(root.path(), &["clone", "-q", &remote, &checkout.to_string_lossy()]).unwrap();
         let refused = refuse_as_workspace(&author, &checkout).unwrap_err();
         assert!(refused.message.contains("pas un espace de travail"), "{}", refused.message);
+        assert!(refuse_as_workspace(&author, Path::new(&remote)).unwrap_err().message.contains("dépôt git nu"));
         assert!(refuse_as_workspace(&author, &author_space.root).is_ok());
         assert!(refuse_as_workspace(&author, &root.path().join("nouveau")).is_ok());
 
