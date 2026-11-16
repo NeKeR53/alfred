@@ -4,6 +4,7 @@
   Pour la régénérer : servir ce dossier (avec un serveur qui accepte le POST de `window.save(nom)`, ou copier le
   PNG depuis `renderer.domElement.toDataURL()`), puis `pnpm tauri icon <rendu>.png` et `public/favicon.png` (64 px).
 -->
+
 <html><head><meta charset="utf-8"><style>html,body{margin:0;background:#888}canvas{display:block}</style>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.169.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.169.0/examples/jsm/"}}</script>
 </head><body>
@@ -90,7 +91,14 @@ const jacketShape = (() => {
   const m = (x, y) => s.moveTo(...P(x, y).toArray());
   const l = (x, y) => s.lineTo(...P(x, y).toArray());
   const q = (cx, cy, x, y) => s.quadraticCurveTo(...P(cx, cy).toArray(), ...P(x, y).toArray());
-  m(150, 1200); l(150, 720); q(150, 480, 400, 408); l(512, 380); l(624, 408); q(874, 480, 874, 720); l(874, 1200);
+  // Épaules jusqu’au col, puis une encolure creusée qui passe sous le col blanc : pas de pointe au-dessus.
+  const c = (x1, y1, x2, y2, x, y) => s.bezierCurveTo(...P(x1, y1).toArray(), ...P(x2, y2).toArray(), ...P(x, y).toArray());
+  m(150, 1200); l(150, 720);
+  c(150, 520, 300, 432, 440, 424);
+  c(470, 422, 486, 448, 512, 448);
+  c(538, 448, 554, 422, 584, 424);
+  c(724, 432, 874, 520, 874, 720);
+  l(874, 1200);
   s.closePath();
   return s;
 })();
@@ -110,6 +118,14 @@ const satin = new THREE.MeshPhysicalMaterial({ color: 0x2f333b, roughness: 0.22,
 extrude(path([[414, 410], [508, 870], [398, 640], [318, 566], [392, 524]]), 12, 10, 60, satin);
 extrude(path([[610, 410], [516, 870], [626, 640], [706, 566], [632, 524]]), 12, 10, 60, satin);
 
+// Col de chemise : bande arrondie qui ferme l’encolure.
+{
+  const band = new THREE.Shape();
+  band.moveTo(...P(436, 424).toArray());
+  band.bezierCurveTo(...P(440, 382).toArray(), ...P(584, 382).toArray(), ...P(588, 424).toArray());
+  band.bezierCurveTo(...P(560, 460).toArray(), ...P(464, 460).toArray(), ...P(436, 424).toArray());
+  extrude(band, 4, 8, 60, shirtMat);
+}
 // Col cassé
 const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.4, clearcoat: 0.3 });
 extrude(path([[512, 452], [432, 398], [460, 474]]), 4, 6, 80, white);
