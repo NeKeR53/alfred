@@ -65,13 +65,11 @@ function ConversationOptions({
   locked,
   responding,
   status,
-  hint,
 }: {
   conversation: Conversation;
   locked: boolean;
   responding: boolean;
   status?: ReactNode;
-  hint?: ReactNode;
 }) {
   const update = useAgents((state) => state.update);
   const spaceDir = useShell((state) => state.snapshot?.path ?? "");
@@ -81,7 +79,6 @@ function ConversationOptions({
   return (
     <div className="agent-composer__options">
       {status}
-      {hint}
       <span className="agent-composer__options-spacer" />
       <ModelPicker
         value={{ provider: conversation.provider, model: conversation.model, effort: conversation.effort }}
@@ -505,9 +502,6 @@ export function Composer({
   };
 
   const sendLabel = canResume && !filled ? "Relancer l’exécution" : responding ? "Envoyer maintenant" : "Envoyer";
-  const hint = responding ? (
-    <span className="agent-composer__hint">↩︎ pour envoyer, {queueShortcut} pour mettre en file</span>
-  ) : null;
   return (
     <div className="agent-composer">
       {draftsLoadError ? (
@@ -684,20 +678,11 @@ export function Composer({
         </div>
       </form>
       {compact ? (
-        hint || status ? (
-          <div className="agent-composer__options">
-            {status}
-            {hint}
-          </div>
+        status ? (
+          <div className="agent-composer__options">{status}</div>
         ) : null
       ) : (
-        <ConversationOptions
-          conversation={conversation}
-          locked={locked}
-          responding={responding}
-          status={status}
-          hint={hint}
-        />
+        <ConversationOptions conversation={conversation} locked={locked} responding={responding} status={status} />
       )}
     </div>
   );

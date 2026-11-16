@@ -85,7 +85,7 @@ describe("HtmlContent · affichage", () => {
     expect(shadow?.textContent).toContain("Bonjour");
     // Rien du courriel dans le document de la page lui-même.
     expect(container.querySelector("p")?.textContent ?? "").not.toContain("Bonjour");
-    (shadow?.querySelector("a[data-href]") as HTMLElement).click();
+    (shadow?.querySelector("a[data-href]") as HTMLElement | null)?.click();
     expect(onLink).toHaveBeenCalledWith("https://exemple.fr");
     await waitFor(() => expect(container.textContent).toContain("1 image masquée."));
     expect(shadow?.querySelector('img[src^="data:"]')).not.toBeNull();

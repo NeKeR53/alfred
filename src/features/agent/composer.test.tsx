@@ -454,13 +454,11 @@ describe("file d’attente", () => {
     await waitFor(() => expect(useComposerDrafts.getState().read("a").text).toBe("Corriger ceci"));
   });
 
-  it("pendant une réponse : « Arrêter l’agent », le rappel des raccourcis sur la ligne du modèle, modèle modifiable", async () => {
+  it("pendant une réponse : « Arrêter l’agent », pas d’aide des raccourcis sous la barre, modèle modifiable", async () => {
     render(<Composer conversation={conversation("a")} responding status={<span>3 fichiers modifiés</span>} />);
     expect(screen.getByRole("button", { name: "Arrêter l’agent" })).toBeInTheDocument();
-    const hint = screen.getByText(/pour envoyer, .* pour mettre en file/);
-    const options = hint.closest(".agent-composer__options");
-    expect(options).not.toBeNull();
-    expect(options).toHaveTextContent("3 fichiers modifiés");
+    expect(screen.queryByText(/pour envoyer, .* pour mettre en file/)).toBeNull();
+    expect(screen.getByText("3 fichiers modifiés").closest(".agent-composer__options")).not.toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: /^Modèle de l’agent/ })).toBeEnabled());
     expect(screen.getByRole("textbox", { name: "Message à Nouvelle conversation" })).toBeInTheDocument();
   });

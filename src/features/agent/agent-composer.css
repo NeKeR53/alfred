@@ -5,7 +5,6 @@
   flex-direction: column;
   min-width: 0;
   gap: 8px;
-  container-type: inline-size;
 }
 .agent-composer__box {
   display: flex;
@@ -110,7 +109,7 @@
   margin-left: 2px;
 }
 /* Sous la saisie, à droite et hors du cadre : modèle et raisonnement, puis le cadenas des demandes secrètes. */
-/* Une seule ligne, comme dans OneApp : Alfred y ajoute l’autonomie et le dossier, c’est l’aide qui cède la place. */
+/* Une seule ligne : statut à gauche, réglages à droite. */
 .agent-composer__options {
   display: flex;
   min-width: 0;
@@ -124,25 +123,8 @@
 .agent-composer__options-spacer {
   flex: 1 1 0;
 }
-.agent-composer__options > :not(.agent-composer__hint, .agent-composer__options-spacer) {
+.agent-composer__options > :not(.agent-composer__options-spacer) {
   flex: none;
-}
-/* Trop étroit pour l’aide : elle disparaît plutôt que de se réduire à « … ». */
-@container (max-width: 520px) {
-  .agent-composer__hint {
-    display: none;
-  }
-}
-/* Rappel des raccourcis pendant que l’agent travaille : envoyer tout de suite ou mettre en file. */
-.agent-composer__hint {
-  flex: 0 1000 auto;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 8px;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* Sélecteur de modèle */
 /* Choix compact : harnais, modèle en liste déroulante, puis raisonnement en curseur. */
