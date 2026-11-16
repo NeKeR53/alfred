@@ -14,7 +14,7 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `alert`, `confirm`, `prompt` | bloqués | `useConfirm`, `Dialog` de `@alfred/ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, 5.2) |
-| un paquet npm, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | du code dans `lib/` du module |
+| un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |
 
 Le cadre d’une page est recréé quand l’utilisateur change d’onglet et chaque fois que l’espace change : un état React ne dure pas. Ce qui doit durer va en base.
 

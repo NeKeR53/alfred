@@ -1,6 +1,7 @@
 //! Transpilation des pages et des fonctions : TSX vers un module ES que le cadre isolé charge tel quel. Aucun
 //! contrôle de types n’est fait ici ; les erreurs de syntaxe et les imports interdits sont signalés à l’agent.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use oxc::allocator::Allocator;
@@ -49,6 +50,7 @@ fn diagnostics(source: &str, errors: impl IntoIterator<Item = oxc::diagnostics::
 }
 
 /// Transpile un fichier `.ts` ou `.tsx`. `Err` porte toutes les erreurs trouvées, positions comprises.
+#[cfg(test)]
 pub fn transpile(source: &str, file_name: &str) -> Result<String, Vec<Diagnostic>> {
     transpile_at(source, file_name, usize::MAX)
 }
@@ -71,7 +73,19 @@ fn escapes_module(specifier: &str, depth: usize) -> bool {
 
 /// Comme `transpile`, pour un fichier situé à `depth` dossiers de la racine de son module : un import relatif qui
 /// en sortirait est refusé, car un module ne dépend jamais du code d’un autre.
+#[cfg(test)]
 pub fn transpile_at(source: &str, file_name: &str, depth: usize) -> Result<String, Vec<Diagnostic>> {
+    transpile_in(source, file_name, depth, &BTreeMap::new())
+}
+
+/// Comme `transpile_at`, avec les librairies du module (nom importé → fichier d’entrée de `vendor/`) : une page les
+/// importe par leur nom, et ce nom devient le chemin du fichier.
+pub fn transpile_in(
+    source: &str,
+    file_name: &str,
+    depth: usize,
+    libraries: &BTreeMap<String, String>,
+) -> Result<String, Vec<Diagnostic>> {
     let allocator = Allocator::default();
     let path = Path::new(file_name);
     let source_type = if file_name.ends_with(".tsx") { SourceType::tsx() } else { SourceType::ts() };
@@ -79,7 +93,7 @@ pub fn transpile_at(source: &str, file_name: &str, depth: usize) -> Result<Strin
     if !parsed.diagnostics.is_empty() || parsed.fatal_error {
         return Err(diagnostics(source, parsed.diagnostics));
     }
-    let mut program = parsed.program;
+    let program = parsed.program;
 
     // Le registre du module liste chaque import et réexport, quelle que soit sa forme.
     let mut import_errors = Vec::new();
@@ -87,7 +101,7 @@ pub fn transpile_at(source: &str, file_name: &str, depth: usize) -> Result<Strin
         let specifier = specifier.as_str();
         let relative = specifier.starts_with("./") || specifier.starts_with("../");
         let outside = relative && depth != usize::MAX && escapes_module(specifier, depth);
-        if (relative && !outside) || ALLOWED_IMPORTS.contains(&specifier) {
+        if (relative && !outside) || ALLOWED_IMPORTS.contains(&specifier) || libraries.contains_key(specifier) {
             continue;
         }
         for request in requests {
@@ -97,7 +111,7 @@ pub fn transpile_at(source: &str, file_name: &str, depth: usize) -> Result<Strin
                     format!("Import interdit : « {specifier} » sort du module. Un module n’importe que ses propres fichiers.")
                 } else {
                     format!(
-                        "Import interdit : « {specifier} ». Seuls {} et les fichiers du module (./…) sont disponibles.",
+                        "Import interdit : « {specifier} ». Seuls {}, les fichiers du module (./…) et ses librairies sont disponibles ; une autre librairie npm s’ajoute au module avec `set_libraries`.",
                         ALLOWED_IMPORTS.join(", ")
                     )
                 },
@@ -110,6 +124,17 @@ pub fn transpile_at(source: &str, file_name: &str, depth: usize) -> Result<Strin
     if !import_errors.is_empty() {
         return Err(import_errors);
     }
+
+    // Les librairies importées par leur nom pointent vers leur fichier de `vendor/` ; on relit la source réécrite.
+    let linked = crate::libraries::link(source, source_type, depth, libraries);
+    let relinked;
+    let mut program = match &linked {
+        Some(linked) => {
+            relinked = Parser::new(&allocator, linked, source_type).parse();
+            relinked.program
+        }
+        None => program,
+    };
 
     let semantic = SemanticBuilder::new().with_excess_capacity(2.0).build(&program);
     if !semantic.diagnostics.is_empty() {

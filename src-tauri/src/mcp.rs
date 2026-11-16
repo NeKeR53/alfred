@@ -413,6 +413,26 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["target", "hidden"],
         ),
         tool(
+            "set_libraries",
+            "Fixe la liste complète des librairies npm d’un module (elle remplace la précédente ; une liste vide les retire). Alfred télécharge chaque paquet et ses dépendances en modules ES dans `modules/<module>/vendor/` ; une page ou une fonction du module l’importe ensuite par son nom exact (`import { useEditor } from \"@tiptap/react\"`), sous-chemin compris s’il est déclaré (« @tiptap/pm/state »). React et React DOM restent ceux d’Alfred ; une librairie qui demande autre chose de React (react-dom/server…) est refusée. À réserver à ce que `@alfred/ui` ne fait pas (éditeur de texte riche, graphiques, calendrier…). Ne jamais écrire dans `vendor/` à la main. Version omise : celle déjà installée, sinon la dernière publiée ; donner la même version aux paquets d’une même famille (@tiptap/…). Puis `check`.",
+            json!({
+                "module": { "type": "string" },
+                "libraries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Nom importé : paquet npm, avec un sous-chemin éventuel (« @tiptap/pm/state »)." },
+                            "version": { "type": "string", "description": "Version exacte (« 3.4.2 ») ; omise, la version installée ou la dernière." },
+                        },
+                        "required": ["name"],
+                        "additionalProperties": false,
+                    },
+                },
+            }),
+            &["module", "libraries"],
+        ),
+        tool(
             "check",
             "Vérifie l’espace : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
             json!({ "module": { "type": "string", "description": "Limiter la vérification à un module." } }),
@@ -522,6 +542,8 @@ fn overview(snapshot: &Snapshot, clients: Value) -> Value {
         "modules": snapshot.modules.iter().map(|module| json!({
             "module": module.id, "name": module.name, "version": module.version, "readOnly": module.read_only,
             "hidden": module.hidden, "requires": module.requires, "requiredBy": module.required_by,
+            "libraries": crate::libraries::lock(std::path::Path::new(&snapshot.path).join("modules").join(&module.id).as_path())
+                .libraries.into_iter().map(|(name, library)| json!({ "name": name, "version": library.version })).collect::<Vec<_>>(),
             "directory": format!("{}/modules/{}", snapshot.path, module.id),
         })).collect::<Vec<_>>(),
         "functions": snapshot.functions.iter().map(|function| json!({
@@ -565,6 +587,17 @@ fn module_files(space: &crate::space::Space, snapshot: &Snapshot, keep: &impl Fn
             manifest.pages.iter().map(|page| space.page_file(&manifest.id, &page.id)).collect();
         declared.extend(manifest.functions.iter().map(|function| space.function_file(&manifest.id, &function.id)));
         let root = space.module_dir(&manifest.id);
+        let libraries = crate::libraries::entries(&root);
+        let altered = crate::libraries::altered_files(&root);
+        if !altered.is_empty() {
+            problems.push(json!({
+                "file": format!("modules/{}/{}", manifest.id, crate::libraries::DIR),
+                "problem": format!(
+                    "Fichiers de librairie modifiés ou absents ({}) : ne jamais les écrire à la main, rappeler `set_libraries` avec la même liste.",
+                    altered.join(", ")
+                ),
+            }));
+        }
         let mut found = Vec::new();
         script_files(&root, &mut found);
         for path in found.into_iter().filter(|path| !declared.contains(path)) {
@@ -574,7 +607,7 @@ fn module_files(space: &crate::space::Space, snapshot: &Snapshot, keep: &impl Fn
             let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
             match std::fs::read_to_string(&path) {
                 Ok(source) => {
-                    if let Err(errors) = crate::transpile::transpile_at(&source, &name, depth) {
+                    if let Err(errors) = crate::transpile::transpile_in(&source, &name, depth, &libraries) {
                         problems.push(json!({ "file": file, "errors": errors }));
                     }
                 }
@@ -860,6 +893,31 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 state.emit("space:changed", Value::Null);
             }
             Ok(json!({ "target": target, "hidden": hidden, "changed": changed.is_some() }))
+        }
+        "set_libraries" => {
+            let module: String = arg(args, "module")?;
+            let wanted: Vec<crate::libraries::Wanted> = arg(args, "libraries")?;
+            let manifest = space.module(&module)?;
+            if manifest.read_only() {
+                return Err(AppError::new(format!(
+                    "Le module « {} » est installé depuis un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
+                    manifest.name
+                )));
+            }
+            let report =
+                crate::libraries::install(&crate::clients::http()?, &space.module_dir(&manifest.id), &wanted).await?;
+            state.emit("space:changed", Value::Null);
+            Ok(json!({
+                "libraries": report.libraries.iter().map(|(name, library)| json!({ "name": name, "version": library.version })).collect::<Vec<_>>(),
+                "files": report.files,
+                "kilobytes": report.bytes / 1024,
+                "warnings": report.warnings,
+                "next": if report.libraries.is_empty() {
+                    "Librairies retirées : enlever leurs imports, puis appeler `check`."
+                } else {
+                    "Importer chaque librairie par son nom exact dans les pages ou fonctions du module, puis appeler `check` et vérifier la page avec `page_screenshot`."
+                },
+            }))
         }
         "check" => {
             let module: Option<String> = opt_arg(args, "module")?;

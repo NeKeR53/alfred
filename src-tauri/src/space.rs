@@ -917,13 +917,14 @@ impl Space {
             |module: &str| manifest.layout.overrides.get(&module_key(module)).is_some_and(|o| o.hidden);
         let page_override = |reference: &str| manifest.layout.overrides.get(&format!("page:{reference}"));
         let mut pages: Vec<(ResolvedPage, Placement)> = Vec::new();
+        let libraries = |module: &str| crate::libraries::entries(&self.module_dir(module));
         for module in &modules {
             for page in &module.pages {
                 let reference = format!("{}/{}", module.id, page.id);
                 let overridden = page_override(&reference);
                 let file = self.page_file(&module.id, &page.id);
                 let (missing, errors) = match fs::read_to_string(&file) {
-                    Ok(source) => (false, transpile::transpile_at(&source, "page.tsx", 1).err().unwrap_or_default()),
+                    Ok(source) => (false, transpile::transpile_in(&source, "page.tsx", 1, &libraries(&module.id)).err().unwrap_or_default()),
                     Err(_) => (true, Vec::new()),
                 };
                 let placement = overridden
@@ -1031,7 +1032,7 @@ impl Space {
                 let file = self.function_path(&module.id, function);
                 let (missing, mut errors) = match fs::read_to_string(&file) {
                     Ok(_) if function.runtime.is_script() => (false, Vec::new()),
-                    Ok(source) => (false, transpile::transpile_at(&source, "function.ts", 1).err().unwrap_or_default()),
+                    Ok(source) => (false, transpile::transpile_in(&source, "function.ts", 1, &libraries(&module.id)).err().unwrap_or_default()),
                     Err(_) => (true, Vec::new()),
                 };
                 if let Some(message) = crate::scripts::availability(function.runtime) {

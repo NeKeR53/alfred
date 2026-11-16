@@ -1524,7 +1524,20 @@ fn verify(space: &Space, manifest: &ModuleManifest, published_manifest: &str, no
         }
     }
 
+    // Librairies (`vendor/`) : du code tiers téléchargé par Alfred, vérifié par son empreinte plutôt que ligne à ligne.
+    let libraries = crate::libraries::entries(&dir);
+    for file in crate::libraries::altered_files(&dir) {
+        problems.push(Problem {
+            file: format!("{}/{file}", crate::libraries::DIR),
+            line: None,
+            column: None,
+            message: "Fichier de librairie modifié ou absent : réinstaller les librairies du module.".to_string(),
+        });
+    }
     for file in list_files(&dir) {
+        if file.starts_with(&format!("{}/", crate::libraries::DIR)) {
+            continue;
+        }
         let Ok(bytes) = fs::read(dir.join(&file)) else {
             problems.push(Problem { file, line: None, column: None, message: "Fichier illisible.".to_string() });
             continue;
@@ -1535,7 +1548,7 @@ fn verify(space: &Space, manifest: &ModuleManifest, published_manifest: &str, no
         }
         let text = String::from_utf8_lossy(&bytes);
         if file.ends_with(".ts") || file.ends_with(".tsx") {
-            for diagnostic in transpile::transpile(&text, &file).err().unwrap_or_default() {
+            for diagnostic in transpile::transpile_in(&text, &file, usize::MAX, &libraries).err().unwrap_or_default() {
                 problems.push(Problem {
                     file: file.clone(),
                     line: diagnostic.line,

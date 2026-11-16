@@ -12,6 +12,7 @@ mod error;
 mod events;
 mod functions;
 mod git;
+mod libraries;
 mod marketplace;
 mod mcp;
 mod oauth;

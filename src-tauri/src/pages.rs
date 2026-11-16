@@ -92,7 +92,18 @@ fn module_script(state: &AppState, module: &str, rest: &str) -> PageResponse {
     if !crate::space::valid_id(module) {
         return PageResponse::not_found();
     }
-    let Some(base) = safe_join(&space.module_dir(module), rest) else { return PageResponse::not_found() };
+    let root = space.module_dir(module);
+    // Fichier d’une librairie (`vendor/….mjs`) : déjà en JavaScript, servi tel quel.
+    if let Some(file) = rest.strip_prefix(&format!("{}/", crate::libraries::DIR)) {
+        if !crate::libraries::is_vendor_file(file) {
+            return PageResponse::not_found();
+        }
+        return match std::fs::read(root.join(crate::libraries::DIR).join(file)) {
+            Ok(body) => PageResponse::new(200, "text/javascript; charset=utf-8", body),
+            Err(_) => PageResponse::not_found(),
+        };
+    }
+    let Some(base) = safe_join(&root, rest) else { return PageResponse::not_found() };
     let candidates = [
         base.clone(),
         base.with_extension("tsx"),
@@ -109,7 +120,7 @@ fn module_script(state: &AppState, module: &str, rest: &str) -> PageResponse {
     }
     let Ok(source) = std::fs::read_to_string(file) else { return PageResponse::not_found() };
     let depth = rest.matches('/').count();
-    let script = match transpile::transpile_at(&source, &name, depth) {
+    let script = match transpile::transpile_in(&source, &name, depth, &crate::libraries::entries(&root)) {
         Ok(code) => code,
         // Le cadre affiche l’erreur à la place de la page, et la coquille la transmet à l’agent.
         Err(diagnostics) => format!(
@@ -186,6 +197,41 @@ mod tests {
             assert!(csp.contains(directive), "{directive} absent de {csp}");
         }
         assert!(String::from_utf8(page.body).unwrap().contains(r#"x-dns-prefetch-control" content="off""#));
+    }
+
+    /// Une librairie installée se charge par la clé du module, et une page l’importe par son nom.
+    #[test]
+    fn a_page_loads_the_libraries_of_its_module() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let space = state.space().unwrap();
+        space
+            .place_page("Notes", None, "", &crate::space::PlaceTarget::Menu { label: "Notes".into(), icon: None, color: None }, None)
+            .unwrap();
+        let root = space.module_dir("notes");
+        std::fs::write(
+            root.join("pages/notes.tsx"),
+            "import { make } from \"petit-editeur\";\nexport default function Page() { return make(); }",
+        )
+        .unwrap();
+        let get = |path: String| respond(&state, &path, "", "alfred-page:");
+        let key = frame_key(&state, "notes");
+        // Sans librairie installée, l’import est refusé à la compilation.
+        let refused = String::from_utf8(get(format!("/m/notes/{key}/pages/notes")).body).unwrap();
+        assert!(refused.contains("Import interdit"), "{refused}");
+
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/abc-editeur.mjs"), "export const make = () => null;").unwrap();
+        std::fs::write(
+            root.join("vendor/libraries.json"),
+            r#"{"source":"https://esm.sh","libraries":{"petit-editeur":{"version":"1.0.0","entry":"abc-editeur.mjs"}},"files":{}}"#,
+        )
+        .unwrap();
+        let page = String::from_utf8(get(format!("/m/notes/{key}/pages/notes")).body).unwrap();
+        assert!(page.contains("\"../vendor/abc-editeur.mjs\""), "{page}");
+        let library = get(format!("/m/notes/{key}/vendor/abc-editeur.mjs"));
+        assert_eq!((library.status, library.content_type), (200, "text/javascript; charset=utf-8"));
+        assert_eq!(get(format!("/m/notes/{key}/vendor/libraries.json")).status, 404);
+        assert_eq!(get("/m/notes/vendor/abc-editeur.mjs".into()).status, 404);
     }
 
     /// Le code d’un module ne sort que par la clé de ce module : une page ne charge pas celui d’un autre.
