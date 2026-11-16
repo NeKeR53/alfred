@@ -5,7 +5,7 @@
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{
     JSXAttribute, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement, JSXElementName,
-    JSXOpeningElement,
+    JSXExpression, JSXOpeningElement,
 };
 use oxc::ast_visit::{walk, Visit};
 use oxc::parser::Parser;
@@ -34,6 +34,19 @@ const ICON_VERBS: [(&str, &str); 16] = [
     ("Réglages", "Settings"),
     ("Paramètres", "Settings"),
     ("Plus", "OverflowMenu"),
+];
+
+/// Briques que les gabarits posent eux-mêmes : une page ne les emploie pas, elle décrit ses données et ses actions.
+const TEMPLATE_PARTS: [(&str, &str); 9] = [
+    ("PageToolbar", "les props `actions` et `search` de `Page`, ou `CollectionPage` pour une liste"),
+    ("ToolbarSeparator", "les props `actions` de `Page`, ou `CollectionPage`"),
+    ("SettingRow", "`SettingsPage` et ses réglages (`switch`, `select`, `text`, `action`, `info`)"),
+    ("SettingRows", "`SettingsPage` et ses réglages (`switch`, `select`, `text`, `action`, `info`)"),
+    ("Modal", "`openForm({ title, fields, submitLabel, onSubmit })`"),
+    ("ConfirmDialog", "une `Action` avec `danger` et `confirm`, ou `confirmAction(…)`"),
+    ("FormActions", "`openForm(…)`, qui pose ses boutons"),
+    ("AnchoredPanel", "un filtre de `CollectionPage` ou une `Action` qui ouvre `openForm`"),
+    ("ObjectHeader", "`DetailPanel`, qui pose le nom, l’état et les actions de l’objet"),
 ];
 
 /// Où se trouve l’élément visité : élément parent, ou attribut d’un élément (`actions` de `Section`…).
@@ -165,6 +178,46 @@ impl Lint<'_> {
             self.report(start, format!("Balise HTML `<{name}>` dans une page : utiliser {instead} (DESIGN.md, section 1)."));
         }
 
+        if let Some((_, instead)) = TEMPLATE_PARTS.iter().find(|(part, _)| *part == name) {
+            self.report(
+                start,
+                format!(
+                    "`<{name}>` est posé par les gabarits : utiliser {instead} (DESIGN.md, section 2). La page décrit ses données et ses actions, Alfred les dispose."
+                ),
+            );
+        }
+
+        if name == "Page" && attribute(opening, "toolbar").is_some() {
+            self.report(
+                start,
+                "`<Page toolbar>` est réservé aux gabarits : passer `actions` (une liste d’`Action`) et `search` à `Page`.".to_string(),
+            );
+        }
+
+        for owner in ["Section", "Page", "ObjectHeader"] {
+            if name != owner {
+                continue;
+            }
+            if let Some(actions) = attribute(opening, "actions") {
+                let jsx = match &actions.value {
+                    Some(JSXAttributeValue::Element(_) | JSXAttributeValue::Fragment(_)) => true,
+                    Some(JSXAttributeValue::ExpressionContainer(container)) => matches!(
+                        container.expression,
+                        JSXExpression::JSXElement(_) | JSXExpression::JSXFragment(_)
+                    ),
+                    _ => false,
+                };
+                if jsx {
+                    self.report(
+                        actions.span.start,
+                        format!(
+                            "`actions` de `<{name}>` reçoit une liste d’`Action` (`{{ label, icon, onClick, primary, danger }}`), pas des boutons : Alfred choisit icône, texte ou menu « ⋯ »."
+                        ),
+                    );
+                }
+            }
+        }
+
         if matches!(name.as_str(), "SelectControl" | "TextInput")
             && attribute(opening, "width").and_then(string_value).as_deref() == Some("full")
             && (self.inside_element(&["Row", "PageToolbar", "SettingRow"]) || self.in_compact_actions())
@@ -271,6 +324,29 @@ export default function P() {
     }
 
     #[test]
+    fn impose_les_gabarits_et_les_actions_declarees() {
+        let page = r#"
+export default function P() {
+  return (
+    <Page toolbar={<PageToolbar />} actions={<Button>Nouveau</Button>}>
+      <Section title="Équipe" actions={[{ label: "Ajouter un membre", onClick: ajouter }]}>
+        <SettingRows><SettingRow title="x" /></SettingRows>
+      </Section>
+      <Modal open title="Renommer" />
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.contains("`<PageToolbar>` est posé par les gabarits")), "{found:?}");
+        assert!(found.iter().any(|m| m.contains("`<Page toolbar>`")), "{found:?}");
+        assert!(found.iter().any(|m| m.contains("`actions` de `<Page>`")), "{found:?}");
+        assert!(!found.iter().any(|m| m.contains("`actions` de `<Section>`")), "une liste d’actions convient : {found:?}");
+        assert!(found.iter().any(|m| m.contains("`<SettingRow>`") && m.contains("`SettingsPage`")), "{found:?}");
+        assert!(found.iter().any(|m| m.contains("`<Modal>`") && m.contains("`openForm(")), "{found:?}");
+    }
+
+    #[test]
     fn demande_une_icone_pour_une_action_courante_dans_une_barre() {
         let page = r#"
 export default function P() {
@@ -308,13 +384,26 @@ export default function P() {
     #[test]
     fn une_page_conforme_ne_recoit_aucune_remarque() {
         let page = r#"
+import { Pencil } from "lucide-react";
 export default function P() {
   return (
-    <Page toolbar={<PageToolbar start={<SearchField label="Rechercher" />}><RefreshButton /><Button variant="primary">Nouvelle tâche</Button></PageToolbar>}>
-      <ObjectHeader title="Tâche" actions={<IconButton label="Modifier la tâche"><Pencil size={16} aria-hidden="true" /></IconButton>} />
-      <Modal open title="Renommer" actions={<><Button>Annuler</Button><Button variant="primary">Enregistrer</Button></>}>
-        <Form id="f" onSubmit={() => {}}><FormField label="Nom"><TextInput /></FormField></Form>
-      </Modal>
+    <CollectionPage
+      label="Tâches"
+      load={charger}
+      rowKey={(t) => t.id}
+      columns={[{ key: "titre", header: "Titre" }]}
+      emptyTitle="Aucune tâche"
+      actions={[{ label: "Nouvelle tâche", primary: true, onClick: () => openForm({ title: "Nouvelle tâche", fields: [{ name: "titre", label: "Titre" }], submitLabel: "Créer", onSubmit: creer }) }]}
+      rowActions={(t) => [{ label: "Modifier", icon: Pencil, onClick: () => modifier(t) }]}
+    />
+  );
+}
+function Autre() {
+  return (
+    <Page actions={[{ label: "Actualiser", onClick: recharger }]}>
+      <Section title="Résumé" actions={[{ label: "Copier", onClick: copier }]}>
+        <Text>Contenu</Text>
+      </Section>
     </Page>
   );
 }

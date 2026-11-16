@@ -1,5 +1,9 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, isValidElement, type ReactNode } from "react";
+import { type Action, ActionBar } from "../templates/actions";
+import { TemplateDialogHost } from "../templates/dialogs";
+import { PageToolbar } from "./PageToolbar";
 import { PageScope } from "./pageScope";
+import { SearchField } from "./SearchField";
 import "./page.css";
 
 type Gap = "none" | "xs" | "sm" | "md" | "lg";
@@ -13,18 +17,43 @@ const gapClass = (gap: Gap) => `al-gap-${gap}`;
 export function Page({
   children,
   toolbar,
+  actions,
+  search,
   width = "full",
 }: {
   children: ReactNode;
-  /** Barre d’actions fixe au-dessus du contenu (`PageToolbar`). */
+  /** Barre fixe au-dessus du contenu, réservée à la coquille et aux gabarits : une page passe `actions` et `search`. */
   toolbar?: ReactNode;
+  /** Actions de la page, disposées par Alfred dans la barre du haut (icônes, « ⋯ », action principale). */
+  actions?: ReadonlyArray<Action>;
+  /** Recherche de la page, à gauche de la barre. */
+  search?: { label: string; value: string; onChange: (value: string) => void };
   /** `text` limite la largeur de lecture ; `full` sert aux tableaux et aux vues denses. */
   width?: "full" | "text";
 }) {
+  const bar =
+    toolbar ??
+    (actions?.length || search ? (
+      <PageToolbar
+        start={
+          search ? (
+            <SearchField
+              label={search.label}
+              placeholder="Rechercher…"
+              value={search.value}
+              onChange={(event) => search.onChange(event.target.value)}
+            />
+          ) : undefined
+        }
+      >
+        {actions ? <ActionBar actions={actions} place="toolbar" /> : null}
+      </PageToolbar>
+    ) : undefined);
   return (
     <PageScope.Provider value={true}>
       <div className="al-page">
-        {toolbar}
+        <TemplateDialogHost />
+        {bar}
         <div className={`al-page__body${width === "text" ? " al-page__body--text" : ""}`}>{children}</div>
       </div>
     </PageScope.Provider>
@@ -106,6 +135,14 @@ export function ObjectHeader({
   );
 }
 
+function isActionList(value: unknown): value is ReadonlyArray<Action> {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => item && typeof item === "object" && !isValidElement(item) && "onClick" in item)
+  );
+}
+
 /** Bloc titré d’une page : titre, description facultative, actions à droite, puis le contenu. */
 export function Section({
   title,
@@ -115,9 +152,15 @@ export function Section({
 }: {
   title: string;
   description?: string;
-  actions?: ReactNode;
+  /** Actions du bloc : une liste d’`Action` (disposée par Alfred), ou des composants. */
+  actions?: ReactNode | ReadonlyArray<Action>;
   children: ReactNode;
 }) {
+  const shown: ReactNode = isActionList(actions) ? (
+    <ActionBar actions={actions} place="section" />
+  ) : (
+    (actions as ReactNode)
+  );
   return (
     <section className="al-section">
       <header className="al-section__header">
@@ -125,7 +168,7 @@ export function Section({
           <h2>{title}</h2>
           {description ? <p>{description}</p> : null}
         </div>
-        {actions ? <div className="al-section__actions">{actions}</div> : null}
+        {shown ? <div className="al-section__actions">{shown}</div> : null}
       </header>
       {children}
     </section>

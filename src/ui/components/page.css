@@ -275,3 +275,30 @@
   margin: 0 4px;
   background: var(--line);
 }
+.al-action-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+/* L’action principale se détache des icônes. */
+.al-action-bar > .ui-button:last-child,
+.al-action-bar > button:not(.icon-button):last-child {
+  margin-left: 4px;
+}
+.al-action-bar--row {
+  justify-content: flex-end;
+  gap: 2px;
+}
+/* Actions d’une ligne : visibles au survol, au focus, sur la ligne sélectionnée et pendant qu’un menu est ouvert. */
+@media (hover: hover) {
+  .al-table
+    tbody
+    tr:not(:hover, :focus-within, [aria-selected="true"])
+    .al-action-bar--row:not(:has([aria-expanded="true"], [aria-busy="true"])) {
+    opacity: 0;
+  }
+}
+.al-table td:has(> .al-action-bar--row) {
+  padding-block: 4px;
+}
