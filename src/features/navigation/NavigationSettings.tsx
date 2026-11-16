@@ -339,7 +339,7 @@ export function NavigationSettings() {
       </Section>
       <Section
         title="Pages des Réglages"
-        description="Les pages de l’espace placées dans les Réglages, après les onglets intégrés."
+        description="Les pages de l’espace de travail placées dans les Réglages, après les onglets intégrés."
       >
         <PageRows place={SETTINGS_SECTION} pages={settingsPages} onRename={setRenaming} onHistory={setHistory} />
       </Section>

@@ -25,7 +25,7 @@ export interface ModuleAccess {
 export interface DependencyStep {
   module: string;
   name: string;
-  /** `install` : absente, installée et masquée du menu ; `update` : trop ancienne, mise à jour. */
+  /** `install` : absente, importée et masquée du menu ; `update` : mise à jour, sans changer de version majeure. */
   action: "install" | "update";
   version: string;
 }
@@ -86,9 +86,24 @@ export interface CatalogModule {
   blocked?: string;
   /** Version installée depuis ce marketplace, ou `null`. */
   installed?: string | null;
-  /** Un module de même identifiant existe déjà dans l’espace sans venir de ce marketplace. */
+  /** Un module de même identifiant existe déjà dans l’espace de travail sans venir de ce marketplace. */
   conflict?: boolean;
+  /** Module développé dans cet espace de travail et publié sur ce marketplace : version publiée et version locale. */
+  own?: { version: string; local: string } | null;
   notes?: string;
+}
+
+/** Dernière publication d’un module développé dans l’espace de travail. */
+export interface ModulePublication {
+  module: string;
+  /** Marketplace branché qui l’a reçue, ou `null` s’il n’est plus branché. */
+  marketplace: string | null;
+  marketplaceName: string | null;
+  /** Adresse git du marketplace. */
+  source: string;
+  version: string;
+  /** Le module a changé depuis cette publication. */
+  modified: boolean;
 }
 
 export interface PublishProblem {
@@ -109,6 +124,7 @@ export const marketplaceApi = {
   remove: (id: string) => invoke<null>("marketplace.remove", { id }),
   refresh: (id?: string) => invoke<Marketplace[]>("marketplace.refresh", id ? { id } : {}),
   modules: (id: string) => invoke<CatalogModule[]>("marketplace.modules", { id }),
+  publications: () => invoke<ModulePublication[]>("marketplace.publications"),
   install: (marketplace: string, module: string) => invoke("marketplace.install", { marketplace, module }),
   updates: (refresh: boolean) => invoke<ModuleUpdate[]>("marketplace.updates", { refresh }),
   update: (module: string) => invoke<{ from: string; to: string }>("marketplace.update", { module }),
@@ -154,7 +170,9 @@ export function catalogAccesses(module: CatalogModule): ModuleAccess[] {
       kind: "module" as const,
       id: requirement.module,
       label: `fonctions et clients du module « ${requirement.module} »${
-        requirement.minVersion ? ` v${requirement.minVersion} ou plus` : ""
+        requirement.minVersion
+          ? ` v${requirement.minVersion} ou plus (v${requirement.minVersion.trim().replace(/^v/, "").split(".")[0]}.x)`
+          : ""
       }`,
     })),
     ...(module.clients ?? []).map((client) => ({

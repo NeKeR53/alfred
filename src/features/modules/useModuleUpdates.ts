@@ -35,7 +35,8 @@ export const useModuleUpdatesStore = create<ModuleUpdatesState>((set) => ({
 
 /** Mises à jour que l’utilisateur peut appliquer : disponibles, hors modules figés. */
 export function countPendingUpdates(updates: ModuleUpdate[]): number {
-  return updates.filter((update) => update.available !== null && !update.pinned).length;
+  // Une mise à jour figée ou bloquée (nouvelle majeure qu’un autre module refuse) reste signalée, sans compter.
+  return updates.filter((update) => update.available !== null && !update.pinned && !update.blocked).length;
 }
 
 /** Ce qui, dans la liste des modules, change l’état des mises à jour ; `null` sans espace ouvert. */

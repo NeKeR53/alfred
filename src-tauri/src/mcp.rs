@@ -134,7 +134,7 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
             "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-03-26"),
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "alfred", "title": "Alfred", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace avant de s’en servir.",
+            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace de travail avant de s’en servir.",
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools(state, conversation) })),
@@ -236,7 +236,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let mut list = vec![
         tool(
             "space_overview",
-            "État de l’espace : sections et leurs onglets, panneaux, pages des Réglages, modules, fonctions, clients déclarés et problèmes détectés. À appeler avant de créer ou de modifier quoi que ce soit.",
+            "État de l’espace de travail : sections et leurs onglets, panneaux, pages des Réglages, modules, fonctions, clients déclarés et problèmes détectés. À appeler avant de créer ou de modifier quoi que ce soit.",
             json!({}),
             &[],
         ),
@@ -328,7 +328,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "vault_store",
-            "Crée ou met à jour une entrée du coffre (trousseau du système). Chaque champ secret vient de `secrets` (valeur donnée par l’utilisateur ou que tu as obtenue) ou, de préférence, de `fromCommand` : Alfred exécute la commande dans l’espace et range sa sortie standard sans jamais te la renvoyer (ex. `gog auth token`, `pbpaste`). Types : `token` (champ secret `value`), `basic` (meta `username`, secret `password`), `oauth2` (meta `clientId`, secret facultatif `clientSecret`), `clientCredentials` (meta `clientId`, secret `clientSecret`). Ne renvoie jamais la valeur.",
+            "Crée ou met à jour une entrée du coffre (trousseau du système). Chaque champ secret vient de `secrets` (valeur donnée par l’utilisateur ou que tu as obtenue) ou, de préférence, de `fromCommand` : Alfred exécute la commande dans l’espace de travail et range sa sortie standard sans jamais te la renvoyer (ex. `gog auth token`, `pbpaste`). Types : `token` (champ secret `value`), `basic` (meta `username`, secret `password`), `oauth2` (meta `clientId`, secret facultatif `clientSecret`), `clientCredentials` (meta `clientId`, secret `clientSecret`). Ne renvoie jamais la valeur.",
             json!({
                 "id": { "type": "string", "description": "Entrée existante à mettre à jour ; omis, Alfred en crée une d’après le libellé." },
                 "label": { "type": "string" },
@@ -434,7 +434,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "check",
-            "Vérifie l’espace : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
+            "Vérifie l’espace de travail : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
             json!({ "module": { "type": "string", "description": "Limiter la vérification à un module." } }),
             &[],
         ),
@@ -466,7 +466,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "db_schema",
-            "Tables de la base de l’espace, leurs colonnes et leur nombre de lignes.",
+            "Tables de la base de l’espace de travail, leurs colonnes et leur nombre de lignes.",
             json!({ "module": { "type": "string" } }),
             &[],
         ),
@@ -482,7 +482,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "call_function",
-            "Exécute une fonction de l’espace avec une entrée et renvoie sa sortie. Sert à essayer une fonction qu’on vient d’écrire.",
+            "Exécute une fonction de l’espace de travail avec une entrée et renvoie sa sortie. Sert à essayer une fonction qu’on vient d’écrire.",
             json!({ "function": { "type": "string", "description": "« module/fonction »." }, "input": { "type": "object" } }),
             &["function"],
         ),
@@ -513,7 +513,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             list.push(json!({
                 "name": function_tool_name(&function.reference),
                 "description": if function.description.is_empty() {
-                    format!("Fonction {} de l’espace.", function.reference)
+                    format!("Fonction {} de l’espace de travail.", function.reference)
                 } else {
                     function.description.clone()
                 },
@@ -900,7 +900,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let manifest = space.module(&module)?;
             if manifest.read_only() {
                 return Err(AppError::new(format!(
-                    "Le module « {} » est installé depuis un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
+                    "Le module « {} » est importé d’un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
                     manifest.name
                 )));
             }
@@ -1002,7 +1002,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let reference: String = arg(args, "page")?;
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace.")))?;
+                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."
@@ -1026,7 +1026,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let full_page = opt_arg::<bool>(args, "fullPage")?.unwrap_or(false);
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace.")))?;
+                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."

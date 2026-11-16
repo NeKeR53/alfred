@@ -54,7 +54,7 @@ beforeEach(() => {
   undoError = undefined;
   useNotifications.getState().clear();
   snapshot = {
-    path: "/Users/test/Espaces/Atelier",
+    path: "/Users/test/Espaces de travail/Atelier",
     name: "Atelier",
     accent: null,
     sections: [
@@ -93,7 +93,7 @@ beforeEach(() => {
   };
   history = [
     { id: "c2", message: "Ajout de la page Tableau des ventes", date: "2026-11-12T10:00:00+01:00", files: ["a", "b"] },
-    { id: "c1", message: "Création de l’espace", date: "2026-11-10T09:00:00+01:00", files: ["space.json"] },
+    { id: "c1", message: "Création de l’espace de travail", date: "2026-11-10T09:00:00+01:00", files: ["space.json"] },
   ];
   grants = [{ subject: "page:ventes/tableau", resource: "client:jira", grantedAt: "2026-11-11T08:00:00Z" }];
   useShell.setState({
@@ -147,22 +147,22 @@ beforeEach(() => {
 const lastCall = (command: string) => calls.filter((call) => call.command === command).at(-1)?.args;
 const notifications = () => useNotifications.getState().items.map((item) => item.title);
 
-it("renomme l’espace, montre son dossier, règle l’apparence et ramène à l’accueil après confirmation", async () => {
+it("renomme l’espace de travail, montre son dossier, règle l’apparence et ramène à l’accueil après confirmation", async () => {
   const user = userEvent.setup();
   const { unmount } = render(<SpaceSettings />);
 
-  const name = screen.getByLabelText("Nom de l’espace");
+  const name = screen.getByLabelText("Nom de l’espace de travail");
   await user.clear(name);
   await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  expect(screen.getByText("Saisissez le nom de l’espace.")).toBeInTheDocument();
+  expect(screen.getByText("Saisissez le nom de l’espace de travail.")).toBeInTheDocument();
   await user.type(name, "Atelier Lyon{Enter}");
-  await waitFor(() => expect(notifications()).toContain("Espace renommé"));
+  await waitFor(() => expect(notifications()).toContain("Espace de travail renommé"));
   expect(lastCall("space.updateLayout")).toMatchObject({ name: "Atelier Lyon" });
   expect(useShell.getState().snapshot?.name).toBe("Atelier Lyon");
 
-  expect(screen.getByText("/Users/test/Espaces/Atelier")).toBeInTheDocument();
+  expect(screen.getByText("/Users/test/Espaces de travail/Atelier")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Afficher dans le Finder" }));
-  expect(lastCall("files.reveal")).toEqual({ path: "/Users/test/Espaces/Atelier" });
+  expect(lastCall("files.reveal")).toEqual({ path: "/Users/test/Espaces de travail/Atelier" });
 
   // L’apparence est une rubrique à part.
   expect(screen.queryByLabelText("Couleur d’accent")).not.toBeInTheDocument();
@@ -188,23 +188,23 @@ it("renomme l’espace, montre son dossier, règle l’apparence et ramène à l
   appearance.unmount();
   useShell.setState({
     recentSpaces: [
-      { path: "/Users/test/Espaces/Atelier", name: "Atelier Lyon", openedAt: "2026-11-14T09:00:00Z" },
-      { path: "/Users/test/Espaces/Perso", name: "Perso", openedAt: "2026-11-13T09:00:00Z" },
+      { path: "/Users/test/Espaces de travail/Atelier", name: "Atelier Lyon", openedAt: "2026-11-14T09:00:00Z" },
+      { path: "/Users/test/Espaces de travail/Perso", name: "Perso", openedAt: "2026-11-13T09:00:00Z" },
     ],
   });
   render(<SpaceSettings />);
-  const recent = screen.getByRole("group", { name: "Espaces récents" });
+  const recent = screen.getByRole("group", { name: "Espaces de travail récents" });
   // L’espace ouvert n’est pas proposé.
   expect(within(recent).queryByText("Atelier Lyon")).not.toBeInTheDocument();
-  await user.click(within(recent).getByRole("button", { name: "Ouvrir l’espace Perso" }));
-  await waitFor(() => expect(lastCall("space.open")).toEqual({ path: "/Users/test/Espaces/Perso" }));
-  expect(useShell.getState().recentSpaces[0]?.path).toBe("/Users/test/Espaces/Perso");
+  await user.click(within(recent).getByRole("button", { name: "Ouvrir l’espace de travail Perso" }));
+  await waitFor(() => expect(lastCall("space.open")).toEqual({ path: "/Users/test/Espaces de travail/Perso" }));
+  expect(useShell.getState().recentSpaces[0]?.path).toBe("/Users/test/Espaces de travail/Perso");
 
   // Fermer l’espace : confirmé, puis retour à l’accueil.
-  await user.click(screen.getByRole("button", { name: "Fermer l’espace" }));
+  await user.click(screen.getByRole("button", { name: "Fermer l’espace de travail" }));
   const dialog = screen.getByRole("alertdialog");
   expect(within(dialog).getByText(/Rien n’est supprimé/)).toBeInTheDocument();
-  await user.click(within(dialog).getByRole("button", { name: "Fermer l’espace" }));
+  await user.click(within(dialog).getByRole("button", { name: "Fermer l’espace de travail" }));
   await waitFor(() => expect(useShell.getState().snapshot).toBeNull());
   expect(lastCall("space.close")).toEqual({});
 });
@@ -213,13 +213,13 @@ it("annule une modification de l’historique et retire un accès accordé", asy
   const user = userEvent.setup();
   render(<SpaceSettings />);
 
-  const table = await screen.findByRole("table", { name: "Historique de l’espace" });
+  const table = await screen.findByRole("table", { name: "Historique de l’espace de travail" });
   expect(within(table).getByText("Ajout de la page Tableau des ventes")).toBeInTheDocument();
   expect(lastCall("space.history")).toEqual({ limit: 50 });
 
   // Une modification non annulable seule : l’erreur du backend est rapportée telle quelle.
   undoError = "Cette modification touche des fichiers modifiés depuis : annulez d’abord les plus récentes.";
-  await user.click(screen.getByRole("button", { name: "Annuler la modification « Création de l’espace »" }));
+  await user.click(screen.getByRole("button", { name: "Annuler la modification « Création de l’espace de travail »" }));
   let dialog = screen.getByRole("alertdialog");
   expect(within(dialog).getByText(/peut elle-même être annulée/)).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Annuler la modification" }));

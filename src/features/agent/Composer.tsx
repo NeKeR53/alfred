@@ -75,7 +75,9 @@ function ConversationOptions({
   const spaceDir = useShell((state) => state.snapshot?.path ?? "");
   const started = conversation.turns.length > 0;
   const folder =
-    conversation.cwd === spaceDir ? "Dossier de l’espace" : (conversation.cwd.split(/[\\/]/).pop() ?? conversation.cwd);
+    conversation.cwd === spaceDir
+      ? "Dossier de l’espace de travail"
+      : (conversation.cwd.split(/[\\/]/).pop() ?? conversation.cwd);
   return (
     <div className="agent-composer__options">
       {status}

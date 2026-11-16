@@ -621,7 +621,7 @@ pub fn load(space: &Space, id: &str) -> AppResult<Option<ClientDef>> {
 }
 
 fn require(space: &Space, id: &str) -> AppResult<ClientDef> {
-    load(space, id)?.ok_or_else(|| AppError::new(format!("Le client « {id} » n’existe pas dans cet espace.")))
+    load(space, id)?.ok_or_else(|| AppError::new(format!("Le client « {id} » n’existe pas dans cet espace de travail.")))
 }
 
 /// Instance d’un client des Réglages : celle nommée, sinon celle par défaut.
@@ -687,7 +687,7 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
     }
     load(space, name)?.ok_or_else(|| {
         AppError::new(format!(
-            "Le client « {name} » n’existe pas dans cet espace. Le configurer dans Réglages → Modules, ou y relier la demande « {need} » à un client existant."
+            "Le client « {name} » n’existe pas dans cet espace de travail. Le configurer dans Réglages → Modules, ou y relier la demande « {need} » à un client existant."
         ))
     })
 }
@@ -1945,7 +1945,7 @@ fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
     let id: String = arg(args, "id")?;
     if !valid_id(&id) || !client_path(&space, &id).is_file() {
-        return Err(AppError::new(format!("Le client « {id} » n’existe pas dans cet espace.")));
+        return Err(AppError::new(format!("Le client « {id} » n’existe pas dans cet espace de travail.")));
     }
     let label = load(&space, &id).ok().flatten().map(|client| client.label).unwrap_or_else(|| id.clone());
     std::fs::remove_file(client_path(&space, &id))?;

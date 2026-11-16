@@ -215,7 +215,7 @@ export function VoiceSettings() {
     <Page width="text">
       <Section
         title="Voix"
-        description="Dictée dans la page Agent, lecture des réponses, et voix offerte aux pages de l’espace."
+        description="Dictée dans la page Agent, lecture des réponses, et voix offerte aux pages de l’espace de travail."
       >
         <SettingRows>
           <SettingRow
@@ -249,7 +249,7 @@ export function VoiceSettings() {
         <SettingRows>
           <SettingRow
             title="Autoriser la dictée"
-            description="Bloquée, le micro ne s’ouvre plus, ni dans la page Agent ni dans une page de l’espace, même si vous parlez. La lecture à voix haute continue."
+            description="Bloquée, le micro ne s’ouvre plus, ni dans la page Agent ni dans une page de l’espace de travail, même si vous parlez. La lecture à voix haute continue."
           >
             <SwitchControl
               label=""
@@ -445,7 +445,7 @@ export function VoiceSettings() {
 
       <Section
         title="Notifications"
-        description="Les notifications envoyées par les pages et les fonctions de l’espace."
+        description="Les notifications envoyées par les pages et les fonctions de l’espace de travail."
       >
         <SettingRows>
           <SettingRow

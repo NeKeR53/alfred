@@ -103,7 +103,8 @@ function hostFor(module: string): Host {
 /** Ferme les cadres de fonctions : à appeler quand l’espace change ou se ferme. */
 export function resetFunctionHosts() {
   for (const host of hosts.values()) {
-    for (const settle of host.pending.values()) settle.reject(new AlfredError({ message: "L’espace a été fermé." }));
+    for (const settle of host.pending.values())
+      settle.reject(new AlfredError({ message: "L’espace de travail a été fermé." }));
     host.frame.remove();
   }
   hosts.clear();

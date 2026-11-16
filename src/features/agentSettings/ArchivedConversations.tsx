@@ -79,7 +79,7 @@ export function ArchivedConversations() {
     const accepted = await confirm({
       title: `Supprimer définitivement « ${header.title} » ?`,
       message:
-        "Son relevé et ses fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que l’agent a créé dans l’espace reste en place.",
+        "Son relevé et ses fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que l’agent a créé dans l’espace de travail reste en place.",
       confirmLabel: "Supprimer définitivement",
       tone: "danger",
     });
@@ -100,7 +100,7 @@ export function ArchivedConversations() {
     const accepted = await confirm({
       title: `Supprimer les ${targets.length} conversations archivées ?`,
       message:
-        "Leurs relevés et leurs fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que les agents ont créé dans l’espace reste en place.",
+        "Leurs relevés et leurs fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que les agents ont créé dans l’espace de travail reste en place.",
       confirmLabel: "Tout supprimer",
       tone: "danger",
     });

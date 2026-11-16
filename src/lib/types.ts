@@ -82,6 +82,8 @@ export interface ModuleSummary {
   description: string;
   readOnly: boolean;
   origin: ModuleOrigin | null;
+  /** Publications d’un module développé ici : une par marketplace (adresse git), la dernière version envoyée. */
+  published?: Array<{ marketplace: string; version: string; commit: string }>;
   /** Masqué du menu, avec toutes ses sections et ses pages (dépendance installée d’office, ou choix). */
   hidden: boolean;
   requires: Requirement[];

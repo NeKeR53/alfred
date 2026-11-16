@@ -85,11 +85,11 @@ it("reconnaît une fenêtre de page à la référence posée par Rust", () => {
   expect(pageWindowReference()).toBe("jira/tickets@acme");
 });
 
-it("affiche la page seule, sans le menu de l’espace", () => {
+it("affiche la page seule, sans le menu de l’espace de travail", () => {
   render(<PageWindow reference="jira/tickets@acme" />);
   expect(screen.getByRole("heading", { name: "Tickets" })).toBeInTheDocument();
   expect(screen.getByText("Page en cours de création")).toBeInTheDocument();
-  expect(screen.queryByRole("navigation", { name: "Sections de l’espace" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Sections de l’espace de travail" })).not.toBeInTheDocument();
 });
 
 it("garde l’attente d’une section par instance, et dit quand la page a disparu", () => {

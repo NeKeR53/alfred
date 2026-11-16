@@ -56,7 +56,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
   const user = userEvent.setup();
   render(<App />);
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace" });
+  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
   await user.click(await within(navigation).findByRole("button", { name: "Suivi" }));
   const page = frameOf(await screen.findByTitle("Tâches"));
   expect(await screen.findByTitle("Détail")).toBeInTheDocument();

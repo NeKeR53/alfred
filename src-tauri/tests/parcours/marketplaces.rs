@@ -39,7 +39,7 @@ async fn publier_installer_mettre_a_jour_detacher_desinstaller() {
     assert_eq!((catalog[0]["id"].as_str(), catalog[0]["version"].as_str()), (Some("recettes"), Some("1.0.0")));
     assert_eq!(catalog[0]["notes"], json!("Première version."));
     reader.invoke("marketplace.install", json!({ "marketplace": marketplace, "module": "recettes" })).await;
-    assert_eq!(reader.history().await[0], "Installation du module Recettes v1.0.0");
+    assert_eq!(reader.history().await[0], "Import du module Recettes v1.0.0");
     let snapshot = reader.snapshot().await;
     let installed = &section(&snapshot, "recettes/principal")["pages"][0];
     assert_eq!((installed["reference"].as_str(), installed["readOnly"].as_bool()), (Some("recettes/carnet"), Some(true)));
@@ -122,7 +122,7 @@ async fn publier_installer_mettre_a_jour_detacher_desinstaller() {
     assert!(!tables(&reader, "recettes").await.contains("recettes_ingredients"));
     assert_eq!(reader.invoke("grants.list", json!({})).await, json!([]), "les accords du module sont oubliés");
     assert!(reader.ui.event_names().contains(&"module:uninstalled".to_string()));
-    assert_eq!(reader.history().await[0], "Désinstallation du module Recettes");
+    assert_eq!(reader.history().await[0], "Retrait du module Recettes");
 }
 
 /// À la désinstallation, les accords donnés à d’autres pages sur les fonctions du module sont oubliés : un module

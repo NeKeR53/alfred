@@ -60,7 +60,7 @@ fn open(app: &AppHandle, state: &AppState, reference: &str) -> AppResult<()> {
     }
     let snapshot = state.space()?.snapshot()?;
     let title = window_title(&snapshot, reference)
-        .ok_or_else(|| AppError::new(format!("La page « {reference} » n’est pas dans la navigation de l’espace.")))?;
+        .ok_or_else(|| AppError::new(format!("La page « {reference} » n’est pas dans la navigation de l’espace de travail.")))?;
     let label = label_for(reference);
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.unminimize();

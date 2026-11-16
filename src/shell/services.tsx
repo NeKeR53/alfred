@@ -167,7 +167,7 @@ export function ShellServices() {
         title={request ? `Autoriser l’accès ${toResource(request.label)} ?` : ""}
         message={
           request
-            ? `${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages → Espace.`
+            ? `${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages → Général.`
             : undefined
         }
         confirmLabel="Autoriser"
