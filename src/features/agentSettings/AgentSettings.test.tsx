@@ -42,7 +42,10 @@ beforeEach(async () => {
   useNotifications.getState().clear();
   useShell.setState({ snapshot: { path: "/tmp/espace" } as never });
   useAgents.setState({ ready: true, defaults: { provider: "claude", autonomy: "ask", models: {} } });
-  useAgentPreferences.setState({ values: { shownModels: {}, titling: null, textEditor: null }, status: "idle" });
+  useAgentPreferences.setState({
+    values: { shownModels: {}, titling: null, pageModel: null, textEditor: null },
+    status: "idle",
+  });
   HTMLDialogElement.prototype.showModal ??= function showModal(this: HTMLDialogElement) {
     this.open = true;
   };
@@ -193,6 +196,46 @@ it("enregistre le modèle de nommage, « Comme les conversations » par défaut"
   );
   await user.selectOptions(provider, "");
   await waitFor(() => expect(lastSetting("agents.titling")).toBeNull());
+});
+
+it("enregistre le modèle des pages, « Comme l’agent » par défaut", async () => {
+  const user = userEvent.setup();
+  render(<AgentSettings />);
+  expect(screen.getByRole("heading", { name: "Dans les pages" })).toBeInTheDocument();
+  expect(screen.getByText(/vos pages et vos fonctions utilisent pour résumer, classer, rédiger/)).toBeInTheDocument();
+  const provider = screen.getByLabelText("Harnais des pages");
+  expect(provider).toHaveValue("");
+  expect(
+    within(provider)
+      .getAllByRole("option")
+      .map((option) => option.textContent),
+  ).toEqual(["Comme l’agent", "Claude Code", "Codex"]);
+  expect(screen.getByLabelText("Modèle des pages")).toBeDisabled();
+  await waitFor(() => expect(screen.getByLabelText("Modèle de Claude Code")).toBeEnabled());
+  await user.selectOptions(provider, "claude");
+  await waitFor(() => expect(lastSetting("agents.pageModel")).toEqual({ provider: "claude", model: "opus" }));
+  await user.selectOptions(screen.getByLabelText("Modèle des pages"), "haiku");
+  await waitFor(() => expect(lastSetting("agents.pageModel")).toEqual({ provider: "claude", model: "haiku" }));
+  await user.selectOptions(screen.getByLabelText("Modèle des pages"), "opus");
+  fireEvent.change(await screen.findByRole("slider", { name: "Raisonnement des pages" }), { target: { value: "3" } });
+  await waitFor(() =>
+    expect(lastSetting("agents.pageModel")).toEqual({ provider: "claude", model: "opus", effort: "high" }),
+  );
+  // Le modèle des pages ne touche ni à celui de l’agent ni au nommage.
+  expect(lastDefaults()).toBeUndefined();
+  expect(lastSetting("agents.titling")).toBeUndefined();
+  await user.selectOptions(provider, "");
+  await waitFor(() => expect(lastSetting("agents.pageModel")).toBeNull());
+});
+
+it("garde visible un harnais réglé pour les pages puis désinstallé", async () => {
+  useAgentPreferences.setState({
+    values: { shownModels: {}, titling: null, pageModel: { provider: "opencode" }, textEditor: null },
+    status: "ready",
+  });
+  render(<AgentSettings />);
+  expect(screen.getByLabelText("Harnais des pages")).toHaveValue("opencode");
+  expect(screen.getByRole("option", { name: "OpenCode (non installé)" })).toBeInTheDocument();
 });
 
 it("enregistre la commande de l’éditeur dès qu’elle est valide, et la désactive", async () => {

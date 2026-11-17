@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
 import { type FakeProcess, fakeSpawn, type Spawned } from "./harness/fakeProcess.test-helper";
+import { useHarnesses } from "./harness/installed";
 import { complete, oneShot } from "./oneShot";
+import { useAgentPreferences } from "./panel/ModelPicker";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -83,7 +85,18 @@ beforeEach(() => {
     ready: true,
     defaults: { provider: "claude", autonomy: "ask", models: { claude: { model: "sonnet", effort: "low" } } },
   });
+  // Réglages → Agent, « Dans les pages » : « Comme l’agent » par défaut.
+  setPageModel(null);
+  useHarnesses.setState({ probes: {} });
 });
+
+const setPageModel = (
+  pageModel: { provider: "claude" | "codex" | "opencode"; model?: string; effort?: string } | null,
+) =>
+  useAgentPreferences.setState({
+    values: { shownModels: {}, titling: null, pageModel, textEditor: null },
+    status: "ready",
+  });
 
 describe("appel unique", () => {
   it("rend la réponse conforme du premier coup et l’inscrit au journal", async () => {
@@ -105,8 +118,8 @@ describe("appel unique", () => {
         kind: "ai",
         subject: "clients/demandes",
         ok: true,
-        summary: "Appel unique via Claude Code",
-        detail: { provider: "claude", model: "sonnet", instruction: "Résume cette demande client" },
+        summary: "Appel unique via Claude Code · sonnet",
+        detail: { provider: "claude", model: "sonnet", effort: "low", instruction: "Résume cette demande client" },
       }),
     ]);
   });
@@ -149,7 +162,7 @@ describe("appel unique", () => {
     expect(journal()).toEqual([
       expect.objectContaining({
         ok: false,
-        summary: "Appel unique via Claude Code : La réponse du modèle ne respecte pas le schéma demandé.",
+        summary: "Appel unique via Claude Code · sonnet : La réponse du modèle ne respecte pas le schéma demandé.",
       }),
     ]);
   });
@@ -166,6 +179,92 @@ describe("appel unique", () => {
   it("refuse un appel sans consigne ou sans schéma", async () => {
     await expect(oneShot({ ...request, instruction: " " }, "x")).rejects.toThrow("demande une consigne");
     await expect(oneShot({ ...request, schema: undefined as never }, "x")).rejects.toThrow("demande le schéma");
+  });
+});
+
+describe("appel unique · modèle des pages", () => {
+  const answer = { structured: { titre: "Portail", priorite: "haute" } };
+
+  it("prend le harnais, le modèle et l’effort réglés pour les pages", async () => {
+    setPageModel({ provider: "claude", model: "haiku", effort: "high" });
+    const spawned = fakeSpawn(claudeAnswering([answer]));
+    await expect(oneShot(request, "clients/demandes")).resolves.toEqual(answer.structured);
+    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku", effort: "high" } });
+    expect(journal()).toEqual([
+      expect.objectContaining({
+        ok: true,
+        summary: "Appel unique via Claude Code · haiku",
+        detail: expect.objectContaining({ provider: "claude", model: "haiku", effort: "high" }),
+      }),
+    ]);
+  });
+
+  it("prend le modèle réglé pour ce harnais quand les pages n’en choisissent pas", async () => {
+    setPageModel({ provider: "claude" });
+    const spawned = fakeSpawn(claudeAnswering([answer]));
+    await oneShot(request, "clients/demandes");
+    expect(spawned[0].options).toMatchObject({ claude: { model: "sonnet", effort: "low" } });
+  });
+
+  it("lit le réglage enregistré avant le premier appel", async () => {
+    useAgentPreferences.setState({ status: "idle" });
+    native.invoke.mockImplementation(async (command: string, args: { key?: string }) =>
+      command === "settings.get" && args?.key === "agents.pageModel" ? { provider: "claude", model: "haiku" } : null,
+    );
+    const spawned = fakeSpawn(claudeAnswering([answer]));
+    await oneShot(request, "clients/demandes");
+    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku" } });
+  });
+
+  it("retombe sur le modèle de l’agent quand celui des pages ne répond pas, et le note au journal", async () => {
+    setPageModel({ provider: "claude", model: "haiku" });
+    const spawned = fakeSpawn(claudeAnswering([{ error: "Overloaded" }, answer]));
+    await expect(oneShot(request, "clients/demandes")).resolves.toEqual(answer.structured);
+    expect(spawned).toHaveLength(2);
+    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku" } });
+    expect(spawned[1].options).toMatchObject({ claude: { model: "sonnet", effort: "low" } });
+    const [entry] = journal() as Array<{ ok: boolean; summary: string; detail: Record<string, unknown> }>;
+    expect(entry.ok).toBe(true);
+    expect(entry.summary).toMatch(
+      /^Appel unique via Claude Code · sonnet \(Claude Code · haiku, réglé pour les pages, n’a pas répondu \(.*Overloaded.*\) : Claude Code · sonnet, celui de l’agent, a pris le relais\)$/,
+    );
+    expect(entry.detail).toMatchObject({
+      provider: "claude",
+      model: "sonnet",
+      fallback: expect.stringContaining("n’a pas répondu"),
+    });
+  });
+
+  it("ne change pas de modèle pour une réponse hors schéma", async () => {
+    setPageModel({ provider: "claude", model: "haiku" });
+    const spawned = fakeSpawn(
+      claudeAnswering([{ structured: { titre: 3, priorite: "haute" } }, { structured: { titre: "Portail" } }]),
+    );
+    await expect(oneShot(request, "clients/demandes")).rejects.toThrow("ne respecte pas le schéma");
+    expect(spawned).toHaveLength(2);
+    expect(spawned.every((launch) => (launch.options as { claude: { model: string } }).claude.model === "haiku")).toBe(
+      true,
+    );
+  });
+
+  it("retombe sur le harnais de l’agent quand celui des pages n’est plus installé", async () => {
+    useHarnesses.setState({
+      probes: {
+        claude: { status: "ready", value: { installed: true } },
+        codex: { status: "ready", value: { installed: true } },
+        opencode: { status: "ready", value: { installed: false } },
+      },
+    });
+    setPageModel({ provider: "opencode", model: "kimi" });
+    const spawned = fakeSpawn(claudeAnswering([answer]));
+    await oneShot(request, "clients/demandes");
+    expect(spawned[0].options).toMatchObject({ claude: { model: "sonnet" } });
+    expect(journal()).toEqual([
+      expect.objectContaining({
+        summary:
+          "Appel unique via Claude Code · sonnet (OpenCode, réglé pour les pages, n’est plus installé : Claude Code, celui de l’agent, le remplace)",
+      }),
+    ]);
   });
 });
 

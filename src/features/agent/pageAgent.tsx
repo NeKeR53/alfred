@@ -12,9 +12,10 @@ import { AlfredError, invoke } from "../../lib/native";
 import { declaredReference, type FrameIdentity, frameServices } from "../../shell/frameBridge";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
-import { PROVIDER_LABEL } from "./harness";
+import type { Provider } from "./harness";
 import { type ConversationRuntime, lastAssistantText } from "./model";
 import { oneShot } from "./oneShot";
+import { modelSummary, resolvePageModel } from "./pageModel";
 import { bindAgentQuestions, useAgents, waitForTurn } from "./store";
 import { Transcript } from "./Transcript";
 import "./agent.css";
@@ -32,28 +33,44 @@ async function startAgent(identity: FrameIdentity, options: Record<string, unkno
   const instruction = typeof options.instruction === "string" ? options.instruction.trim() : "";
   if (!instruction) throw new AlfredError({ message: "Lancer un agent demande une consigne (`instruction`)." });
   const started = performance.now();
+  // Le modèle réglé pour les pages (Réglages → Agent, « Dans les pages »), sinon celui de l’agent.
+  const { page: model } = await resolvePageModel();
   const record = (ok: boolean, summary: string, conversation?: string) =>
     invoke("journal.record", {
       kind: "agent",
       subject: identity.reference,
       ok,
       durationMs: Math.round(performance.now() - started),
-      summary,
-      detail: { conversation: conversation ?? null, instruction: instruction.slice(0, 500) },
+      summary: model.fallback ? `${summary} (${model.fallback})` : summary,
+      detail: {
+        conversation: conversation ?? null,
+        provider: model.provider,
+        model: model.model ?? null,
+        ...(model.effort ? { effort: model.effort } : {}),
+        ...(model.fallback ? { fallback: model.fallback } : {}),
+        instruction: instruction.slice(0, 500),
+      },
     }).catch(() => undefined);
   try {
-    const result = await runAgent(identity, options, instruction);
-    void record(true, `Conversation d’agent via ${PROVIDER_LABEL[result.provider]}`, result.conversationId);
+    const result = await runAgent(identity, options, instruction, model);
+    void record(true, `Conversation d’agent via ${modelSummary(model)}`, result.conversationId);
     return result.value;
   } catch (error) {
-    void record(false, error instanceof Error ? error.message : String(error));
+    void record(
+      false,
+      `Conversation d’agent via ${modelSummary(model)} : ${error instanceof Error ? error.message : String(error)}`,
+    );
     throw error;
   }
 }
 
-async function runAgent(identity: FrameIdentity, options: Record<string, unknown>, instruction: string) {
+async function runAgent(
+  identity: FrameIdentity,
+  options: Record<string, unknown>,
+  instruction: string,
+  model: { provider: Provider; model?: string; effort?: string },
+) {
   bindAgentQuestions();
-  if (!useAgents.getState().ready) await useAgents.getState().load();
   const fromPage = identity.kind !== "function";
   const page = identity.host ?? identity.reference;
   const title = fromPage ? pageTitle(page) : identity.module;
@@ -66,6 +83,9 @@ async function runAgent(identity: FrameIdentity, options: Record<string, unknown
     title: typeof options.title === "string" && options.title.trim() ? options.title.trim() : `${title} · agent`,
     origin: { reference: page, title },
     autonomy: "strict",
+    provider: model.provider,
+    model: model.model,
+    effort: model.effort,
   });
   try {
     await invoke("frame.agents.authorize", {
@@ -104,7 +124,6 @@ async function runAgent(identity: FrameIdentity, options: Record<string, unknown
   const finish = (value: { conversationId: string; message: string; result?: unknown }) => ({
     value,
     conversationId: conversation.id,
-    provider: conversation.provider,
   });
   if (!schema) return finish({ conversationId: conversation.id, message });
   let result: unknown;

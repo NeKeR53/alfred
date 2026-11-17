@@ -218,17 +218,29 @@ function ModelFields({
 }
 
 /**
- * Modèle qui nomme les conversations d’après leur premier message, repris de la ligne « Nommage » des réglages de
- * OneApp : « Comme les conversations » garde le modèle par défaut ; sinon un harnais, un de ses modèles affichés et
- * son effort.
+ * Modèle choisi à part de celui des conversations, repris de la ligne « Nommage » des réglages de OneApp : la
+ * première option garde le modèle de l’agent ; sinon un harnais installé, un de ses modèles affichés et son effort.
  */
-function TitlingFields({
+function ModelChoiceFields({
+  title,
+  description,
+  subject,
+  inheritLabel,
+  modelDefaultLabel,
   value,
   models,
   shownModels,
   providers,
   onChange,
 }: {
+  title: string;
+  description: string;
+  /** Complément des libellés accessibles : « Harnais du nommage », « Modèle des pages »… */
+  subject: string;
+  /** Première option, qui garde le modèle de l’agent (valeur `null`). */
+  inheritLabel: string;
+  /** Option « modèle » quand aucun modèle précis n’est choisi. */
+  modelDefaultLabel: string;
   value: ModelChoice | null;
   /** Harnais installés : les seuls proposés. */
   providers: readonly Provider[];
@@ -247,12 +259,9 @@ function TitlingFields({
   const selected = provider ? catalog(provider).find((model) => model.id === value?.model) : undefined;
   const efforts = selected?.efforts ?? [];
   return (
-    <SettingRow
-      title="Nommage"
-      description="Le modèle qui donne un nom aux conversations d’après leur premier message."
-    >
+    <SettingRow title={title} description={description}>
       <SelectControl
-        aria-label="Harnais du nommage"
+        aria-label={`Harnais ${subject}`}
         value={provider ?? ""}
         onChange={(event) => {
           const next = event.target.value as Provider | "";
@@ -261,7 +270,11 @@ function TitlingFields({
           onChange({ provider: next, ...(first ? { model: first.id } : {}) });
         }}
       >
-        <option value="">Comme les conversations</option>
+        <option value="">{inheritLabel}</option>
+        {/* Un harnais réglé puis désinstallé reste affiché : le réglage n’est pas perdu en silence. */}
+        {provider && !providers.includes(provider) ? (
+          <option value={provider}>{PROVIDER_LABEL[provider]} (non installé)</option>
+        ) : null}
         {providers.map((item) => (
           <option key={item} value={item}>
             {PROVIDER_LABEL[item]}
@@ -269,14 +282,14 @@ function TitlingFields({
         ))}
       </SelectControl>
       <SelectControl
-        aria-label="Modèle du nommage"
+        aria-label={`Modèle ${subject}`}
         value={value?.model ?? ""}
         disabled={!provider}
         onChange={(event) =>
           provider && onChange({ provider, ...(event.target.value ? { model: event.target.value } : {}) })
         }
       >
-        <option value="">{provider ? "Modèle par défaut" : "—"}</option>
+        <option value="">{provider ? modelDefaultLabel : "—"}</option>
         {value?.model && !selected ? <option value={value.model}>{value.model}</option> : null}
         {list.map((model) => (
           <option key={model.id} value={model.id}>
@@ -286,7 +299,7 @@ function TitlingFields({
       </SelectControl>
       {value && selected ? (
         <EffortSlider
-          label="Raisonnement du nommage"
+          label={`Raisonnement ${subject}`}
           efforts={efforts}
           value={value.effort ?? ""}
           onChange={(effort) =>
@@ -473,7 +486,7 @@ function TextEditorSection({
 
 /**
  * Onglet « Agents » des Réglages : état des harnais, harnais, modèle, effort et autonomie par défaut, modèle de
- * nommage, modèles affichés, éditeur de texte et conversations archivées.
+ * nommage, modèle des pages, modèles affichés, éditeur de texte et conversations archivées.
  */
 export function AgentSettings() {
   const defaults = useAgents((state) => state.defaults);
@@ -636,12 +649,37 @@ export function AgentSettings() {
                   onChange={(value) => void save({ ...defaults, models: { ...defaults.models, [provider]: value } })}
                 />
               ))}
-              <TitlingFields
+              <ModelChoiceFields
+                title="Nommage"
+                description="Le modèle qui donne un nom aux conversations d’après leur premier message."
+                subject="du nommage"
+                inheritLabel="Comme les conversations"
+                modelDefaultLabel="Modèle par défaut"
                 value={preferences.titling}
                 models={models}
                 shownModels={preferences.shownModels}
                 providers={PROVIDERS}
                 onChange={(value) => void savePreferenceOrReport("titling", value)}
+              />
+            </SettingRows>
+          </Section>
+
+          <Section
+            title="Dans les pages"
+            description="Le modèle que vos pages et vos fonctions utilisent pour résumer, classer, rédiger ou lancer une conversation. Les décisions locales restent faites sur ce poste."
+          >
+            <SettingRows>
+              <ModelChoiceFields
+                title="Modèle des pages"
+                description="« Comme l’agent » reprend le harnais, le modèle et le raisonnement des conversations. Si le harnais choisi n’est plus installé ou ne répond pas, Alfred se sert de celui de l’agent et le note au journal."
+                subject="des pages"
+                inheritLabel="Comme l’agent"
+                modelDefaultLabel="Modèle de l’agent pour ce harnais"
+                value={preferences.pageModel}
+                models={models}
+                shownModels={preferences.shownModels}
+                providers={PROVIDERS}
+                onChange={(value) => void savePreferenceOrReport("pageModel", value)}
               />
             </SettingRows>
           </Section>

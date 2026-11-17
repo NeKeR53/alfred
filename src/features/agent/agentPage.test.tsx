@@ -84,7 +84,7 @@ beforeEach(() => {
   });
   useAgents.setState({ loaded: {}, headers: [], runtime: {}, activeId: null, ready: false, load: realLoad });
   useAgentPreferences.setState({
-    values: { shownModels: {}, titling: null, textEditor: null },
+    values: { shownModels: {}, titling: null, pageModel: null, textEditor: null },
     status: "idle",
   });
 });
@@ -108,7 +108,7 @@ describe("page Agent", () => {
 
     act(() =>
       useAgentPreferences.setState({
-        values: { shownModels: {}, titling: null, textEditor: { command: 'code "{{directory}}"' } },
+        values: { shownModels: {}, titling: null, pageModel: null, textEditor: { command: 'code "{{directory}}"' } },
       }),
     );
     await waitFor(() => expect(editor).toBeEnabled());

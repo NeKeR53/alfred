@@ -29,21 +29,24 @@ export type ShownModels = Partial<Record<Provider, string[]>>;
 /**
  * Préférences des agents enregistrées hors des choix par défaut, comme dans les réglages des agents de OneApp
  * (`agentSettings.ts`) : modèles affichés par harnais, modèle qui nomme les conversations (absent : celui des
- * conversations), éditeur de texte qui ouvre le dossier de travail.
+ * conversations), modèle des pages et des fonctions (`ai.oneShot`, `ai.startAgent` ; absent : celui de l’agent),
+ * éditeur de texte qui ouvre le dossier de travail.
  */
 export interface AgentPreferences {
   shownModels: ShownModels;
   titling: ModelChoice | null;
+  pageModel: ModelChoice | null;
   textEditor: { command: string } | null;
 }
 
 const PREFERENCE_KEYS: Record<keyof AgentPreferences, string> = {
   shownModels: "agents.shownModels",
   titling: "agents.titling",
+  pageModel: "agents.pageModel",
   textEditor: "agents.textEditor",
 };
 
-const EMPTY_PREFERENCES: AgentPreferences = { shownModels: {}, titling: null, textEditor: null };
+const EMPTY_PREFERENCES: AgentPreferences = { shownModels: {}, titling: null, pageModel: null, textEditor: null };
 
 interface PreferencesState {
   values: AgentPreferences;

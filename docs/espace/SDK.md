@@ -334,13 +334,15 @@ Un client déclaré ou modifié par l’agent est « à valider » : l’agent r
 
 ## 7. IA
 
+`ai.oneShot` et `ai.startAgent` utilisent le modèle que l’utilisateur a réglé pour les pages dans Réglages → Agent, section « Dans les pages » (harnais, modèle et raisonnement) ; par défaut, « Comme l’agent », celui des conversations. Si ce harnais n’est plus installé, ou si `ai.oneShot` n’obtient pas de réponse de ce modèle, Alfred se sert de celui de l’agent et le note au journal des appels IA (`read_journal`), qui dit pour chaque appel quel harnais et quel modèle ont répondu. `ai.decide` n’est pas concerné : il tourne toujours sur l’ordinateur.
+
 ### `ai.oneShot` : une réponse structurée
 
 ```ts
 ai.oneShot<Output>(options: { instruction: string; context?: unknown; schema: Record<string, unknown> }): Promise<Output>;
 ```
 
-Un tour, sans outil, avec le modèle réglé par défaut ; `context` (objet ou texte, 120 000 caractères au plus) accompagne la consigne. Alfred valide la réponse contre `schema` et relance une fois avec les écarts ; si elle reste invalide, rejet (« La réponse du modèle ne respecte pas le schéma demandé. », écarts dans `detail`). L’appel prend plusieurs secondes : affiche un état en cours.
+Un tour, sans outil, avec le modèle réglé pour les pages ; `context` (objet ou texte, 120 000 caractères au plus) accompagne la consigne. Alfred valide la réponse contre `schema` et relance une fois avec les écarts ; si elle reste invalide, rejet (« La réponse du modèle ne respecte pas le schéma demandé. », écarts dans `detail`). L’appel prend plusieurs secondes : affiche un état en cours.
 
 Schéma bien formé : un objet à la racine, toutes ses propriétés dans `required`, `additionalProperties: false`, et seulement `type`, `properties`, `required`, `items`, `enum`. Une valeur facultative s’écrit `type: ["string", "null"]`.
 

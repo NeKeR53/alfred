@@ -16,7 +16,10 @@ import { ModelPicker, useAgentPreferences } from "./ModelPicker";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAgentPreferences.setState({ values: { shownModels: {}, titling: null, textEditor: null }, status: "ready" });
+  useAgentPreferences.setState({
+    values: { shownModels: {}, titling: null, pageModel: null, textEditor: null },
+    status: "ready",
+  });
 });
 
 // Les modèles masqués dans les réglages ne sont plus proposés, sauf celui déjà choisi, comme dans OneApp.
@@ -27,7 +30,7 @@ it("ne propose que les modèles affichés, plus le modèle déjà choisi", async
     { id: "haiku", name: "Haiku", efforts: [] },
   ]);
   useAgentPreferences.setState({
-    values: { shownModels: { claude: ["opus"] }, titling: null, textEditor: null },
+    values: { shownModels: { claude: ["opus"] }, titling: null, pageModel: null, textEditor: null },
     status: "ready",
   });
   render(<ModelPicker value={{ provider: "claude", model: "haiku" }} cwd="/tmp" onChange={() => {}} />);
