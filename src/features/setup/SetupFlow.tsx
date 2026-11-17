@@ -48,6 +48,7 @@ export function SetupFlow({
   modules,
   services,
   start,
+  step: first,
   onEdit,
   onClose,
   onOpenModule,
@@ -58,6 +59,8 @@ export function SetupFlow({
   services: ClientsController;
   /** `intro` juste après l’installation ; `resume` pour reprendre à la première étape incomplète. */
   start: "intro" | "resume";
+  /** Étape d’ouverture (`module/besoin`), avant `start` : le service qui manque à une page. */
+  step?: string;
   onEdit: (editing: ServiceEditing) => void;
   onClose: () => void;
   /** Ouvre la première section du module dans le menu ; absent si le module n’en a pas. */
@@ -71,8 +74,9 @@ export function SetupFlow({
 
   useEffect(() => {
     if (current || !setup) return;
-    setCurrent(start === "intro" ? INTRO : resumeStep(setup));
-  }, [current, setup, start]);
+    const wanted = first && setup.steps.some((item) => item.key === first) ? first : undefined;
+    setCurrent(wanted ?? (start === "intro" ? INTRO : resumeStep(setup)));
+  }, [current, setup, start, first]);
 
   const clients = services.overview?.clients ?? [];
   const step = setup?.steps.find((candidate) => candidate.key === current);

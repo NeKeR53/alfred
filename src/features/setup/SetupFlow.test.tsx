@@ -14,7 +14,7 @@ import type { VaultEntry } from "../vault/api";
 import { type ModuleSetup, remainingSummary, type SetupStep } from "./api";
 import { OnboardingHost, openOnboarding, useOnboarding } from "./Onboarding";
 import { resumeStep } from "./SetupFlow";
-import { SetupGate } from "./SetupGate";
+import { pageNeeds, SetupGate } from "./SetupGate";
 
 /**
  * Parcours de configuration d’un module, par l’écran réel des Réglages → Modules, contre un faux backend qui
@@ -404,12 +404,12 @@ it("une page à qui il manque un service affiche la page d’attente, et son bou
       <p>Vraie page</p>
     </SetupGate>,
   );
-  expect(await screen.findByText("Cette page attend Gmail")).toBeTruthy();
-  expect(screen.getByText("Gmail : à ajouter.")).toBeTruthy();
+  expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
+  expect(screen.getByText("Pour l’afficher, ajoutez votre compte Gmail.")).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
   expect(screen.getAllByRole("button")).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Configurer" }));
-  expect(useOnboarding.getState()).toEqual({ module: "boite", start: "resume" });
+  expect(useOnboarding.getState()).toEqual({ module: "boite", start: "resume", step: "boite/gmail" });
 });
 
 it("la page d’attente cède la place à la vraie page dès que le service est prêt, sans recharger", async () => {
@@ -419,7 +419,7 @@ it("la page d’attente cède la place à la vraie page dès que le service est 
       <p>Vraie page</p>
     </SetupGate>,
   );
-  expect(await screen.findByText("Cette page attend Gmail")).toBeTruthy();
+  expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
   stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
   tests.gmail = { ok: true, message: "Le service répond (200)." };
   act(() => emit("clients:changed"));
@@ -446,7 +446,9 @@ it("un service seulement pas encore testé est vérifié de lui-même ; un test 
       <p>Vraie page</p>
     </SetupGate>,
   );
-  expect(await screen.findByText("Gmail : connexion en échec.")).toBeTruthy();
+  expect(
+    await screen.findByText("Pour l’afficher, vérifiez votre compte Gmail, dont la connexion a échoué."),
+  ).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
 });
 
@@ -467,8 +469,77 @@ it("une page qui n’utilise que les services prêts s’affiche, même si le mo
       <p>Vraie page</p>
     </SetupGate>,
   );
-  expect(await screen.findByText("Cette page attend Agenda")).toBeTruthy();
+  // L’autre page ne parle que de son compte, pas de Gmail, déjà prêt.
+  expect(await screen.findByText("Pour l’afficher, ajoutez votre compte Agenda.")).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
+});
+
+it("la page d’attente nomme chaque compte qui manque à la page, avec ce qu’il reste à faire", async () => {
+  stored = [{ id: "agenda", label: "Agenda", baseUrl: "https://agenda.exemple", auth: { type: "bearer" } }];
+  modules = [
+    summary("boite", "Boîte", { clients: [GMAIL, { id: "agenda", label: "Agenda" }, { id: "slack", label: "Slack" }] }),
+  ];
+  render(
+    <SetupGate module="boite" uses={{ clients: ["gmail", "agenda"] }}>
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Il manque des comptes à cette page")).toBeTruthy();
+  expect(
+    screen.getByText("Pour l’afficher, il reste à ajouter votre compte Gmail et à connecter votre compte Agenda."),
+  ).toBeTruthy();
+  expect(screen.queryByText(/Slack/)).toBeNull();
+});
+
+it("les comptes qui attendent la même chose sont regroupés sous un seul verbe", () => {
+  const step = (label: string, state: SetupStep["state"], module = "boite"): SetupStep => ({
+    key: `${module}/${label}`,
+    module,
+    moduleName: module === "boite" ? "Boîte" : "Atlassian",
+    need: label,
+    label,
+    help: "",
+    optional: false,
+    hasTemplate: false,
+    client: null,
+    state,
+  });
+  expect(
+    pageNeeds([step("Météo", "missing"), step("Agenda", "missing"), step("Jira", "missing", "atlassian")], "boite"),
+  ).toBe(
+    "Pour l’afficher, il reste à ajouter votre compte Météo, votre compte Agenda et votre compte Jira, utilisé par le module Atlassian.",
+  );
+  expect(pageNeeds([step("Gmail", "missing"), step("Agenda", "missing"), step("Slack", "untested")], "boite")).toBe(
+    "Pour l’afficher, il reste à ajouter votre compte Gmail et votre compte Agenda, et à tester votre compte Slack.",
+  );
+});
+
+it("un compte qui vient d’une dépendance est nommé avec son module, et le parcours s’ouvre sur son étape", async () => {
+  const user = userEvent.setup();
+  modules = [
+    summary("atlassian", "Atlassian", { clients: [{ id: "jira", label: "Jira" }] }),
+    summary("suivi", "Suivi", {
+      clients: [{ id: "notes", label: "Notes" }],
+      requires: [{ module: "atlassian" }] as ModuleSummary["requires"],
+    }),
+  ];
+  useShell.setState({ snapshot: { modules, sections: [] } as unknown as Snapshot });
+  render(
+    <>
+      <SetupGate module="suivi" uses={{ clients: ["atlassian/jira"] }}>
+        <p>Vraie page</p>
+      </SetupGate>
+      <OnboardingHost />
+    </>,
+  );
+  expect(
+    await screen.findByText("Pour l’afficher, ajoutez votre compte Jira, utilisé par le module Atlassian."),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Configurer" }));
+  expect(useOnboarding.getState()).toMatchObject({ module: "suivi", step: "atlassian/jira" });
+  // Le parcours s’ouvre sur le compte Jira, pas sur la présentation du module ni sur Notes.
+  const panel = await screen.findByRole("dialog", { name: "Configurer Suivi" });
+  expect(await within(panel).findByRole("heading", { name: "Jira" })).toBeTruthy();
 });
 
 it("un service facultatif qui manque ne retient pas la page", async () => {

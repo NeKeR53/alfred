@@ -20,13 +20,18 @@ interface OnboardingState {
   module: string | null;
   /** `intro` juste après l’import ; `resume` pour reprendre à la première étape incomplète. */
   start: "intro" | "resume";
+  /** Étape (`module/besoin`) sur laquelle ouvrir le parcours, à la place de la reprise : celle d’une page qui attend. */
+  step?: string;
 }
 
 export const useOnboarding = create<OnboardingState>(() => ({ module: null, start: "resume" }));
 
-/** Ouvre l’onboarding d’un module, au-dessus de ce qui est affiché. */
-export function openOnboarding(module: string, start: "intro" | "resume" = "resume") {
-  useOnboarding.setState({ module, start });
+/**
+ * Ouvre l’onboarding d’un module, au-dessus de ce qui est affiché ; `step` l’ouvre directement sur l’étape d’un
+ * service (celui qui manque à une page).
+ */
+export function openOnboarding(module: string, start: "intro" | "resume" = "resume", step?: string) {
+  useOnboarding.setState({ module, start, step });
 }
 
 export function closeOnboarding() {
@@ -46,11 +51,12 @@ export function OnboardingHost() {
   );
   const module = useOnboarding((state) => state.module);
   const start = useOnboarding((state) => state.start);
+  const step = useOnboarding((state) => state.step);
   if (!module) return null;
-  return <OnboardingPanel key={`${module}:${start}`} module={module} start={start} />;
+  return <OnboardingPanel key={`${module}:${start}:${step ?? ""}`} module={module} start={start} step={step} />;
 }
 
-function OnboardingPanel({ module, start }: { module: string; start: "intro" | "resume" }) {
+function OnboardingPanel({ module, start, step }: { module: string; start: "intro" | "resume"; step?: string }) {
   const modules = useShell((state) => state.snapshot?.modules) ?? [];
   const snapshot = useShell((state) => state.snapshot);
   const services = useClients();
@@ -101,6 +107,7 @@ function OnboardingPanel({ module, start }: { module: string; start: "intro" | "
           modules={modules}
           services={services}
           start={start}
+          step={step}
           onEdit={setEditing}
           onClose={closeOnboarding}
           onOpenModule={
