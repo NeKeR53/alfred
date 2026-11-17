@@ -697,3 +697,37 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "compte" }));
   expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
 });
+
+it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs", async () => {
+  const user = userEvent.setup();
+  vault = [entry("jeton-jira", "Jeton Jira", "token"), entry("jeton-bb", "Jeton Bitbucket", "token")];
+  stored = [
+    { id: "jira", label: "Jira", baseUrl: "https://jira.exemple.com", auth: { type: "bearer", secret: "jeton-jira" } },
+    {
+      id: "bitbucket",
+      label: "Bitbucket",
+      baseUrl: "https://bb.exemple.com",
+      auth: { type: "bearer", secret: "jeton-bb" },
+    },
+  ];
+  const need = (id: string, label: string): ClientNeedItem => ({
+    key: `dev/${id}`,
+    module: "dev",
+    moduleName: "Dev",
+    id,
+    label,
+    baseUrl: null,
+    auth: null,
+    binding: null,
+    client: id,
+  });
+  needs = [need("jira", "Jira"), need("bitbucket", "Bitbucket")];
+  renderModules();
+  await openModule(user, "Dev");
+  expect(await screen.findByRole("heading", { name: "Jira" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Bitbucket" })).toBeInTheDocument();
+  // Sous chaque nom, le compte de ce service.
+  expect(
+    within(screen.getByRole("group", { name: "Comptes Bitbucket" })).getByText("Votre compte"),
+  ).toBeInTheDocument();
+});

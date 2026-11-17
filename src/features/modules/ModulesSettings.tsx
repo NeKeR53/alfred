@@ -565,6 +565,7 @@ export function ModulesSettings() {
                   help={module.clients.find((item) => item.id === need.id)?.help || undefined}
                   controller={services}
                   onEdit={setEditingService}
+                  titled={moduleNeeds.length > 1}
                   describeInstance={(instance) => {
                     const page = snapshot?.sections.find(
                       (section) => section.module === module.id && section.instance === instance,

@@ -11,6 +11,7 @@
   min-height: 32px;
 }
 .service-block__title {
+  margin: 0;
   color: var(--color-ink);
   font-size: var(--font-size-body);
   font-weight: 500;
@@ -54,6 +55,11 @@
 /* Pas de cadre autour d’un service : un trait fin sépare deux services, comme deux lignes. */
 .service-list > * + * {
   border-top: 1px solid var(--line);
+}
+/* Un service nommé au-dessus de ses comptes : de l’air entre deux services. */
+.service-list > * + *:has(> .service-block__head) {
+  margin-top: 16px;
+  padding-top: 12px;
 }
 /* Barre d’actions sous les comptes : à part de la liste, pour qu’on ne la prenne pas pour un compte. */
 .service-block__footer {

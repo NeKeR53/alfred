@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo } from "react";
 import { Button } from "../components/Button";
 import { ChoiceButton, ChoiceGroup } from "../components/ChoiceButton";
 import { DataTable, type DataTableColumn } from "../components/DataTable";
@@ -12,6 +12,7 @@ import { RefreshButton } from "../components/RefreshButton";
 import { SearchField } from "../components/SearchField";
 import { type Action, ActionBar } from "./actions";
 import { columnLayout, FormattedValue, type StatusMap, sortValueOf, type ValueType, valueText } from "./format";
+import { usePageState } from "./pageState";
 import { useFrameServices, useReloadOnPeerChange } from "./services";
 import { useLoad } from "./useLoad";
 
@@ -98,10 +99,16 @@ export function CollectionPage<Row>({
   const services = useFrameServices();
   const state = useLoad(load, deps);
   useReloadOnPeerChange(state.reload);
-  const [query, setQuery] = useState("");
-  const [filterValues, setFilterValues] = useState<string[]>(() => filters.map(() => ""));
-  const [view, setView] = useState(views?.items[0]?.id ?? "");
-  const [selected, setSelected] = useState<string | number | null>(null);
+  // Retenus par Alfred : en revenant sur la page, la recherche, les filtres, la vue et la ligne ouverte sont là.
+  const [query, setQuery] = usePageState("alfred:collection:query", "");
+  const [keptFilters, setFilterValues] = usePageState<string[]>("alfred:collection:filters", () =>
+    filters.map(() => ""),
+  );
+  // Des filtres ajoutés ou retirés depuis : chacun retrouve sa place, les nouveaux partent vides.
+  const filterValues = filters.map((_, index) => keptFilters[index] ?? "");
+  const [keptView, setView] = usePageState("alfred:collection:view", views?.items[0]?.id ?? "");
+  const view = views?.items.some((item) => item.id === keptView) ? keptView : (views?.items[0]?.id ?? "");
+  const [selected, setSelected] = usePageState<string | number | null>("alfred:collection:selected", null);
 
   const rows = state.data ?? [];
   const visible = useMemo(() => {

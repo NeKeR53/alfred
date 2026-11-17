@@ -3,7 +3,7 @@
  * rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur d’exécution).
  */
 
-import { emitToShell, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
+import { emitToShell, files, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
 import { EmptyState, type FrameServices, FrameServicesContext } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -96,6 +96,11 @@ const services: FrameServices = {
   setPanelVisible: (visible) => quiet(() => shell.setPanelVisible(visible)),
   openExternal: (url) => quiet(() => shell.openExternal(url)),
   send: (message) => quiet(() => shell.send(message)),
+  readFile: async (id) => {
+    const { info, data } = await files.read(id);
+    return { name: info.name, mime: info.mime, data };
+  },
+  openFile: (id) => files.open(id),
   onPeer: (handler) => onShellEvent("peer", handler),
   onSelection: (handler) => {
     let active = true;
@@ -116,9 +121,21 @@ function Host() {
 
   useEffect(() => {
     let active = true;
-    import(/* @vite-ignore */ `${base}m/${moduleId}/${moduleKey}/pages/${pageId}?v=${params.get("v") ?? ""}`).then(
-      (module: { default?: ComponentType }) => {
+    // L’état retenu de la page arrive avec son code : elle s’affiche d’emblée telle qu’on l’a laissée.
+    const kept = request<Record<string, unknown>>("shell.state.get").catch(() => ({}));
+    Promise.all([
+      import(/* @vite-ignore */ `${base}m/${moduleId}/${moduleKey}/pages/${pageId}?v=${params.get("v") ?? ""}`),
+      kept,
+    ]).then(
+      ([module, initial]: [{ default?: ComponentType }, Record<string, unknown>]) => {
         if (!active) return;
+        services.state = {
+          initial,
+          set: (key, value) => {
+            initial[key] = value;
+            quiet(() => request("shell.state.set", { key, value }));
+          },
+        };
         if (typeof module.default !== "function") {
           const error = new Error("La page doit exporter son composant par défaut : `export default function Page()`.");
           report("load", error);

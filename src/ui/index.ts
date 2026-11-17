@@ -15,6 +15,7 @@ export { Code, Divider, Image } from "./components/Content";
 export { DataTable, type DataTableColumn } from "./components/DataTable";
 export { Dialog } from "./components/Dialog";
 export { Disclosure } from "./components/Disclosure";
+export { DocumentViewer, type DocumentViewerProps } from "./components/DocumentViewer";
 export { EmptyState } from "./components/EmptyState";
 export { Avatar, Pagination, ProgressBar, pageOf } from "./components/Essentials";
 export { FeedbackBanner, type FeedbackBannerTone } from "./components/FeedbackBanner";
@@ -84,6 +85,7 @@ export {
   openModal,
 } from "./templates/dialogs";
 export { FormattedValue, type StatusMap, type StatusTone, type ValueType } from "./templates/format";
+export { usePageState } from "./templates/pageState";
 export { type Setting, SettingsPage, type SettingsSection } from "./templates/SettingsPage";
 export { type FrameServices, FrameServicesContext } from "./templates/services";
 export {

@@ -39,6 +39,7 @@ export function ServiceBlock({
   onEdit,
   note,
   describeInstance,
+  titled = false,
 }: {
   /** Besoin du module auquel ce service répond. */
   need: ClientNeedItem;
@@ -53,6 +54,8 @@ export function ServiceBlock({
   note?: ReactNode;
   /** Ce que sert un compte, en mots simples (la page qui l’affiche). */
   describeInstance?: (instance: string) => string | undefined;
+  /** Le module a plusieurs services : chacun porte son nom au-dessus de ses comptes. */
+  titled?: boolean;
 }) {
   const { statusBadge, statusDetails, validate, removeInstance, makeDefault, test, connect, disconnect, testing } =
     controller;
@@ -77,9 +80,23 @@ export function ServiceBlock({
     }
   };
 
+  const head = titled ? (
+    <div className="service-block__head">
+      <h4 className="service-block__title">{label}</h4>
+      {client && !client.simple ? (
+        <span className="service-block__note">
+          {client.instances.length === 0
+            ? "Aucun compte"
+            : `${client.instances.length} compte${client.instances.length > 1 ? "s" : ""}`}
+        </span>
+      ) : null}
+    </div>
+  ) : null;
+
   if (!client) {
     return (
       <div className="service-block">
+        {head}
         <SettingRows label={`Comptes ${label}`}>
           <SettingRow
             title={need.label}
@@ -119,6 +136,7 @@ export function ServiceBlock({
 
   return (
     <div className="service-block">
+      {head}
       <SettingRows label={`Comptes ${label}`}>
         {client.instances.map((instance) => {
           const title = accountTitle(client, instance);
@@ -129,7 +147,7 @@ export function ServiceBlock({
           return (
             <SettingRow
               key={instance.id}
-              title={client.simple ? `${label} — ${title}` : title}
+              title={client.simple && !titled ? `${label} — ${title}` : title}
               badge={instance.status === "ready" ? null : statusBadge(instance)}
               description={
                 <>

@@ -14,6 +14,7 @@ import {
 } from "../lib/native";
 import { isKnownPage } from "./badges";
 import { notify } from "./notifications";
+import { pageMemoryOf, rememberPageValue } from "./pageMemory";
 import { useShell } from "./store";
 
 export interface FrameIdentity {
@@ -143,6 +144,12 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
   switch (method) {
     case "shell.context":
       return frameContext(identity);
+    // État retenu de la page (`usePageState`) : par page affichée, instance comprise.
+    case "shell.state.get":
+      return pageMemoryOf(identity.reference);
+    case "shell.state.set":
+      rememberPageValue(identity.reference, params.key, params.value);
+      return null;
     case "shell.notify": {
       const title = String(params.title ?? "");
       const description = params.description ? String(params.description) : undefined;

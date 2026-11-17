@@ -339,6 +339,13 @@ Une zone libre reçoit **ce que la page veut** : des composants de `@alfred/ui` 
 - `footer?: ReactNode` : pied fixe sous ce qui défile (total, sélection, pagination).
 - `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus) ; `fill?: boolean` (le contenu occupe la hauteur sans défiler : pour un `DataTable fill` ou un éditeur) ; `children`.
 
+**Ce qui doit survivre au départ de la page** : quand l’utilisateur quitte une page et y revient, son cadre est recréé. Toute valeur qu’il s’attend à retrouver (texte de recherche, étiquettes, filtres, onglet, vue, élément ouvert) se déclare avec `usePageState(clé, valeurDeDépart)` de `@alfred/ui`, qui s’emploie exactement comme `useState` : Alfred la retient et la rend au retour, sans clignotement. Les gabarits le font d’eux-mêmes (`CollectionPage` retrouve sa recherche, ses filtres, sa vue et sa ligne ouverte). Réserve-le à l’état de l’écran, petit et en JSON ; les données restent dans la base.
+
+```tsx
+const [etiquettes, setEtiquettes] = usePageState<string[]>("etiquettes", []);
+<Page bar={<TagSearchField label="Rechercher un ticket" tags={etiquettes} onTagsChange={setEtiquettes} suggestions={projets} />}>
+```
+
 **La barre** est la petite bande fixe sous l’en-tête : elle apparaît dès que `search`, `bar` ou `actions` est donné. Une page composée qui veut une recherche ou des filtres en haut s’en sert, toujours (seule la prop `toolbar`, une barre toute faite, est réservée aux gabarits). Marge, défilement et espacement des blocs (24 px) sont fixés ; l’en-tête, la barre et le pied restent fixes.
 
 **`Section`** — un bloc titré : `title`, `description?` (une phrase), `actions?: Action[]` (à droite du titre : deux icônes au plus, une action principale en texte s’il le faut, le reste dans « ⋯ »), `children`. Un bloc par sujet ; pas de titre de page au-dessus.
@@ -353,7 +360,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 
 | Besoin | Composant | Props essentielles |
 |---|---|---|
-| Recherche simple dans la page | `Page search` (ou `SearchField` dans une zone) | `label`, `value`, `onChange` |
+| Recherche simple dans la page | `Page search` (ou `SearchField` dans une zone) | `label`, `value`, `onChange` ; la valeur dans un `usePageState` pour la retrouver au retour |
 | Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
 | Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
 | Deux à quatre choix exclusifs visibles (vue, période) | `ChoiceGroup appearance="segmented"` + `ChoiceButton` | `label` ; chaque bouton `label`, `selected`, `onClick`, `variant="label"`, `size="compact"` |
@@ -375,7 +382,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 
 **Lire un contenu** (section « Texte et contenus venus des données » ci-dessous)
 
-`Text`, `Heading`, `Code` (identifiant, extrait), `Link`, `Image` (`data:`/`blob:`), `Markdown` (texte riche venu des données), `HtmlContent` (corps d’un courriel, nettoyé et isolé).
+`Text`, `Heading`, `Code` (identifiant, extrait), `Link`, `Image` (`data:`/`blob:`), `Markdown` (texte riche venu des données), `HtmlContent` (corps d’un courriel, nettoyé et isolé), `DocumentViewer` (un document entier : PDF, image, texte, Markdown, avec page x/y, zoom et ouverture dans l’application du système).
 
 **Organiser et naviguer**
 
@@ -419,6 +426,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | `Image` | Image venue des données (`data:` ou `blob:` ; une adresse distante affiche son texte de remplacement) | `src`, `alt: string` (obligatoire ; `""` si décorative), `size`: `"sm" \| "md" \| "lg" \| "full"` (`"md"` : 120, 240, 480 px, toute la largeur), `fit`: `"contain" \| "cover"` (`"contain"` ; `cover` : vignette carrée) |
 | `Markdown` | Affiche un texte Markdown venu des données (note, réponse d’un agent) : titres, listes, tableaux, code. Pas pour composer la page elle-même | `children: string`, `onLink?: (href: string) => void` |
 | `HtmlContent` | Affiche un HTML venu de l’extérieur, le corps d’un courriel (Outlook, Gmail…) : nettoyé par liste blanche (ni script, ni gestionnaire `on…`, ni formulaire, ni cadre) et isolé dans une racine fantôme, ses styles ne débordent pas. Le seul moyen d’afficher du HTML : jamais `dangerouslySetInnerHTML` ni `innerHTML` | `html: string`, `onLink?: (url) => void`, `resolveImage?: (source) => Promise<string \| null>` (image jointe `cid:` ou distante → adresse `data:`/`blob:` ; sans, elle reste masquée), `label?: string` |
+| `DocumentViewer` | Affiche un document en entier dans la page : PDF (dessiné par pdf.js, chargé à la première demande), image, texte brut (`.txt`, `.log`, `.csv`, `.json`…) ou Markdown (`.md`). Barre : page x/y, zoom (aussi Ctrl+molette), ajuster à la largeur, et pour un fichier du module « Ouvrir avec l’application du système » (`files.open`). États chargement, « Document illisible » (message) et « Format non pris en charge » (avec l’ouverture dans l’application du système). Un PDF a une hauteur fixe ; le reste prend celle de son contenu | Une source : `file` (id d’un fichier du module, lu par `files.read`), `src` (adresse `data:` ; `blob:` pour une image seulement, la page ne pouvant pas lire une adresse `blob:`) ou `blob: Blob` (un `File` déposé) ; `label: string` (obligatoire), `name?` (nom affiché, reconnaît le format), `type?` (MIME forcé), `fill?` (`false` ; occupe la hauteur restante d’une `Page fill`) |
 
 Utiliser `as="span"` quand le texte est dans une `Row`, à côté d’une icône ou d’une pastille. Dans `Markdown` comme dans `Link`, un lien ne navigue jamais seul : `onLink` ou `onNavigate` reçoit l’adresse et décide quoi en faire.
 

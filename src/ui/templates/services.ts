@@ -17,6 +17,12 @@ export interface FrameServices {
   onPeer(handler: (message: unknown) => void): () => void;
   /** Abonnement à la sélection publiée par la page (pour un panneau) ; renvoie le désabonnement. */
   onSelection(handler: (selection: unknown) => void): () => void;
+  /** Contenu d’un fichier du module, en base64 (`files.read`) : pour `DocumentViewer`. */
+  readFile?(id: string): Promise<{ name: string; mime: string; data: string }>;
+  /** Ouvre un fichier du module avec l’application du système (`files.open`). */
+  openFile?(id: string): Promise<void>;
+  /** État retenu par Alfred pour cette page (`usePageState`) : valeurs au chargement, et enregistrement. */
+  state?: { initial: Record<string, unknown>; set(key: string, value: unknown): void };
 }
 
 const none: FrameServices = {

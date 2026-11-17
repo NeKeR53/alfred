@@ -547,6 +547,8 @@ files.open(id: string): Promise<void>;      // application du système
 
 Alfred range les fichiers du module hors de l’espace versionné (`.alfred/files/<module>/`), les copie avec les sauvegardes et les supprime avec le module. Chaque module ne voit que les siens. 50 Mo par fichier ; `mime` se déduit de l’extension du nom. Garde l’`id` dans une table du module pour relier le fichier à une ligne (une facture, un ticket). `files.open` montre dans le Finder, au lieu de l’ouvrir, un fichier qui s’exécuterait (script, application).
 
+Pour afficher un fichier du module dans une page (PDF, image, texte, Markdown), `<DocumentViewer file={fichier.id} label="…" />` de `@alfred/ui` le lit et l’affiche, avec page, zoom et ouverture dans l’application du système (DESIGN.md, section 5).
+
 ```tsx
 import { db, files, shell } from "@alfred/sdk";
 
