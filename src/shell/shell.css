@@ -647,3 +647,32 @@
   place-items: center;
   padding: 24px;
 }
+
+/* Pastille « Exemple » de la barre du haut : la page montre des données d’exemple (un clic ouvre « Quitter… »). */
+.example-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.example-indicator__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in oklch, var(--color-warning) 40%, var(--line));
+  border-radius: 999px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  cursor: default;
+}
+.example-indicator__pill:hover,
+.example-indicator__pill[aria-expanded="true"] {
+  border-color: var(--color-warning);
+}
+.example-indicator__pill:focus-visible {
+  outline: 2px solid var(--color-warning);
+  outline-offset: 2px;
+}

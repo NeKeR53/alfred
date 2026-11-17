@@ -18,11 +18,11 @@ import type { SetupStep } from "../features/setup/api";
 import { SetupGate } from "../features/setup/SetupGate";
 import { invoke, onNativeEvent } from "../lib/native";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../lib/types";
-import { ExampleBanner } from "./ExampleBanner";
+import { ExampleIndicator } from "./ExampleIndicator";
 import { useShell } from "./store";
 
 /**
- * Mode « données d’exemple » : bouton de la page d’attente, interrupteur de la fiche du module, bandeau de la page.
+ * Mode « données d’exemple » : bouton de la page d’attente, interrupteur de la fiche du module, pastille de la barre.
  * Le faux backend garde la liste des modules en mode exemple, comme `src-tauri/src/examples.rs`.
  */
 let examples: string[];
@@ -121,49 +121,57 @@ beforeEach(() => {
   });
 });
 
-it("la page d’attente propose les données d’exemple, qui affichent la page sans compte", async () => {
+it("la page d’attente propose les données d’exemple, qui affichent la page sans compte et sans bandeau", async () => {
   const user = userEvent.setup();
   render(
-    <SetupGate module="tickets">
-      <ExampleBanner module="tickets" />
-      <p>Vraie page</p>
-    </SetupGate>,
+    <>
+      <ExampleIndicator module="tickets" />
+      <SetupGate module="tickets">
+        <p>Vraie page</p>
+      </SetupGate>
+    </>,
   );
   expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Voir avec des données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([
     { module: "tickets", on: true },
   ]);
   expect(await screen.findByText("Vraie page")).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("Données d’exemple");
+  expect(screen.getByRole("button", { name: /^Exemple/ })).toBeTruthy();
+  expect(screen.queryByRole("status")).toBeNull();
   expect(screen.queryByText("Il manque un compte à cette page")).toBeNull();
 });
 
-it("le bandeau dit que la page montre des données d’exemple, et « Quitter » en sort", async () => {
+it("la pastille « Exemple » de la barre dit le mode et son menu le quitte", async () => {
   const user = userEvent.setup();
   examples = ["tickets"];
   useShell.setState({ snapshot: snapshot() });
   render(
-    <SetupGate module="tickets">
-      <ExampleBanner module="tickets" />
-      <p>Vraie page</p>
-    </SetupGate>,
+    <>
+      <ExampleIndicator module="tickets" />
+      <SetupGate module="tickets">
+        <p>Vraie page</p>
+      </SetupGate>
+    </>,
   );
   expect(screen.getByText("Vraie page")).toBeTruthy();
-  expect(screen.getByText(/aucun service n’est appelé/)).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Quitter" }));
+  const pill = screen.getByRole("button", { name: /^Exemple/ });
+  expect(pill.getAttribute("title")).toBe("Cette page affiche des données d’exemple");
+  await user.click(pill);
+  await user.click(screen.getByRole("menuitem", { name: "Quitter les données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([
     { module: "tickets", on: false },
   ]);
-  // Hors du mode, la page d’attente revient : le compte manque toujours.
+  // Hors du mode, la page d’attente revient (le compte manque toujours) et la pastille disparaît.
   expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
-  expect(screen.queryByText("Données d’exemple")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
 });
 
-it("hors du mode, aucun bandeau", () => {
-  render(<ExampleBanner module="tickets" />);
-  expect(screen.queryByRole("status")).toBeNull();
+it("hors du mode, aucune pastille", () => {
+  render(<ExampleIndicator module="tickets" />);
+  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
 });
 
 it("l’interrupteur de la fiche du module active et quitte les données d’exemple", async () => {

@@ -24,7 +24,7 @@ import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
-import { ExampleBanner } from "./ExampleBanner";
+import { ExampleIndicator } from "./ExampleIndicator";
 import { SectionIcon } from "./icons";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
 import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
@@ -72,7 +72,6 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
   // Tant qu’un service dont la page a besoin n’est pas prêt, la page d’attente remplace le cadre, qui n’est pas chargé.
   return (
     <SetupGate module={page.module} uses={page.uses} compact={kind === "panel"}>
-      {kind === "page" ? <ExampleBanner module={page.module} /> : null}
       <PageFrame page={page} kind={kind} host={host} />
     </SetupGate>
   );
@@ -239,6 +238,7 @@ export function SectionView({
             <AppWindow size={16} aria-hidden="true" />
           </IconButton>
         ) : null}
+        {page && !builtInTab && !waiting ? <ExampleIndicator module={page.module} /> : null}
         {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
         <NotificationBell />
       </PageTopBar>

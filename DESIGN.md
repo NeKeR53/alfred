@@ -40,6 +40,7 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 - Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche, masque et redimensionne (280 à 900 px).
 - Une page peut s’ajouter aux onglets des **Réglages**.
 - Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
+- L’état d’une page (données d’exemple, service à configurer…) se signale par un indicateur compact dans sa barre du haut, jamais par un bandeau pleine largeur ; seule la page d’attente remplace une page qui ne peut pas s’afficher.
 - Une page est affichée dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Une modale, un menu ou une infobulle restent dans son cadre. `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas.
 
 Choisir le gabarit d’après ce que la page montre, sans exception :
