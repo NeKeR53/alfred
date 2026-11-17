@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useReadyServicesReload } from "../features/setup/useModuleSetup";
 import { frameBase, onNativeEvent } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
@@ -34,6 +35,8 @@ export function PageFrame({
 }) {
   const info = useShell((state) => state.info);
   const revision = useShell((state) => state.revision);
+  // Un service de la page devient prêt (compte ajouté, connecté, testé) : la page se recharge d’elle-même.
+  const ready = useReadyServicesReload(page.module, page.uses, !capture);
   const theme = useShell((state) => state.theme);
   const accent = useShell((state) => state.snapshot?.accent ?? null);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -63,12 +66,12 @@ export function PageFrame({
       module: page.module,
       key: moduleKey,
       page: page.id,
-      v: String(revision),
+      v: `${revision}.${ready}`,
       theme: initialTheme.current.theme,
     });
     if (initialTheme.current.accent) query.set("accent", initialTheme.current.accent);
     return `${frameBase(info.pageBase)}/host/page?${query}`;
-  }, [info, moduleKey, page.module, page.id, revision]);
+  }, [info, moduleKey, page.module, page.id, revision, ready]);
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");

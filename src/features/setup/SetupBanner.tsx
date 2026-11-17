@@ -8,9 +8,11 @@ import { PlugZap } from "lucide-react";
 import { useState } from "react";
 import type { Uses } from "../../lib/types";
 import { listClients, testClient } from "../clients/api";
-import type { ModuleSetup, SetupStep } from "./api";
+import type { SetupStep } from "./api";
 import { openOnboarding } from "./Onboarding";
-import { useModuleSetup } from "./useModuleSetup";
+import { stepsOfPage, useModuleSetup } from "./useModuleSetup";
+
+export { stepsOfPage };
 
 /** Ouvre l’onboarding du module, à la première étape incomplète, au-dessus de la page. */
 export function openModuleSetup(module: string) {
@@ -26,17 +28,6 @@ async function verify(steps: SetupStep[]) {
       await testClient(client.id, client.simple ? undefined : instance.id);
     }
   }
-}
-
-/**
- * Services dont dépend une page : ceux qu’elle déclare dans `uses.clients` (« besoin » de son module, ou
- * « dépendance/besoin »), sinon tous ceux du module, dépendances comprises.
- */
-export function stepsOfPage(setup: ModuleSetup, module: string, uses?: Uses): SetupStep[] {
-  const declared = uses?.clients ?? [];
-  if (declared.length === 0) return setup.steps;
-  const keys = new Set(declared.map((need) => (need.includes("/") ? need : `${module}/${need}`)));
-  return setup.steps.filter((step) => keys.has(step.key));
 }
 
 export function SetupBanner({ module, uses }: { module: string; uses?: Uses }) {

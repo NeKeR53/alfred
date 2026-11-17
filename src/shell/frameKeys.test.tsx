@@ -9,6 +9,8 @@ const native = vi.hoisted(() => {
 vi.mock("../lib/native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/native")>()),
   invoke: native.invoke,
+  // Pas de flux d’événements du backend dans jsdom.
+  onNativeEvent: () => () => undefined,
 }));
 
 import type { ResolvedPage } from "../lib/types";
