@@ -4,12 +4,12 @@ import {
   type DataTableColumn,
   EmptyState,
   FeedbackBanner,
+  LoadingSkeleton,
   Page,
   RefreshButton,
   SearchField,
   Section,
   SelectControl,
-  Spinner,
   StatusBadge,
   Text,
 } from "@alfred/ui";
@@ -269,7 +269,7 @@ export function MarketplaceSettings() {
       }
     >
       {marketplaces === null || offers === null ? (
-        <Spinner label="Chargement des modules disponibles" />
+        <LoadingSkeleton rows={3} label="Chargement des modules disponibles" />
       ) : marketplaces.length === 0 ? (
         <EmptyState
           size="compact"

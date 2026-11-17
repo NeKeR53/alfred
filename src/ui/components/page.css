@@ -49,7 +49,7 @@
 .al-page__body--fill {
   overflow: hidden;
 }
-.al-page__body--text > * {
+.al-page__body--text > :where(:not(.al-spinner)) {
   width: 100%;
   max-width: 760px;
 }

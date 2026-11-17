@@ -3,12 +3,12 @@ import {
   ChoiceButton,
   ChoiceGroup,
   FeedbackBanner,
+  LoadingSkeleton,
   Page,
   Section,
   SelectControl,
   SettingRow,
   SettingRows,
-  Spinner,
   SwitchControl,
   TextInput,
 } from "@alfred/ui";
@@ -183,7 +183,7 @@ export function VoiceSettings() {
   }, [voices, config?.voice, config?.language]);
 
   if (loadError) return <FeedbackBanner>{`Réglages de la voix indisponibles : ${loadError}`}</FeedbackBanner>;
-  if (!config) return <Spinner label="Chargement des réglages de la voix" />;
+  if (!config) return <LoadingSkeleton rows={4} label="Chargement des réglages de la voix" />;
 
   const install = async () => {
     setInstalling(true);

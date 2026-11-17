@@ -423,12 +423,18 @@
   margin-top: 3px;
 }
 .shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog) {
-  width: auto;
   margin: 16px var(--settings-inline) 0;
 }
 .shell-body--settings .al-page__body > :not(.al-section, dialog) {
-  width: auto;
   margin: 16px var(--settings-inline) 8px;
+}
+/*
+ * La largeur rendue à `auto` laisse le contenu prendre la colonne. Pas l’indicateur d’attente : étiré, son cercle
+ * devenait une longue ellipse claire pendant le chargement d’une rubrique.
+ */
+.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog, .al-spinner),
+.shell-body--settings .al-page__body > :not(.al-section, dialog, .al-spinner) {
+  width: auto;
 }
 .shell-body--settings .al-page > .page-toolbar {
   padding-inline: var(--settings-inline);

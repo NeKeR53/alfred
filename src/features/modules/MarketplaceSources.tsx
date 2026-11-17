@@ -3,9 +3,9 @@ import {
   EmptyState,
   FormControlGroup,
   FormField,
+  LoadingSkeleton,
   RefreshButton,
   Section,
-  Spinner,
   StatusBadge,
   TextInput,
   useConfirm,
@@ -182,7 +182,7 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
           ) : null}
         </form>
         {marketplaces === null ? (
-          <Spinner label="Chargement des marketplaces" />
+          <LoadingSkeleton rows={2} label="Chargement des marketplaces" />
         ) : marketplaces.length === 0 ? (
           <EmptyState
             size="compact"
