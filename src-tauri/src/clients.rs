@@ -1986,18 +1986,15 @@ pub fn validate_by_agent(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
     Ok(describe(state, &def, &[]))
 }
 
-fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
-    let space = state.space()?;
-    let id: String = arg(args, "id")?;
-    if !valid_id(&id) || !client_path(&space, &id).is_file() {
-        return Err(AppError::new(format!("Le client « {id} » n’existe pas dans cet espace de travail.")));
-    }
-    let label = load(&space, &id).ok().flatten().map(|client| client.label).unwrap_or_else(|| id.clone());
-    std::fs::remove_file(client_path(&space, &id))?;
+/// Retire un client de l’espace, avec tout ce qui s’y rattache (comptes, validation, accords, tests), sans
+/// commit ; rend son nom. Les entrées du coffre restent : le coffre est commun à tous les espaces de travail.
+fn forget(state: &AppState, space: &Space, id: &str) -> AppResult<String> {
+    let label = load(space, id).ok().flatten().map(|client| client.label).unwrap_or_else(|| id.to_string());
+    std::fs::remove_file(client_path(space, id))?;
     // Les demandes reliées à ce client redeviennent « à relier » plutôt que de pointer dans le vide.
     let mut manifest = space.manifest()?;
     let before = manifest.bindings.len();
-    manifest.bindings.retain(|_, bound| bound != &id);
+    manifest.bindings.retain(|_, bound| bound != id);
     if manifest.bindings.len() != before {
         space.write_manifest(&manifest)?;
     }
@@ -2006,14 +2003,58 @@ fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         let db = trust_db(state)?;
         db.execute(
             "DELETE FROM client_trust WHERE space = ?1 AND (client = ?2 OR client LIKE ?3)",
-            params![space_key(&space), id, format!("{id}#%")],
+            params![space_key(space), id, format!("{id}#%")],
         )?;
         db.execute(
             "DELETE FROM grants WHERE space = ?1 AND resource = ?2",
-            params![space_key(&space), format!("client:{id}")],
+            params![space_key(space), format!("client:{id}")],
         )?;
     }
-    forget_tests(state, &space, &id)?;
+    forget_tests(state, space, id)?;
+    Ok(label)
+}
+
+/// Clients qui répondent aujourd’hui à un besoin d’un module de l’espace (liaison, sinon même identifiant).
+fn used_clients(space: &Space) -> AppResult<std::collections::BTreeSet<String>> {
+    let bindings = space.manifest()?.bindings;
+    let mut used = std::collections::BTreeSet::new();
+    for module_id in space.module_ids() {
+        let Ok(module) = space.module(&module_id) else { continue };
+        for need in &module.clients {
+            let key = format!("{module_id}/{}", need.id);
+            used.insert(bindings.get(&key).cloned().unwrap_or_else(|| need.id.clone()));
+        }
+    }
+    Ok(used)
+}
+
+/// Un service appartient aux modules qui s’en servent : celui qu’aucun module n’utilise plus (son module a été
+/// supprimé) quitte l’espace avec ses comptes. Sans commit ; rend les noms des services retirés.
+pub fn forget_unused(state: &AppState, space: &Space) -> AppResult<Vec<String>> {
+    // Un module illisible garde ses services : on ne sait pas ce qu’il utilise.
+    if space.module_ids().iter().any(|id| space.module(id).is_err()) {
+        return Ok(Vec::new());
+    }
+    let used = used_clients(space)?;
+    let mut labels = Vec::new();
+    for (id, _) in load_all(space) {
+        if !used.contains(&id) {
+            labels.push(forget(state, space, &id)?);
+        }
+    }
+    if !labels.is_empty() {
+        state.emit("clients:changed", Value::Null);
+    }
+    Ok(labels)
+}
+
+fn delete(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let id: String = arg(args, "id")?;
+    if !valid_id(&id) || !client_path(&space, &id).is_file() {
+        return Err(AppError::new(format!("Le client « {id} » n’existe pas dans cet espace de travail.")));
+    }
+    let label = forget(state, &space, &id)?;
     git::commit_all(&space.root, &format!("Suppression du client {label}"))?;
     state.emit("clients:changed", json!({ "client": id }));
     Ok(Value::Null)

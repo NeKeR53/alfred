@@ -192,6 +192,10 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
+    // Les services restés après la suppression de leur module (avant que le retrait ne les emporte) s’en vont.
+    if let Err(error) = crate::clients::forget_unused(state, &space) {
+        log::error!("services sans module non retirés : {}", error.message);
+    }
     git::commit_all(&space.root, "Ouverture de l’espace de travail")?;
     // Les tâches de fond et les livraisons d’événements interrompues à la fermeture reprennent.
     crate::jobs::kick();

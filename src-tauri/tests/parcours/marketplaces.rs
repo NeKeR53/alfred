@@ -162,3 +162,35 @@ async fn uninstalling_a_module_forgets_the_grants_on_its_functions() {
     let result = menu.call("recettes/compter", json!({})).await;
     assert_eq!(reader.ui.asked_resources().len(), 2, "accord hérité : la page appelle le nouveau module sans question ({result:?})");
 }
+
+/// Un service appartient aux modules qui s’en servent : supprimer un module emporte les services qu’il était seul
+/// à utiliser, avec leurs comptes, et garde ceux qu’un autre module utilise encore.
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_module_takes_its_own_services_with_it() {
+    let desk = Desk::open("services-du-module").await;
+    for (label, module_clients) in [("Ventes", json!([{ "id": "partage" }, { "id": "facturation" }])), ("Achats", json!([{ "id": "partage" }]))] {
+        let placed = desk.invoke("space.placePage", json!({ "title": "Accueil", "target": { "kind": "menu", "label": label } })).await;
+        let module = placed["module"].as_str().unwrap().to_string();
+        let path = format!("modules/{module}/module.json");
+        let mut manifest: Value = serde_json::from_str(&desk.read(&path).unwrap()).unwrap();
+        manifest["clients"] = module_clients;
+        desk.write(&path, &serde_json::to_string_pretty(&manifest).unwrap());
+    }
+    for id in ["partage", "facturation"] {
+        desk.write(&format!("clients/{id}.json"), &json!({ "label": id, "baseUrl": format!("https://{id}.exemple.com"), "auth": { "type": "none" } }).to_string());
+    }
+    desk.invoke("space.commit", json!({ "message": "Deux modules et leurs services" })).await;
+
+    desk.invoke("marketplace.uninstall", json!({ "module": "ventes", "deleteData": true })).await;
+    let ids: Vec<String> = desk.invoke("clients.list", json!({})).await["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|client| client["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, vec!["partage".to_string()], "seul le service encore utilisé par Achats reste");
+    assert!(desk.read("clients/facturation.json").is_none());
+
+    desk.invoke("marketplace.uninstall", json!({ "module": "achats", "deleteData": true })).await;
+    assert_eq!(desk.invoke("clients.list", json!({})).await["clients"], json!([]));
+}

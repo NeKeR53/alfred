@@ -280,7 +280,6 @@ export function ModulesSettings() {
   const clients = services.overview?.clients ?? [];
   const needs = services.overview?.needs ?? [];
   const nameOf = (id: string) => modules.find((candidate) => candidate.id === id)?.name || id;
-  const orphans = clients.filter((client) => client.usedBy.length === 0);
   const clientOf = (need: ClientNeedItem) => clients.find((client) => client.id === need.client);
   const hiddenOf = (module: ModuleSummary) => (snapshot ? isModuleHidden(snapshot, module.id) : module.hidden);
   // Un module est « à configurer » tant que son parcours n’est pas terminé (services prêts et testés, dépendances
@@ -714,26 +713,6 @@ export function ModulesSettings() {
           </div>
         )}
       </Section>
-
-      {orphans.length > 0 ? (
-        <Section
-          title="Autres services"
-          description="Services qu’aucun module n’utilise pour l’instant. Les pages peuvent quand même les appeler."
-          actions={<Button onClick={() => setEditingService({ kind: "client" })}>Nouveau service</Button>}
-        >
-          <div className="service-list">
-            {orphans.map((client) => (
-              <ServiceBlock
-                key={client.id}
-                client={client}
-                clients={clients}
-                controller={services}
-                onEdit={setEditingService}
-              />
-            ))}
-          </div>
-        </Section>
-      ) : null}
     </>
   );
 

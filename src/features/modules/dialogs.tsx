@@ -267,10 +267,10 @@ export function UninstallDialog({
     >
       <p>
         {installed
-          ? "Ses pages et ses fonctions quittent l’espace de travail. Il pourra être importé de nouveau depuis son marketplace."
+          ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Il pourra être importé de nouveau depuis son marketplace."
           : (module.published ?? []).length > 0
-            ? "Ses pages et ses fonctions quittent l’espace de travail. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
-            : "Ses pages et ses fonctions quittent l’espace de travail. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
+            ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
+            : "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
       </p>
       {error ? (
         <FeedbackBanner tone="error" appearance="contained">

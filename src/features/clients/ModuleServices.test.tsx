@@ -21,8 +21,8 @@ import type {
 } from "./api";
 
 /**
- * Les services se règlent dans l’onglet Modules : ceux d’un module dans sa fiche, ceux qu’aucun module n’utilise
- * sous « Autres services ». Ces parcours passent donc par l’écran réel.
+ * Les services se règlent dans l’onglet Modules, dans la fiche du module qui s’en sert : un service appartient à
+ * ses modules. Ces parcours passent donc par l’écran réel.
  */
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -308,6 +308,23 @@ async function menuItem(user: ReturnType<typeof userEvent.setup>, subject: strin
   return screen.findByRole("menuitem", { name: item });
 }
 
+/** Fait utiliser le service `client` par un module « Outils », dont on ouvre ensuite la fiche. */
+function usedByModule(client: string, label: string) {
+  needs = [
+    {
+      key: `outils/${client}`,
+      module: "outils",
+      moduleName: "Outils",
+      id: client,
+      label,
+      baseUrl: null,
+      auth: null,
+      binding: null,
+      client,
+    },
+  ];
+}
+
 const lastCall = (command: string) => calls.filter((call) => call.command === command).at(-1)?.args;
 const notifications = () => useNotifications.getState().items.map((item) => item.title);
 const optionLabels = (select: HTMLElement) =>
@@ -337,7 +354,9 @@ it("configure le service demandé par un module depuis sa fiche, le teste, chang
 
   // Le module signale qu’il attend un service ; sa fiche propose de le configurer.
   expect(await screen.findByText("À configurer")).toBeInTheDocument();
-  expect(screen.getByRole("group", { name: "Comptes Secours" })).toBeInTheDocument();
+  // Un service qu’aucun module n’utilise n’a pas de place dans la liste des modules.
+  expect(screen.queryByText("Autres services")).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Comptes Secours" })).not.toBeInTheDocument();
   await openModule(user, "CRM");
   await user.click(await screen.findByRole("button", { name: "Configurer Tickets" }));
 
@@ -414,17 +433,6 @@ it("configure le service demandé par un module depuis sa fiche, le teste, chang
   expect(screen.queryByRole("menuitem", { name: "Supprimer le service…" })).not.toBeInTheDocument();
 });
 
-it("supprime un service qu’aucun module n’utilise", async () => {
-  const user = userEvent.setup();
-  stored = [{ id: "secours", label: "Secours", baseUrl: "https://secours.exemple.com", auth: { type: "none" } }];
-  renderModules();
-  await screen.findByRole("group", { name: "Comptes Secours" });
-  await user.click(await menuItem(user, "Secours", "Supprimer le service…"));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
-  await waitFor(() => expect(screen.queryByRole("group", { name: "Comptes Secours" })).not.toBeInTheDocument());
-  expect(lastCall("clients.delete")).toEqual({ id: "secours" });
-});
-
 it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", async () => {
   const user = userEvent.setup();
   vault = [entry("sso", "SSO", "oauth2", { meta: { clientId: "alfred-app" }, hasSecret: false, connected: false })];
@@ -442,7 +450,9 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
       },
     },
   ];
+  usedByModule("portail", "Portail");
   renderModules();
+  await openModule(user, "Outils");
   const table = await screen.findByRole("group", { name: "Comptes Portail" });
   expect(within(table).getByText("À connecter")).toBeInTheDocument();
 
@@ -564,7 +574,9 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
       auth: { type: "bearer", secret: "jeton-jira" },
     },
   ];
+  usedByModule("jira", "Jira");
   renderModules();
+  await openModule(user, "Outils");
 
   // À valider : l’état le dit, et le test est impossible tant que rien n’est approuvé.
   const table = await screen.findByRole("group", { name: "Comptes Jira" });

@@ -1465,6 +1465,8 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
     });
     layout_owner.bindings.retain(|need, _| !need.starts_with(&prefix));
     space.write_manifest(&layout_owner)?;
+    // Ses services et leurs comptes partent avec lui, sauf ceux qu’un autre module utilise encore.
+    crate::clients::forget_unused(state, &space)?;
 
     let message = format!("Retrait du module {}", display_name(&manifest));
     let commit = git::commit_all(&space.root, &message)?;
