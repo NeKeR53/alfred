@@ -11,6 +11,11 @@ type Gap = "none" | "xs" | "sm" | "md" | "lg";
 
 const gapClass = (gap: Gap) => `al-gap-${gap}`;
 
+/** L’en-tête décrit (nom, état, actions) plutôt qu’un contenu libre. */
+function isHeaderSpec(header: PageHeaderSpec | ReactNode): header is PageHeaderSpec {
+  return typeof header === "object" && header !== null && !Array.isArray(header) && !isValidElement(header);
+}
+
 /**
  * Racine d’une page ou d’un panneau créé dans l’espace : occupe tout le cadre, fait défiler son contenu et fixe
  * les marges. Une page n’écrit ni marge extérieure ni couleur de fond elle-même. L’en-tête (`header`) et la barre
@@ -21,22 +26,34 @@ export function Page({
   toolbar,
   actions,
   search,
+  bar,
   header,
+  footer,
   width = "full",
   fill = false,
 }: {
   children: ReactNode;
-  /** Barre fixe au-dessus du contenu, réservée à la coquille et aux gabarits : une page passe `actions` et `search`. */
+  /**
+   * Barre toute faite, réservée à la coquille et aux gabarits. Une page a pourtant sa barre fixe sous l’en-tête :
+   * elle l’obtient avec `search`, `bar` et `actions`.
+   */
   toolbar?: ReactNode;
   /** Actions de la page, disposées par Alfred dans la barre du haut (icônes, « ⋯ », action principale). */
   actions?: ReadonlyArray<Action>;
   /** Recherche de la page, à gauche de la barre. */
   search?: { label: string; value: string; onChange: (value: string) => void };
   /**
+   * Contenu libre de la barre, après la recherche : filtres (`ChoiceGroup`, `SelectControl`), compteur, onglets de
+   * vue. Les actions restent dans `actions`, à droite.
+   */
+  bar?: ReactNode;
+  /**
    * En-tête fixe de l’objet que montre la page (un panneau de droite composé, la fiche d’un objet) : nom, état,
    * ligne de contexte et actions en icônes. Jamais le titre de la section, que la coquille affiche déjà.
    */
-  header?: PageHeaderSpec;
+  header?: PageHeaderSpec | ReactNode;
+  /** Pied fixe sous la zone qui défile : total, état d’une sélection, pagination. Contenu libre. */
+  footer?: ReactNode;
   /** `text` limite la largeur de lecture ; `full` sert aux tableaux et aux vues denses. */
   width?: "full" | "text";
   /**
@@ -48,18 +65,23 @@ export function Page({
   const host = useDialogOwner();
   const subpage = useSubpage();
   const covered = host && subpage !== undefined;
-  const bar =
+  const topBar =
     toolbar ??
-    (actions?.length || search ? (
+    (actions?.length || search || bar ? (
       <PageToolbar
         start={
-          search ? (
-            <SearchField
-              label={search.label}
-              placeholder="Rechercher…"
-              value={search.value}
-              onChange={(event) => search.onChange(event.target.value)}
-            />
+          search || bar ? (
+            <>
+              {search ? (
+                <SearchField
+                  label={search.label}
+                  placeholder="Rechercher…"
+                  value={search.value}
+                  onChange={(event) => search.onChange(event.target.value)}
+                />
+              ) : null}
+              {bar ? <div className="al-page__bar">{bar}</div> : null}
+            </>
           ) : undefined
         }
       >
@@ -74,9 +96,14 @@ export function Page({
       <div className="al-page">
         {host ? <TemplateDialogHost /> : null}
         <div className="al-page__main" inert={covered || undefined} aria-hidden={covered || undefined}>
-          {header ? <PageHeaderBar header={header} /> : null}
-          {bar}
+          {header === undefined || header === null || header === false ? null : isHeaderSpec(header) ? (
+            <PageHeaderBar header={header} />
+          ) : (
+            <header className="al-page__header">{header}</header>
+          )}
+          {topBar}
           <div className={bodyClass}>{children}</div>
+          {footer ? <footer className="al-page__footer">{footer}</footer> : null}
         </div>
         {covered ? <SubpageLayer entry={subpage} /> : null}
       </div>

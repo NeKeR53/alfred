@@ -338,3 +338,23 @@
 .al-page__header > .al-action-bar {
   margin-top: -4px;
 }
+/* Zones libres de la page : contenu de la barre (après la recherche), pied fixe. */
+.al-page__bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.al-page__footer {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--color-bg);
+}

@@ -11,14 +11,14 @@ Le transpileur ne vérifie pas les types : une prop inventée est ignorée en si
 ## 1. Règles non négociables
 
 1. **Un gabarit d’abord.** Une liste d’objets est une `CollectionPage`, un panneau de droite est un `DetailPanel`, un onglet de Réglages est une `SettingsPage`, une saisie est un `openForm`, une confirmation est une `Action` `danger` (section 2). `Page` composée à la main seulement quand aucun gabarit ne convient (section 5).
-2. **Des actions, pas des boutons.** Toute action se décrit par une `Action` (`{ label, icon, onClick, primary, danger }`, section 3) passée à un gabarit, à `Page actions` ou à `Section actions`. La page ne pose ni `Button`, ni `IconButton`, ni menu dans une barre, un en-tête ou une ligne : le gabarit choisit.
+2. **Des actions, pas des boutons.** Toute action se décrit par une `Action` (`{ label, icon, onClick, primary, danger }`, section 3) passée à un gabarit, à `Page actions` ou à `Section actions`. La page ne pose ni `Button`, ni `IconButton`, ni menu pour une action de page, d’objet ou de ligne : le gabarit choisit. Le reste (recherche, filtres, saisies, compteurs, composants du module) va librement dans les zones de la page (section 5).
 3. **Imports.** Une page n’importe que `react`, `lucide-react`, `@alfred/ui`, `@alfred/sdk`, ses librairies et les fichiers de son module par chemin relatif (`./…`).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`), qui rend un gabarit (ou `Page`) à la racine, dans tous ses états : le gabarit gère lui-même chargement, vide et erreur.
 5. **Aucun style propre.** Ni `style`, ni `<style>`, ni `className`, ni balise HTML (`<div>`, `<span>`, `<button>`…). Une page ne fixe ni couleur, ni taille, ni marge, ni largeur : elle règle les props des composants.
 6. **Aucun doublon de la coquille.** Le titre de la section, les onglets, le bouton du panneau, la navigation et les notifications sont dessinés par Alfred : la page ne commence pas par un titre.
 7. **Le sens passe par le type et le texte.** Un état est une valeur `status` avec son libellé et son ton, jamais une couleur.
 8. **Français.** Les textes affichés sont en français, avec la typographie française (section 8). Les noms du code suivent le vocabulaire du module.
-9. **Un manque se signale.** Si aucun gabarit ni composant ne convient, le dire à l’utilisateur. Ne jamais contourner par du HTML stylé.
+9. **Un manque se compose.** Si aucun gabarit ni composant ne convient tel quel, écrire un composant du module avec ceux de `@alfred/ui` et le placer dans une zone de la page (section 5) : jamais refuser pour autant. Seul le HTML stylé reste interdit.
 
 La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’accent, l’icône et la couleur des entrées du menu, et les composants suivent ces réglages. Une couleur écrite dans une page est illisible dans l’un des thèmes, une marge locale rompt l’alignement, une classe inventée ne correspond à aucune règle.
 
@@ -315,17 +315,95 @@ const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, labe
 
 Seulement quand aucun gabarit ne convient : lire un document, une synthèse de quelques blocs, un éditeur ou un graphique de librairie. La page reste une colonne de blocs, dans cet ordre : bandeau éventuel, objet principal, blocs de détail.
 
-**`Page`** — racine. Props : `header?: { title, subtitle?, status?: { label, tone }, actions?: Action[] }` (en-tête fixe de l’objet que montre la page : un panneau de droite composé, la fiche d’un document ; jamais le titre de la section, que la coquille affiche), `actions?: Action[]` (barre du haut : icônes, « ⋯ », action principale, disposées comme en section 3), `search?: { label, value, onChange(value) }` (recherche à gauche de la barre), `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus), `fill?: boolean` (le contenu occupe la hauteur sans défiler : pour une page dont le bloc principal est un `DataTable fill` ou un éditeur), `children`. Marge, défilement et espacement des blocs (24 px) sont fixés ; l’en-tête et la barre restent fixes au-dessus de ce qui défile.
+**Zones de la page.** `Page` se découpe en zones, toutes facultatives, de haut en bas :
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ header   en-tête fixe (nom, état, actions — ou contenu libre) │
+├───────────────────────────────────────────────────────────┤
+│ barre    [search][bar : contenu libre…]        [actions] │  fixe
+├───────────────────────────────────────────────────────────┤
+│ children les blocs, seule zone qui défile                 │
+├───────────────────────────────────────────────────────────┤
+│ footer   pied fixe, contenu libre                         │
+└───────────────────────────────────────────────────────────┘
+```
+
+Une zone libre reçoit **ce que la page veut** : des composants de `@alfred/ui` (`ChoiceGroup`, `SelectControl`, `MultiSelectCombobox`, `Text`, `StatusBadge`…), ou un composant du module écrit avec eux (une recherche à étiquettes avec autocomplétion, par exemple, dans un fichier `./RechercheEtiquettes.tsx`). La zone fixe la place, la hauteur, l’alignement et l’espacement ; le contenu reste celui de la page. Rien n’y est obligatoire ni figé : un besoin que les composants ne couvrent pas se compose dans une zone, il ne se refuse pas.
+
+**`Page`** — racine. Props :
+- `header?` : soit `{ title, subtitle?, status?: { label, tone }, actions?: Action[] }` (l’en-tête de l’objet que montre la page : un panneau de droite composé, la fiche d’un document), soit un contenu libre. Jamais le titre de la section, que la coquille affiche.
+- `search?: { label, value, onChange(value) }` : la recherche simple, à gauche de la barre.
+- `bar?: ReactNode` : zone libre de la barre, après la recherche (ou à sa place) : filtres, recherche à étiquettes, compteur, choix de vue. Elle s’étire sur la largeur disponible.
+- `actions?: Action[]` : à droite de la barre (icônes, « ⋯ », action principale, disposées comme en section 3).
+- `footer?: ReactNode` : pied fixe sous ce qui défile (total, sélection, pagination).
+- `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus) ; `fill?: boolean` (le contenu occupe la hauteur sans défiler : pour un `DataTable fill` ou un éditeur) ; `children`.
+
+**La barre** est la petite bande fixe sous l’en-tête : elle apparaît dès que `search`, `bar` ou `actions` est donné. Une page composée qui veut une recherche ou des filtres en haut s’en sert, toujours (seule la prop `toolbar`, une barre toute faite, est réservée aux gabarits). Marge, défilement et espacement des blocs (24 px) sont fixés ; l’en-tête, la barre et le pied restent fixes.
 
 **`Section`** — un bloc titré : `title`, `description?` (une phrase), `actions?: Action[]` (à droite du titre : deux icônes au plus, une action principale en texte s’il le faut, le reste dans « ⋯ »), `children`. Un bloc par sujet ; pas de titre de page au-dessus.
 
 **Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`) encadre un contenu autonome dans une page large ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres.
 
-**Montrer des données** — `KeyValueList` (`items: { label, value }[]`, fiche d’un objet), `List` et `ListItem` (`title`, `description?`, `leading?`, `trailing?`, `onClick?` : quelques éléments hétérogènes), `DataTable` (`columns`, `rows`, `rowKey`, `label` : un tableau secondaire dans un bloc ; une collection principale est une `CollectionPage`. Son en-tête est hors de la zone qui défile ; avec `fill`, sous `Page fill`, il prend la hauteur restante et seules ses lignes défilent), `FormattedValue` (`value`, `options: { type, statuses, currency }` : une valeur formatée hors d’un gabarit), `StatusBadge` (`tone`, `size="compact"`), `StatusDot`.
+### Catalogue des composants
 
-**Retour** — `FeedbackBanner` (`tone`: `"danger" \| "warning" \| "info"`, `action?` : un état qui dure), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`). Règles en section 9.
+Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et accessible : la page les **emploie**, elle ne les dessine pas. Cherche ici le besoin, prends le composant, règle ses props. Un besoin absent se compose avec eux (règle 9).
 
-**Saisie sur place** — `SearchField` (dans `Page search` de préférence), `InlineEdit` (une valeur isolée modifiable par un clic), `Tabs` (rubriques d’un même objet), `ChoiceGroup` et `ChoiceButton` (deux à quatre choix exclusifs visibles), `Disclosure` (contenu secondaire replié). Un formulaire passe par `openForm`.
+**Rechercher et filtrer** (dans la barre de la page, `search` ou `bar`)
+
+| Besoin | Composant | Props essentielles |
+|---|---|---|
+| Recherche simple dans la page | `Page search` (ou `SearchField` dans une zone) | `label`, `value`, `onChange` |
+| Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
+| Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
+| Deux à quatre choix exclusifs visibles (vue, période) | `ChoiceGroup appearance="segmented"` + `ChoiceButton` | `label` ; chaque bouton `label`, `selected`, `onClick`, `variant="label"`, `size="compact"` |
+| Un choix dans une liste fermée | `SelectControl` | props d’un `<select>` + `<option>` |
+
+**Montrer des données**
+
+| Besoin | Composant | Props essentielles |
+|---|---|---|
+| Collection principale d’une page (tri, recherche, filtres, sélection) | `CollectionPage` (4.1) | `columns`, `load`, `search`, `filters` |
+| Tableau secondaire dans un bloc | `DataTable` | `label`, `columns` (`key`, `header`, `align?`, `render?`, `sortable?`), `rows`, `rowKey`, `onRowClick?`, `selectedKey?`, `loading?`, `emptyTitle?`, `fill?` (sous `Page fill` : seules les lignes défilent, l’en-tête reste fixe) |
+| Découper une longue liste | `Pagination` dans `Page footer`, et `pageOf(rows, page, pageSize)` | `page` (dès 1), `pageSize`, `total`, `onChange` |
+| Quelques éléments hétérogènes (personnes, fichiers, résultats) | `List` + `ListItem` | `title`, `description?`, `leading?` (un `Avatar`, une icône), `trailing?` (un `StatusBadge`, une date), `onClick?`, `selected?` |
+| Fiche « libellé : valeur » d’un objet | `KeyValueList` | `items: { label, value }[]` |
+| Une valeur formatée (montant, date, durée) | `FormattedValue` | `value`, `options: { type, statuses, currency }` |
+| Un état | `StatusBadge` (`tone`, `size="compact"`), `StatusDot` | — |
+| Une personne | `Avatar` | `name`, `src?` (`data:`/`blob:`), `size?` (`sm`, `md`, `lg`) |
+| Avancement, quota | `ProgressBar` | `label`, `value`, `max?` (100), `showValue?`, `tone?` |
+
+**Lire un contenu** (section « Texte et contenus venus des données » ci-dessous)
+
+`Text`, `Heading`, `Code` (identifiant, extrait), `Link`, `Image` (`data:`/`blob:`), `Markdown` (texte riche venu des données), `HtmlContent` (corps d’un courriel, nettoyé et isolé).
+
+**Organiser et naviguer**
+
+| Besoin | Composant | Props essentielles |
+|---|---|---|
+| Rubriques d’un même objet | `Tabs` | `label`, `items: { id, label, content? }[]`, `activeId`, `onChange` |
+| Contenu secondaire replié | `Disclosure` | `label`, `children`, `appearance?` |
+| Étapes d’un parcours | `StepList` | `label`, `steps`, `current`, `onSelect?` |
+| Disposer | `Stack`, `Row`, `Grid`, `Divider`, `Surface`, `Section` | voir plus haut |
+| Ouvrir un objet en entier, une saisie, un contenu | `openSubpage`, `openForm`, `openModal` (section 4) | — |
+
+**Agir**
+
+| Besoin | Composant | Props essentielles |
+|---|---|---|
+| Action de page, d’objet, de section ou de ligne | une `Action` (section 3) dans `actions` | `label`, `icon?`, `onClick`, `primary?`, `danger?` |
+| Bouton dans le contenu d’un bloc (« Tester la connexion » sous une explication) | `Button` | `variant?` (`primary`, `secondary`, `danger`), `loading?`, `onClick` |
+| Icône seule dans un contenu | `IconButton` | `label` (obligatoire, devient l’infobulle), `onClick`, `size?` |
+| Menu de quelques choix dans un contenu | `MenuButton` (texte) ou `OverflowMenu` (« ⋯ ») + `MenuItem` | `label`, `children` |
+| Modifier une valeur isolée sur place | `InlineEdit` | `label`, `value`, `onSave`, `renderEditor` |
+
+**Saisir** (dans `openForm` de préférence ; ailleurs, toujours dans un `FormField`)
+
+`FormField` (`label`, `hint?`, `error?`) autour de `TextInput`, `TextArea`, `SelectControl`, `CheckboxControl`, `RadioControl`, `SwitchControl` ; `Combobox` (saisie libre avec suggestions : `value`, `options`, `onChange`) ; `SearchCombobox` (choisir une entité dans une recherche distante : `value`, `options`, `onChange`, `onSelect`, `getOptionKey`, `getOptionLabel`, `loading?`).
+
+**Dire ce qui se passe** (section 9)
+
+`FeedbackBanner` (`tone`: `"danger" \| "warning" \| "info"`, `action?` : un état qui dure), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`), `ProgressBar` (opération longue mesurable), `shell.notify` (événement ponctuel).
 
 **Réservé aux gabarits et à la coquille** — ne s’emploient pas dans une page (`check` signale la plupart) : `PageToolbar`, `ToolbarSeparator`, `SettingRow`, `SettingRows`, `Modal` (passer par `openModal`), `ConfirmDialog`, `useConfirm`, `FormActions`, `AnchoredPanel`, `ObjectHeader` (passer par `Page header`), `PageTopBar`, `PanelToggleButton`, `PanelHeader`, `Dialog`, `Menu`, la prop `toolbar` de `Page`, et des boutons en JSX passés à `actions`. `Button`, `IconButton`, `OverflowMenu` et `MenuButton` ne servent qu’au contenu d’un bloc (« Tester la connexion » sous une explication), jamais pour une action de page, d’objet ou de ligne.
 

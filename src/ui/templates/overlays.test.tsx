@@ -119,3 +119,41 @@ describe("DataTable", () => {
     ).toEqual(["Relancer", "Facturer"]);
   });
 });
+
+describe("barre de la page", () => {
+  it("met la recherche et le contenu libre dans la barre fixe, sous l’en-tête, hors du défilement", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    render(
+      <Page
+        search={{ label: "Rechercher un contact", value: "", onChange: (value) => typed.push(value) }}
+        bar={<Text>12 contacts</Text>}
+      >
+        <Text>Liste</Text>
+      </Page>,
+    );
+    const field = screen.getByRole("searchbox", { name: "Rechercher un contact" });
+    const bar = field.closest(".page-toolbar") as HTMLElement;
+    expect(bar).toBeTruthy();
+    expect(within(bar).getByText("12 contacts")).toBeTruthy();
+    // La barre n’est pas dans la zone qui défile.
+    expect(bar.closest(".al-page__body")).toBeNull();
+    await user.type(field, "a");
+    expect(typed).toEqual(["a"]);
+  });
+});
+
+describe("zones libres de la page", () => {
+  it("accepte un en-tête et un pied libres, hors de la zone qui défile", () => {
+    render(
+      <Page header={<Text>Résumé du jour</Text>} footer={<Text>20 contacts</Text>}>
+        <Text>Liste</Text>
+      </Page>,
+    );
+    const header = screen.getByRole("banner");
+    expect(within(header).getByText("Résumé du jour")).toBeTruthy();
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByText("20 contacts")).toBeTruthy();
+    expect(footer.closest(".al-page__body")).toBeNull();
+  });
+});

@@ -190,7 +190,7 @@ impl Lint<'_> {
         if name == "Page" && attribute(opening, "toolbar").is_some() {
             self.report(
                 start,
-                "`<Page toolbar>` est réservé aux gabarits : passer `actions` (une liste d’`Action`) et `search` à `Page`.".to_string(),
+                "`<Page toolbar>` est réservé aux gabarits : la barre de la page s’obtient avec `search` (recherche), `bar` (filtres, compteur) et `actions` (une liste d’`Action`) sur `Page`.".to_string(),
             );
         }
 
