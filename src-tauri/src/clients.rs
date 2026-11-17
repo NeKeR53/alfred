@@ -104,6 +104,9 @@ pub struct Client {
     /// Chemin lu par le bouton Tester, celui du client (voir `ClientDef::test_path`).
     #[serde(skip)]
     pub test_path: Option<String>,
+    /// Le certificat du serveur est accepté sans vérification (option avancée du compte).
+    #[serde(skip)]
+    pub insecure_tls: bool,
 }
 
 /// Instance d’un client écrit sous sa forme simple (une adresse, une authentification), et méthode qu’elle utilise.
@@ -136,6 +139,13 @@ pub struct Instance {
     /// Identifiant de l’entrée du coffre ; jamais la valeur.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    /// Options avancées du compte, pour une subtilité que le module ne peut pas prévoir : en-têtes ajoutés à ceux
+    /// du client (et prioritaires sur eux)…
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// … et certificat du serveur accepté sans vérification (serveur interne à certificat auto-signé).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub insecure_tls: bool,
 }
 
 /// Fichier `clients/<id>.json`, sous l’une de ses deux formes : un client à une seule instance (`baseUrl`, `auth`
@@ -364,6 +374,7 @@ impl Instance {
         self.method = self.method.trim().to_string();
         clean(&mut self.url);
         clean(&mut self.secret);
+        clean_headers(&mut self.headers);
     }
 
     /// Nom affiché : l’instance d’un client à une seule instance n’en a pas toujours.
@@ -411,6 +422,8 @@ impl ClientDef {
             && instance.method == DEFAULT_INSTANCE
             && instance.label.is_empty()
             && instance.url.is_none()
+            && instance.headers.is_empty()
+            && !instance.insecure_tls
             && !self.base_url.is_empty()
     }
 
@@ -556,8 +569,17 @@ impl ClientDef {
             label,
             base_url,
             auth,
-            headers: self.headers.clone(),
+            headers: {
+                let mut headers = self.headers.clone();
+                // Un en-tête du compte remplace celui du client, quelle que soit sa casse.
+                for (name, value) in &instance.headers {
+                    headers.retain(|known, _| !known.eq_ignore_ascii_case(name));
+                    headers.insert(name.clone(), value.clone());
+                }
+                headers
+            },
             test_path: self.test_path.clone(),
+            insecure_tls: instance.insecure_tls,
         })
     }
 
@@ -703,7 +725,7 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
 
 /// Champs de l’empreinte : tout ce qui décide où part le secret et ce qu’il permet d’obtenir. Chaque valeur est un
 /// texte ou `null`, pour pouvoir montrer l’avant et l’après à l’utilisateur.
-const TRUST_FIELDS: [(&str, &str); 10] = [
+const TRUST_FIELDS: [(&str, &str); 11] = [
     ("authType", "Authentification"),
     ("secret", "Entrée du coffre"),
     ("baseUrl", "Adresse de base"),
@@ -714,6 +736,7 @@ const TRUST_FIELDS: [(&str, &str); 10] = [
     ("queryParam", "Paramètre de la clé"),
     ("prefix", "Préfixe de la clé"),
     ("headers", "En-têtes fixes"),
+    ("insecureTls", "Certificat accepté sans vérification"),
 ];
 
 /// Forme canonique d’une adresse : deux écritures de la même adresse donnent la même empreinte. Pour l’adresse de
@@ -736,7 +759,7 @@ pub fn fingerprint(client: &Client) -> Value {
         client.headers.iter().map(|(name, value)| (name.to_ascii_lowercase(), value.as_str())).collect();
     let headers: Vec<String> = headers.iter().map(|(name, value)| format!("{name}: {value}")).collect();
     let text = |value: &Option<String>, relevant: bool| value.clone().filter(|_| relevant);
-    json!({
+    let mut print = json!({
         "authType": auth.kind,
         "secret": auth.secret,
         "baseUrl": canonical_url(&client.base_url, true),
@@ -747,7 +770,12 @@ pub fn fingerprint(client: &Client) -> Value {
         "queryParam": text(&auth.query_param, api_key),
         "prefix": text(&auth.prefix, api_key),
         "headers": Some(headers.join(", ")).filter(|headers| !headers.is_empty()),
-    })
+    });
+    // Absente tant qu’elle est désactivée : les validations déjà données restent valables.
+    if client.insecure_tls {
+        print["insecureTls"] = json!("oui");
+    }
+    print
 }
 
 fn space_key(space: &Space) -> String {
@@ -1012,8 +1040,18 @@ fn written_forms(secret: &str) -> Vec<String> {
 /// Client HTTP partagé. Une redirection n’est suivie que vers la même origine : l’authentification ajoutée par
 /// Alfred ne doit jamais partir vers un autre hôte que celui que l’utilisateur a déclaré.
 pub fn http() -> AppResult<reqwest::Client> {
-    fn build() -> AppResult<reqwest::Client> {
+    shared_http(false)
+}
+
+/// Client HTTP d’un compte : celui qui accepte un certificat non vérifié si le compte le demande.
+pub fn http_for(client: &Client) -> AppResult<reqwest::Client> {
+    shared_http(client.insecure_tls)
+}
+
+fn shared_http(insecure: bool) -> AppResult<reqwest::Client> {
+    let build = || -> AppResult<reqwest::Client> {
         reqwest::Client::builder()
+            .danger_accept_invalid_certs(insecure)
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("Alfred/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -1027,17 +1065,19 @@ pub fn http() -> AppResult<reqwest::Client> {
             }))
             .build()
             .map_err(|error| AppError::new(format!("Le client HTTP d’Alfred n’a pas pu démarrer : {error}")))
-    }
+    };
     // Chaque test a son propre exécuteur : un client partagé y garderait des connexions d’un exécuteur arrêté.
     if cfg!(test) {
         return build();
     }
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
-    if let Some(client) = HTTP.get() {
+    static INSECURE: OnceLock<reqwest::Client> = OnceLock::new();
+    let shared = if insecure { &INSECURE } else { &HTTP };
+    if let Some(client) = shared.get() {
         return Ok(client.clone());
     }
     let client = build()?;
-    Ok(HTTP.get_or_init(|| client).clone())
+    Ok(shared.get_or_init(|| client).clone())
 }
 
 /// Message d’un échec réseau, sans l’adresse complète : elle peut porter une clé d’API en paramètre.
@@ -1223,7 +1263,7 @@ async fn perform(state: &Arc<AppState>, client: &Client, call: &Call<'_>) -> App
         }
     };
 
-    let http = http()?;
+    let http = http_for(client)?;
     let mut stale: Option<String> = None;
     loop {
         let credential = credential(state, client, stale.as_deref()).await?;
@@ -1540,6 +1580,8 @@ fn describe_instance(state: &AppState, def: &ClientDef, index: usize, instance: 
         "url": instance.url,
         "method": instance.method,
         "secret": instance.secret,
+        "headers": instance.headers,
+        "insecureTls": instance.insecure_tls,
         "default": index == 0,
     });
     let mut item = base;

@@ -89,7 +89,6 @@ function OnboardingPanel({ module, start }: { module: string; start: "intro" | "
           <ServiceEditor
             editing={editing}
             redirectUri={services.overview?.redirectUri ?? null}
-            onEdit={setEditing}
             onDone={() => {
               setEditing(undefined);
               void services.load();

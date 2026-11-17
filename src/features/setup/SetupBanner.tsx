@@ -3,7 +3,8 @@
  * qu’un service est prêt : une page qui déclare ses services (`uses.clients`) ne parle que des siens, et n’affiche
  * rien quand ils sont prêts, même si le reste du module attend encore sa configuration.
  */
-import { Button, FeedbackBanner } from "@alfred/ui";
+import { Button, FeedbackBanner, IconButton } from "@alfred/ui";
+import { PlugZap } from "lucide-react";
 import { useState } from "react";
 import type { Uses } from "../../lib/types";
 import { listClients, testClient } from "../clients/api";
@@ -84,5 +85,25 @@ export function SetupBanner({ module, uses }: { module: string; uses?: Uses }) {
       {left.length === 1 ? `${names} n’est pas encore configuré` : `${names} ne sont pas encore configurés`} : ce qui en
       dépend reste vide pour l’instant.
     </FeedbackBanner>
+  );
+}
+
+/**
+ * Bouton de la barre d’une page, à côté de la cible et de l’agent : ouvre la configuration du module quand un
+ * service dont la page dépend n’est pas prêt. Absent sinon.
+ */
+export function SetupTool({ module, uses }: { module: string; uses?: Uses }) {
+  const { of } = useModuleSetup();
+  const setup = of(module);
+  if (!setup || setup.ready) return null;
+  const left = stepsOfPage(setup, module, uses).filter((step) => !step.optional && step.state !== "ready");
+  if (left.length === 0) return null;
+  return (
+    <IconButton
+      label={`Configurer ${left.map((step) => step.label).join(", ")}`}
+      onClick={() => openModuleSetup(module)}
+    >
+      <PlugZap size={15} aria-hidden="true" />
+    </IconButton>
   );
 }

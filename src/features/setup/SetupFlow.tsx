@@ -5,35 +5,18 @@
  * Rien n’est mémorisé : chaque étape se lit dans l’état réel des services (`modules.setup`), si bien qu’on peut
  * quitter le parcours à tout moment et le reprendre là où il en était.
  */
-import {
-  Button,
-  FeedbackBanner,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  Spinner,
-  StatusBadge,
-  StepList,
-  Text,
-} from "@alfred/ui";
+import { Button, FeedbackBanner, SettingRow, SettingRows, Spinner, StatusBadge, StepList, Text } from "@alfred/ui";
 import { ArrowLeft, Check, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import {
-  AUTH_TYPES,
-  type AuthType,
-  type ClientConfig,
-  type ClientInstanceItem,
-  type ClientItem,
-  saveClient,
-  testClient,
-} from "../clients/api";
+import { type ClientInstanceItem, type ClientItem, testClient } from "../clients/api";
+import { createFromTemplate, templateNeedsAccount, templateOf } from "../clients/fromTemplate";
+import { UNDESCRIBED } from "../clients/ServiceBlock";
 import type { ServiceEditing } from "../clients/ServiceEditor";
 import type { ClientsController } from "../clients/useClients";
-import { errorMessage, slugify } from "../vault/api";
-import { VaultEntryDialog } from "../vault/VaultEntryDialog";
+import { errorMessage } from "../vault/api";
 import type { ModuleSetup, SetupStep, SetupStepState } from "./api";
 import { ModuleNaming, moduleSections } from "./ModuleNaming";
 import "./setup.css";
@@ -60,27 +43,6 @@ export function resumeStep(setup: ModuleSetup): string {
   );
 }
 
-/** Identifiant libre pour un nouveau service : celui du besoin, sinon suffixé. */
-function freeId(wanted: string, clients: ClientItem[]) {
-  const base = slugify(wanted) || "service";
-  for (let index = 1; ; index += 1) {
-    const id = index === 1 ? base : `${base}-${index}`;
-    if (!clients.some((client) => client.id === id)) return id;
-  }
-}
-
-/** Ce qu’un service à une seule adresse enregistre, repris de sa vue dans les Réglages. */
-function configOf(client: ClientItem): ClientConfig {
-  return {
-    id: client.id,
-    label: client.label,
-    baseUrl: client.baseUrl,
-    auth: client.auth,
-    headers: client.headers,
-    testPath: client.testPath,
-  };
-}
-
 export function SetupFlow({
   setup,
   modules,
@@ -103,7 +65,6 @@ export function SetupFlow({
 }) {
   const [current, setCurrent] = useState<string>();
   const [creating, setCreating] = useState<string>();
-  const [entryFor, setEntryFor] = useState<ClientItem>();
   const [testing, setTesting] = useState<string>();
   /** Comptes déjà testés d’office pendant ce parcours : on ne relance pas un test qui vient d’échouer. */
   const autoTested = useRef(new Set<string>());
@@ -114,7 +75,6 @@ export function SetupFlow({
   }, [current, setup, start]);
 
   const clients = services.overview?.clients ?? [];
-  const needs = services.overview?.needs ?? [];
   const step = setup?.steps.find((candidate) => candidate.key === current);
   const client = step?.client ? clients.find((candidate) => candidate.id === step.client) : undefined;
 
@@ -161,39 +121,16 @@ export function SetupFlow({
     }
   }
 
-  /** Crée le service d’une étape : depuis le modèle du module, sinon par le formulaire prérempli. */
+  /** Crée le service d’une étape d’après le modèle du module, puis ouvre l’ajout du premier compte. */
   async function createService(item: SetupStep) {
-    const owner = modules.find((candidate) => candidate.id === item.module);
-    const need = owner?.clients.find((candidate) => candidate.id === item.need);
-    const wanted = clients.some((known) => known.id === item.need) ? undefined : item.need;
-    if (!need?.client) {
-      onEdit({
-        kind: "client",
-        preset: {
-          id: wanted,
-          label: item.label,
-          baseUrl: need?.baseUrl ?? "",
-          auth: { type: (need?.auth ?? "none") as AuthType },
-        },
-      });
-      return;
-    }
+    const template = templateOf(modules, item.module, item.need);
+    if (!template) return;
     setCreating(item.key);
     try {
-      const template = need.client as Partial<ClientConfig>;
-      const id = wanted ?? freeId(item.need, clients);
-      const saved = await saveClient(
-        { ...template, id, label: template.label || item.label, baseUrl: template.baseUrl ?? "" } as ClientConfig,
-        true,
-      );
-      // Un service créé sous un autre nom que le besoin doit lui être relié.
-      const needItem = needs.find((candidate) => candidate.key === item.key);
-      if (id !== item.need && needItem) await services.bind(needItem, id);
-      await services.load();
-      // Plusieurs comptes possibles : le premier se crée tout de suite.
-      if (!saved.simple) onEdit({ kind: "instance", client: saved });
+      const saved = await createFromTemplate(template, { key: item.key, id: item.need, label: item.label }, services);
+      if (templateNeedsAccount(template)) onEdit({ kind: "account", client: saved, help: item.help || undefined });
     } catch (failure) {
-      notify({ title: `${item.label} n’a pas pu être créé`, description: errorMessage(failure), tone: "error" });
+      notify({ title: `${item.label} n’a pas pu être ajouté`, description: errorMessage(failure), tone: "error" });
     } finally {
       setCreating(undefined);
     }
@@ -278,8 +215,7 @@ export function SetupFlow({
   const accountRow = (target: ClientItem, instance: ClientInstanceItem) => {
     const key = `${target.id}#${instance.id}`;
     const label = target.simple ? target.label : `${target.label} — ${instance.label}`;
-    const edit = () =>
-      onEdit(target.simple ? { kind: "client", client: target } : { kind: "instance", client: target, instance });
+    const edit = () => onEdit({ kind: "account", client: target, instance, help: step?.help || undefined });
     const lastTest = instance.lastTest;
     let message: string;
     let tone: "muted" | "success" | "warning" | "danger" = "muted";
@@ -287,9 +223,8 @@ export function SetupFlow({
     if (testing === key) {
       message = "Test de la connexion…";
     } else if (instance.status === "invalid") {
-      message = instance.problem ?? "Ce compte est mal configuré.";
+      message = instance.problem ?? UNDESCRIBED;
       tone = "danger";
-      action = <Button onClick={edit}>Corriger…</Button>;
     } else if (instance.status === "toValidate") {
       message = "Vérifiez où partira votre clé, puis approuvez.";
       tone = "warning";
@@ -299,15 +234,11 @@ export function SetupFlow({
         </Button>
       );
     } else if (instance.status === "missingSecret") {
-      message = "Saisissez le mot de passe ou la clé de ce compte. Il reste sur cet ordinateur, dans le coffre.";
+      message = "Saisissez vos identifiants. Ils restent sur cet ordinateur, dans le coffre.";
       tone = "warning";
       action = (
-        <Button
-          variant="primary"
-          aria-label={`Saisir la clé de ${label}`}
-          onClick={() => (target.simple ? setEntryFor(target) : edit())}
-        >
-          Saisir la clé…
+        <Button variant="primary" aria-label={`Saisir les identifiants de ${label}`} onClick={edit}>
+          Saisir vos identifiants…
         </Button>
       );
     } else if (instance.status === "toConnect") {
@@ -366,25 +297,13 @@ export function SetupFlow({
     );
   };
 
-  /** Le modèle du service demande-t-il un compte (une authentification) ? */
-  const templateNeedsAccount = (item: SetupStep) => {
-    const template = modules
-      .find((candidate) => candidate.id === item.module)
-      ?.clients.find((candidate) => candidate.id === item.need)?.client as Partial<ClientConfig> | undefined;
-    if (!template) return true;
-    if (template.methods?.length) return template.methods.some((method) => method.type !== "none");
-    return (template.auth?.type ?? "none") !== "none";
-  };
-
   /**
    * Combien de comptes ce service accepte, dit simplement : un seul, ou plusieurs (deux boîtes mail, deux sites
    * Jira), avec une page par compte quand le module en affiche une pour chacun.
    */
   const accountsRule = (item: SetupStep) => {
     const known = item.client ? clients.find((candidate) => candidate.id === item.client) : undefined;
-    const template = modules
-      .find((candidate) => candidate.id === item.module)
-      ?.clients.find((candidate) => candidate.id === item.need)?.client as Partial<ClientConfig> | undefined;
+    const template = templateOf(modules, item.module, item.need);
     const several = known ? !known.simple : Boolean(template?.methods?.length);
     const pagePerAccount = sections.some((section) => section.perInstance === item.need || section.instance);
     if (!several) return "Un seul compte suffit pour ce service.";
@@ -394,8 +313,7 @@ export function SetupFlow({
   };
 
   const serviceStep = (item: SetupStep) => {
-    const others = clients.filter((known) => known.id !== item.client);
-    const needItem = needs.find((candidate) => candidate.key === item.key);
+    const template = templateOf(modules, item.module, item.need);
     return (
       <div className="setup-flow__body">
         <div className="setup-flow__step-head">
@@ -416,55 +334,34 @@ export function SetupFlow({
         {services.overview === undefined ? (
           <Spinner label="Chargement des services" />
         ) : !client ? (
-          <SettingRows label={`Service ${item.label}`}>
-            <SettingRow
-              title={`Ajouter ${item.label}`}
-              description={
-                !item.hasTemplate
-                  ? "Indiquez l’adresse du service et comment s’y connecter."
-                  : templateNeedsAccount(item)
-                    ? "Le module sait déjà comment s’y connecter : il ne vous restera qu’à indiquer votre compte."
-                    : "Le module sait déjà comment s’y connecter, sans compte : il suffit de l’ajouter."
-              }
-            >
-              <Button
-                variant="primary"
-                disabled={creating !== undefined}
-                aria-label={`Ajouter ${item.label}`}
-                onClick={() => void createService(item)}
-              >
-                {creating === item.key ? "Création…" : "Ajouter"}
-              </Button>
-            </SettingRow>
-            {others.length > 0 && needItem ? (
+          template ? (
+            <SettingRows label={`Comptes ${item.label}`}>
               <SettingRow
-                title="Ou utiliser un service déjà configuré"
-                description="Un service que vous avez déjà ajouté."
+                title={templateNeedsAccount(template) ? "Votre compte" : item.label}
+                description={
+                  templateNeedsAccount(template)
+                    ? "Le module sait comment s’y connecter : il ne vous demande que vos identifiants."
+                    : "Le module sait comment s’y connecter, sans compte : il suffit de l’activer."
+                }
               >
-                <SelectControl
-                  aria-label={`Utiliser un service existant pour ${item.label}`}
-                  value=""
-                  onChange={(event) => void services.bind(needItem, event.target.value)}
+                <Button
+                  variant="primary"
+                  loading={creating === item.key}
+                  disabled={creating !== undefined}
+                  aria-label={`Ajouter votre compte ${item.label}`}
+                  onClick={() => void createService(item)}
                 >
-                  <option value="">Choisir…</option>
-                  {others.map((known) => (
-                    <option key={known.id} value={known.id}>
-                      {known.label}
-                    </option>
-                  ))}
-                </SelectControl>
+                  {templateNeedsAccount(template) ? "Ajouter votre compte" : "Activer"}
+                </Button>
               </SettingRow>
-            ) : null}
-          </SettingRows>
+            </SettingRows>
+          ) : (
+            <FeedbackBanner tone="warning">{UNDESCRIBED}</FeedbackBanner>
+          )
         ) : (
           <>
             {client.status === "invalid" && client.instances.length === 0 ? (
-              <FeedbackBanner
-                tone="danger"
-                action={<Button onClick={() => onEdit({ kind: "client", client })}>Corriger…</Button>}
-              >
-                {client.problem ?? "Ce service est mal configuré."}
-              </FeedbackBanner>
+              <FeedbackBanner tone="danger">{client.problem ?? UNDESCRIBED}</FeedbackBanner>
             ) : null}
             <SettingRows label={`Comptes ${client.label}`}>
               {client.instances.map((instance) => accountRow(client, instance))}
@@ -474,7 +371,7 @@ export function SetupFlow({
                 <Button
                   variant={client.instances.length === 0 ? "primary" : "secondary"}
                   aria-label={`Ajouter un compte à ${client.label}`}
-                  onClick={() => onEdit({ kind: "instance", client })}
+                  onClick={() => onEdit({ kind: "account", client, help: item.help || undefined })}
                 >
                   <Plus size={14} aria-hidden="true" />
                   {client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un autre compte"}
@@ -578,28 +475,6 @@ export function SetupFlow({
           </div>
         </section>
       </div>
-      {entryFor ? (
-        <VaultEntryDialog
-          fixedKind={AUTH_TYPES.find((item) => item.type === entryFor.auth?.type)?.vaultKind}
-          suggested={{ label: entryFor.label }}
-          onClose={() => setEntryFor(undefined)}
-          onSaved={(entry) => {
-            const target = entryFor;
-            setEntryFor(undefined);
-            void (async () => {
-              try {
-                await saveClient(
-                  { ...configOf(target), auth: { ...(target.auth ?? { type: "none" }), secret: entry.id } },
-                  false,
-                );
-              } catch (failure) {
-                notify({ title: "La clé n’a pas été reliée", description: errorMessage(failure), tone: "error" });
-              }
-              await services.load();
-            })();
-          }}
-        />
-      ) : null}
     </div>
   );
 }

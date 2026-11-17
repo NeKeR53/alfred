@@ -27,6 +27,7 @@ import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/n
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import type { ClientNeedItem } from "../clients/api";
+import { templateOf } from "../clients/fromTemplate";
 import { ServiceBlock, serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
@@ -268,7 +269,6 @@ export function ModulesSettings() {
       <ServiceEditor
         editing={editingService}
         redirectUri={services.overview?.redirectUri ?? null}
-        onEdit={setEditingService}
         onDone={() => {
           setEditingService(undefined);
           void services.load();
@@ -535,20 +535,12 @@ export function ModulesSettings() {
         <ModuleFunctions module={module} clientLabels={module.clients.map((need) => need.label || need.id)} />
         <div className="module-part">
           <div className="module-part__head">
-            {single ? (
-              <>
-                <h3>Comptes</h3>
-                <p>
-                  Chaque compte est une connexion à {single.label} (une boîte mail, un site…).
-                  {perInstance ? " Le module affiche une page par compte." : ""}
-                </p>
-              </>
-            ) : (
-              <>
-                <h3>Services connectés</h3>
-                <p>Les services en ligne dont ce module a besoin, et vos comptes chez eux.</p>
-              </>
-            )}
+            <h3>Comptes</h3>
+            <p>
+              {single
+                ? `Vos comptes ${single.label} (une boîte mail, un site…).${perInstance ? " Le module affiche une page par compte." : ""}`
+                : "Vos comptes chez les services dont ce module a besoin. Le module sait comment s’y connecter : il ne vous demande que vos identifiants."}
+            </p>
           </div>
           {services.overview === undefined ? (
             services.error ? (
@@ -569,10 +561,10 @@ export function ModulesSettings() {
                   key={need.key}
                   need={need}
                   client={clientOf(need)}
-                  clients={clients}
+                  template={templateOf(modules, need.module, need.id)}
+                  help={module.clients.find((item) => item.id === need.id)?.help || undefined}
                   controller={services}
                   onEdit={setEditingService}
-                  flat={Boolean(single)}
                   describeInstance={(instance) => {
                     const page = snapshot?.sections.find(
                       (section) => section.module === module.id && section.instance === instance,

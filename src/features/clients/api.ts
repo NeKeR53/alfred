@@ -46,6 +46,10 @@ export interface ClientInstanceConfig {
   url?: string;
   method: string;
   secret?: string;
+  /** Options avancées du compte : en-têtes ajoutés à ceux du service… */
+  headers?: Record<string, string>;
+  /** … et certificat du serveur accepté sans vérification. */
+  insecureTls?: boolean;
 }
 
 export type ClientStatus = "ready" | "toValidate" | "noInstance" | "missingSecret" | "toConnect" | "invalid";

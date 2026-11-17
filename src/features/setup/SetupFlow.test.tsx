@@ -170,6 +170,18 @@ beforeEach(() => {
         emit("clients:changed");
         return describe(config);
       }
+      case "clients.saveInstance": {
+        // Le compte d’un service à une seule adresse : son entrée du coffre rejoint l’authentification.
+        const { client, instance } = args as { client: string; instance: { secret?: string } };
+        stored = stored.map((known) =>
+          known.id === client
+            ? { ...known, auth: { ...(known.auth ?? { type: "none" }), secret: instance.secret } }
+            : known,
+        );
+        delete tests[client];
+        emit("clients:changed");
+        return describe(stored.find((known) => known.id === client) as ClientConfig);
+      }
       case "clients.test": {
         const { id } = args as { id: string };
         tests[id] = testOk
@@ -182,7 +194,13 @@ beforeEach(() => {
         return vault;
       case "vault.save": {
         const input = args as unknown as VaultEntry;
-        const saved: VaultEntry = { ...input, meta: {}, updatedAt: "2026-11-15T10:00:00Z", hasSecret: true };
+        const saved: VaultEntry = {
+          ...input,
+          id: input.id ?? input.label.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+          meta: {},
+          updatedAt: "2026-11-15T10:00:00Z",
+          hasSecret: true,
+        };
         vault = [...vault, saved];
         emit("vault:changed");
         return saved;
@@ -265,9 +283,10 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
 
   // Reprise : directement à l’étape du service qui manque, avec l’aide du module.
   expect(await screen.findByRole("heading", { name: "Gmail" })).toBeTruthy();
-  expect(screen.getByText(GMAIL.help as string)).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Ajouter Gmail" }));
+  expect(screen.getAllByText(GMAIL.help as string).length).toBeGreaterThan(0);
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Ajouter votre compte Gmail" }));
 
+  // Le service naît du modèle du module : l’utilisateur n’en voit rien.
   await waitFor(() => expect(stored).toHaveLength(1));
   expect(stored[0]).toMatchObject({
     id: "gmail",
@@ -276,19 +295,19 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
     testPath: "/gmail/v1/users/me/profile",
   });
 
-  // Le compte attend sa clé : elle va au coffre, puis est reliée au service.
-  await user.click(await screen.findByRole("button", { name: "Saisir la clé de Gmail" }));
-  // La saisie de la clé s’ouvre par-dessus le panneau de l’onboarding.
-  const dialog = await screen.findByRole("dialog", { name: /clé|Gmail|coffre/i });
-  await user.type(within(dialog).getByLabelText("Valeur"), "jeton-secret");
-  await user.click(within(dialog).getByRole("button", { name: "Créer" }));
+  // Le compte ne demande que le jeton : ni nom, ni adresse, ni façon de se connecter.
+  expect(await screen.findByRole("heading", { name: "Votre compte Gmail" })).toBeTruthy();
+  expect(screen.queryByLabelText(/Nom du compte|Adresse|Identifiant du compte|Type de connexion/)).toBeNull();
+  await user.type(screen.getByLabelText("Jeton d’accès"), "jeton-secret");
+  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
 
   await waitFor(() => expect(stored[0].auth?.secret).toBeTruthy());
   // Le compte prêt est testé sans clic de plus.
   expect(await screen.findByText(/Connexion réussie/)).toBeTruthy();
   expect(calls.filter((call) => call.command === "clients.test")).toHaveLength(1);
 
-  await user.click(screen.getByRole("button", { name: "Suivant" }));
+  // L’étape devient prête quand l’état du module est relu.
+  await user.click(await screen.findByRole("button", { name: "Suivant" }));
   expect(await screen.findByRole("heading", { name: "Boîte est prêt" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Terminer" }));
   // Le panneau se ferme ; la fiche, derrière, n’a plus de bandeau : le module est prêt.
