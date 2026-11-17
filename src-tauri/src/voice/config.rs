@@ -66,6 +66,9 @@ pub struct VoiceConfig {
     pub dictation: bool,
     /// Lire à voix haute les notifications des pages et des fonctions de l'espace (`shell.notify`).
     pub read_notifications: bool,
+    /// Dictée dans la page Agent : un silence de cette durée après avoir parlé termine la dictée et envoie
+    /// le message, comme un clic sur le bouton. 0 : jamais, la dictée se termine au clic.
+    pub pause_send_ms: u64,
 }
 
 impl Default for VoiceConfig {
@@ -90,6 +93,7 @@ impl Default for VoiceConfig {
             enabled: true,
             dictation: true,
             read_notifications: false,
+            pause_send_ms: 2000,
         }
     }
 }
@@ -157,6 +161,7 @@ impl VoiceConfig {
             enabled: true,
             dictation: true,
             read_notifications: false,
+            pause_send_ms: defaults.pause_send_ms,
         }
         .expanded())
     }

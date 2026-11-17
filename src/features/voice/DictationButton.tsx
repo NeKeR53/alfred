@@ -1,6 +1,6 @@
 import { IconButton } from "@alfred/ui";
 import { LoaderCircle, Mic, Square, Volume2, VolumeX } from "lucide-react";
-import { type CSSProperties, useEffect } from "react";
+import { type CSSProperties, useEffect, useRef } from "react";
 import { useVoice } from "./store";
 import "./voice.css";
 
@@ -22,6 +22,23 @@ export function DictationButton({ onTranscript }: { onTranscript: (text: string)
   useEffect(() => {
     void useVoice.getState().refresh();
   }, []);
+
+  // Après avoir parlé, une pause assez longue termine la dictée et envoie le message, comme un clic sur le bouton.
+  const pause = status?.pauseSendMs ?? 0;
+  const deliver = useRef(onTranscript);
+  deliver.current = onTranscript;
+  useEffect(() => {
+    if (dictation !== "listening" || pause <= 0) return;
+    const timer = setInterval(() => {
+      const { heardAt, dictation: current } = useVoice.getState();
+      if (current !== "listening" || heardAt === null || Date.now() - heardAt < pause) return;
+      clearInterval(timer);
+      void finish().then((text) => {
+        if (text) deliver.current(text);
+      });
+    }, 150);
+    return () => clearInterval(timer);
+  }, [dictation, pause, finish]);
 
   if (!status) return null;
 
@@ -60,7 +77,11 @@ export function DictationButton({ onTranscript }: { onTranscript: (text: string)
       <IconButton
         className="voice-dictation voice-dictation--listening"
         label="Terminer la dictée et envoyer"
-        tooltip="Terminer et envoyer · Échap annule"
+        tooltip={
+          pause > 0
+            ? `Envoyé après ${(pause / 1000).toLocaleString("fr-FR")} s de silence · cliquer pour envoyer tout de suite · Échap annule`
+            : "Terminer et envoyer · Échap annule"
+        }
         style={{ "--voice-level": level.toFixed(2) } as CSSProperties}
         onClick={async () => {
           const text = await finish();

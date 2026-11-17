@@ -21,6 +21,7 @@ import { useVoice } from "./store";
 
 let configured: boolean;
 let enabled: boolean;
+let pauseSendMs: number;
 const status = () => ({
   configured,
   listenError: configured ? null : "Aucun modèle.",
@@ -28,12 +29,14 @@ const status = () => ({
   listening: false,
   readReplies: true,
   enabled,
+  pauseSendMs,
   qwenInstalled: false,
 });
 
 beforeEach(() => {
   configured = true;
   enabled = true;
+  pauseSendMs = 0;
   useNotifications.getState().clear();
   useVoice.setState({ status: undefined, dictation: "idle", partial: "", speaking: false });
   vi.mocked(onNativeEvent).mockReturnValue(() => undefined);
@@ -93,4 +96,22 @@ it("couper la voix retire le micro ; la réactiver le rend", async () => {
   expect(invoke).toHaveBeenCalledWith("voice.enabled.set", { enabled: false });
   await user.click(screen.getByRole("button", { name: "Activer la voix" }));
   expect(await screen.findByRole("button", { name: "Dicter un message" })).toBeVisible();
+});
+
+it("après avoir parlé, une pause assez longue termine la dictée et envoie le message", async () => {
+  pauseSendMs = 400;
+  const onTranscript = vi.fn();
+  const user = userEvent.setup();
+  render(<DictationButton onTranscript={onTranscript} />);
+  await user.click(await screen.findByRole("button", { name: "Dicter un message" }));
+  await screen.findByRole("button", { name: "Terminer la dictée et envoyer" });
+
+  // Rien n’a encore été dit : le silence seul n’envoie rien.
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(onTranscript).not.toHaveBeenCalled();
+
+  // On parle, puis on se tait : la pause envoie le message, sans clic.
+  useVoice.setState({ heardAt: Date.now() });
+  await waitFor(() => expect(onTranscript).toHaveBeenCalledWith("Bonjour Alfred"), { timeout: 2000 });
+  expect(invoke).toHaveBeenCalledWith("voice.listen.stop");
 });

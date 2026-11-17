@@ -36,6 +36,15 @@ const LANGUAGES = [
 
 const SAMPLE = "Bonjour. Je suis Alfred, à votre service.";
 
+/** Durées proposées pour l’envoi après un silence ; 0 : la dictée se termine au clic. */
+const PAUSES = [
+  { value: 0, label: "Jamais" },
+  { value: 1000, label: "1 seconde" },
+  { value: 1500, label: "1,5 seconde" },
+  { value: 2000, label: "2 secondes" },
+  { value: 3000, label: "3 secondes" },
+];
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -195,7 +204,11 @@ export function VoiceSettings() {
   };
 
   /** Bloquer la dictée, lire les notifications : appliqué sans recharger la voix. */
-  const setPreference = async (preferences: { dictation?: boolean; readNotifications?: boolean }) => {
+  const setPreference = async (preferences: {
+    dictation?: boolean;
+    readNotifications?: boolean;
+    pauseSendMs?: number;
+  }) => {
     await useVoice.getState().setPreferences(preferences);
     const next = useVoice.getState().status;
     if (next) setStatus(next);
@@ -466,7 +479,7 @@ export function VoiceSettings() {
         <SettingRows>
           <SettingRow
             title="Lire les réponses aux demandes dictées"
-            description="Une demande tapée n’est jamais lue. Rouvrir le micro coupe la lecture."
+            description="Alfred commence à parler dès sa première phrase, pendant qu’il écrit la suite. Une demande tapée n’est jamais lue. Rouvrir le micro coupe la lecture."
           >
             <SwitchControl
               label=""
@@ -474,6 +487,22 @@ export function VoiceSettings() {
               checked={config.readReplies}
               onChange={(event) => void save({ ...config, readReplies: event.target.checked })}
             />
+          </SettingRow>
+          <SettingRow
+            title="Envoyer après un silence"
+            description="Pendant une dictée, une pause de cette durée après avoir parlé envoie le message, sans cliquer."
+          >
+            <SelectControl
+              aria-label="Envoyer après un silence"
+              value={String(status?.pauseSendMs ?? config.pauseSendMs)}
+              onChange={(event) => void setPreference({ pauseSendMs: Number(event.target.value) })}
+            >
+              {PAUSES.map((pause) => (
+                <option key={pause.value} value={pause.value}>
+                  {pause.label}
+                </option>
+              ))}
+            </SelectControl>
           </SettingRow>
         </SettingRows>
       </Section>

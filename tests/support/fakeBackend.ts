@@ -95,6 +95,8 @@ export class FakeBackend {
     transcript: "",
     listening: false,
     spoken: [] as string[],
+    /** Lecture au fil de l’eau en cours. */
+    streaming: "",
     readReplies: true,
     dictation: true,
     readNotifications: false,
@@ -425,6 +427,21 @@ export class FakeBackend {
       return { interrupted: false };
     },
     "voice.speak.stop": () => null,
+    // Lecture au fil de l’eau : ce qui est envoyé pendant le tour compte comme une seule lecture, à sa fin.
+    "voice.stream.begin": () => {
+      this.voice.streaming = "";
+      return null;
+    },
+    "voice.stream.delta": (args) => {
+      this.voice.streaming += String(args.text);
+      return null;
+    },
+    "voice.stream.end": () => {
+      const text = this.voice.streaming.replace(/\s+/g, " ").trim();
+      if (text) this.voice.spoken.push(text);
+      this.voice.streaming = "";
+      return null;
+    },
     "voice.enabled.set": (args) => this.handlers["voice.status"]?.(args),
     "voice.preferences.set": (args) => {
       if (typeof args.dictation === "boolean") this.voice.dictation = args.dictation;

@@ -32,6 +32,8 @@ export interface VoiceConfig {
   dictation: boolean;
   /** Lire à voix haute les notifications des pages et des fonctions de l’espace. */
   readNotifications: boolean;
+  /** Dictée : un silence de cette durée après avoir parlé envoie le message (0 : jamais). */
+  pauseSendMs: number;
 }
 
 export interface VoiceStatus {
@@ -46,6 +48,8 @@ export interface VoiceStatus {
   enabled: boolean;
   dictation: boolean;
   readNotifications: boolean;
+  /** Dictée : un silence de cette durée après avoir parlé envoie le message (0 : jamais). */
+  pauseSendMs: number;
   /** La voix d’Alfred est installée (environnement Python de Qwen3-TTS). */
   qwenInstalled: boolean;
 }
@@ -82,6 +86,7 @@ export const setVoiceEnabled = (enabled: boolean) => invoke<VoiceStatus>("voice.
 export interface VoicePreferences {
   dictation?: boolean;
   readNotifications?: boolean;
+  pauseSendMs?: number;
 }
 
 /** Bloque ou permet la dictée, lit ou non les notifications, sans recharger la voix ; rend le nouvel état. */
@@ -94,6 +99,10 @@ export const cancelListening = () => invoke<void>("voice.listen.cancel");
 /** Lit `text` (une nouvelle lecture coupe la précédente) ; se résout à la fin de la lecture. */
 export const speak = (text: string) => invoke<{ interrupted: boolean }>("voice.speak", { text });
 export const stopSpeaking = () => invoke<void>("voice.speak.stop");
+/** Lecture au fil de l’eau : commence (coupe ce qui se dit), ajoute du texte (chaque phrase complète est dite), finit. */
+export const beginStreamedSpeech = () => invoke<void>("voice.stream.begin");
+export const addStreamedSpeech = (text: string) => invoke<void>("voice.stream.delta", { text });
+export const endStreamedSpeech = () => invoke<void>("voice.stream.end");
 
 export function onVoiceEvent(handler: (event: VoiceEvent) => void): () => void {
   return onNativeEvent("voice:event", (payload) => handler(payload as VoiceEvent));

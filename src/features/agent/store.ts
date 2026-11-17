@@ -22,6 +22,7 @@ import {
   usableProvider,
 } from "./harness";
 import { CODEX_FILE_TOOLS } from "./harness/codex";
+import { finishReading, readAlong } from "./liveReading";
 import {
   type AgentQuestion,
   boundedActivityContent,
@@ -526,8 +527,10 @@ export const useAgents = create<AgentState>((set, get) => {
       void startTurn(id, next.message, next.id).catch(() => undefined);
       return;
     }
-    // La réponse à une demande dictée est lue, si la voix le prévoit ; un tour suivant dicté la coupera.
-    if (finished?.user.spoken && status === "done") {
+    // La réponse à une demande dictée est lue, si la voix le prévoit ; un tour suivant dicté la coupera. Lue au fil
+    // de l’eau pendant le tour, il ne reste qu’à dire la fin ; arrivée d’un bloc, elle est lue entière.
+    const streamed = finished ? finishReading(id, finished, status) : false;
+    if (!streamed && finished?.user.spoken && status === "done") {
       const reply = plainText(lastAssistantText(finished));
       const voice = useVoice.getState().status;
       if (reply && voice?.enabled !== false && voice?.readReplies !== false) void useVoice.getState().read(reply);
@@ -711,6 +714,8 @@ export const useAgents = create<AgentState>((set, get) => {
             items: upsertItem(turn.items, { kind: "message", id: event.itemId, content, occurredAt: Date.now() }),
           };
         });
+        // Demande dictée : Alfred dit chaque phrase dès qu’elle est écrite.
+        readAlong(id, current(id)?.turns.at(-1));
         return;
       case "activity":
         patchItem(id, event.itemId, (turn) => {

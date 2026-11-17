@@ -30,6 +30,11 @@ interface VoiceState {
   partial: string;
   /** Niveau du micro, entre 0 et 1. */
   level: number;
+  /**
+   * Dernier instant où l’on a entendu parler pendant la dictée (voix au-dessus du bruit de fond, ou transcription
+   * qui avance) ; `null` tant que rien n’a été dit. Une pause assez longue après ce moment envoie le message.
+   */
+  heardAt: number | null;
   speaking: boolean;
   refresh: () => Promise<VoiceStatus | undefined>;
   /** Ouvre le micro pour la page Agent (coupe la lecture en cours). */
@@ -55,6 +60,9 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Niveau du micro (RMS) au-dessus duquel on parle ; le bruit de fond d’une pièce calme est bien en dessous. */
+const SPEECH_RMS = 0.02;
+
 let bound = false;
 
 /** Relaie les événements du moteur vocal dans l’état ; une seule fois. */
@@ -63,12 +71,22 @@ export function bindVoiceEvents() {
   bound = true;
   onVoiceEvent((event) => {
     switch (event.type) {
-      case "level":
-        useVoice.setState({ level: Math.min(1, event.rms * 6) });
+      case "level": {
+        const listening = useVoice.getState().dictation === "listening";
+        useVoice.setState({
+          level: Math.min(1, event.rms * 6),
+          ...(listening && event.rms >= SPEECH_RMS ? { heardAt: Date.now() } : {}),
+        });
         return;
-      case "partial":
-        if (useVoice.getState().dictation === "listening") useVoice.setState({ partial: event.text });
+      }
+      case "partial": {
+        const state = useVoice.getState();
+        if (state.dictation !== "listening") return;
+        // La transcription avance : on parle encore, même à voix basse.
+        const moved = event.text.trim() && event.text !== state.partial;
+        useVoice.setState({ partial: event.text, ...(moved ? { heardAt: Date.now() } : {}) });
         return;
+      }
       case "speech_started":
         useVoice.setState({ speaking: true });
         return;
@@ -88,6 +106,7 @@ export const useVoice = create<VoiceState>((set, get) => ({
   dictation: "idle",
   partial: "",
   level: 0,
+  heardAt: null,
   speaking: false,
 
   async refresh() {
@@ -103,7 +122,7 @@ export const useVoice = create<VoiceState>((set, get) => ({
   async startDictation() {
     bindVoiceEvents();
     if (get().dictation !== "idle") return false;
-    set({ dictation: "starting", partial: "", level: 0 });
+    set({ dictation: "starting", partial: "", level: 0, heardAt: null });
     try {
       await startListening();
       set({ dictation: "listening" });

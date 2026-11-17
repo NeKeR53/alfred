@@ -293,7 +293,11 @@ async fn set_enabled(state: &Arc<AppState>, enabled: bool) -> AppResult<Value> {
 async fn set_preferences(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let dictation: Option<bool> = crate::error::opt_arg(args, "dictation")?;
     let read_notifications: Option<bool> = crate::error::opt_arg(args, "readNotifications")?;
+    let pause_send_ms: Option<u64> = crate::error::opt_arg(args, "pauseSendMs")?;
     let mut config = load_config(state)?;
+    if let Some(pause) = pause_send_ms {
+        config.pause_send_ms = pause.min(10_000);
+    }
     if let Some(dictation) = dictation {
         config.dictation = dictation;
     }
@@ -454,6 +458,30 @@ async fn speak(state: &Arc<AppState>, text: &str) -> AppResult<Value> {
     }
 }
 
+/// Commence une lecture au fil de l’eau : coupe ce qui se dit et prépare le moteur (chargé au besoin).
+async fn stream_begin(state: &Arc<AppState>) -> AppResult<Value> {
+    let engine = engine(state).await?;
+    engine.stop_speech();
+    Ok(Value::Null)
+}
+
+/// Ajoute du texte à la lecture en cours ; chaque phrase complète part aussitôt à la synthèse.
+async fn stream_delta(text: &str) -> AppResult<Value> {
+    if let Some(engine) = voice().engine.lock().await.as_ref() {
+        let text: String = text.chars().take(MAX_SPEECH_CHARS).collect();
+        engine.speak_delta(&text);
+    }
+    Ok(Value::Null)
+}
+
+/// Fin du texte : la dernière phrase est dite même sans ponctuation finale.
+async fn stream_end() -> AppResult<Value> {
+    if let Some(engine) = voice().engine.lock().await.as_ref() {
+        engine.finish_speech();
+    }
+    Ok(Value::Null)
+}
+
 async fn stop_speaking() -> AppResult<Value> {
     if let Some(engine) = voice().engine.lock().await.as_ref() {
         engine.stop_speech();
@@ -478,6 +506,7 @@ fn status(state: &AppState) -> AppResult<Value> {
         "enabled": config.enabled,
         "dictation": config.dictation,
         "readNotifications": config.read_notifications,
+        "pauseSendMs": config.pause_send_ms,
         "qwenInstalled": qwen_python(state).is_file(),
     }))
 }
@@ -624,6 +653,14 @@ pub async fn handle(
             Err(error) => Err(error),
         },
         "voice.speak.stop" => stop_speaking().await,
+        // Lecture au fil de l’eau d’une réponse que l’agent est encore en train d’écrire : chaque phrase est
+        // dite dès qu’elle est complète, sans attendre la fin de la réponse.
+        "voice.stream.begin" => stream_begin(state).await,
+        "voice.stream.delta" => match arg::<String>(args, "text") {
+            Ok(text) => stream_delta(&text).await,
+            Err(error) => Err(error),
+        },
+        "voice.stream.end" => stream_end().await,
         "frame.voice.listen.start" => match page_owner(state, args, true).await {
             Ok(who) => listen_start(state, &who).await,
             Err(error) => Err(error),

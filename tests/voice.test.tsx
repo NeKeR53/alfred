@@ -1,6 +1,6 @@
 /**
- * La voix dans l’application entière : une demande dictée part comme un message, et la réponse finale de l’agent
- * est lue à voix haute ; une demande tapée ne l’est pas.
+ * La voix dans l’application entière : une demande dictée part comme un message, et la réponse de l’agent est lue à
+ * voix haute au fil de l’eau, phrase par phrase pendant qu’il écrit ; une demande tapée ne l’est pas.
  */
 import "./support/dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -38,7 +38,10 @@ it("dicter une demande l’envoie, et la réponse de l’agent est lue", async (
   expect(sent.message.content[0]?.text).toBe("Ajoute une page pour les recettes");
 
   await finishTurn(user);
-  await waitFor(() => expect(backend.voice.spoken).toEqual(["La page recettes/recettes est prête."]));
+  // Lue au fil de l’eau : ce qu’Alfred dit en cours de route, puis sa réponse finale, en une seule lecture.
+  await waitFor(() =>
+    expect(backend.voice.spoken).toEqual(["Je regarde ce que contient l’espace. La page recettes/recettes est prête."]),
+  );
 
   // Une demande tapée ensuite n’est pas lue.
   await user.type(screen.getByRole("textbox", { name: /^Message à / }), "Et une page pour les courses");
