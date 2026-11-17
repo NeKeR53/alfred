@@ -220,7 +220,7 @@ fn function_tool_name(reference: &str) -> String {
 
 fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let placement = json!({
-        "description": "Emplacement. Celui que l’utilisateur a demandé ; sinon choisis le plus logique d’après `space_overview` (onglet d’une section existante du même sujet, sinon nouvelle entrée du menu). Omis : nouvelle entrée du menu au nom de la page.",
+        "description": "Emplacement. Une page demandée est une nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut, même si une section existante traite du même sujet. `tab` seulement si l’utilisateur parle d’onglet ou demande d’ajouter quelque chose dans une section existante (« ajoute un onglet à Factures », « dans la page Contacts, ajoute… ») ; `panel` ou `settings` seulement s’il le dit. Omis : nouvelle entrée du menu au nom de la page.",
         "oneOf": [
             { "type": "object", "required": ["kind", "label"], "properties": {
                 "kind": { "const": "menu" }, "label": { "type": "string", "description": "Nom de la nouvelle entrée du menu de gauche." },
@@ -242,7 +242,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "place_page",
-            "Enregistre une nouvelle page et renvoie le fichier .tsx à écrire. Appeler AVANT d’écrire le fichier.",
+            "Enregistre une nouvelle page et renvoie le fichier .tsx à écrire. Appeler AVANT d’écrire le fichier. Quand l’utilisateur dit « page », il parle d’une entrée du menu de gauche : un onglet seulement s’il le demande.",
             json!({
                 "title": { "type": "string", "description": "Titre de la page, en français." },
                 "description": { "type": "string", "description": "Ce que fait la page, en une phrase." },
@@ -1288,6 +1288,29 @@ mod tests {
             return Err(text);
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    }
+
+    /// Une page demandée est une nouvelle entrée du menu de gauche, même quand une section du même sujet existe ;
+    /// la description de l’outil dit qu’un onglet ne se fait que sur demande.
+    #[tokio::test]
+    async fn a_page_without_placement_becomes_a_new_menu_entry() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let listed = rpc(&state, "tools/list", json!({})).await;
+        let place = listed["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "place_page").cloned();
+        let placement = place.expect("place_page proposé")["inputSchema"]["properties"]["placement"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(placement.contains("nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut"), "{placement}");
+        assert!(placement.contains("`tab` seulement si l’utilisateur parle d’onglet"), "{placement}");
+
+        let factures = call(&state, "place_page", json!({ "title": "Factures" })).await.unwrap();
+        let impayees = call(&state, "place_page", json!({ "title": "Factures impayées" })).await.unwrap();
+        let module_of = |placed: &Value| placed["page"].as_str().unwrap().split_once('/').unwrap().0.to_string();
+        assert_ne!(module_of(&factures), module_of(&impayees));
+        let snapshot = state.space().unwrap().snapshot().unwrap();
+        let sections: Vec<_> = snapshot.sections.iter().filter(|section| section.pages.len() == 1).collect();
+        assert_eq!(sections.len(), 2, "une entrée du menu par page");
     }
 
     /// L’agent ouvre l’onboarding d’un module : un événement part vers la fenêtre ; un module inconnu est refusé.
