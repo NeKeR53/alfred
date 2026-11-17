@@ -169,7 +169,7 @@ export function SettingsModal({
             ))}
           </nav>
           <section
-            className="settings-modal__content shell-body--settings"
+            className="settings-modal__content"
             data-surface="settings"
             aria-label={current?.label ?? "Réglages"}
           >

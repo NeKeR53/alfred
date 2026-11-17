@@ -1106,7 +1106,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let snapshot = space.snapshot()?;
             let keep = |owner: &str| module.as_deref().is_none_or(|wanted| wanted == owner);
             let mut pages = Vec::new();
-            let mut collect = |page: &crate::space::ResolvedPage| {
+            let mut collect = |page: &crate::space::ResolvedPage, settings: bool| {
                 if !keep(&page.module) {
                     return;
                 }
@@ -1119,7 +1119,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 } else if !page.read_only {
                     // Une page qui compile est relue contre DESIGN.md : chaque remarque est à corriger.
                     let source = std::fs::read_to_string(space.page_file(&page.module, &page.id)).unwrap_or_default();
-                    let design = crate::design_lint::lint(&source);
+                    let design = crate::design_lint::lint(&source, settings);
                     if !design.is_empty() {
                         pages.push(json!({ "page": page.reference, "design": design }));
                     }
@@ -1127,14 +1127,14 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             };
             for section in &snapshot.sections {
                 for page in &section.pages {
-                    collect(page);
+                    collect(page, false);
                     if let Some(panel) = &page.panel {
-                        collect(panel);
+                        collect(panel, false);
                     }
                 }
             }
             for page in &snapshot.settings_pages {
-                collect(page);
+                collect(page, true);
             }
             let mut functions: Vec<Value> = snapshot
                 .functions

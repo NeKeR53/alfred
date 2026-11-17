@@ -156,6 +156,25 @@ describe("openForm", () => {
 });
 
 describe("SettingsPage", () => {
+  it("ne limite pas la largeur : ses blocs sont directement dans le corps de la page, sans colonne de lecture", async () => {
+    const { container } = render(
+      <FrameServicesContext.Provider value={services()}>
+        <SettingsPage
+          sections={() => [
+            {
+              title: "Lecture",
+              settings: [{ id: "lu", type: "switch", title: "Marquer comme lu", value: false, save: noop }],
+            },
+          ]}
+        />
+      </FrameServicesContext.Provider>,
+    );
+    await screen.findByRole("switch", { name: "Marquer comme lu" });
+    const body = container.querySelector(".al-page__body");
+    expect(body).not.toHaveClass("al-page__body--text");
+    expect(body?.firstElementChild).toHaveClass("al-section");
+  });
+
   it("remet la valeur précédente et notifie quand l’enregistrement échoue", async () => {
     const user = userEvent.setup();
     const frame = services();

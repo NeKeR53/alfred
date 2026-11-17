@@ -1,14 +1,58 @@
 /*
  * Style des Réglages, commun aux onglets intégrés (fenêtre des Réglages) et aux pages de l’espace placées dans les
- * Réglages : la coquille et le cadre d’une page posent `data-surface="settings"` (contexte `surface` du SDK).
- * Titres de bloc légers, tableaux sans cadre, rubrique vide en haut à gauche. Les lignes sont `SettingRow`.
+ * Réglages : la coquille et le cadre d’une page posent `data-surface="settings"` (contexte `surface` du SDK), si
+ * bien qu’une page de l’espace a exactement la mise en page des rubriques intégrées, quel que soit son code.
+ * Toute la largeur de la zone de contenu, une marge de 24 px, titres de bloc légers, tableaux sans cadre, rubrique
+ * vide en haut à gauche. Les lignes sont `SettingRow`.
  */
+[data-surface="settings"] {
+  --settings-inline: 24px;
+}
+[data-surface="settings"] .al-page__body {
+  padding: 0 0 24px;
+  gap: 0;
+}
+/* `Page width="text"` (et la colonne de lecture de 760 px) ne limite rien dans les Réglages. */
+[data-surface="settings"] .al-page__body--text > * {
+  max-width: none;
+}
+[data-surface="settings"] .al-page__body > .al-section {
+  gap: 0;
+  padding-block: 20px 12px;
+}
+[data-surface="settings"] .al-page__body > .al-section > .al-section__header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  padding-inline: var(--settings-inline);
+}
+[data-surface="settings"] .al-page__body > .al-section > .al-section__header .al-section__title {
+  flex: 1 1 320px;
+}
+[data-surface="settings"] .al-page__body > .al-section > :not(.al-section__header, dialog) {
+  margin: 16px var(--settings-inline) 0;
+}
+[data-surface="settings"] .al-page__body > :not(.al-section, dialog) {
+  margin: 16px var(--settings-inline) 8px;
+}
+/*
+ * La largeur rendue à `auto` laisse le contenu prendre toute la ligne. Pas l’indicateur d’attente : étiré, son cercle
+ * devenait une longue ellipse claire pendant le chargement d’une rubrique.
+ */
+[data-surface="settings"] .al-page__body > .al-section > :not(.al-section__header, dialog, .al-spinner),
+[data-surface="settings"] .al-page__body > :not(.al-section, dialog, .al-spinner) {
+  width: auto;
+}
+[data-surface="settings"] .al-page__main > .page-toolbar {
+  padding-inline: var(--settings-inline);
+}
 [data-surface="settings"] .al-section__header h2 {
   font-size: var(--font-size-panel);
   font-weight: 500;
   line-height: 20px;
 }
 [data-surface="settings"] .al-section__header p {
+  max-width: 72ch;
   margin-top: 2px;
   font-size: var(--font-size-secondary);
 }

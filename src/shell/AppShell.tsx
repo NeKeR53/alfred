@@ -242,7 +242,8 @@ export function SectionView({
         <NotificationBell />
       </PageTopBar>
       <div
-        className={`workspace-body shell-body${variant === "settings" && builtInTab ? " shell-body--settings" : ""}`}
+        className="workspace-body shell-body"
+        data-surface={variant === "settings" && builtInTab ? "settings" : undefined}
       >
         <div ref={main} className="shell-body__main">
           {builtInTab ? (

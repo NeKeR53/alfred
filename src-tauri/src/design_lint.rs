@@ -1,6 +1,7 @@
 //! Relecture de design d’une page, rapportée par l’outil `check` : ce que DESIGN.md interdit et qu’on lit dans le
 //! JSX sans exécuter la page. Le style propre (`style`, `className`, balises HTML stylées), une liste ou un champ
-//! étiré dans une barre, et un bouton texte là où une icône suffit. Chaque remarque dit quoi écrire à la place.
+//! étiré dans une barre, et un bouton texte là où une icône suffit. Une page placée dans les Réglages est en plus une
+//! `SettingsPage`, sans largeur imposée ni formulaire. Chaque remarque dit quoi écrire à la place.
 
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{
@@ -62,6 +63,12 @@ struct Lint<'s> {
     uses_library: bool,
     stack: Vec<Frame>,
     owners: Vec<String>,
+    /// La page est placée dans les Réglages (`placement: { kind: "settings" }`).
+    settings: bool,
+    /// Le fichier pose une `SettingsPage`.
+    has_settings_page: bool,
+    /// Début de la première `<Page>` du fichier.
+    first_page: Option<u32>,
     found: Vec<Diagnostic>,
 }
 
@@ -187,6 +194,29 @@ impl Lint<'_> {
             );
         }
 
+        if name == "SettingsPage" {
+            self.has_settings_page = true;
+        }
+        if name == "Page" && self.first_page.is_none() {
+            self.first_page = Some(start);
+        }
+        if self.settings {
+            if name == "Page" {
+                if let Some(width) = attribute(opening, "width") {
+                    self.report(
+                        width.span.start,
+                        "Une page des Réglages prend toute la largeur de la rubrique, comme les rubriques intégrées : retirer `width` de `<Page>` (DESIGN.md, section 4.3).".to_string(),
+                    );
+                }
+            }
+            if name == "Form" {
+                self.report(
+                    start,
+                    "Pas de `<Form>` dans une page des Réglages : chaque réglage est une ligne de `SettingsPage` (`type: \"text\"`, `\"select\"`, `\"switch\"`), qui s’enregistre seule, et une saisie plus longue passe par `openForm(…)` depuis une ligne `type: \"action\"` (DESIGN.md, section 4.3).".to_string(),
+                );
+            }
+        }
+
         if name == "Page" && attribute(opening, "toolbar").is_some() {
             self.report(
                 start,
@@ -278,7 +308,8 @@ impl<'a> Visit<'a> for Lint<'_> {
 }
 
 /// Remarques de design sur le fichier d’une page ; vide si la page ne se lit pas (ses erreurs sont dites ailleurs).
-pub fn lint(source: &str) -> Vec<Diagnostic> {
+/// `settings` : la page est placée dans les Réglages, où elle doit être une `SettingsPage`.
+pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::tsx()).parse();
     if parsed.fatal_error || !parsed.diagnostics.is_empty() {
@@ -288,7 +319,16 @@ pub fn lint(source: &str) -> Vec<Diagnostic> {
         let specifier = specifier.as_str();
         !specifier.starts_with('.') && !crate::transpile::ALLOWED_IMPORTS.contains(&specifier)
     });
-    let mut lint = Lint { source, uses_library, stack: Vec::new(), owners: Vec::new(), found: Vec::new() };
+    let mut lint = Lint {
+        source,
+        uses_library,
+        stack: Vec::new(),
+        owners: Vec::new(),
+        settings,
+        has_settings_page: false,
+        first_page: None,
+        found: Vec::new(),
+    };
     // Cloisonnement : une page n’appelle jamais un client, elle passe par les fonctions du connecteur.
     for statement in &parsed.program.body {
         let oxc::ast::ast::Statement::ImportDeclaration(import) = statement else { continue };
@@ -310,6 +350,14 @@ pub fn lint(source: &str) -> Vec<Diagnostic> {
         }
     }
     lint.visit_program(&parsed.program);
+    if settings && !lint.has_settings_page {
+        if let Some(start) = lint.first_page {
+            lint.report(
+                start,
+                "Une page placée dans les Réglages est une `SettingsPage` : `<SettingsPage load={…} sections={(valeurs) => [{ title, settings: [{ id, type, title, value, save }] }]} />` (DESIGN.md, sections 4.3 et 12.3). Elle prend alors la largeur, les marges et les lignes des rubriques intégrées.".to_string(),
+            );
+        }
+    }
     lint.found
 }
 
@@ -318,7 +366,7 @@ mod tests {
     use super::*;
 
     fn messages(source: &str) -> Vec<String> {
-        lint(source).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+        lint(source, false).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
     }
 
     #[test]
@@ -333,6 +381,40 @@ export default function P() {
         let found = messages(page);
         assert!(found.iter().any(|m| m.starts_with("2: Une page n’appelle pas un client")), "{found:?}");
         assert!(messages(&page.replace(", client", "")).is_empty());
+    }
+
+    fn settings_messages(source: &str) -> Vec<String> {
+        lint(source, true).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+    }
+
+    #[test]
+    fn une_page_des_reglages_est_une_settings_page_sans_largeur() {
+        let page = r#"
+import { Page, Form, Section } from "@alfred/ui";
+export default function P() {
+  return (
+    <Page width="text">
+      <Section title="Signature">
+        <Form onSubmit={enregistrer}>{null}</Form>
+      </Section>
+    </Page>
+  );
+}
+"#;
+        let found = settings_messages(page);
+        assert!(found.iter().any(|m| m.starts_with("5: Une page des Réglages prend toute la largeur") && m.contains("retirer `width`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: Pas de `<Form>`") && m.contains("`SettingsPage`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("5: Une page placée dans les Réglages est une `SettingsPage`")), "{found:?}");
+        // Hors des Réglages, la même page n’a rien à corriger sur ces points.
+        assert!(messages(page).is_empty(), "{:?}", messages(page));
+
+        let settings_page = r#"
+import { SettingsPage } from "@alfred/ui";
+export default function P() {
+  return <SettingsPage sections={() => [{ title: "Lecture", settings: [] }]} />;
+}
+"#;
+        assert!(settings_messages(settings_page).is_empty(), "{:?}", settings_messages(settings_page));
     }
 
     #[test]

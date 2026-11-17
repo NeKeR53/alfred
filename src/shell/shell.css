@@ -401,65 +401,6 @@
   }
 }
 
-/*
- * Rubriques intégrées des Réglages : un filet de toute la largeur sépare deux sections, et chaque section (titre,
- * description, actions, puis contenu) tient sur la colonne centrée de 880 px. Le filet passe entre les blocs, jamais
- * entre un titre et son contenu. Les pages de l’espace placées dans les Réglages gardent leur propre mise en page.
- */
-.shell-body--settings {
-  --settings-column: 880px;
-  --settings-inline: max(16px, calc((100% - var(--settings-column)) / 2));
-}
-.shell-body--settings .al-page__body {
-  padding: 0 0 24px;
-  gap: 0;
-}
-.shell-body--settings .al-page__body--text > * {
-  max-width: none;
-}
-.shell-body--settings .al-page__body > .al-section {
-  gap: 0;
-  padding-block: 20px 24px;
-}
-.shell-body--settings .al-page__body > .al-section + .al-section {
-  border-top: 1px solid var(--line);
-}
-.shell-body--settings .al-page__body > .al-section > .al-section__header {
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px;
-  padding-inline: var(--settings-inline);
-}
-.shell-body--settings .al-page__body > .al-section > .al-section__header .al-section__title {
-  flex: 1 1 320px;
-}
-.shell-body--settings .al-page__body > .al-section > .al-section__header h2 {
-  font-size: var(--font-size-panel);
-  font-weight: 600;
-  line-height: 20px;
-}
-.shell-body--settings .al-page__body > .al-section > .al-section__header p {
-  max-width: 72ch;
-  margin-top: 3px;
-}
-.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog) {
-  margin: 16px var(--settings-inline) 0;
-}
-.shell-body--settings .al-page__body > :not(.al-section, dialog) {
-  margin: 16px var(--settings-inline) 8px;
-}
-/*
- * La largeur rendue à `auto` laisse le contenu prendre la colonne. Pas l’indicateur d’attente : étiré, son cercle
- * devenait une longue ellipse claire pendant le chargement d’une rubrique.
- */
-.shell-body--settings .al-page__body > .al-section > :not(.al-section__header, dialog, .al-spinner),
-.shell-body--settings .al-page__body > :not(.al-section, dialog, .al-spinner) {
-  width: auto;
-}
-.shell-body--settings .al-page > .page-toolbar {
-  padding-inline: var(--settings-inline);
-}
-
 /* Cadres chargés hors de la vue pour une capture de l’agent (outil `page_snapshot`) : taille d’une fenêtre ordinaire,
    jamais visibles ni atteignables. */
 .page-snapshot-host {
@@ -597,27 +538,6 @@
   min-height: 0;
   overflow: hidden;
 }
-/* Le contenu des Réglages prend toute la largeur de la fenêtre, avec une simple marge. */
-.settings-modal__content.shell-body--settings {
-  --settings-inline: 24px;
-}
-/* Titres des blocs : plus grands et plus légers, description en gris dessous, comme chez Claude. */
-.settings-modal__content.shell-body--settings .al-page__body > .al-section {
-  padding-block: 20px 12px;
-}
-.settings-modal__content.shell-body--settings .al-page__body > .al-section + .al-section {
-  border-top: 0;
-}
-.settings-modal__content.shell-body--settings .al-page__body > .al-section > .al-section__header h2 {
-  font-size: var(--font-size-panel);
-  font-weight: 500;
-  line-height: 20px;
-}
-.settings-modal__content.shell-body--settings .al-page__body > .al-section > .al-section__header p {
-  margin-top: 2px;
-  font-size: var(--font-size-secondary);
-}
-
 /* Compteur d’une page (`badge.set` du SDK). Sur la ligne d’une section : la pastille des agents de OneApp, à la place
  * fixe de `.product-agents__trigger` (à gauche du bouton « … », qui ne la décale pas) ; sur l’icône quand le menu est
  * replié. Après le titre d’un onglet, une pastille pleine. */

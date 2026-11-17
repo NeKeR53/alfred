@@ -163,6 +163,8 @@ Le panneau ne charge jamais une liste à lui seul et ne remplace pas la page : i
 
 Des blocs titrés de lignes de réglage : titre et explication à gauche, contrôle à droite, aligné sur une colonne de 240 px. Chaque réglage s’applique dès qu’il change ; un échec remet la valeur précédente et notifie. Exemple complet en 12.3.
 
+Toute page placée dans les Réglages (`{ "kind": "settings" }`) est une `SettingsPage`, jamais une `Page` composée ni un `Form` : Alfred lui donne la largeur, les marges et les titres des rubriques intégrées (Général, Modules…). Elle n’impose aucune largeur : pas de `width` sur `Page`, la rubrique prend toute la largeur de la fenêtre des Réglages. Une saisie plus longue qu’un champ passe par `openForm(…)` depuis une ligne `type: "action"`. `check` signale l’écart.
+
 | Prop | Rôle |
 |---|---|
 | `load?: () => Promise<Values>` | Lit les valeurs enregistrées ; chargement et erreur sont affichés par le gabarit. |
@@ -485,7 +487,7 @@ Alfred est une application de bureau dense, utilisée à la souris et au clavier
 
 Tailles : 12 px pour les métadonnées, aides et en-têtes de tableau (`<Text size="meta">`) ; 13 px pour le texte courant, les cellules, champs et boutons (`<Text>`, `<Heading level={3}>` en gras) ; 14 px pour un titre de section ou de panneau (`<Section title>`, `<Heading level={2}>`, `<Text size="panel">`) ; 18 px pour le nom de l’objet auquel une page entière est consacrée (`<Heading level={1}>`, une fois par page au plus).
 
-Graisses de `Text` : `normal` (400), `medium` (500), `strong` (600). Un texte long se lit sur 65 à 75 caractères par ligne : c’est le rôle de `Page width="text"`.
+Graisses de `Text` : `normal` (400), `medium` (500), `strong` (600). Un texte long se lit sur 65 à 75 caractères par ligne : c’est le rôle de `Page width="text"`, sans effet dans les Réglages, qui prennent toute la largeur.
 
 Échelle d’espacement, commune à `Stack`, `Row` et `Grid` :
 

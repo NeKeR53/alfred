@@ -246,7 +246,8 @@ function SettingLine({ setting }: { setting: Setting }) {
 
 /**
  * Gabarit d’un onglet de Réglages : des blocs titrés de lignes de réglage, chargés d’un coup. Chaque ligne a son
- * contrôle choisi par Alfred d’après son type ; la page fournit les valeurs et la façon de les enregistrer.
+ * contrôle choisi par Alfred d’après son type ; la page fournit les valeurs et la façon de les enregistrer. Il prend
+ * toute la largeur de la rubrique, avec les marges et les titres des rubriques intégrées (`settings-surface.css`).
  */
 export function SettingsPage<Values>({
   load,
@@ -259,7 +260,7 @@ export function SettingsPage<Values>({
   const state = useLoad(async () => (load ? load() : (undefined as Values)), []);
   if (state.error) {
     return (
-      <Page width="text">
+      <Page>
         <FeedbackBanner tone="danger" action={<Button onClick={state.reload}>Réessayer</Button>}>
           {`Les réglages n’ont pas pu être chargés. ${state.error.message}`}
         </FeedbackBanner>
@@ -268,13 +269,13 @@ export function SettingsPage<Values>({
   }
   if (state.loading && state.data === undefined && load) {
     return (
-      <Page width="text">
+      <Page>
         <LoadingSkeleton rows={4} label="Chargement des réglages…" />
       </Page>
     );
   }
   return (
-    <Page width="text">
+    <Page>
       {sections(state.data as Values).map((section) => (
         <Section key={section.title} title={section.title} description={section.description}>
           <SettingRows>

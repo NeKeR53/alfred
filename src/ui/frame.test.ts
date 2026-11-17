@@ -101,3 +101,43 @@ describe("couleurs d’accent", () => {
     expect(primary()).toBe(initial);
   });
 });
+
+describe("surface des Réglages", () => {
+  const page = (body: string) => {
+    document.getElementById("root")!.innerHTML =
+      `<div class="al-page"><div class="al-page__main"><div class="page-toolbar"></div>${body}</div></div>`;
+  };
+
+  beforeAll(() => {
+    document.documentElement.dataset.surface = "settings";
+  });
+  afterAll(() => {
+    delete document.documentElement.dataset.surface;
+  });
+
+  it('donne à une page des Réglages toute la largeur, même avec `width="text"`', () => {
+    page(
+      '<div class="al-page__body al-page__body--text"><section class="al-section"><div class="al-section__header"><div class="al-section__title"><h2>Lecture</h2></div></div><div class="setting-rows"></div></section><p class="libre">Texte</p></div>',
+    );
+    expect(computed(".al-page__body").paddingLeft).toBe("0px");
+    expect(computed(".al-page__body").paddingRight).toBe("0px");
+    expect(computed(".al-section").maxWidth).toBe("none");
+    expect(computed(".libre").maxWidth).toBe("none");
+    expect(computed(".setting-rows").width).toBe("auto");
+  });
+
+  it("reprend les marges et les titres des rubriques intégrées", () => {
+    page(
+      '<div class="al-page__body"><section class="al-section"><div class="al-section__header"><div class="al-section__title"><h2>Lecture</h2></div></div><div class="setting-rows"></div></section></div>',
+    );
+    expect(getComputedStyle(document.documentElement).getPropertyValue("--settings-inline").trim()).toBe("24px");
+    expect(computed(".al-section__header").getPropertyValue("padding-inline")).toBe("var(--settings-inline)");
+    // jsdom ne lit pas un raccourci `margin` qui contient `var()` : la règle est lue dans la feuille.
+    expect(readFileSync(built, "utf8")).toContain(
+      "[data-surface=settings] .al-page__body>.al-section>:not(.al-section__header,dialog){margin:16px var(--settings-inline) 0}",
+    );
+    expect(computed(".al-section").getPropertyValue("padding-block")).toBe("20px 12px");
+    expect(computed(".al-section h2").fontWeight).toBe("500");
+    expect(computed(".page-toolbar").getPropertyValue("padding-inline")).toBe("var(--settings-inline)");
+  });
+});
