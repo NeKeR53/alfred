@@ -18,11 +18,11 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react
 import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { openOnboarding } from "../setup/Onboarding";
 import { type CatalogModule, errorMessage, type Marketplace, marketplaceApi } from "./api";
 import { InstallDialog } from "./dialogs";
 import { MarketplaceSources } from "./MarketplaceSources";
 import { ModulePart } from "./ModulePart";
-import { SETUP_INTRO_FOCUS } from "./ModulesSettings";
 import { useModuleUpdatesStore } from "./useModuleUpdates";
 import "./modules.css";
 
@@ -362,10 +362,9 @@ export function MarketplaceSettings() {
             setInstalling(null);
             await Promise.all([refreshSpace().catch(() => undefined), loadUpdates(false).catch(() => undefined)]);
             notify({ title: `${imported.name} importé`, tone: "success" });
-            // Juste après l’import : le parcours de configuration présente le module et demande ce qui lui manque.
-            const shell = useShell.getState();
-            shell.setActiveTab(SETTINGS_SECTION, "modules");
-            shell.setActiveTab(SETUP_INTRO_FOCUS, imported.id);
+            // Juste après l’import : l’onboarding présente le module, fait nommer ses pages et connecter ses comptes.
+            useShell.getState().setActiveTab(SETTINGS_SECTION, "modules");
+            openOnboarding(imported.id, "intro");
           }}
         />
       ) : null}

@@ -96,3 +96,57 @@
 .setup-flow__spacer {
   flex: 1;
 }
+
+/* Onboarding : panneau à part, au-dessus de l’app, assez large pour les étapes à gauche et le contenu à droite. */
+.onboarding-panel {
+  width: min(960px, calc(100vw - 48px));
+  height: min(720px, calc(100vh - 48px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  padding: 20px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.onboarding-panel__editor {
+  min-height: 100%;
+}
+
+/* Étape « Vos pages » : une carte par entrée du menu, son nom, puis ses onglets et leurs services. */
+.onboarding-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.onboarding-pages__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.onboarding-pages__head {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.onboarding-pages__head > :last-child {
+  flex: 0 1 320px;
+}
+.onboarding-pages__tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 38px;
+  list-style: none;
+}
+.onboarding-pages__tabs > li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+}

@@ -319,7 +319,7 @@ export interface JobStep<Input = unknown, State = unknown> {
 /**
  * Travail long, découpé en étapes : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`,
  * en lui passant l’état laissé par l’étape précédente. Une tâche reprend après une fermeture d’Alfred, s’annule
- * entre deux étapes, et l’utilisateur la suit dans Réglages → Tâches de fond.
+ * entre deux étapes, et l’utilisateur la suit dans la fiche du module (Réglages → Modules).
  */
 export const jobs = {
   /** Lance la fonction `fonction` du module en tâche de fond ; rend la tâche, qui attend son tour. */

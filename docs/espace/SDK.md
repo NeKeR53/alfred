@@ -605,7 +605,7 @@ export async function exporterFactures() {
 
 ## 11. Tâches de fond : `jobs`
 
-Pour un travail plus long que les 120 secondes d’une fonction (importer des milliers de lignes, relever tout un service page par page), découpe-le en **étapes** : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`, en lui passant l’état que l’étape précédente a rendu. L’état est gardé : si Alfred se ferme, la tâche reprend à la même étape à la réouverture. L’utilisateur la suit, l’annule ou la reprend dans Réglages → Tâches de fond, et il est notifié quand elle se termine ou échoue.
+Pour un travail plus long que les 120 secondes d’une fonction (importer des milliers de lignes, relever tout un service page par page), découpe-le en **étapes** : Alfred rappelle la fonction du module tant qu’elle ne rend pas `done: true`, en lui passant l’état que l’étape précédente a rendu. L’état est gardé : si Alfred se ferme, la tâche reprend à la même étape à la réouverture. L’utilisateur la suit, l’annule ou la reprend dans la fiche du module (Réglages → Modules), et il est notifié quand elle se termine ou échoue.
 
 ```ts
 jobs.start(fonction: string, input?: unknown, options?: { title?: string }): Promise<Job>; // fonction du module

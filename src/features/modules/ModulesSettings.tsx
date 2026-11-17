@@ -33,8 +33,8 @@ import { useClients } from "../clients/useClients";
 import { ModuleFunctions } from "../functions/ModuleFunctions";
 import { JobsSettings } from "../jobs/JobsSettings";
 import { SchedulesSettings } from "../schedules/SchedulesSettings";
-import { remainingSummary, SETUP_FOCUS } from "../setup/api";
-import { SetupFlow } from "../setup/SetupFlow";
+import { remainingSummary } from "../setup/api";
+import { openOnboarding } from "../setup/Onboarding";
 import { useModuleSetup } from "../setup/useModuleSetup";
 import { WebhooksSettings } from "../webhooks/WebhooksSettings";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
@@ -60,11 +60,7 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
 }
 
-type Screen =
-  | { kind: "list" }
-  | { kind: "module"; id: string }
-  /** Parcours de configuration : `intro` juste après l’installation, `resume` pour le reprendre. */
-  | { kind: "setup"; id: string; start: "intro" | "resume" };
+type Screen = { kind: "list" } | { kind: "module"; id: string };
 type Filter = "all" | "attention" | "updates" | "off";
 
 /** Minuscules sans accents, pour une recherche tolérante. */
@@ -76,9 +72,6 @@ const fold = (text: string) =>
 
 /** Clé de `activeTab` qui demande d’ouvrir la fiche d’un module (voir `openModuleSettings`). */
 export const MODULE_FOCUS = "réglages:module";
-/** Clé de `activeTab` qui ouvre le parcours de configuration d’un module juste importé, à sa présentation. */
-export const SETUP_INTRO_FOCUS = "réglages:configuration-accueil";
-export { SETUP_FOCUS } from "../setup/api";
 
 /** Ouvre la rubrique Marketplace des Réglages : catalogue des modules à importer, et marketplaces branchés. */
 export function openMarketplaces() {
@@ -155,19 +148,6 @@ export function ModulesSettings() {
     setScreen({ kind: "module", id: focused });
     useShell.getState().setActiveTab(MODULE_FOCUS, "");
   }, [focused]);
-  const setupFocused = useShell((state) => state.activeTab[SETUP_FOCUS]);
-  useEffect(() => {
-    if (!setupFocused) return;
-    setScreen({ kind: "setup", id: setupFocused, start: "resume" });
-    useShell.getState().setActiveTab(SETUP_FOCUS, "");
-  }, [setupFocused]);
-  // Juste après un import depuis le Marketplace : le parcours présente le module et demande ce qui lui manque.
-  const introFocused = useShell((state) => state.activeTab[SETUP_INTRO_FOCUS]);
-  useEffect(() => {
-    if (!introFocused) return;
-    setScreen({ kind: "setup", id: introFocused, start: "intro" });
-    useShell.getState().setActiveTab(SETUP_INTRO_FOCUS, "");
-  }, [introFocused]);
 
   const updateOf = useMemo(() => new Map(updates.map((update) => [update.module, update])), [updates]);
   const pending = countPendingUpdates(updates);
@@ -433,6 +413,7 @@ export function ModulesSettings() {
           }
         />
         <OverflowMenu label={`Actions du module ${module.name}`} disabled={busy !== null}>
+          <MenuAction onSelect={() => openOnboarding(module.id, "intro")}>Configurer…</MenuAction>
           {installed ? (
             <>
               <MenuAction onSelect={() => void togglePin(module, !module.origin?.pinned)}>
@@ -520,7 +501,7 @@ export function ModulesSettings() {
             tone="warning"
             appearance="contained"
             action={
-              <Button variant="primary" onClick={() => setScreen({ kind: "setup", id: module.id, start: "resume" })}>
+              <Button variant="primary" onClick={() => openOnboarding(module.id)}>
                 Terminer la configuration
               </Button>
             }
@@ -530,7 +511,7 @@ export function ModulesSettings() {
         ) : null}
         {update?.sourceMissing ? (
           <Text size="meta" tone="muted">
-            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplaces
+            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace
             pour recevoir les mises à jour, ou détacher le module.
           </Text>
         ) : null}
@@ -754,31 +735,6 @@ export function ModulesSettings() {
     </>
   );
 
-  const setupModule = screen.kind === "setup" ? modules.find((module) => module.id === screen.id) : undefined;
-  const firstSection = (module: string) =>
-    snapshot?.sections.find((section) => section.module === module && !section.hidden) ??
-    snapshot?.sections.find((section) => section.module === module);
-  const setupScreen =
-    screen.kind === "setup" && setupModule ? (
-      <SetupFlow
-        key={`${setupModule.id}:${screen.start}`}
-        setup={setups.of(setupModule.id)}
-        modules={modules}
-        services={services}
-        start={screen.start}
-        onEdit={setEditingService}
-        onClose={() => setScreen({ kind: "module", id: setupModule.id })}
-        onOpenModule={
-          firstSection(setupModule.id)
-            ? () => {
-                const section = firstSection(setupModule.id);
-                if (section) useShell.getState().setView({ kind: "section", id: section.id });
-              }
-            : undefined
-        }
-      />
-    ) : null;
-
   const moduleScreen = opened_ ? (
     <Section title={opened_.name} description={opened_.description || undefined} actions={back}>
       <div className="module-page" data-module={opened_.id}>
@@ -799,11 +755,7 @@ export function ModulesSettings() {
 
   return (
     <Page>
-      {screen.kind === "setup" && setupScreen
-        ? setupScreen
-        : screen.kind === "module" && moduleScreen
-          ? moduleScreen
-          : listScreen}
+      {screen.kind === "module" && moduleScreen ? moduleScreen : listScreen}
 
       {openedUpdate ? (
         <UpdateDialog

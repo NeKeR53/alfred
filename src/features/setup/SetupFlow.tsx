@@ -20,6 +20,7 @@ import { ArrowLeft, Check, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
+import { useShell } from "../../shell/store";
 import {
   AUTH_TYPES,
   type AuthType,
@@ -34,9 +35,11 @@ import type { ClientsController } from "../clients/useClients";
 import { errorMessage, slugify } from "../vault/api";
 import { VaultEntryDialog } from "../vault/VaultEntryDialog";
 import type { ModuleSetup, SetupStep, SetupStepState } from "./api";
+import { ModuleNaming, moduleSections } from "./ModuleNaming";
 import "./setup.css";
 
 const INTRO = "intro";
+const PAGES = "pages";
 const DONE = "fin";
 
 /** État d’une étape, en mots simples. */
@@ -127,12 +130,22 @@ export function SetupFlow({
     void runTest(client, instance);
   });
 
-  const ids = useMemo(() => [INTRO, ...(setup?.steps.map((item) => item.key) ?? []), DONE], [setup]);
+  const snapshot = useShell((state) => state.snapshot);
+  const sections = setup && snapshot ? moduleSections(snapshot.sections, setup.module) : [];
+  const owner = setup ? modules.find((candidate) => candidate.id === setup.module) : undefined;
+  /** L’étape « Vos pages » n’a lieu que si le module ajoute quelque chose au menu. */
+  const naming = sections.length > 0 && owner !== undefined;
+  const ids = useMemo(
+    () => [INTRO, ...(naming ? [PAGES] : []), ...(setup?.steps.map((item) => item.key) ?? []), DONE],
+    [setup, naming],
+  );
   if (!setup || !current) return <Spinner label="Chargement de la configuration" />;
 
   const index = Math.max(0, ids.indexOf(current));
   const go = (offset: number) => setCurrent(ids[Math.min(ids.length - 1, Math.max(0, index + offset))]);
   const total = setup.steps.length;
+  /** Étapes entre la présentation et la fin : les pages, puis un service chacune. */
+  const stepCount = ids.length - 2;
 
   async function runTest(target: ClientItem, instance: ClientInstanceItem) {
     const key = `${target.id}#${instance.id}`;
@@ -196,10 +209,10 @@ export function SetupFlow({
         <h2>Configurer {setup.name}</h2>
         <p>
           {current === INTRO || current === DONE
-            ? setup.ready
+            ? setup.ready && !naming
               ? "Tout est prêt."
-              : `${total} étape${total > 1 ? "s" : ""} à suivre. Vous pouvez vous arrêter et reprendre plus tard.`
-            : `Étape ${index} sur ${total}`}
+              : `${stepCount} étape${stepCount > 1 ? "s" : ""}. Vous pouvez vous arrêter et reprendre plus tard.`
+            : `Étape ${index} sur ${stepCount}`}
         </p>
       </div>
     </div>
@@ -210,6 +223,7 @@ export function SetupFlow({
       label={`Étapes de la configuration de ${setup.name}`}
       steps={[
         { id: INTRO, title: "Présentation" },
+        ...(naming ? [{ id: PAGES, title: "Vos pages", hint: "Les nommer" }] : []),
         ...setup.steps.map((item) => ({
           id: item.key,
           title: item.label,
@@ -227,11 +241,17 @@ export function SetupFlow({
       <h3>Bienvenue dans {setup.name}</h3>
       {setup.description ? <Text>{setup.description}</Text> : null}
       {setup.welcome ? <Text>{setup.welcome}</Text> : null}
+      {naming ? (
+        <Text>
+          Vous allez d’abord nommer {sections.length > 1 ? "ses pages" : "sa page"} dans le menu de gauche
+          {total > 0 ? ", puis connecter vos comptes." : "."}
+        </Text>
+      ) : null}
       {total === 0 ? (
-        <Text tone="muted">Ce module n’a besoin de rien d’autre : il est prêt à servir.</Text>
+        <Text tone="muted">Ce module n’a besoin d’aucun compte : il est prêt à servir.</Text>
       ) : (
         <>
-          <Text>Pour fonctionner, il a besoin de :</Text>
+          <Text>Pour fonctionner, il a besoin de ces services :</Text>
           <ul className="setup-flow__needs">
             {setup.steps.map((item) => (
               <li key={item.key}>
@@ -356,6 +376,23 @@ export function SetupFlow({
     return (template.auth?.type ?? "none") !== "none";
   };
 
+  /**
+   * Combien de comptes ce service accepte, dit simplement : un seul, ou plusieurs (deux boîtes mail, deux sites
+   * Jira), avec une page par compte quand le module en affiche une pour chacun.
+   */
+  const accountsRule = (item: SetupStep) => {
+    const known = item.client ? clients.find((candidate) => candidate.id === item.client) : undefined;
+    const template = modules
+      .find((candidate) => candidate.id === item.module)
+      ?.clients.find((candidate) => candidate.id === item.need)?.client as Partial<ClientConfig> | undefined;
+    const several = known ? !known.simple : Boolean(template?.methods?.length);
+    const pagePerAccount = sections.some((section) => section.perInstance === item.need || section.instance);
+    if (!several) return "Un seul compte suffit pour ce service.";
+    return pagePerAccount
+      ? "Vous pouvez connecter plusieurs comptes : chacun aura sa propre page dans le menu."
+      : "Vous pouvez connecter plusieurs comptes, et en ajouter d’autres plus tard.";
+  };
+
   const serviceStep = (item: SetupStep) => {
     const others = clients.filter((known) => known.id !== item.client);
     const needItem = needs.find((candidate) => candidate.key === item.key);
@@ -374,6 +411,7 @@ export function SetupFlow({
             : `${item.moduleName}, installé avec ${setup.name}, se connecte à ${item.label} en votre nom.`}
         </Text>
         {item.help ? <Text tone="muted">{item.help}</Text> : null}
+        <Text tone="muted">{accountsRule(item)}</Text>
 
         {services.overview === undefined ? (
           <Spinner label="Chargement des services" />
@@ -495,9 +533,19 @@ export function SetupFlow({
         <aside className="setup-flow__steps">{stepper}</aside>
         <section
           className="setup-flow__main"
-          aria-label={step ? step.label : current === INTRO ? "Présentation" : "Terminé"}
+          aria-label={
+            step ? step.label : current === INTRO ? "Présentation" : current === PAGES ? "Vos pages" : "Terminé"
+          }
         >
-          {current === INTRO ? intro : last ? done : step ? serviceStep(step) : null}
+          {current === INTRO ? (
+            intro
+          ) : current === PAGES && owner ? (
+            <ModuleNaming module={owner} />
+          ) : last ? (
+            done
+          ) : step ? (
+            serviceStep(step)
+          ) : null}
           <div className="setup-flow__footer">
             {index > 0 ? <Button onClick={() => go(-1)}>Précédent</Button> : null}
             <span className="setup-flow__spacer" />

@@ -390,7 +390,7 @@ export function PublishDialog({
 }: {
   module: ModuleSummary;
   marketplaces: Marketplace[];
-  /** Ouvre la rubrique Marketplaces, où l’on en ajoute un. */
+  /** Ouvre la rubrique Marketplace, où l’on en ajoute un. */
   onManage: () => void;
   onClose: () => void;
   onPublished: (version: string, marketplace: Marketplace) => void;
@@ -473,7 +473,7 @@ export function PublishDialog({
           action={<Button onClick={onManage}>Ajouter un marketplace</Button>}
         >
           Aucun marketplace n’est branché. Un marketplace est le catalogue de modules partagé de votre équipe :
-          ajoutez-le dans Réglages › Marketplaces avant de publier.
+          ajoutez-le dans Réglages › Marketplace avant de publier.
         </FeedbackBanner>
       ) : (
         <p>

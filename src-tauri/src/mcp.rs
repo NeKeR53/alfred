@@ -406,7 +406,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_webhook",
-            "Déclare (ou met à jour) un webhook : une adresse locale qui, appelée par un service avec le secret du webhook, exécute une fonction du même module. Déclarer la fonction d’abord (`declare_function`). Renvoie l’adresse ; le secret, lui, ne se lit que dans Réglages → Webhooks.",
+            "Déclare (ou met à jour) un webhook : une adresse locale qui, appelée par un service avec le secret du webhook, exécute une fonction du même module. Déclarer la fonction d’abord (`declare_function`). Renvoie l’adresse ; le secret, lui, ne se lit que dans la fiche du module (Réglages → Modules).",
             json!({
                 "module": { "type": "string" },
                 "id": { "type": "string", "description": "Identifiant en minuscules et tirets." },
@@ -911,7 +911,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             Ok(json!({
                 "hook": declared["hook"],
                 "url": declared["url"],
-                "next": "Donner cette adresse locale à l’utilisateur. Le service doit l’appeler avec le secret du webhook, que l’utilisateur lit (et renouvelle) dans Réglages → Webhooks : tu ne le vois jamais. Appeler ensuite `check`.",
+                "next": "Donner cette adresse locale à l’utilisateur. Le service doit l’appeler avec le secret du webhook, que l’utilisateur lit (et renouvelle) dans la fiche du module (Réglages → Modules) : tu ne le vois jamais. Appeler ensuite `check`.",
             }))
         }
         "remove_webhook" => {
@@ -1494,7 +1494,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hook["url"], json!("http://127.0.0.1:4567/hooks/ventes/paiement"));
-        assert!(hook["next"].as_str().unwrap().contains("Réglages → Webhooks"));
+        assert!(hook["next"].as_str().unwrap().contains("fiche du module"));
         assert_eq!(space.module(&module).unwrap().webhooks.len(), 1);
         call(&state, "remove_webhook", json!({ "hook": "ventes/paiement" })).await.unwrap();
         assert!(space.module(&module).unwrap().webhooks.is_empty());

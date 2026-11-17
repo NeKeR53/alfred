@@ -6,18 +6,14 @@
 import { Button, FeedbackBanner } from "@alfred/ui";
 import { useState } from "react";
 import type { Uses } from "../../lib/types";
-import { SETTINGS_SECTION } from "../../shell/navigationLayout";
-import { useShell } from "../../shell/store";
 import { listClients, testClient } from "../clients/api";
-import { type ModuleSetup, SETUP_FOCUS, type SetupStep } from "./api";
+import type { ModuleSetup, SetupStep } from "./api";
+import { openOnboarding } from "./Onboarding";
 import { useModuleSetup } from "./useModuleSetup";
 
-/** Ouvre les Réglages sur le parcours de configuration du module, à la première étape incomplète. */
+/** Ouvre l’onboarding du module, à la première étape incomplète, au-dessus de la page. */
 export function openModuleSetup(module: string) {
-  const shell = useShell.getState();
-  shell.setView({ kind: "settings" });
-  shell.setActiveTab(SETTINGS_SECTION, "modules");
-  shell.setActiveTab(SETUP_FOCUS, module);
+  openOnboarding(module, "resume");
 }
 
 /** Teste les comptes prêts mais jamais testés des services qui manquent au module ; Alfred garde le résultat. */

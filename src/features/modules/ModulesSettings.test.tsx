@@ -5,6 +5,7 @@ import type { ModuleSummary, Snapshot } from "../../lib/types";
 import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { OnboardingHost, useOnboarding } from "../setup/Onboarding";
 import type { CatalogModule, Marketplace, ModulePublication, ModuleUpdate } from "./api";
 import { MarketplaceSettings } from "./MarketplaceSettings";
 import { MarketplaceSources } from "./MarketplaceSources";
@@ -431,14 +432,20 @@ describe("ModulesSettings", () => {
       expect(invoke).toHaveBeenCalledWith("marketplace.install", { marketplace: "equipe", module: "facturation" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // Juste après l’import, Alfred mène aux modules installés, où le parcours de configuration présente le module.
+    // Juste après l’import : Alfred mène aux modules installés et ouvre l’onboarding du module, à sa présentation.
     expect(useShell.getState().activeTab[SETTINGS_SECTION]).toBe("modules");
+    expect(useOnboarding.getState()).toEqual({ module: "facturation", start: "intro" });
     unmount();
-    render(<ModulesSettings />);
+    render(
+      <>
+        <ModulesSettings />
+        <OnboardingHost />
+      </>,
+    );
     expect(await screen.findByRole("heading", { name: "Configurer Facturation" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Bienvenue dans Facturation" })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: /Terminer plus tard/ })[0]);
-    fireEvent.click(await screen.findByRole("button", { name: "Tous les modules" }));
+    expect(useOnboarding.getState().module).toBeNull();
     expect(await within(moduleList()).findByText("Facturation")).toBeInTheDocument();
   });
 

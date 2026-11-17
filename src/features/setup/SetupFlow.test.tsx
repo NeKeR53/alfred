@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -11,7 +11,8 @@ import { useShell } from "../../shell/store";
 import type { ClientConfig, ClientInstanceItem, ClientItem } from "../clients/api";
 import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
 import type { VaultEntry } from "../vault/api";
-import { type ModuleSetup, remainingSummary, SETUP_FOCUS, type SetupStep } from "./api";
+import { type ModuleSetup, remainingSummary, type SetupStep } from "./api";
+import { OnboardingHost, openOnboarding, useOnboarding } from "./Onboarding";
 import { SetupBanner } from "./SetupBanner";
 import { resumeStep } from "./SetupFlow";
 
@@ -125,6 +126,7 @@ function setupOf(module: ModuleSummary): ModuleSetup {
 }
 
 beforeEach(() => {
+  useOnboarding.setState({ module: null, start: "resume" });
   stored = [];
   vault = [];
   tests = {};
@@ -242,7 +244,12 @@ function renderModules() {
     layout: { sections: [] },
   } as unknown as Snapshot;
   useShell.setState({ snapshot });
-  return render(<ModulesSettings />);
+  return render(
+    <>
+      <ModulesSettings />
+      <OnboardingHost />
+    </>,
+  );
 }
 
 it("guide la configuration d’un module : service créé depuis son modèle, clé saisie, test lancé d’office", async () => {
@@ -271,7 +278,8 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
 
   // Le compte attend sa clé : elle va au coffre, puis est reliée au service.
   await user.click(await screen.findByRole("button", { name: "Saisir la clé de Gmail" }));
-  const dialog = await screen.findByRole("dialog");
+  // La saisie de la clé s’ouvre par-dessus le panneau de l’onboarding.
+  const dialog = await screen.findByRole("dialog", { name: /clé|Gmail|coffre/i });
   await user.type(within(dialog).getByLabelText("Valeur"), "jeton-secret");
   await user.click(within(dialog).getByRole("button", { name: "Créer" }));
 
@@ -283,9 +291,10 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
   await user.click(screen.getByRole("button", { name: "Suivant" }));
   expect(await screen.findByRole("heading", { name: "Boîte est prêt" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Terminer" }));
-  // Retour à la fiche, sans le bandeau : le module est prêt.
+  // Le panneau se ferme ; la fiche, derrière, n’a plus de bandeau : le module est prêt.
+  expect(useOnboarding.getState().module).toBeNull();
   await screen.findByRole("button", { name: "Tous les modules" });
-  expect(screen.queryByText(/Ce module n’est pas encore prêt/)).toBeNull();
+  await waitFor(() => expect(screen.queryByText(/Ce module n’est pas encore prêt/)).toBeNull());
 });
 
 it("présente le module, compte les dépendances et les services facultatifs, et ne le dit pas prêt après un test raté", async () => {
@@ -305,13 +314,13 @@ it("présente le module, compte les dépendances et les services facultatifs, et
   ];
   renderModules();
   // Comme juste après l’installation : le parcours s’ouvre.
-  useShell.getState().setActiveTab(SETUP_FOCUS, "suivi");
+  act(() => openOnboarding("suivi"));
 
   // Reprise à la première étape essentielle incomplète.
   expect(await screen.findByRole("heading", { name: "Jira" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Présentation" }));
   expect(screen.getByText("Suivi relie vos tickets Jira à votre CRM.")).toBeTruthy();
-  const needs = screen.getByText("Pour fonctionner, il a besoin de :").nextElementSibling as HTMLElement;
+  const needs = screen.getByText("Pour fonctionner, il a besoin de ces services :").nextElementSibling as HTMLElement;
   expect(needs.textContent).toContain("Slack (facultatif)");
   expect(needs.textContent).toContain("CRM — pour Annuaire, installé avec lui");
 
@@ -333,7 +342,10 @@ it("présente le module, compte les dépendances et les services facultatifs, et
   await user.click(await screen.findByRole("button", { name: "Réessayer CRM" }));
   expect(await screen.findByText(/Connexion réussie/)).toBeTruthy();
 
-  await user.click(screen.getByRole("button", { name: /Terminer plus tard/ }));
+  await user.click(screen.getAllByRole("button", { name: /Terminer plus tard/ })[0]);
+  // Le panneau se ferme ; la fiche du module dit ce qui reste.
+  expect(useOnboarding.getState().module).toBeNull();
+  act(() => useShell.getState().setActiveTab(MODULE_FOCUS, "suivi"));
   expect(await screen.findByText(/Reste à configurer : Jira\./)).toBeTruthy();
 });
 

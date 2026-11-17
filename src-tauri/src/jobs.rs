@@ -2,7 +2,7 @@
 //! Une tâche est une fonction du module qu’Alfred rappelle étape par étape, chacune sous la limite de 120 secondes
 //! d’une fonction, en lui rendant l’état qu’elle a laissé. L’état est gardé dans la base de l’espace : une tâche
 //! interrompue (Alfred fermé, espace changé) reprend à l’étape où elle s’était arrêtée, et l’utilisateur peut
-//! l’annuler entre deux étapes. Il suit la progression dans Réglages → Tâches de fond.
+//! l’annuler entre deux étapes. Il suit la progression dans la fiche du module (Réglages → Modules).
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};

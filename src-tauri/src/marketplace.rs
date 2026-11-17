@@ -237,7 +237,7 @@ fn add(state: &AppState, url: &str, name: Option<String>) -> AppResult<Value> {
 pub fn refuse_as_workspace(state: &AppState, path: &Path) -> AppResult<()> {
     let refusal = || {
         AppError::new(
-            "Ce dossier est un marketplace (un catalogue de modules partagé), pas un espace de travail. Ajoutez son adresse dans Réglages › Marketplaces pour importer ses modules, et choisissez un autre dossier pour l’espace de travail.",
+            "Ce dossier est un marketplace (un catalogue de modules partagé), pas un espace de travail. Ajoutez son adresse dans Réglages › Marketplace pour importer ses modules, et choisissez un autre dossier pour l’espace de travail.",
         )
     };
     let clones = state.data_dir.join("marketplaces");
@@ -259,7 +259,7 @@ pub fn refuse_as_workspace(state: &AppState, path: &Path) -> AppResult<()> {
         && path.join("refs").is_dir();
     if bare {
         return Err(AppError::new(
-            "Ce dossier est un dépôt git nu, comme celui d’un marketplace : il ne peut pas contenir un espace de travail. S’il s’agit d’un marketplace, ajoutez son adresse dans Réglages › Marketplaces, et choisissez un autre dossier pour l’espace de travail.",
+            "Ce dossier est un dépôt git nu, comme celui d’un marketplace : il ne peut pas contenir un espace de travail. S’il s’agit d’un marketplace, ajoutez son adresse dans Réglages › Marketplace, et choisissez un autre dossier pour l’espace de travail.",
         ));
     }
     Ok(())

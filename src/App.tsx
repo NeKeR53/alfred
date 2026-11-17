@@ -6,6 +6,7 @@ import { UiFixTool } from "./features/agent/uiFix";
 import { useModuleUpdates } from "./features/modules/useModuleUpdates";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
+import { OnboardingHost } from "./features/setup/Onboarding";
 import { AppShell } from "./shell/AppShell";
 import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
@@ -58,6 +59,7 @@ export function App() {
       />
       <ShellServices />
       <CommandPalette />
+      <OnboardingHost />
     </>
   );
 }
