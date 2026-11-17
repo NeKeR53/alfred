@@ -106,10 +106,11 @@ fn qwen_python(state: &AppState) -> std::path::PathBuf {
 /// l’échantillon fourni avec l’application (écrit au besoin dans le dossier de la voix).
 fn effective_config(state: &AppState) -> AppResult<VoiceConfig> {
     let mut config = load_config(state)?;
-    // Réglage enregistré avant la version MLX, ou avec l'ancienne version MLX pleine : sur Mac Apple
-    // Silicon, la version 8 bits le remplace.
+    // Réglage enregistré avant la version MLX, ou avec un ancien défaut MLX (pleine, puis grande en 8 bits) :
+    // sur Mac Apple Silicon, la petite version 8 bits le remplace.
     if config.qwen_model == config::TORCH_QWEN_MODEL
         || config.qwen_model == config::MLX_BF16_QWEN_MODEL
+        || config.qwen_model == config::MLX_LARGE_QWEN_MODEL
     {
         config.qwen_model = config::DEFAULT_QWEN_MODEL.into();
     }
@@ -687,6 +688,23 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un ancien défaut de la voix d’Alfred (PyTorch, MLX pleine, MLX grande en 8 bits) est remplacé par le défaut
+    /// actuel ; un modèle choisi à la main est gardé.
+    #[test]
+    fn an_old_default_model_gives_way_to_the_current_one() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        for (stored, expected) in [
+            (config::MLX_LARGE_QWEN_MODEL, config::DEFAULT_QWEN_MODEL),
+            (config::MLX_BF16_QWEN_MODEL, config::DEFAULT_QWEN_MODEL),
+            (config::TORCH_QWEN_MODEL, config::DEFAULT_QWEN_MODEL),
+            ("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit", "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit"),
+        ] {
+            let config = VoiceConfig { qwen_model: stored.into(), ..VoiceConfig::default() };
+            app_db::set_setting(&*lock_db(&state).unwrap(), SETTING, &serde_json::to_value(config).unwrap()).unwrap();
+            assert_eq!(effective_config(&state).unwrap().qwen_model, expected, "{stored}");
+        }
+    }
 
     #[test]
     fn voice_errors_read_as_sentences() {

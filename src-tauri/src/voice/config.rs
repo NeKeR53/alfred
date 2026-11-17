@@ -16,16 +16,19 @@ pub const TTS_SYSTEM: &str = "system";
 pub const TTS_KOKORO: &str = "kokoro";
 
 /// Modèle Qwen3-TTS qui clone la voix de référence.
-/// Sur Mac Apple Silicon, la version MLX compressée en 8 bits : la même voix, deux fois plus rapide, et
-/// assez légère pour ne pas pousser le Mac à relire son swap pendant le calcul (ce qui fait grésiller
-/// tout le son du système). Ailleurs, la version PyTorch.
+/// Sur Mac Apple Silicon, la petite version (0.6B) MLX compressée en 8 bits, choisie à l'écoute : premier son
+/// en moins de 0,2 s, calcul quatre fois plus rapide que la parole, et assez légère pour ne pas pousser le Mac
+/// à relire son swap pendant le calcul (ce qui fait grésiller tout le son du système). Ailleurs, la version
+/// PyTorch.
 pub const DEFAULT_QWEN_MODEL: &str = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
     MLX_QWEN_MODEL
 } else {
     TORCH_QWEN_MODEL
 };
-pub const MLX_QWEN_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit";
-/// Version MLX pleine (bf16), le défaut précédent : remplacée par la version 8 bits.
+pub const MLX_QWEN_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit";
+/// Grande version MLX 8 bits, le défaut précédent : remplacée par la petite.
+pub const MLX_LARGE_QWEN_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit";
+/// Version MLX pleine (bf16), un défaut plus ancien : remplacée aussi.
 pub const MLX_BF16_QWEN_MODEL: &str = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16";
 pub const TORCH_QWEN_MODEL: &str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
 /// Ce que dit l'échantillon de la voix d'Alfred (`alfred-majordome.wav`).
