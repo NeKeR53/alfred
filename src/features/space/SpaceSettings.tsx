@@ -8,26 +8,28 @@ import {
   FeedbackBanner,
   IconButton,
   LoadingSkeleton,
+  MenuItem,
+  OverflowMenu,
   Page,
   RefreshButton,
   Section,
   SelectControl,
   SettingRow,
   SettingRows,
-  TextInput,
+  StatusBadge,
   useConfirm,
 } from "@alfred/ui";
-import { Monitor, Moon, Sun, Undo2, X } from "lucide-react";
+import { Monitor, Moon, Sun, Undo2 } from "lucide-react";
 import "./space.css";
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
-import { inTauri, invoke, onNativeEvent, pickFolder } from "../../lib/native";
+import { useCallback, useEffect, useState } from "react";
+import { invoke, onNativeEvent } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { BackupsSection } from "./BackupsSection";
 import { DecisionsSection } from "./DecisionsSection";
 import { SemanticSection } from "./SemanticSection";
-import { confirmLeaving } from "./switchGuard";
+import { spaceList, useSpaceActions } from "./spaceActions";
 
 export interface Grant {
   /** `page:module/page`, `function:module/fonction` ou `function:module/*`. */
@@ -154,110 +156,20 @@ function useList<Item>(command: string, args: Record<string, unknown>, events: s
   return { items, error, loading, reload: () => void load() };
 }
 
-function SpaceSection({ snapshot }: { snapshot: Snapshot }) {
-  const nameId = useId();
-  const platform = useShell((state) => state.info?.platform);
-  const [name, setName] = useState(snapshot.name);
-  const [nameError, setNameError] = useState<string>();
-  const [saving, setSaving] = useState(false);
+const openedFormat = new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" });
 
-  // Un renommage fait ailleurs (agent, autre onglet) remplace la saisie tant qu’elle n’a pas été modifiée.
-  const [shownName, setShownName] = useState(snapshot.name);
-  if (shownName !== snapshot.name) {
-    setShownName(snapshot.name);
-    if (name === shownName) setName(snapshot.name);
-  }
-
-  const rename = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const next = name.trim();
-    if (!next) {
-      setNameError("Saisissez le nom de l’espace de travail.");
-      return;
-    }
-    setNameError(undefined);
-    if (next === snapshot.name) return;
-    setSaving(true);
-    try {
-      await invoke("space.updateLayout", { name: next, message: `Renommage de l’espace de travail en « ${next} »` });
-      await useShell.getState().refresh();
-      notify({ title: "Espace de travail renommé", tone: "success" });
-    } catch (failure) {
-      notify({ title: "L’espace de travail n’a pas été renommé", description: errorMessage(failure), tone: "error" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const reveal = async () => {
-    try {
-      await invoke("files.reveal", { path: snapshot.path });
-    } catch (failure) {
-      notify({ title: "Le dossier n’a pas pu être affiché", description: errorMessage(failure), tone: "error" });
-    }
-  };
-
-  return (
-    <Section
-      title="Espace de travail"
-      description="L’espace de travail rassemble tout ce que vous construisez avec l’agent, dans un dossier."
-    >
-      <SettingRows>
-        <SettingRow
-          title="Nom de l’espace de travail"
-          description={
-            nameError ? <span className="setting-row__error">{nameError}</span> : "Affiché en haut du menu de gauche."
-          }
-        >
-          <form className="setting-row__inline-form" noValidate onSubmit={rename}>
-            <TextInput
-              id={nameId}
-              className="setting-row__field"
-              aria-label="Nom de l’espace de travail"
-              aria-invalid={nameError ? true : undefined}
-              value={name}
-              aria-required="true"
-              autoComplete="off"
-              onChange={(event) => {
-                setName(event.target.value);
-                setNameError(undefined);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Escape" || name === snapshot.name) return;
-                // Échap annule la saisie avant de fermer les Réglages.
-                event.preventDefault();
-                setName(snapshot.name);
-                setNameError(undefined);
-              }}
-            />
-            {/* Les boutons n’apparaissent que si le nom a changé : rien à enregistrer sinon. */}
-            {name !== snapshot.name ? (
-              <>
-                <Button
-                  onClick={() => {
-                    setName(snapshot.name);
-                    setNameError(undefined);
-                  }}
-                >
-                  Annuler
-                </Button>
-                <Button type="submit" variant="primary" loading={saving} loadingLabel="Enregistrement…">
-                  Enregistrer
-                </Button>
-              </>
-            ) : null}
-          </form>
-        </SettingRow>
-        <SettingRow title="Dossier" description={<span title={snapshot.path}>{snapshot.path}</span>}>
-          <Button onClick={() => void reveal()}>Afficher dans {fileManager(platform)}</Button>
-        </SettingRow>
-      </SettingRows>
-    </Section>
-  );
+/** « Ouvert le 17 novembre 2026 à 21:58 » ; rien quand la date manque. */
+function openedLabel(iso: string): string | null {
+  const date = new Date(iso);
+  return iso && !Number.isNaN(date.getTime()) ? `Ouvert le ${openedFormat.format(date)}` : null;
 }
 
-/** Passer à un autre espace sans revenir à l’accueil : les espaces récents, un autre dossier, ou fermer. */
-function SwitchSpaceSection({
+/**
+ * Tous les espaces de travail de l’utilisateur, l’ouvert marqué : l’ouvrir, le renommer, l’afficher dans le
+ * gestionnaire de fichiers, le supprimer (de la liste, et à la corbeille si on le coche). En tête, ouvrir un autre
+ * dossier ou créer un espace ; en bas, fermer l’espace pour revenir à l’accueil.
+ */
+function SpacesSection({
   snapshot,
   confirm,
 }: {
@@ -265,32 +177,28 @@ function SwitchSpaceSection({
   confirm: ReturnType<typeof useConfirm>["confirm"];
 }) {
   const recent = useShell((state) => state.recentSpaces);
-  const openSpace = useShell((state) => state.openSpace);
+  const platform = useShell((state) => state.info?.platform);
   const closeSpace = useShell((state) => state.closeSpace);
-  const forgetSpace = useShell((state) => state.forgetSpace);
+  const actions = useSpaceActions();
   const [opening, setOpening] = useState<string | null>(null);
-  const others = recent.filter((space) => space.path !== snapshot.path);
+  const spaces = spaceList(recent, snapshot);
+  const busy = actions.busy || opening !== null;
 
   const open = async (path: string) => {
-    const target = recent.find((space) => space.path === path)?.name ?? path.split(/[\\/]/).pop() ?? path;
-    if (!(await confirmLeaving(target, confirm))) return;
     setOpening(path);
     try {
-      await openSpace(path);
-    } catch (failure) {
-      notify({
-        title: "L’espace de travail n’a pas pu être ouvert",
-        description: errorMessage(failure),
-        tone: "error",
-      });
+      await actions.open(path, undefined, true);
     } finally {
       setOpening(null);
     }
   };
 
-  const openOther = async () => {
-    const path = await pickFolder("Choisir le dossier de l’espace de travail");
-    if (path) await open(path);
+  const reveal = async (path: string) => {
+    try {
+      await invoke("files.reveal", { path });
+    } catch (failure) {
+      notify({ title: "Le dossier n’a pas pu être affiché", description: errorMessage(failure), tone: "error" });
+    }
   };
 
   const close = async () => {
@@ -310,50 +218,75 @@ function SwitchSpaceSection({
 
   return (
     <Section
-      title="Changer d’espace de travail"
-      description="Passez d’un espace de travail à l’autre. Chaque espace de travail garde ses modules, ses pages et son historique."
+      title="Général"
+      description="Vos espaces de travail : chacun est un dossier qui garde ses modules, ses pages et son historique. Passez de l’un à l’autre, renommez-les, ou retirez ceux dont vous n’avez plus besoin."
+      actions={
+        <>
+          <Button disabled={busy} onClick={actions.openOther}>
+            Ouvrir un autre dossier…
+          </Button>
+          <Button disabled={busy} onClick={actions.create}>
+            Créer un espace de travail…
+          </Button>
+        </>
+      }
     >
-      <SettingRows label="Espaces de travail récents">
-        {others.map((space) => (
-          <SettingRow key={space.path} title={space.name} description={<span title={space.path}>{space.path}</span>}>
-            <Button
-              aria-label={`Ouvrir l’espace de travail ${space.name}`}
-              loading={opening === space.path}
-              disabled={opening !== null}
-              onClick={() => void open(space.path)}
+      <SettingRows label="Vos espaces de travail">
+        {spaces.map((space) => {
+          const current = space.path === snapshot.path;
+          const opened = openedLabel(space.openedAt);
+          return (
+            <SettingRow
+              key={space.path}
+              title={
+                <span className="space-row__title">
+                  <span>{space.name}</span>
+                  {current ? (
+                    <StatusBadge tone="success" size="compact">
+                      Ouvert
+                    </StatusBadge>
+                  ) : null}
+                </span>
+              }
+              description={
+                <span className="space-row__details">
+                  <span className="space-row__path" title={space.path}>
+                    {space.path}
+                  </span>
+                  {opened && !current ? <span>{opened}</span> : null}
+                </span>
+              }
             >
-              Ouvrir
-            </Button>
-            <IconButton
-              size="small"
-              label={`Retirer ${space.name} de la liste`}
-              tooltip="Retirer de la liste"
-              disabled={opening !== null}
-              onClick={() => forgetSpace(space.path)}
-            >
-              <X size={14} aria-hidden="true" />
-            </IconButton>
-          </SettingRow>
-        ))}
-        {inTauri ? (
-          <SettingRow
-            title="Un autre dossier"
-            description="Ouvrir un espace de travail qui n’est pas dans la liste, ou en créer un."
-          >
-            <Button disabled={opening !== null} onClick={() => void openOther()}>
-              Choisir un dossier…
-            </Button>
-          </SettingRow>
-        ) : null}
+              {current ? null : (
+                <Button
+                  aria-label={`Ouvrir l’espace de travail ${space.name}`}
+                  loading={opening === space.path}
+                  disabled={busy}
+                  onClick={() => void open(space.path)}
+                >
+                  Ouvrir
+                </Button>
+              )}
+              <OverflowMenu label={`Actions de l’espace de travail ${space.name}`} disabled={busy} size="small">
+                <MenuItem onClick={() => actions.rename(space)}>Renommer…</MenuItem>
+                <MenuItem onClick={() => void reveal(space.path)}>Afficher dans {fileManager(platform)}</MenuItem>
+                <MenuItem tone="danger" onClick={() => actions.remove(space)}>
+                  Supprimer…
+                </MenuItem>
+              </OverflowMenu>
+            </SettingRow>
+          );
+        })}
         <SettingRow
           title="Fermer l’espace de travail"
           description="Revenir à l’accueil d’Alfred. Rien n’est supprimé : l’espace de travail se rouvre depuis cette liste."
         >
-          <Button disabled={opening !== null} onClick={() => void close()}>
+          <Button disabled={busy} onClick={() => void close()}>
             Fermer l’espace de travail
           </Button>
         </SettingRow>
       </SettingRows>
+      {actions.elements}
     </Section>
   );
 }
@@ -688,8 +621,7 @@ export function SpaceSettings() {
 
   return (
     <Page width="text">
-      <SpaceSection snapshot={snapshot} />
-      <SwitchSpaceSection snapshot={snapshot} confirm={confirm} />
+      <SpacesSection snapshot={snapshot} confirm={confirm} />
       <HistorySection confirm={confirm} />
       <BackupsSection snapshot={snapshot} confirm={confirm} />
       <SemanticSection />

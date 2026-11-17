@@ -173,3 +173,34 @@
   flex: 1 1 260px;
   min-width: 0;
 }
+
+/* Réglages › Espaces de travail : nom et pastille « Ouvert », puis le dossier en texte discret et la date. */
+.space-row__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.space-row__details {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.space-row__path {
+  overflow: hidden;
+  color: var(--color-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Confirmation de suppression : le dossier nommé, en dessous de l’option corbeille. */
+.space-remove {
+  display: grid;
+  gap: 8px;
+}
+.space-remove p {
+  margin: 0;
+}
+.space-remove__path {
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}

@@ -42,6 +42,7 @@ mod server;
 mod setup;
 mod space;
 mod space_db;
+mod spaces;
 mod state;
 mod system_notifications;
 mod team_sync;
@@ -175,6 +176,15 @@ pub fn run() {
                     match events.recv().await {
                         Ok(event) => {
                             on_core_event(&handle.state::<Arc<AppState>>(), &event);
+                            // Un autre espace ouvert (ou plus aucun) : les fenêtres de page de l’espace quitté se
+                            // ferment, plutôt que de lire et d’écrire dans le suivant.
+                            if event.name == "space:switched" {
+                                for (label, page) in handle.webview_windows() {
+                                    if label.starts_with(page_windows::PREFIX) {
+                                        let _ = page.close();
+                                    }
+                                }
+                            }
                             let _ = handle.emit("alfred:event", event);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,

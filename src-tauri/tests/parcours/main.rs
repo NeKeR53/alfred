@@ -11,3 +11,4 @@ mod agent_tools;
 mod webhooks_and_schedules;
 mod marketplaces;
 mod frames;
+mod spaces;

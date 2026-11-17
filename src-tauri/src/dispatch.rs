@@ -22,7 +22,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, function_tests, backups, module_files, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup, team_sync);
+    delegate!(vault, agent_workspace, clients, space_db, function_tests, backups, module_files, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup, team_sync, spaces);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -81,10 +81,22 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
         "space.open" => {
             let path: String = arg(&args, "path")?;
             let name: Option<String> = opt_arg(&args, "name")?;
-            open_space(&state, &PathBuf::from(path), name.as_deref())?;
+            // Un espace de la liste des récents : son dossier doit encore en être un, sans quoi on en créerait un vide.
+            let existing: Option<bool> = opt_arg(&args, "existing")?;
+            let path = PathBuf::from(path);
+            if existing == Some(true) && !path.join(crate::space::SPACE_FILE).is_file() {
+                return Err(AppError::new(format!(
+                    "Le dossier {} n’est plus un espace de travail : il a été déplacé ou supprimé. Retirez-le de la liste dans Réglages › Général.",
+                    path.display()
+                )));
+            }
+            open_space(&state, &path, name.as_deref())?;
             Ok(serde_json::to_value(state.space()?.snapshot()?)?)
         }
         "space.close" => {
+            if state.try_space().is_some() {
+                state.emit("space:switched", Value::Null);
+            }
             state.set_space(None);
             if let Ok(mut watcher) = state.watcher.lock() {
                 *watcher = None;
@@ -201,7 +213,11 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     crate::jobs::kick();
     crate::module_events::kick();
     let root = space.root.clone();
+    let previous = state.try_space().map(|space| space.root);
     state.set_space(Some(space));
+    if previous.is_some_and(|previous| previous != root) {
+        state.emit("space:switched", json!({ "path": root.to_string_lossy() }));
+    }
     {
         let db = lock_db(state)?;
         app_db::set_setting(&db, LAST_SPACE, &Value::String(root.to_string_lossy().to_string()))?;

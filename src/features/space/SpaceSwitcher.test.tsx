@@ -112,7 +112,7 @@ it("ouvre aussitôt l’espace choisi, sans redémarrer, et le place en tête de
   await user.click(screen.getByRole("button", { name: /Espace de travail : Atelier/ }));
   await user.click(screen.getByRole("menuitem", { name: "Perso" }));
 
-  await waitFor(() => expect(opened()).toEqual([{ path: PERSO }]));
+  await waitFor(() => expect(opened()).toEqual([{ path: PERSO, existing: true }]));
   await waitFor(() => expect(screen.getByRole("button", { name: /Espace de travail : Perso/ })).toBeInTheDocument());
   expect(useShell.getState().snapshot?.path).toBe(PERSO);
   expect(useShell.getState().recentSpaces.map((recent) => recent.path)).toEqual([PERSO, ATELIER]);
@@ -136,7 +136,7 @@ it("prévient avant de partir quand un import est en route", async () => {
   await user.click(screen.getByRole("menuitem", { name: "Perso" }));
   dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Changer d’espace de travail" }));
-  await waitFor(() => expect(opened()).toEqual([{ path: PERSO }]));
+  await waitFor(() => expect(opened()).toEqual([{ path: PERSO, existing: true }]));
 });
 
 it("arrête la conversation d’agent en cours une fois le changement accepté", async () => {
@@ -154,7 +154,7 @@ it("arrête la conversation d’agent en cours une fois le changement accepté",
   const dialog = await screen.findByRole("alertdialog");
   expect(dialog).toHaveTextContent(/Une conversation de l’agent est en cours : elle sera arrêtée/);
   await user.click(within(dialog).getByRole("button", { name: "Changer d’espace de travail" }));
-  await waitFor(() => expect(opened()).toEqual([{ path: PERSO }]));
+  await waitFor(() => expect(opened()).toEqual([{ path: PERSO, existing: true }]));
   expect(cancel).toHaveBeenCalledWith("c1");
 });
 

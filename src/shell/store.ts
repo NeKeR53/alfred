@@ -42,12 +42,15 @@ interface ShellState {
   recentSpaces: RecentSpace[];
   /** Retire un espace de la liste des récents, sans rien supprimer sur le disque. */
   forgetSpace: (path: string) => void;
+  /** Nouveau nom d’un espace de la liste des récents (renommé sans être ouvert). */
+  renameRecent: (path: string, name: string) => void;
   theme: Theme;
   /** Vrai quand le thème suit celui du système plutôt qu’un choix de l’utilisateur. */
   themeFollowsSystem: boolean;
   start: () => Promise<void>;
   refresh: () => Promise<void>;
-  openSpace: (path: string, name?: string) => Promise<void>;
+  /** `existing` : un espace déjà connu (liste des récents), refusé si son dossier n’en est plus un. */
+  openSpace: (path: string, name?: string, options?: { existing?: boolean }) => Promise<void>;
   closeSpace: () => Promise<void>;
   setView: (view: View) => void;
   /** Ferme la fenêtre des Réglages et revient à la vue d’où elle a été ouverte. */
@@ -150,17 +153,22 @@ export const useShell = create<ShellState>((set, get) => ({
     if (known && known.name !== snapshot.name) rememberSpace(snapshot);
   },
 
-  async openSpace(path, name) {
-    const snapshot = await invoke<Snapshot>("space.open", { path, name });
+  async openSpace(path, name, options) {
+    const snapshot = await invoke<Snapshot>(
+      "space.open",
+      options?.existing ? { path, name, existing: true } : { path, name },
+    );
     applyTheme(get().theme, snapshot.accent);
     set((state) => ({ snapshot, revision: state.revision + 1, view: { kind: "agent" } }));
     rememberSpace(snapshot);
   },
 
   forgetSpace(path) {
-    const recentSpaces = get().recentSpaces.filter((space) => space.path !== path);
-    set({ recentSpaces });
-    void quietly(() => invoke("settings.set", { key: RECENT_KEY, value: recentSpaces }));
+    updateRecents((spaces) => spaces.filter((space) => space.path !== path));
+  },
+
+  renameRecent(path, name) {
+    updateRecents((spaces) => spaces.map((space) => (space.path === path ? { ...space, name } : space)));
   },
 
   async closeSpace() {
@@ -229,11 +237,27 @@ export const useShell = create<ShellState>((set, get) => ({
 
 /** Place l’espace ouvert en tête des récents, avec son nom du moment. */
 function rememberSpace(snapshot: Pick<Snapshot, "path" | "name">) {
-  const others = useShell.getState().recentSpaces.filter((space) => space.path !== snapshot.path);
-  const recentSpaces = [
-    { path: snapshot.path, name: snapshot.name, openedAt: new Date().toISOString() },
-    ...others,
-  ].slice(0, RECENT_LIMIT);
-  useShell.setState({ recentSpaces });
-  void quietly(() => invoke("settings.set", { key: RECENT_KEY, value: recentSpaces }));
+  updateRecents((spaces) =>
+    [
+      { path: snapshot.path, name: snapshot.name, openedAt: new Date().toISOString() },
+      ...spaces.filter((space) => space.path !== snapshot.path),
+    ].slice(0, RECENT_LIMIT),
+  );
+}
+
+let recentWrites: Promise<unknown> = Promise.resolve();
+
+/**
+ * Change la liste des récents : tout de suite à l’écran, puis sur la liste enregistrée relue juste avant d’écrire.
+ * Une autre interface (fenêtre de page, navigateur de développement) a pu la changer depuis : sa modification reste,
+ * au lieu d’être écrasée par la copie gardée ici. Les écritures passent l’une après l’autre.
+ */
+function updateRecents(change: (spaces: RecentSpace[]) => RecentSpace[]) {
+  useShell.setState({ recentSpaces: change(useShell.getState().recentSpaces) });
+  recentWrites = recentWrites.then(async () => {
+    const stored = await quietly(() => invoke<RecentSpace[] | null>("settings.get", { key: RECENT_KEY }));
+    const recentSpaces = change(Array.isArray(stored) ? stored : useShell.getState().recentSpaces);
+    useShell.setState({ recentSpaces });
+    await quietly(() => invoke("settings.set", { key: RECENT_KEY, value: recentSpaces }));
+  });
 }
