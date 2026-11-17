@@ -144,13 +144,7 @@ export function ModuleContents({
           title={needs.length > 0 || module.clients.length > 0 ? "Autres fonctions" : "Fonctions"}
           description="Les traitements propres au module, qui ne passent par aucun service."
         >
-          <FunctionGroup
-            module={module}
-            functions={others}
-            tests={tests}
-            label="Fonctions"
-            open={false}
-          />
+          <FunctionGroup module={module} functions={others} tests={tests} label="Fonctions" open={false} />
         </ModulePart>
       ) : null}
     </>
