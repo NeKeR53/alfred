@@ -87,7 +87,7 @@ export function ModuleContents({
         <ModulePart
           part="pages"
           title="Dans le menu"
-          description="Ses entrées du menu de gauche, avec leurs onglets et leurs panneaux. Décochez ce que vous ne voulez pas voir."
+          description="Les entrées que ce module ajoute au menu de gauche, et leurs onglets. Décochez ce que vous ne voulez pas voir."
         >
           <ModulePages snapshot={snapshot} module={module.id} disabled={hidden} />
         </ModulePart>
@@ -96,7 +96,7 @@ export function ModuleContents({
         <ModulePart
           part="services"
           title="Services"
-          description="Les services en ligne auxquels le module se connecte : vos comptes chez chacun, et ce que le module en fait."
+          description="Les services en ligne auxquels ce module se connecte : vos comptes chez chacun, et ce que le module en fait."
         >
           {overview === undefined ? (
             services.error ? (
@@ -148,7 +148,7 @@ export function ModuleContents({
             module={module}
             functions={others}
             tests={tests}
-            label={needs.length > 0 || module.clients.length > 0 ? "Autres fonctions" : "Fonctions"}
+            label="Fonctions"
             open={false}
           />
         </ModulePart>

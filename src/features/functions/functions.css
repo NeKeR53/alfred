@@ -41,17 +41,6 @@
   font-style: italic;
 }
 
-/* Fiche d’un module : partie « Fonctions » ou « Connecteur ». */
-.module-part__head--actions {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.module-functions__summary {
-  margin-bottom: 4px;
-}
-
 /* Checklist « Tout vérifier ». */
 .function-verify-dialog {
   width: min(720px, calc(100vw - 32px));

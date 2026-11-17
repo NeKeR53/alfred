@@ -1,9 +1,11 @@
+import { Section } from "@alfred/ui";
 import type { ReactNode } from "react";
 
 /**
- * Partie de la fiche d’un module (Réglages → Modules) : un titre, une phrase qui dit à quoi elle sert, des actions
- * éventuelles à droite, puis son contenu. Pages, fonctions, services, webhooks, planifications et tâches de fond d’un
- * module s’affichent tous ainsi, l’un sous l’autre.
+ * Groupe de la fiche d’un module (Réglages → Modules) ou de sa fiche de marketplace : un titre de section, une
+ * courte phrase qui dit ce qu’il contient, des actions éventuelles à droite, puis ses éléments. Dans les menus,
+ * services, fonctions, webhooks, planifications, tâches de fond et dépendances d’un module s’affichent tous ainsi,
+ * l’un sous l’autre, séparés par un trait : le titre se distingue nettement des éléments qu’il range.
  */
 export function ModulePart({
   title,
@@ -13,7 +15,7 @@ export function ModulePart({
   children,
 }: {
   title: string;
-  description?: ReactNode;
+  description?: string;
   actions?: ReactNode;
   /** Nom stable de la partie (`data-part`), pour les tests et la capture. */
   part: string;
@@ -21,23 +23,9 @@ export function ModulePart({
 }) {
   return (
     <div className="module-part" data-part={part}>
-      <div className={`module-part__head${actions ? " module-part__head--actions" : ""}`}>
-        {actions ? (
-          <>
-            <div>
-              <h3>{title}</h3>
-              {description ? <p>{description}</p> : null}
-            </div>
-            {actions}
-          </>
-        ) : (
-          <>
-            <h3>{title}</h3>
-            {description ? <p>{description}</p> : null}
-          </>
-        )}
-      </div>
-      {children}
+      <Section title={title} description={description} actions={actions}>
+        {children}
+      </Section>
     </div>
   );
 }

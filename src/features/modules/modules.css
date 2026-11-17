@@ -196,20 +196,26 @@
   flex-direction: column;
   gap: 20px;
 }
-.module-part {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* Groupes de la fiche (Dans le menu, Services…) : un titre de section, puis un trait avant le groupe suivant. */
+.module-part ~ .module-part {
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
 }
-.module-part__head h3 {
-  margin: 0;
-  font-size: var(--font-size-body);
-  font-weight: 600;
+/* Entrée du menu dans la fiche : son icône dans sa couleur, comme dans le menu de gauche. */
+.module-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-.module-part__head p {
-  margin: 2px 0 0;
+.module-entry__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  color: var(--product-color);
+}
+.module-entry--tab .module-entry__icon {
   color: var(--color-muted);
-  font-size: var(--font-size-secondary);
 }
 .module-pages {
   margin: 0;

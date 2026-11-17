@@ -533,7 +533,11 @@ export function ModulesSettings() {
         <ModuleSchedules module={module.id} />
         <ModuleJobs module={module.id} />
         {module.requires.length > 0 || module.requiredBy.length > 0 ? (
-          <ModulePart part="dependencies" title="Dépendances">
+          <ModulePart
+            part="dependencies"
+            title="Dépendances"
+            description="Les modules dont celui-ci se sert, et ceux qui se servent de lui."
+          >
             <ul className="modules-facts">
               {module.requires.map((required) => (
                 <li key={`requires:${required.module}`}>

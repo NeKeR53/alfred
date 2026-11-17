@@ -4,7 +4,9 @@
  * ou masque la section ou l’onglet. Une section qui n’a qu’une page tient sur une seule ligne.
  */
 import { SettingRow, SettingRows, SwitchControl } from "@alfred/ui";
+import { Boxes } from "lucide-react";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../../lib/types";
+import { NamedIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { setPageHidden, setSectionHidden } from "../../shell/navigationLayout";
 
@@ -60,6 +62,32 @@ export function listing(items: string[]): string {
   return `${items.slice(0, -1).join(", ")} et ${items.at(-1)}`;
 }
 
+/** Entrée du menu de gauche, telle qu’elle y apparaît : son icône dans sa couleur, puis son nom. */
+function SectionTitle({ section }: { section: ResolvedSection }) {
+  return (
+    <span className={`module-entry module-entry--section product-color--${section.color ?? "steel"}`}>
+      <span className="module-entry__icon" aria-hidden="true">
+        {section.icon ? <NamedIcon name={section.icon} size={16} /> : <Boxes size={16} />}
+      </span>
+      {section.label}
+    </span>
+  );
+}
+
+/** Onglet d’une entrée : son icône, discrète, puis son titre. */
+function PageTitle({ page }: { page: ResolvedPage }) {
+  return (
+    <span className="module-entry module-entry--tab">
+      {page.icon ? (
+        <span className="module-entry__icon" aria-hidden="true">
+          <NamedIcon name={page.icon} size={14} />
+        </span>
+      ) : null}
+      {page.title}
+    </span>
+  );
+}
+
 /** « avec le panneau « Email » à droite », pour une page qui en a un. */
 function panelNote(page: ResolvedPage | undefined): string | undefined {
   return page?.panel ? `Avec le panneau « ${page.panel.title} » à droite.` : undefined;
@@ -91,7 +119,7 @@ export function ModulePages({
 
   const pageRow = (page: ResolvedPage, off: boolean, description?: string, nested = false) => (
     <div key={page.reference} className={nested ? "setting-row--nested" : undefined}>
-      <SettingRow title={page.title} description={description}>
+      <SettingRow title={<PageTitle page={page} />} description={description}>
         {toggle(
           page.title,
           !page.hidden,
@@ -122,7 +150,7 @@ export function ModulePages({
           return [
             <div key={group.key}>
               <SettingRow
-                title={section.label}
+                title={<SectionTitle section={section} />}
                 description={
                   only
                     ? [only.title !== section.label ? `Page « ${only.title} ».` : null, panelNote(only)]
@@ -141,7 +169,7 @@ export function ModulePages({
           ];
         return [
           <div key={group.key}>
-            <SettingRow title={section.label} description={`${section.pages.length} onglets`}>
+            <SettingRow title={<SectionTitle section={section} />} description={`${section.pages.length} onglets`}>
               {toggle(
                 section.label,
                 !section.hidden,

@@ -27,6 +27,10 @@
 .service-block .setting-rows {
   border-top: 1px solid var(--line);
 }
+/* Aucun compte encore : pas de trait pour une liste vide, seul le bouton d’ajout reste. */
+.service-block .setting-rows:empty {
+  display: none;
+}
 .service-block > .setting-row:first-child {
   padding-top: 0;
 }
@@ -70,7 +74,8 @@
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }
-.service-block__footer > [data-slot="button"]:first-child {
+/* Un bouton discret aligne son texte sur la colonne ; un bouton plein garde son bord aligné. */
+.service-block__footer > [data-slot="button"][data-variant="ghost"]:first-child {
   margin-left: -12px;
 }
 

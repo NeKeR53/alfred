@@ -796,8 +796,8 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
         id: "dev/principal",
         module: "dev",
         label: "Développement",
-        icon: null,
-        color: null,
+        icon: "code",
+        color: "violet",
         hidden: false,
         pages: [
           page("tickets", "Tickets", ["jira"], page("ticket", "Ticket", ["jira"])),
@@ -814,8 +814,23 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
   );
   await openModule(user, "Dev");
 
-  // Dans le menu : la section, ses onglets, et le panneau de l’onglet qui en a un.
+  // Chaque groupe est un titre de section, avec sa phrase d’explication, au-dessus de ses éléments.
+  for (const [title, explanation] of [
+    ["Dans le menu", /Les entrées que ce module ajoute au menu de gauche/],
+    ["Services", /Les services en ligne auxquels ce module se connecte/],
+    ["Autres fonctions", /ne passent par aucun service/],
+  ] as const) {
+    const heading = screen.getByRole("heading", { name: title, level: 2 });
+    expect(within(heading.closest("section") as HTMLElement).getByText(explanation)).toBeInTheDocument();
+  }
+
+  // Dans le menu : l’entrée avec son icône dans sa couleur, comme dans le menu de gauche, ses onglets en retrait,
+  // et le panneau de l’onglet qui en a un.
   const menu = screen.getByRole("group", { name: "Pages du module" });
+  const menuEntry = within(menu).getByText("Développement");
+  expect(menuEntry).toHaveClass("module-entry", "product-color--violet");
+  expect(menuEntry.querySelector(".module-entry__icon svg")).not.toBeNull();
+  expect(within(menu).getByText("Tickets").closest(".setting-row--nested")).not.toBeNull();
   expect(within(menu).getByText("Développement")).toBeInTheDocument();
   expect(within(menu).getByText("2 onglets")).toBeInTheDocument();
   expect(within(menu).getByText("Avec le panneau « Ticket » à droite.")).toBeInTheDocument();
