@@ -1,5 +1,5 @@
 import { IconButton, MenuGroup, MenuItem } from "@alfred/ui";
-import { Check, ChevronsUpDown, FolderOpen, FolderPlus, Layers } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, FolderPlus, Layers } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useShell } from "../../shell/store";
 import { AnchoredMenu } from "../../ui/components/AnchoredMenu";
@@ -16,8 +16,9 @@ export function isSwitchShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | 
 const shortcutText = () => (isMac() ? "⌘⇧O" : "Ctrl Maj O");
 
 /**
- * Entrée du bas du menu de gauche, avec Agent et Réglages : le nom de l’espace ouvert, et un menu pour passer à un
- * espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni redémarrer.
+ * Titre du menu de gauche, à côté du bouton qui le replie : le nom de l’espace ouvert et une petite flèche, qui ouvrent
+ * un menu pour passer à un espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni
+ * redémarrer. Menu replié : une icône, avec le nom dans son infobulle.
  */
 export function SpaceSwitcher() {
   const snapshot = useShell((state) => state.snapshot);
@@ -71,18 +72,18 @@ export function SpaceSwitcher() {
           }
         }}
       >
-        <Layers size={16} aria-hidden="true" />
-        <span className="sidebar__label" title={snapshot.path}>
+        <Layers className="sidebar-space__icon" size={16} aria-hidden="true" />
+        <span className="sidebar__label sidebar__brand" title={snapshot.path}>
           {snapshot.name}
         </span>
-        <ChevronsUpDown className="sidebar__label sidebar-space__chevron" size={14} aria-hidden="true" />
+        <ChevronDown className="sidebar__label sidebar-space__chevron" size={12} aria-hidden="true" />
       </IconButton>
       {anchor ? (
         <AnchoredMenu
           id={menuId}
           anchor={anchor}
           label="Espaces de travail"
-          placement="above"
+          placement="below"
           align="start"
           onClose={closeMenu}
         >

@@ -509,19 +509,23 @@ export function AppShell({
   return (
     <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
       <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-        <IconButton
-          appearance="navigation"
-          className="sidebar__toggle"
-          label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
-          tooltipPlacement="right"
-          aria-expanded={!collapsed}
-          onClick={toggleSidebar}
-        >
-          {collapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
-          <span className="sidebar__label sidebar__brand" aria-hidden="true">
-            {snapshot.name}
-          </span>
-        </IconButton>
+        <div className="sidebar__head">
+          <IconButton
+            appearance="navigation"
+            className="sidebar__toggle"
+            label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
+            tooltipPlacement="right"
+            aria-expanded={!collapsed}
+            onClick={toggleSidebar}
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={16} aria-hidden="true" />
+            ) : (
+              <PanelLeftClose size={16} aria-hidden="true" />
+            )}
+          </IconButton>
+          <SpaceSwitcher />
+        </div>
         <div className="sidebar__catalog-controls">
           <SearchField
             className="sidebar__search"
@@ -616,7 +620,6 @@ export function AppShell({
         >
           <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
         </NavButton>
-        <SpaceSwitcher />
       </aside>
       <main className="workspace" inert={settingsOpen}>
         {effective.kind === "agent" && agentAvailable !== null ? (
