@@ -293,30 +293,26 @@
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
-/* En-tête du menu de gauche : le bouton qui le replie, puis le nom de l’espace, qui ouvre le menu des espaces. */
+/* En-tête du menu de gauche : le bouton qui le replie, puis le nom de l’espace, qui ouvre le menu des espaces. Le bouton
+ * a la marge des autres entrées : son icône reste à la même place, menu replié ou non. Replié, le nom se masque (le
+ * menu des espaces reste au raccourci). */
 .sidebar__head {
   display: flex;
   align-items: center;
   gap: 1px;
 }
-.app-shell--sidebar-collapsed .sidebar__head {
-  flex-direction: column;
-  align-items: stretch;
-}
 .sidebar .sidebar__head > .nav-icon.sidebar__toggle {
-  width: 30px;
-  flex: 0 0 30px;
-  justify-content: center;
-  padding: 0;
-}
-.app-shell--sidebar-collapsed .sidebar .sidebar__head > .nav-icon.sidebar__toggle {
-  width: 100%;
+  width: 33px;
+  flex: 0 0 33px;
 }
 .sidebar .sidebar-space {
   min-width: 0;
   flex: 1 1 auto;
   gap: 4px;
   padding: 0 6px;
+}
+.app-shell--sidebar-collapsed .sidebar .sidebar-space {
+  visibility: hidden;
 }
 .sidebar .sidebar-space > .sidebar__brand {
   min-width: 0;
@@ -329,9 +325,6 @@
   height: 12px;
   flex: 0 0 12px;
   color: var(--color-muted);
-}
-.app-shell:not(.app-shell--sidebar-collapsed) .sidebar-space > .sidebar-space__icon {
-  display: none;
 }
 .space-switcher__check {
   width: 16px;

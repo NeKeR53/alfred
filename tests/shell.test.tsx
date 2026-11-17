@@ -36,6 +36,9 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   expect(toggle).toHaveAccessibleName("Replier la navigation");
   expect(switcher).toHaveAccessibleName(/^Espace de travail : Maison/);
   expect(switcher).toHaveAttribute("aria-haspopup", "menu");
+  // Pas de champ de recherche dans le menu : ⌘K ouvre la palette.
+  expect(within(sidebar).queryByRole("searchbox")).not.toBeInTheDocument();
+  expect(within(sidebar).queryByRole("textbox")).not.toBeInTheDocument();
   await user.click(switcher);
   expect(screen.getByRole("menuitem", { name: "Créer un espace de travail…" })).toBeVisible();
   await user.keyboard("{Escape}");

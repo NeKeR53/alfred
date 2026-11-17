@@ -1,4 +1,4 @@
-import { Button, EmptyState, IconButton, PageTopBar, SearchField, Tabs } from "@alfred/ui";
+import { Button, EmptyState, IconButton, PageTopBar, Tabs } from "@alfred/ui";
 import {
   AppWindow,
   Bot,
@@ -17,7 +17,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
 } from "react";
 import { SetupGate } from "../features/setup/SetupGate";
 import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
@@ -404,15 +403,6 @@ export function agentEntryLabel(summary: AgentSummary | undefined): string {
     .join(" · ");
 }
 
-const shortcutLabel = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
-
-/** Comparaison sans casse ni accents, comme la palette de commandes. */
-const fold = (text: string) =>
-  text
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLocaleLowerCase("fr");
-
 /** Touche Menu ou Maj+F10 : ouvre le menu contextuel de l’élément qui a le focus. */
 const isMenuKey = (event: KeyboardEvent) => event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
 
@@ -475,9 +465,6 @@ export function AppShell({
   const editor = useNavigationEditor();
   const counts = useBadges((state) => state.counts);
   useEffect(() => startBadges(), []);
-  const [query, setQuery] = useState("");
-  const folded = fold(query.trim());
-  const matches = (label: string) => !folded || fold(label).includes(folded);
   const sections = useMemo(
     () =>
       (snapshot?.sections ?? []).filter((section) => !section.hidden).map((section) => ({ id: section.id, section })),
@@ -526,20 +513,9 @@ export function AppShell({
           </IconButton>
           <SpaceSwitcher />
         </div>
-        <div className="sidebar__catalog-controls">
-          <SearchField
-            className="sidebar__search"
-            label="Rechercher une section dans la navigation"
-            placeholder={`Rechercher… · ${shortcutLabel}`}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onClear={() => setQuery("")}
-          />
-        </div>
         <nav aria-label="Sections de l’espace de travail">
           {sections.length > 0 ? <p className="sidebar__section">Espace de travail</p> : null}
           {drag.orderedItems.map(({ section }) => {
-            if (!matches(section.label)) return null;
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
             const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
             return (
@@ -596,9 +572,6 @@ export function AppShell({
               </div>
             );
           })}
-          {sections.length > 0 && !sections.some(({ section }) => matches(section.label)) ? (
-            <p className="sidebar__empty">Aucune section trouvée.</p>
-          ) : null}
         </nav>
         {agentAvailable === true ? (
           <NavButton

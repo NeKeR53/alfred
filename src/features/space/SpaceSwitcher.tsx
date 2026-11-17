@@ -1,5 +1,5 @@
 import { IconButton, MenuGroup, MenuItem } from "@alfred/ui";
-import { Check, ChevronDown, FolderOpen, FolderPlus, Layers } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, FolderPlus } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useShell } from "../../shell/store";
 import { AnchoredMenu } from "../../ui/components/AnchoredMenu";
@@ -13,17 +13,14 @@ export function isSwitchShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | 
   return isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
-const shortcutText = () => (isMac() ? "⌘⇧O" : "Ctrl Maj O");
-
 /**
  * Titre du menu de gauche, à côté du bouton qui le replie : le nom de l’espace ouvert et une petite flèche, qui ouvrent
  * un menu pour passer à un espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni
- * redémarrer. Menu replié : une icône, avec le nom dans son infobulle.
+ * redémarrer. Menu replié : le nom se masque sans rien décaler ; le menu reste au raccourci.
  */
 export function SpaceSwitcher() {
   const snapshot = useShell((state) => state.snapshot);
   const recent = useShell((state) => state.recentSpaces);
-  const collapsed = useShell((state) => state.sidebarCollapsed);
   const settingsOpen = useShell((state) => state.view.kind === "settings");
   const menuId = useId();
   const button = useRef<HTMLButtonElement>(null);
@@ -57,8 +54,7 @@ export function SpaceSwitcher() {
         appearance="navigation"
         className="sidebar-space"
         label={`${label}. Changer d’espace de travail`}
-        tooltip={anchor ? false : collapsed ? `${snapshot.name} · Changer d’espace (${shortcutText()})` : false}
-        tooltipPlacement="right"
+        tooltip={false}
         aria-haspopup="menu"
         aria-expanded={Boolean(anchor)}
         aria-keyshortcuts={isMac() ? "Meta+Shift+O" : "Control+Shift+O"}
@@ -72,7 +68,6 @@ export function SpaceSwitcher() {
           }
         }}
       >
-        <Layers className="sidebar-space__icon" size={16} aria-hidden="true" />
         <span className="sidebar__label sidebar__brand" title={snapshot.path}>
           {snapshot.name}
         </span>
