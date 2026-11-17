@@ -820,7 +820,7 @@ export async function versionDePandoc() {
 
 ## 17. Données partagées en équipe : `sync`
 
-Pour que les membres d’une équipe travaillent sur les mêmes lignes, chacun dans son Alfred (un carnet de contacts, un suivi de commandes), nomme les tables à partager dans `module.json` :
+Pour que les membres d’une équipe travaillent sur les mêmes lignes, chacun chez soi (un carnet de contacts, un suivi de commandes), nomme les tables à partager dans `module.json` :
 
 ```json
 "sync": { "tables": ["carnet_contacts", "carnet_notes"] }

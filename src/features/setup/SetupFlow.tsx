@@ -439,7 +439,7 @@ export function SetupFlow({
             {others.length > 0 && needItem ? (
               <SettingRow
                 title="Ou utiliser un service déjà configuré"
-                description="Un service que vous avez déjà ajouté dans Alfred."
+                description="Un service que vous avez déjà ajouté."
               >
                 <SelectControl
                   aria-label={`Utiliser un service existant pour ${item.label}`}
