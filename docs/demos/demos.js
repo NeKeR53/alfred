@@ -7,7 +7,10 @@
      <div class="dm" data-demo="all"></div>                  les quatre, avec des onglets ;
      <div class="dm" data-demo="creer-page" data-video="videos/creer-page.mp4" data-poster="videos/creer-page.jpg"></div>
                                                              la vidéo enregistrée, à la place de la démo animée.
-   Identifiants : creer-page, brancher-module, rechercher, corriger. */
+   Identifiants : creer-page, brancher-module, rechercher, corriger.
+
+   Pilotage par la page hôte (le diaporama de presentation.html) : chaque élément .dm reçoit el.player,
+   avec play() (lance depuis le début) et stop() (arrête et remet au début), pour une démo comme pour une vidéo. */
 (() => {
   const W = 1120;
   const CANCEL = Symbol("cancel");
@@ -198,7 +201,8 @@
     layer(s) { const l = this.q(".dm-layer"); l.innerHTML = s || ""; l.classList.toggle("on", Boolean(s)); return l.firstElementChild; }
     toast(title, desc) { const t = html(`<div class="dm-toast"><strong>${title}</strong><span>${desc}</span></div>`); this.el.append(t); setTimeout(() => t.remove(), 3200 / this.P.speed); }
     pos(el, dx = 0, dy = 0, anchor = "center") {
-      const r = el.getBoundingClientRect(), s = this.P.stage.getBoundingClientRect(), k = this.P.scale;
+      // L’échelle réelle se lit sur la scène : elle tient compte d’une page hôte elle-même mise à l’échelle.
+      const r = el.getBoundingClientRect(), s = this.P.stage.getBoundingClientRect(), k = s.width / W || this.P.scale;
       const x = (r.left - s.left) / k + (anchor === "left" ? 16 : r.width / k / 2);
       const y = (r.top - s.top) / k + r.height / k / 2;
       return { x: x + dx, y: y + dy };
@@ -606,6 +610,8 @@
       }
     }
     next() { this.select((this.index + 1) % this.list.length); this.play(); }
+    /** Arrête la démo et la remet au début, bouton de lecture affiché. */
+    stop() { this.select(this.index); }
   }
 
   /** Vidéo enregistrée : lecture au clic, sans son, avec l’affiche si elle est déclarée. */
@@ -620,6 +626,10 @@
     start.addEventListener("click", () => { start.hidden = true; video.controls = true; video.play(); });
     video.addEventListener("ended", () => { el.dataset.state = "ended"; });
     el.dataset.state = "ready";
+    el.player = {
+      play() { start.hidden = true; video.controls = true; el.dataset.state = "playing"; video.currentTime = 0; return video.play().catch(() => { start.hidden = false; }); },
+      stop() { video.pause(); video.currentTime = 0; video.controls = false; start.hidden = false; el.dataset.state = "ready"; },
+    };
   }
 
   const byId = Object.fromEntries(SCENARIOS.map((s) => [s.id, s]));
