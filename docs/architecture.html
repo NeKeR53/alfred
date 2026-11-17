@@ -145,6 +145,177 @@ table.ref tr:last-child td { border-bottom: 0; }
 }
 @media (max-width: 560px) { nav.toc ol { columns: 1; } }
 @media print { nav.toc { display: none; } .layout { display: block; } figure.fig { break-inside: avoid; } }
+
+/* ============ Démos animées ============ */
+nav.toc li.nonum { counter-increment: none; }
+nav.toc li.nonum a::before { content: ""; }
+.dm { margin: 18px 0 8px; }
+.dm-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.dm-choices button { font: 500 13.5px var(--sans); color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+.dm-choices button:hover { color: var(--ink); border-color: var(--edge); }
+.dm-choices button[aria-selected="true"] { color: var(--c1); border-color: var(--c1); background: var(--c1-bg); }
+.dm-viewport { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+.dm-stage { position: absolute; left: 0; top: 0; width: 960px; height: 540px; transform-origin: 0 0; --sp: 1; }
+.dm-start { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; width: 100%; border: 0; cursor: pointer; color: var(--ink); background: color-mix(in srgb, var(--bg) 55%, transparent); backdrop-filter: blur(2px); font: 600 17px var(--sans); }
+.dm-start[hidden] { display: none; }
+.dm-start .dm-round { width: 64px; height: 64px; border-radius: 50%; background: var(--c1); color: var(--surface); display: grid; place-items: center; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.dm-start small { font: 13px var(--sans); color: var(--muted); }
+.dm-start:hover .dm-round { transform: scale(1.05); }
+.dm-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.dm-controls button { font: 500 13px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer; min-width: 36px; }
+.dm-controls button:hover { border-color: var(--edge); }
+.dm-segs { flex: 1; display: flex; gap: 4px; }
+.dm-segs span { flex: 1; height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
+.dm-segs span.done { background: var(--c1); }
+.dm-segs span.now::after { content: ""; position: absolute; inset: 0; background: var(--c1); opacity: .45; }
+.dm-caption { min-height: 48px; margin-top: 10px; padding: 10px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 14.5px; }
+.dm-caption b { color: var(--c1); font-weight: 600; margin-right: 6px; }
+
+/* Fenêtre simulée */
+.dm-app { position: absolute; inset: 0; display: grid; grid-template-columns: 172px minmax(0, 1fr); background: var(--surface); color: var(--ink); font: 13px/1.4 var(--sans); overflow: hidden; }
+.dm-side { background: var(--surface-2); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 3px; }
+.dm-brand { font: 700 13px var(--sans); padding: 2px 8px 12px; display: flex; align-items: center; gap: 8px; }
+.dm-brand i { width: 18px; height: 18px; border-radius: 5px; background: var(--ink); display: inline-block; }
+.dm-sec { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 7px; color: var(--muted); }
+.dm-sec i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.dm-sec.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.dm-sec b { margin-left: auto; font: 600 10.5px var(--sans); background: var(--c1); color: var(--surface); border-radius: 9px; padding: 0 6px; }
+.dm-sec.dm-new { animation: dm-new calc(1.6s / var(--sp)) ease-out; }
+@keyframes dm-new { 0% { background: var(--c4-bg); box-shadow: 0 0 0 2px var(--c4); transform: translateX(-8px); opacity: 0; } 30% { opacity: 1; transform: none; } 100% { } }
+.dm-side .dm-gear { margin-top: auto; }
+.dm-main-wrap { display: grid; grid-template-rows: 44px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
+.dm-top { display: flex; align-items: center; border-bottom: 1px solid var(--line); padding: 0 12px 0 18px; gap: 20px; }
+.dm-tab { height: 44px; display: flex; align-items: center; color: var(--muted); border-bottom: 2px solid transparent; }
+.dm-tab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--c1); }
+.dm-tools { margin-left: auto; display: flex; gap: 4px; }
+.dm-tool { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); }
+.dm-tool.warn { color: var(--c3); background: var(--c3-bg); }
+.dm-tool.on { color: var(--c1); background: var(--c1-bg); }
+.dm-body { display: flex; min-height: 0; }
+.dm-main { flex: 1; min-width: 0; overflow: hidden; position: relative; padding: 0; }
+.dm-pbar .dm-input { flex: 0 1 auto; min-width: 0; }
+.dm-panel { width: 0; overflow: hidden; border-left: 1px solid transparent; background: var(--surface); transition: width calc(350ms / var(--sp)) ease; display: flex; flex-direction: column; }
+.dm-panel.open { width: 300px; border-left-color: var(--line); }
+.dm-panel > * { min-width: 300px; }
+.dm-ico { width: var(--s, 16px); height: var(--s, 16px); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* Page */
+.dm-page { height: 100%; display: flex; flex-direction: column; }
+.dm-ph { display: flex; align-items: flex-start; justify-content: space-between; padding: 16px 20px 10px; }
+.dm-ph h5 { margin: 0; font-size: 18px; }
+.dm-ph p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+.dm-pbar { display: flex; align-items: center; gap: 8px; padding: 0 20px 10px; position: relative; }
+.dm-pbody { flex: 1; min-height: 0; padding: 0 20px; overflow: hidden; }
+.dm-pfoot { border-top: 1px solid var(--line); padding: 8px 20px; display: flex; justify-content: flex-end; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.dm-btn { transition: transform .12s, filter .12s; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; white-space: nowrap; }
+.dm-btn.primary { background: var(--c1); border-color: var(--c1); color: var(--surface); }
+.dm-btn.small { height: 26px; padding: 0 9px; font-size: 12px; }
+.dm-press { transform: scale(.95); filter: brightness(.92); }
+.dm-input { min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-bottom: 2px solid var(--line); border-radius: 7px; background: var(--surface); flex-wrap: wrap; }
+.dm-input.dm-focus { border-bottom-color: var(--c1); background: color-mix(in srgb, var(--c1) 4%, var(--surface)); }
+.dm-txt:empty::before { content: attr(data-ph); color: var(--muted); }
+.dm-caret { width: 1px; height: 15px; background: transparent; margin-left: -5px; }
+.dm-focus .dm-caret { background: var(--ink); animation: dm-blink 1s steps(1) infinite; }
+@keyframes dm-blink { 50% { opacity: 0; } }
+.dm-tag { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--c2-bg); color: var(--c2); font-size: 12px; font-weight: 500; animation: dm-pop calc(.35s / var(--sp)) ease-out; }
+@keyframes dm-pop { from { transform: scale(.6); opacity: 0; } }
+.dm-sugg { position: absolute; left: 20px; top: 38px; width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 22px rgba(0,0,0,.14); padding: 4px; z-index: 3; }
+.dm-sugg div { padding: 6px 9px; border-radius: 5px; }
+.dm-sugg div.on { background: var(--c1-bg); color: var(--c1); }
+.dm-kbd { position: absolute; z-index: 4; font: 600 11px var(--sans); padding: 3px 8px; border-radius: 5px; border: 1px solid var(--line); border-bottom-width: 3px; background: var(--surface); animation: dm-pop calc(.3s / var(--sp)); }
+
+.dm-table { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.dm-tr { display: flex; align-items: center; height: 38px; padding: 0 12px; gap: 10px; border-top: 1px solid var(--line); }
+.dm-tr > div { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dm-tr.dm-th { border-top: 0; height: 32px; background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 600; }
+.dm-tr.sel { background: var(--c1-bg); }
+.dm-tr .end { text-align: right; font-variant-numeric: tabular-nums; }
+.dm-tr .mono { font-family: var(--mono); font-size: 12px; }
+.dm-flash { animation: dm-flash calc(1.4s / var(--sp)) ease-out; }
+@keyframes dm-flash { 0%, 40% { background: var(--c4-bg); } }
+.dm-badge { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 10px; }
+.dm-badge.ok { color: var(--c4); background: color-mix(in srgb, var(--c4) 14%, transparent); }
+.dm-badge.warn { color: var(--c3); background: color-mix(in srgb, var(--c3) 14%, transparent); }
+.dm-badge.bad { color: var(--no); background: color-mix(in srgb, var(--no) 14%, transparent); }
+.dm-badge.info { color: var(--c1); background: color-mix(in srgb, var(--c1) 14%, transparent); }
+.dm-badge.mute { color: var(--muted); background: var(--surface-2); }
+.dm-av { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10.5px; font-weight: 700; background: var(--c2-bg); color: var(--c2); margin-right: 8px; vertical-align: middle; }
+.dm-skel { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--surface-2), var(--line), var(--surface-2)); background-size: 200% 100%; animation: dm-skel 1.2s linear infinite; }
+@keyframes dm-skel { to { background-position: -200% 0; } }
+.dm-banner { margin: 0 20px 10px; padding: 10px 12px; border-radius: 8px; background: var(--c3-bg); border: 1px solid color-mix(in srgb, var(--c3) 40%, transparent); display: flex; align-items: center; gap: 10px; }
+
+/* Panneau */
+.dm-pnh { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; border-bottom: 1px solid var(--line); font-weight: 600; }
+.dm-pnb { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow: hidden; }
+.dm-kv { display: grid; grid-template-columns: 90px 1fr; gap: 8px 10px; font-size: 12.5px; }
+.dm-kv span:nth-child(odd) { color: var(--muted); }
+
+/* Agent */
+.dm-agent { height: 100%; display: flex; flex-direction: column; }
+.dm-transcript { flex: 1; min-height: 0; overflow: hidden; padding: 18px 26px 8px; display: flex; flex-direction: column; gap: 10px; justify-content: flex-end; }
+.dm-empty { margin: auto; text-align: center; color: var(--muted); }
+.dm-empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 4px; }
+.dm-msg { max-width: 82%; padding: 9px 12px; border-radius: 10px; animation: dm-pop calc(.3s / var(--sp)); }
+.dm-msg.me { align-self: flex-end; background: var(--c1-bg); }
+.dm-msg.ai { align-self: flex-start; background: var(--surface-2); }
+.dm-act { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); animation: dm-pop calc(.25s / var(--sp)); }
+.dm-act code { font: 12px var(--mono); color: var(--ink); background: none; padding: 0; }
+.dm-act .st { width: 15px; height: 15px; display: grid; place-items: center; color: var(--c4); }
+.dm-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--c1); animation: dm-spin .8s linear infinite; }
+@keyframes dm-spin { to { transform: rotate(360deg); } }
+.dm-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; background: var(--surface); animation: dm-pop calc(.3s / var(--sp)); }
+.dm-composer { margin: 0 26px 18px; display: flex; align-items: flex-end; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 10px 14px; min-height: 54px; background: var(--surface); }
+.dm-composer.dm-focus { border-color: var(--c1); }
+.dm-composer .dm-in { flex: 1; align-self: center; }
+.dm-send { width: 30px; height: 30px; border-radius: 8px; background: var(--c1); color: var(--surface); display: grid; place-items: center; flex: none; }
+
+/* Calques : réglages, configuration, capture */
+.dm-layer { position: absolute; inset: 0; display: none; z-index: 10; }
+.dm-layer.on { display: grid; place-items: center; background: rgba(10,10,14,.35); animation: dm-fade calc(.25s / var(--sp)); }
+@keyframes dm-fade { from { opacity: 0; } }
+.dm-win { width: 720px; height: 440px; background: var(--surface); border-radius: 12px; box-shadow: 0 20px 50px rgba(0,0,0,.3); display: grid; grid-template-columns: 180px 1fr; overflow: hidden; animation: dm-rise calc(.3s / var(--sp)) ease-out; }
+@keyframes dm-rise { from { transform: translateY(14px); opacity: 0; } }
+.dm-win aside { background: var(--surface-2); padding: 16px 10px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); }
+.dm-win aside small { font: 700 10px var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 10px 9px 4px; }
+.dm-win aside div { padding: 6px 9px; border-radius: 6px; color: var(--muted); }
+.dm-win aside div.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.dm-win section { padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 0; position: relative; }
+.dm-win h6 { margin: 0; font-size: 17px; }
+.dm-mod { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; display: flex; align-items: center; gap: 12px; }
+.dm-mod > div:first-child { flex: 1; min-width: 0; }
+.dm-mod strong { display: block; }
+.dm-mod span { color: var(--muted); font-size: 12px; }
+.dm-dialog { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10,10,14,.25); }
+.dm-dialog > div { width: 340px; background: var(--surface); border-radius: 10px; padding: 16px 18px; box-shadow: 0 14px 36px rgba(0,0,0,.3); display: flex; flex-direction: column; gap: 10px; animation: dm-rise calc(.25s / var(--sp)); }
+.dm-dialog .acts { display: flex; justify-content: flex-end; gap: 8px; }
+.dm-steps { display: flex; flex-direction: column; gap: 4px; }
+.dm-step { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 6px; color: var(--muted); }
+.dm-step i { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line); display: grid; place-items: center; font: 600 10.5px var(--sans); font-style: normal; flex: none; }
+.dm-step.on { color: var(--ink); font-weight: 600; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.dm-step.on i { border-color: var(--c1); color: var(--c1); }
+.dm-step.ok i { border-color: var(--c4); background: var(--c4); color: var(--surface); }
+.dm-field { display: flex; flex-direction: column; gap: 5px; }
+.dm-field label { font-size: 12px; font-weight: 600; }
+.dm-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.dm-row > div:first-child { flex: 1; min-width: 0; }
+.dm-row strong { display: block; }
+.dm-row span.d { color: var(--muted); font-size: 12px; }
+.dm-foot { margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; }
+.dm-capture { position: absolute; inset: 0; z-index: 12; background: rgba(10,10,14,.28); animation: dm-shot calc(.5s / var(--sp)); cursor: crosshair; }
+@keyframes dm-shot { 0% { background: rgba(255,255,255,.7); } }
+.dm-capture .hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--surface); padding: 6px 12px; border-radius: 8px; font-size: 12.5px; box-shadow: 0 6px 16px rgba(0,0,0,.2); }
+.dm-rect { position: absolute; border: 2px solid var(--c5); background: color-mix(in srgb, var(--c5) 12%, transparent); border-radius: 3px; box-shadow: 0 0 0 9999px rgba(10,10,14,.25); transition-property: width, height; transition-timing-function: cubic-bezier(.4,.1,.2,1); }
+.dm-rectbar { position: absolute; display: flex; gap: 6px; animation: dm-pop calc(.25s / var(--sp)); }
+.dm-shot { width: 76px; height: 44px; border-radius: 5px; border: 1px solid var(--line); background: linear-gradient(90deg, var(--surface-2) 18%, var(--surface) 18%); position: relative; flex: none; }
+.dm-shot::after { content: ""; position: absolute; right: 12px; top: 12px; width: 14px; height: 20px; border: 1.5px solid var(--c5); border-radius: 2px; }
+.dm-toast { position: absolute; right: 16px; bottom: 16px; z-index: 20; width: 270px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--c4); border-radius: 9px; padding: 10px 12px; box-shadow: 0 10px 26px rgba(0,0,0,.18); animation: dm-rise calc(.3s / var(--sp)); }
+.dm-toast strong { display: block; }
+.dm-toast span { color: var(--muted); font-size: 12px; }
+.dm-cursor { position: absolute; left: 0; top: 0; z-index: 30; pointer-events: none; transition-property: transform; transition-timing-function: cubic-bezier(.4,.1,.2,1); }
+.dm-cursor svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.dm-ripple { position: absolute; z-index: 29; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 2px solid var(--c1); pointer-events: none; animation: dm-ripple calc(.45s / var(--sp)) ease-out forwards; }
+@keyframes dm-ripple { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.3); opacity: 0; } }
+@media (max-width: 640px) { .dm-caption { font-size: 13.5px; } .dm-controls .dm-speed { display: none; } }
 </style>
 </head>
 <body>
@@ -160,6 +331,7 @@ table.ref tr:last-child td { border-bottom: 0; }
 <nav class="toc" aria-label="Sommaire">
   <strong>Sommaire</strong>
   <ol>
+    <li class="nonum"><a href="#demos">▶ En démo</a></li>
     <li><a href="#couches">Les couches</a></li>
     <li><a href="#espace">L’espace de travail</a></li>
     <li><a href="#fenetre">Fenêtre et zones d’une page</a></li>
@@ -198,6 +370,23 @@ table.ref tr:last-child td { border-bottom: 0; }
     <span><i style="background:var(--c5-bg);border-color:var(--c5)"></i>Agents</span>
   </div>
 </header>
+
+<!-- ============================================================ Démos -->
+<h2 id="demos">En démo</h2>
+<p>Quatre usages, joués dans une fenêtre d’Alfred reconstituée : créer une page en parlant à l’agent, importer un module et
+le configurer, rechercher puis retrouver sa recherche, corriger un élément d’un geste. Les écrans reprennent les libellés de
+l’application ; les données sont fictives.</p>
+<div class="dm" id="demo">
+  <div class="dm-choices" role="tablist" aria-label="Choisir une démo"></div>
+  <div class="dm-viewport"><div class="dm-stage" aria-hidden="true"></div><button type="button" class="dm-start"></button></div>
+  <div class="dm-controls">
+    <button type="button" class="dm-play">Lecture</button>
+    <button type="button" class="dm-restart">Rejouer</button>
+    <div class="dm-segs" aria-hidden="true"></div>
+    <button type="button" class="dm-speed" title="Vitesse">1×</button>
+  </div>
+  <div class="dm-caption" aria-live="polite"></div>
+</div>
 
 <!-- ============================================================ 1 -->
 <h2 id="couches">1. Les couches</h2>
@@ -1222,5 +1411,549 @@ précédente.</p>
 port <code>14731</code> ; un navigateur ouvert sur l’interface passe par le même backend, par un pont réservé au développement.</p>
 </main>
 </div>
+<script>
+/* Démos animées : une fenêtre d’Alfred reconstituée, pilotée par des scénarios. Rien n’est enregistré ni envoyé. */
+(() => {
+  const root = document.getElementById("demo");
+  if (!root) return;
+  const CANCEL = Symbol("cancel");
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const html = (s) => { const t = document.createElement("template"); t.innerHTML = s.trim(); return t.content.firstElementChild; };
+
+  const PATHS = {
+    plug: '<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/>',
+    target: '<circle cx="12" cy="12" r="8"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+    chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+    panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+    check: '<path d="m5 12 5 5 9-10"/>',
+    send: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+    play: '<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>',
+    git: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 4-6 3-11 5"/>',
+  };
+  const ic = (name, size = 16) => `<svg class="dm-ico" style="--s:${size}px" viewBox="0 0 24 24" aria-hidden="true">${PATHS[name]}</svg>`;
+  const TONE = { "À payer": "warn", "Payée": "ok", "En retard": "bad", "Actif": "ok", "Inactif": "mute", "En cours": "info", "À faire": "mute", "Terminé": "ok", "Prêt": "ok", "À configurer": "warn", "À tester": "info" };
+  const badge = (s) => `<span class="dm-badge ${TONE[s] || "mute"}">${s}</span>`;
+  const initials = (n) => n.split(" ").map((w) => w[0]).join("").slice(0, 2);
+  const input = (ph, extra = "") => `<div class="dm-input ${extra}"><span class="dm-txt" data-ph="${ph}"></span><span class="dm-caret"></span></div>`;
+
+  /* ---------- Données de démonstration ---------- */
+  const FACTURES = [
+    { n: "F-2026-118", c: "Atelier Moreau", e: "30/11/2026", m: 1240, s: "À payer" },
+    { n: "F-2026-117", c: "Brasserie du Port", e: "22/11/2026", m: 860.5, s: "Payée" },
+    { n: "F-2026-116", c: "Studio Kerlan", e: "15/11/2026", m: 2300, s: "En retard" },
+    { n: "F-2026-115", c: "Atelier Moreau", e: "02/11/2026", m: 415, s: "Payée" },
+    { n: "F-2026-114", c: "Librairie Ortolan", e: "28/10/2026", m: 98.9, s: "Payée" },
+    { n: "F-2026-113", c: "Garage Fabre", e: "21/10/2026", m: 1575, s: "Payée" },
+  ];
+  const euros = (v) => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(v);
+  const CONTACTS = [
+    { n: "Léa Martin", soc: "Atelier Moreau", v: "Lyon", s: "Actif" },
+    { n: "Hugo Bernard", soc: "Brasserie du Port", v: "Nantes", s: "Actif" },
+    { n: "Chloé Petit", soc: "Studio Kerlan", v: "Lyon", s: "Inactif" },
+    { n: "Nathan Roux", soc: "Librairie Ortolan", v: "Lyon", s: "Actif" },
+    { n: "Inès Fabre", soc: "Garage Fabre", v: "Grenoble", s: "Actif" },
+    { n: "Paul Girard", soc: "Lyonnaise de conseil", v: "Villeurbanne", s: "Actif" },
+  ];
+  const TICKETS = [
+    { k: "ALF-231", t: "Erreur à l’export PDF", a: "Léa M.", s: "En cours" },
+    { k: "ALF-229", t: "Ajouter le filtre par client", a: "Hugo B.", s: "À faire" },
+    { k: "ALF-224", t: "Lenteur de la recherche", a: "Léa M.", s: "En cours" },
+    { k: "ALF-220", t: "Traduire l’écran d’accueil", a: "Inès F.", s: "Terminé" },
+    { k: "ALF-217", t: "Relances automatiques", a: "Nathan R.", s: "Terminé" },
+  ];
+
+  /* ---------- Gabarits des écrans ---------- */
+  function table(cols, rows, sel) {
+    const head = cols.map((c) => `<div class="${c.cls || ""}" style="flex:${c.f || 1}">${c.h}</div>`).join("");
+    const body = rows.map((r, i) => `<div class="dm-tr ${sel === i ? "sel" : ""}" data-row="${i}">${cols.map((c) => `<div class="${c.cls || ""}" style="flex:${c.f || 1}">${c.fn(r)}</div>`).join("")}</div>`).join("");
+    return `<div class="dm-table"><div class="dm-tr dm-th">${head}</div>${body}</div>`;
+  }
+  function page({ title, desc, action, bar = "", body, foot = "", banner = "" }) {
+    return `<div class="dm-page"><div class="dm-ph"><div><h5>${title}</h5><p>${desc}</p></div>${action ? `<div class="dm-btn primary" data-a="new">${ic("plus", 14)}${action}</div>` : ""}</div>${banner}${bar ? `<div class="dm-pbar">${bar}</div>` : ""}<div class="dm-pbody">${body}</div>${foot ? `<div class="dm-pfoot">${foot}</div>` : ""}</div>`;
+  }
+  function facturesPage({ fmt = true, sel = -1 } = {}) {
+    const cols = [
+      { h: "Numéro", f: 1, cls: "mono", fn: (r) => r.n },
+      { h: "Client", f: 1.6, fn: (r) => r.c },
+      { h: "Échéance", f: 1, fn: (r) => r.e },
+      { h: "Montant", f: 1, cls: `col-m ${fmt ? "end" : ""}`, fn: (r) => (fmt ? euros(r.m) : String(r.m)) },
+      { h: "État", f: 0.9, fn: (r) => badge(r.s) },
+    ];
+    return page({
+      title: "Factures", desc: "Factures émises et leur échéance.", action: "Nouvelle facture",
+      bar: `<div class="dm-input" style="width:280px">${ic("search", 15)}<span class="dm-txt" data-ph="Rechercher une facture…"></span></div><div class="dm-btn small">État ▾</div>`,
+      body: table(cols, FACTURES, sel), foot: `<span>1–6 sur 6</span>`,
+    });
+  }
+  function facturePanel(r) {
+    return `<div class="dm-pnh">${r.n}${ic("x", 15)}</div><div class="dm-pnb"><div>${badge(r.s)}</div><div class="dm-kv"><span>Client</span><span>${r.c}</span><span>Échéance</span><span>${r.e}</span><span>Montant</span><span>${euros(r.m)}</span><span>Pièce jointe</span><span>${r.n}.pdf</span></div><div class="dm-btn small" style="align-self:flex-start">Marquer payée</div></div>`;
+  }
+  const matchTag = (r, tag) => {
+    const [k, v] = tag.split(" : ");
+    if (k === "Ville") return r.v === v;
+    if (k === "État") return r.s.toLowerCase() === v.toLowerCase();
+    if (k === "Société") return r.soc === v;
+    return true;
+  };
+  function contactsPage(st) {
+    const rows = CONTACTS.filter((r) => st.tags.every((t) => matchTag(r, t)));
+    const cols = [
+      { h: "Nom", f: 1.5, fn: (r) => `<span class="dm-av">${initials(r.n)}</span>${r.n}` },
+      { h: "Société", f: 1.6, fn: (r) => r.soc },
+      { h: "Ville", f: 1, fn: (r) => r.v },
+      { h: "État", f: 0.8, fn: (r) => badge(r.s) },
+    ];
+    const tags = st.tags.map((t) => `<span class="dm-tag">${t} ${ic("x", 11)}</span>`).join("");
+    return page({
+      title: "Carnet", desc: "Vos contacts et leurs sociétés.", action: "Nouveau contact",
+      bar: `<div class="dm-input dm-search" style="width:420px">${ic("search", 15)}${tags}<span class="dm-txt" data-ph="${st.tags.length ? "" : "Rechercher un contact…"}"></span><span class="dm-caret"></span></div><div class="dm-btn small" style="margin-left:auto">Exporter</div>`,
+      body: table(cols, rows, rows.findIndex((r) => r.n === st.open)),
+      foot: `<span>${rows.length} contact${rows.length > 1 ? "s" : ""}</span>`,
+    });
+  }
+  function contactPanel(name) {
+    const r = CONTACTS.find((c) => c.n === name);
+    return `<div class="dm-pnh">${r.n}${ic("x", 15)}</div><div class="dm-pnb"><div><span class="dm-av" style="width:40px;height:40px;font-size:14px">${initials(r.n)}</span></div><div class="dm-kv"><span>Société</span><span>${r.soc}</span><span>Ville</span><span>${r.v}</span><span>État</span><span>${badge(r.s)}</span><span>Courriel</span><span>${r.n.split(" ")[0].toLowerCase()}@exemple.fr</span></div></div>`;
+  }
+  function ticketsPage(state) {
+    const cols = [
+      { h: "Clé", f: 0.8, cls: "mono", fn: (r) => r.k },
+      { h: "Titre", f: 2.4, fn: (r) => r.t },
+      { h: "Assigné", f: 1, fn: (r) => r.a },
+      { h: "État", f: 0.9, fn: (r) => badge(r.s) },
+    ];
+    let body;
+    if (state === "setup") body = `<div style="color:var(--muted);padding:30px 0;text-align:center">La page s’affichera dès que Jira sera configuré.</div>`;
+    else if (state === "loading") body = `<div class="dm-table">${Array.from({ length: 5 }, () => `<div class="dm-tr"><div style="flex:1"><div class="dm-skel"></div></div><div style="flex:3"><div class="dm-skel" style="width:70%"></div></div><div style="flex:1"><div class="dm-skel"></div></div></div>`).join("")}</div>`;
+    else body = table(cols, TICKETS);
+    return page({
+      title: "Mes tickets", desc: "Vos tickets Jira, par projet.",
+      banner: state === "setup" ? `<div class="dm-banner">${ic("plug", 15)}<span style="flex:1">Jira — à configurer</span><div class="dm-btn small">Configurer</div></div>` : "",
+      bar: state === "ready" ? `<div class="dm-input" style="width:260px">${ic("search", 15)}<span class="dm-txt" data-ph="Rechercher un ticket…"></span></div><div class="dm-btn small">Projet : ALF ▾</div>` : "",
+      body, foot: state === "ready" ? "<span>5 tickets</span>" : "",
+    });
+  }
+  function agentPage() {
+    return `<div class="dm-agent"><div class="dm-transcript"><div class="dm-empty"><strong>Que voulez-vous construire ?</strong>Décrivez une page, un service, une automatisation.</div></div><div class="dm-composer"><div class="dm-in"><span class="dm-txt" data-ph="Demandez à Alfred…"></span><span class="dm-caret"></span></div><div class="dm-send">${ic("send", 15)}</div></div></div>`;
+  }
+
+  /* ---------- La fenêtre simulée ---------- */
+  class App {
+    constructor(player) {
+      this.P = player;
+      this.el = html(`<div class="dm-app">
+        <aside class="dm-side"><div class="dm-brand"><i></i>Alfred</div><div class="dm-secs" style="display:flex;flex-direction:column;gap:3px"></div><div class="dm-sec dm-gear" data-s="settings">${ic("gear", 14)}<span>Réglages</span></div></aside>
+        <div class="dm-main-wrap"><div class="dm-top"><div class="dm-tabs" style="display:flex;gap:20px"></div><div class="dm-tools">
+          <span class="dm-tool" data-t="setup" style="display:none">${ic("plug", 15)}</span><span class="dm-tool" data-t="fix">${ic("target", 15)}</span><span class="dm-tool" data-t="agent">${ic("chat", 15)}</span><span class="dm-tool" data-t="panel">${ic("panel", 15)}</span></div></div>
+          <div class="dm-body"><main class="dm-main"></main><aside class="dm-panel"></aside></div></div>
+        <div class="dm-layer"></div>
+        <div class="dm-cursor"><svg viewBox="0 0 24 24"><path d="M4 2l15 11-7 1-3 7z" fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
+      </div>`);
+      player.stage.replaceChildren(this.el);
+      this.cursor = this.q(".dm-cursor");
+      this.cx = 620; this.cy = 380;
+      this.cursor.style.transform = `translate(${this.cx}px,${this.cy}px)`;
+      this.secs = []; this.active = null;
+    }
+    q(s) { return this.el.querySelector(s); }
+    qa(s) { return [...this.el.querySelectorAll(s)]; }
+    sections(list, active) { this.secs = list; if (active !== undefined) this.active = active; this.renderSecs(); }
+    addSection(s) { this.secs.splice(this.secs.length - 1, 0, { ...s, isNew: true }); this.renderSecs(); this.secs.forEach((x) => delete x.isNew); }
+    renderSecs() {
+      this.q(".dm-secs").innerHTML = this.secs.map((s) => `<div class="dm-sec ${s.id === this.active ? "on" : ""} ${s.isNew ? "dm-new" : ""}" data-s="${s.id}"><i style="background:var(--${s.color})"></i><span>${s.label}</span>${s.badge ? `<b>${s.badge}</b>` : ""}</div>`).join("");
+    }
+    go(id) { this.active = id; this.renderSecs(); }
+    sec(id) { return this.q(`[data-s="${id}"]`); }
+    tabs(list, on = list[0]) { this.q(".dm-tabs").innerHTML = list.map((t) => `<div class="dm-tab ${t === on ? "on" : ""}">${t}</div>`).join(""); }
+    tool(name) { return this.q(`[data-t="${name}"]`); }
+    main(s) { const m = this.q(".dm-main"); m.innerHTML = s; return m; }
+    panel(s) { const p = this.q(".dm-panel"); if (s == null) p.classList.remove("open"); else { p.innerHTML = s; p.classList.add("open"); } this.tool("panel").classList.toggle("on", s != null); return p; }
+    layer(s) { const l = this.q(".dm-layer"); l.innerHTML = s || ""; l.classList.toggle("on", Boolean(s)); return l.firstElementChild; }
+    toast(title, desc) {
+      const t = html(`<div class="dm-toast"><strong>${title}</strong><span>${desc}</span></div>`);
+      this.el.append(t);
+      setTimeout(() => t.remove(), 3200 / this.P.speed);
+    }
+    pos(el, dx = 0, dy = 0, anchor = "center") {
+      const r = el.getBoundingClientRect(), s = this.P.stage.getBoundingClientRect(), k = this.P.scale;
+      const x = (r.left - s.left) / k + (anchor === "left" ? 14 : r.width / k / 2);
+      const y = (r.top - s.top) / k + r.height / k / 2;
+      return { x: x + dx, y: y + dy };
+    }
+    async moveXY(x, y, ms = 650) {
+      this.cx = x; this.cy = y;
+      this.cursor.style.transition = `transform ${ms / this.P.speed}ms cubic-bezier(.4,.1,.2,1)`;
+      this.cursor.style.transform = `translate(${x}px,${y}px)`;
+      await this.P.sleep(ms + 40);
+    }
+    async move(el, opts = {}) { const p = this.pos(el, opts.dx, opts.dy, opts.anchor); await this.moveXY(p.x, p.y, opts.ms); }
+    async click(el, opts = {}) {
+      await this.move(el, opts);
+      const r = html(`<div class="dm-ripple" style="left:${this.cx}px;top:${this.cy}px"></div>`);
+      this.el.append(r); setTimeout(() => r.remove(), 600);
+      el.classList.add("dm-press"); await this.P.sleep(170); el.classList.remove("dm-press"); await this.P.sleep(110);
+    }
+    focus(el) { this.qa(".dm-focus").forEach((x) => x.classList.remove("dm-focus")); if (el) el.classList.add("dm-focus"); }
+    async type(box, text, cps = 26) {
+      this.focus(box);
+      const t = box.querySelector(".dm-txt");
+      for (const ch of text) { t.textContent += ch; await this.P.sleep(1000 / cps + (ch === " " ? 30 : 0)); }
+    }
+    async key(near, label) {
+      const p = this.pos(near);
+      const k = html(`<div class="dm-kbd" style="left:${p.x + 10}px;top:${p.y + 22}px">${label}</div>`);
+      this.el.append(k); await this.P.sleep(650); k.remove();
+    }
+  }
+
+  /* ---------- Agent : activités et messages ---------- */
+  function transcript(app) { return app.q(".dm-transcript"); }
+  function userSays(box, text) { box.querySelector(".dm-empty")?.remove(); box.append(html(`<div class="dm-msg me">${text}</div>`)); }
+  async function activity(app, box, tool, what, ms = 900) {
+    const row = html(`<div class="dm-act"><span class="st"><span class="dm-spin"></span></span><code>${tool}</code><span>${what}</span></div>`);
+    box.append(row);
+    await app.P.sleep(ms);
+    row.querySelector(".st").innerHTML = ic("check", 14);
+    await app.P.sleep(180);
+  }
+  function aiSays(box, text) { box.append(html(`<div class="dm-msg ai">${text}</div>`)); }
+
+  /* ---------- Scénarios ---------- */
+  const BASE_SECTIONS = () => [
+    { id: "contacts", label: "Contacts", color: "c4" },
+    { id: "agent", label: "Agent", color: "muted" },
+  ];
+
+  const SCENARIOS = [
+    {
+      id: "creer", title: "Créer une page", length: "≈ 45 s",
+      setup(app) {
+        app.sections(BASE_SECTIONS(), "contacts"); app.tabs(["Carnet", "Sociétés"]);
+        app.main(contactsPage({ tags: [] }));
+      },
+      chapters: [
+        { say: "Vous ouvrez la page Agent et décrivez, avec vos mots, la page que vous voulez.", async run(app) {
+          await app.click(app.sec("agent"), { anchor: "left" });
+          app.go("agent"); app.tabs(["Conversations"]); app.main(agentPage());
+          await app.P.sleep(300);
+          const comp = app.q(".dm-composer");
+          await app.click(comp, { dx: -120 });
+          await app.type(comp, "Fais-moi une page pour suivre mes factures : numéro, client, échéance, montant et état.", 34);
+          await app.P.sleep(300);
+          await app.click(app.q(".dm-send"));
+        } },
+        { say: "L’agent lit l’espace, puis place la page : une nouvelle entrée apparaît dans le menu.", async run(app) {
+          const box = transcript(app);
+          userSays(box, "Fais-moi une page pour suivre mes factures : numéro, client, échéance, montant et état.");
+          app.q(".dm-composer .dm-txt").textContent = ""; app.focus(null);
+          await app.P.sleep(400);
+          await activity(app, box, "space_overview", "2 sections, 3 modules, aucun service à relier");
+          await activity(app, box, "place_page", "« Factures », nouvelle entrée du menu");
+          app.addSection({ id: "factures", label: "Factures", color: "c1" });
+          await app.P.sleep(900);
+        } },
+        { say: "Il écrit la table, la page et son panneau, comme des fichiers du module.", async run(app) {
+          const box = transcript(app);
+          await activity(app, box, "Écrit", "factures/migrations/0001_factures.sql", 700);
+          await activity(app, box, "Écrit", "factures/pages/liste.tsx", 800);
+          await activity(app, box, "Écrit", "factures/pages/detail.tsx (panneau)", 700);
+        } },
+        { say: "Il vérifie tout (compilation, design, schéma), regarde la page en capture, et l’enregistre dans l’historique de l’espace.", async run(app) {
+          const box = transcript(app);
+          await activity(app, box, "check", "compilation, design, schéma : rien à signaler", 1100);
+          await activity(app, box, "page_screenshot", "la page s’affiche comme prévu", 900);
+          aiSays(box, "La page <b>Factures</b> est prête : la liste, la recherche, le filtre par état et le détail à droite.");
+          await app.P.sleep(400);
+          box.append(html(`<div class="dm-card">${ic("git", 15)}<span><b>Modifications</b> · 4 fichiers · enregistrées, annulables</span></div>`));
+          await app.P.sleep(1200);
+        } },
+        { say: "La page est là, avec de vraies données ; une ligne s’ouvre dans le panneau de droite.", async run(app) {
+          await app.click(app.sec("factures"), { anchor: "left" });
+          app.go("factures"); app.tabs(["Factures"]); app.main(facturesPage());
+          await app.P.sleep(700);
+          const row = app.q('[data-row="0"]');
+          await app.click(row, { dx: -120 });
+          app.main(facturesPage({ sel: 0 })); app.panel(facturePanel(FACTURES[0]));
+          await app.P.sleep(1800);
+        } },
+      ],
+    },
+    {
+      id: "module", title: "Importer et configurer un module", length: "≈ 55 s",
+      setup(app) {
+        app.sections([{ id: "factures", label: "Factures", color: "c1" }, ...BASE_SECTIONS()], "factures");
+        app.tabs(["Factures"]); app.main(facturesPage());
+      },
+      chapters: [
+        { say: "Dans les Réglages, le marketplace propose les modules de votre équipe.", async run(app) {
+          await app.click(app.sec("settings"), { anchor: "left" });
+          app.layer(`<div class="dm-win"><aside><small>Espace de travail</small><div>Modules</div><div class="on" data-w="mk">Marketplace</div><div>Général</div><div>Apparence</div><small>Alfred</small><div>Agent</div><div>Voix</div><div>Mots de passe et clés</div></aside>
+            <section><h6>Marketplace</h6>${input("Rechercher un module…")}
+            <div class="dm-mod"><div><strong>Tickets Jira</strong><span>Vos tickets Jira, par projet. Services nécessaires : Jira</span></div><div class="dm-btn small" data-imp>Importer</div></div>
+            <div class="dm-mod"><div><strong>Boîte</strong><span>Vos mails importants. Services nécessaires : Gmail</span></div><div class="dm-btn small">Importer</div></div>
+            <div class="dm-mod"><div><strong>Agenda d’équipe</strong><span>Les absences et les rendez-vous de l’équipe.</span></div><div class="dm-btn small">Importer</div></div></section></div>`);
+          await app.P.sleep(900);
+        } },
+        { say: "Vous importez « Tickets Jira » : il arrive dans l’espace avec ses pages.", async run(app) {
+          await app.click(app.q("[data-imp]"));
+          app.q(".dm-win section").append(html(`<div class="dm-dialog"><div><strong>Importer Tickets Jira ?</strong><span style="color:var(--muted);font-size:12.5px">Le module ajoute la page « Tickets » et a besoin d’un compte Jira.</span><div class="acts"><div class="dm-btn small">Annuler</div><div class="dm-btn small primary" data-ok>Importer</div></div></div></div>`));
+          await app.P.sleep(600);
+          await app.click(app.q("[data-ok]"));
+          app.layer(null);
+          app.addSection({ id: "tickets", label: "Tickets", color: "c5" });
+          app.toast("Tickets Jira importé", "Il reste à le configurer.");
+          await app.P.sleep(900);
+        } },
+        { say: "La configuration s’ouvre : le module se présente et dit ce dont il a besoin.", async run(app) {
+          app.layer(onboarding(0, `<h6>Bienvenue dans Tickets Jira</h6><p style="margin:0;color:var(--muted)">Vos tickets Jira, par projet, avec leur état. Il vous faut un compte Jira et un jeton d’API.</p>
+            <span style="font-weight:600">Pour fonctionner, il a besoin de ces services :</span><div class="dm-row"><div><strong>Jira</strong></div>${badge("À configurer")}</div>
+            <div class="dm-foot"><div class="dm-btn small">Terminer plus tard</div><div class="dm-btn small primary" data-next>Commencer</div></div>`));
+          await app.P.sleep(1400);
+          await app.click(app.q("[data-next]"));
+        } },
+        { say: "Vous choisissez le nom de ses pages dans le menu.", async run(app) {
+          app.layer(onboarding(1, `<h6>Vos pages</h6><p style="margin:0;color:var(--muted)">Pages du module dans le menu.</p>
+            <div class="dm-field"><label>Nom dans le menu</label>${input("Nom dans le menu", "dm-name")}</div>
+            <div class="dm-foot"><div class="dm-btn small">Précédent</div><div class="dm-btn small primary" data-next>Suivant</div></div>`));
+          const name = app.q(".dm-name"); name.querySelector(".dm-txt").textContent = "Tickets";
+          await app.click(name);
+          name.querySelector(".dm-txt").textContent = "";
+          await app.type(name, "Mes tickets", 16);
+          await app.P.sleep(300);
+          await app.click(app.q("[data-next]"));
+          const s = app.secs.find((x) => x.id === "tickets"); s.label = "Mes tickets"; app.renderSecs();
+        } },
+        { say: "Pour Jira, vous n’ajoutez que votre compte : la façon de s’y connecter, le module la connaît déjà.", async run(app) {
+          app.layer(onboarding(2, `<h6>Jira</h6><div class="dm-row"><div><strong>Votre compte</strong><span class="d">Créez un jeton d’API dans votre profil Atlassian.</span></div>${badge("À configurer")}<div class="dm-btn small primary" data-add>Ajouter votre compte</div></div><div class="dm-acc" style="display:flex;flex-direction:column;gap:10px"></div>
+            <div class="dm-foot"><div class="dm-btn small">Précédent</div><div class="dm-btn small primary" data-next style="opacity:.45">Suivant</div></div>`));
+          await app.P.sleep(900);
+          await app.click(app.q("[data-add]"));
+          app.q(".dm-acc").innerHTML = `<div class="dm-field"><label>Adresse de votre compte</label>${input("https://…", "f-url")}</div><div class="dm-field"><label>Identifiant</label>${input("", "f-id")}</div><div class="dm-field"><label>Jeton d’API</label>${input("", "f-tok")}</div><div class="dm-btn small primary" data-save style="align-self:flex-end">Enregistrer</div>`;
+          await app.click(app.q(".f-url")); await app.type(app.q(".f-url"), "https://atelier.atlassian.net", 30);
+          await app.click(app.q(".f-id")); await app.type(app.q(".f-id"), "lea@atelier.fr", 26);
+          await app.click(app.q(".f-tok")); await app.type(app.q(".f-tok"), "••••••••••••••••", 30);
+          await app.click(app.q("[data-save]"));
+        } },
+        { say: "Alfred range le jeton dans le trousseau du système, puis teste la connexion.", async run(app) {
+          app.q(".dm-acc").innerHTML = "";
+          const row = app.q(".dm-row");
+          row.innerHTML = `<div><strong>Votre compte</strong><span class="d">Prêt à être testé.</span></div>${badge("À tester")}<div class="dm-btn small primary" data-test>Vérifier</div>`;
+          await app.P.sleep(700);
+          await app.click(app.q("[data-test]"));
+          row.innerHTML = `<div><strong>Votre compte</strong><span class="d">Test de la connexion…</span></div><span class="dm-spin"></span>`;
+          await app.P.sleep(1400);
+          row.innerHTML = `<div><strong>Votre compte</strong><span class="d">Le service répond (200).</span></div>${badge("Prêt")}`;
+          app.q("[data-next]").style.opacity = 1;
+          await app.P.sleep(900);
+          await app.click(app.q("[data-next]"));
+        } },
+        { say: "Tout est prêt : la page se recharge d’elle-même et montre vos tickets.", async run(app) {
+          app.layer(onboarding(3, `<h6>Tickets Jira est prêt</h6><p style="margin:0;color:var(--muted)">Tout ce dont il a besoin est renseigné et testé.</p><div class="dm-row"><div><strong>Jira</strong><span class="d">Votre compte · atelier.atlassian.net</span></div>${badge("Prêt")}</div><div class="dm-foot"><div class="dm-btn small primary" data-next>Terminer</div></div>`));
+          await app.P.sleep(1000);
+          await app.click(app.q("[data-next]"));
+          app.layer(null);
+          await app.click(app.sec("tickets"), { anchor: "left" });
+          app.go("tickets"); app.tabs(["Mes tickets"]); app.main(ticketsPage("loading"));
+          await app.P.sleep(1000);
+          app.main(ticketsPage("ready"));
+          await app.P.sleep(1800);
+        } },
+      ],
+    },
+    {
+      id: "recherche", title: "Rechercher et retrouver", length: "≈ 35 s",
+      setup(app) {
+        app.sections([{ id: "factures", label: "Factures", color: "c1" }, ...BASE_SECTIONS()], "contacts");
+        app.tabs(["Carnet", "Sociétés"]); app.st = { tags: [], open: null }; app.main(contactsPage(app.st));
+      },
+      chapters: [
+        { say: "La recherche à étiquettes propose des critères pendant la frappe ; Entrée prend la première suggestion.", async run(app) {
+          const field = app.q(".dm-search");
+          await app.click(field, { dx: -120 });
+          await app.type(field, "lyo", 8);
+          const bar = app.q(".dm-pbar");
+          bar.append(html(`<div class="dm-sugg"><div class="on">Ville : Lyon</div><div>Société : Lyonnaise de conseil</div></div>`));
+          await app.P.sleep(900);
+          await app.key(field, "Entrée");
+          app.st.tags.push("Ville : Lyon"); app.main(contactsPage(app.st)); app.focus(app.q(".dm-search"));
+          await app.P.sleep(900);
+        } },
+        { say: "Un deuxième critère affine la liste. Chaque étiquette se retire d’un clic sur sa croix.", async run(app) {
+          const field = app.q(".dm-search");
+          await app.type(field, "act", 8);
+          app.q(".dm-pbar").append(html(`<div class="dm-sugg" style="left:200px"><div class="on">État : actif</div></div>`));
+          await app.P.sleep(800);
+          await app.key(field, "Entrée");
+          app.st.tags.push("État : actif"); app.main(contactsPage(app.st));
+          await app.P.sleep(800);
+          const row = app.q('[data-row="1"]');
+          await app.click(row, { dx: -150 });
+          app.st.open = "Nathan Roux"; app.main(contactsPage(app.st)); app.panel(contactPanel("Nathan Roux"));
+          await app.P.sleep(1000);
+        } },
+        { say: "Vous partez sur une autre page : le cadre de celle-ci est détruit…", async run(app) {
+          await app.click(app.sec("factures"), { anchor: "left" });
+          app.go("factures"); app.tabs(["Factures"]); app.panel(null); app.main(facturesPage());
+          await app.P.sleep(1500);
+        } },
+        { say: "…et quand vous revenez, la recherche, les critères et la fiche ouverte sont restés (usePageState).", async run(app) {
+          await app.click(app.sec("contacts"), { anchor: "left" });
+          app.go("contacts"); app.tabs(["Carnet", "Sociétés"]); app.main(contactsPage(app.st)); app.panel(contactPanel("Nathan Roux"));
+          app.q(".dm-search").classList.add("dm-flash");
+          await app.P.sleep(2200);
+        } },
+      ],
+    },
+    {
+      id: "corriger", title: "Corriger un élément", length: "≈ 40 s",
+      setup(app) {
+        app.sections([{ id: "factures", label: "Factures", color: "c1" }, ...BASE_SECTIONS()], "factures");
+        app.tabs(["Factures"]); app.main(facturesPage({ fmt: false }));
+      },
+      chapters: [
+        { say: "Un détail vous gêne : les montants sont bruts et mal alignés. Vous prenez la cible, dans la barre de la page.", async run(app) {
+          await app.move(app.qa(".col-m")[3], { ms: 800 });
+          await app.P.sleep(500);
+          await app.click(app.tool("fix"));
+        } },
+        { say: "Alfred capture toute la fenêtre ; vous encadrez l’élément qui ne va pas.", async run(app) {
+          const cap = html(`<div class="dm-capture"><div class="hint">Encadrez l’élément à corriger · Échap pour annuler</div></div>`);
+          app.el.append(cap);
+          await app.P.sleep(700);
+          const cols = app.qa(".col-m");
+          const a = app.pos(cols[0], 0, 0), b = app.pos(cols[cols.length - 1], 0, 0);
+          const w0 = cols[0].getBoundingClientRect().width / app.P.scale;
+          const x0 = a.x - w0 / 2 - 8, y0 = a.y - 20, x1 = a.x + w0 / 2 + 8, y1 = b.y + 22;
+          await app.moveXY(x0, y0, 600);
+          const rect = html(`<div class="dm-rect" style="left:${x0}px;top:${y0}px;width:0;height:0"></div>`);
+          cap.append(rect);
+          await app.P.sleep(60);
+          rect.style.transitionDuration = `${900 / app.P.speed}ms`;
+          rect.style.width = `${x1 - x0}px`; rect.style.height = `${y1 - y0}px`;
+          await app.moveXY(x1, y1, 900);
+          const bar = html(`<div class="dm-rectbar" style="left:${x0}px;top:${y1 + 8}px"><div class="dm-btn small">Annuler</div><div class="dm-btn small primary" data-fix>Corriger cet élément</div></div>`);
+          cap.append(bar);
+          await app.P.sleep(500);
+          await app.click(app.q("[data-fix]"));
+          cap.remove();
+        } },
+        { say: "Une conversation s’ouvre à droite, la capture annotée déjà jointe. Vous dites ce que vous voulez.", async run(app) {
+          app.panel(`<div class="dm-pnh">Corriger un élément${ic("x", 15)}</div><div class="dm-pnb"><div class="dm-transcript" style="padding:0;justify-content:flex-end"></div>
+            <div class="dm-card"><span class="dm-shot"></span><span><b>capture-fenetre.png</b><br><span style="color:var(--muted)">Factures › tableau › colonne Montant</span></span></div>
+            <div class="dm-composer" style="margin:0"><div class="dm-in"><span class="dm-txt" data-ph="Que faut-il changer ?"></span><span class="dm-caret"></span></div><div class="dm-send">${ic("send", 15)}</div></div></div>`);
+          await app.P.sleep(800);
+          const comp = app.q(".dm-panel .dm-composer");
+          await app.click(comp, { dx: -60 });
+          await app.type(comp, "Aligne les montants à droite et affiche-les en euros.", 30);
+          await app.click(app.q(".dm-panel .dm-send"));
+        } },
+        { say: "L’agent corrige la page, la vérifie, et la page se met à jour sous vos yeux.", async run(app) {
+          const box = app.q(".dm-panel .dm-transcript");
+          const comp = app.q(".dm-panel .dm-composer");
+          comp.querySelector(".dm-txt").textContent = ""; app.focus(null);
+          app.q(".dm-panel .dm-card").remove();
+          userSays(box, "Aligne les montants à droite et affiche-les en euros.");
+          await app.P.sleep(400);
+          await activity(app, box, "Écrit", "factures/pages/liste.tsx", 900);
+          await activity(app, box, "check", "rien à signaler", 900);
+          app.main(facturesPage({ fmt: true }));
+          app.qa(".col-m").forEach((c) => c.classList.add("dm-flash"));
+          await activity(app, box, "page_screenshot", "montants alignés", 700);
+          aiSays(box, "C’est fait : les montants sont en euros, alignés à droite.");
+          await app.P.sleep(2200);
+        } },
+      ],
+    },
+  ];
+
+  function onboarding(step, content) {
+    const names = ["Présentation", "Vos pages", "Jira", "Terminé"];
+    const steps = names.map((n, i) => `<div class="dm-step ${i === step ? "on" : ""} ${i < step ? "ok" : ""}"><i>${i < step ? "✓" : i + 1}</i>${n}</div>`).join("");
+    return `<div class="dm-win" style="grid-template-columns:200px 1fr"><aside><small>Configurer Tickets Jira</small><div class="dm-steps" style="padding:0">${steps}</div></aside><section>${content}</section></div>`;
+  }
+
+  /* ---------- Le lecteur ---------- */
+  class Player {
+    constructor(el) {
+      this.root = el;
+      this.viewport = el.querySelector(".dm-viewport");
+      this.stage = el.querySelector(".dm-stage");
+      this.caption = el.querySelector(".dm-caption");
+      this.segs = el.querySelector(".dm-segs");
+      this.start = el.querySelector(".dm-start");
+      this.btnPlay = el.querySelector(".dm-play");
+      this.btnSpeed = el.querySelector(".dm-speed");
+      this.token = 0; this.paused = false; this.speed = 1; this.running = false;
+      const choices = el.querySelector(".dm-choices");
+      choices.innerHTML = SCENARIOS.map((s, i) => `<button type="button" role="tab" data-i="${i}">${i + 1}. ${s.title}</button>`).join("");
+      choices.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) this.select(Number(b.dataset.i)); });
+      this.start.addEventListener("click", () => (this.ended ? this.next() : this.play()));
+      el.querySelector(".dm-restart").addEventListener("click", () => this.play());
+      this.btnPlay.addEventListener("click", () => {
+        if (!this.running) return this.play();
+        this.paused = !this.paused; this.btnPlay.textContent = this.paused ? "Lecture" : "Pause";
+      });
+      this.btnSpeed.addEventListener("click", () => {
+        this.speed = this.speed === 1 ? 2 : 1; this.btnSpeed.textContent = `${this.speed}×`;
+        this.stage.style.setProperty("--sp", this.speed);
+      });
+      new ResizeObserver(() => this.fit()).observe(this.viewport);
+      this.fit();
+      this.select(0);
+    }
+    fit() { this.scale = this.viewport.clientWidth / 960; this.stage.style.transform = `scale(${this.scale})`; }
+    async sleep(ms) {
+      const tk = this.token;
+      let left = ms;
+      while (left > 0) {
+        if (tk !== this.token) throw CANCEL;
+        await pause(30);
+        if (!this.paused) left -= 30 * this.speed;
+      }
+      if (tk !== this.token) throw CANCEL;
+    }
+    select(i) {
+      this.token++; this.running = false; this.ended = false; this.paused = false;
+      this.index = i; this.sc = SCENARIOS[i];
+      this.root.querySelectorAll(".dm-choices button").forEach((b, j) => b.setAttribute("aria-selected", String(j === i)));
+      this.app = new App(this); this.sc.setup(this.app);
+      this.segs.innerHTML = this.sc.chapters.map((c) => `<span title="${c.say.replace(/"/g, "&quot;")}"></span>`).join("");
+      this.caption.innerHTML = `<b>${i + 1}. ${this.sc.title}</b>${this.sc.chapters.length} étapes, ${this.sc.length}. Lancez la démo.`;
+      this.start.innerHTML = `<span class="dm-round">${ic("play", 26)}</span>${this.sc.title}<small>${this.sc.length} · reconstitution animée</small>`;
+      this.start.hidden = false; this.btnPlay.textContent = "Lecture";
+    }
+    async play() {
+      this.select(this.index);
+      const tk = this.token;
+      this.start.hidden = true; this.running = true; this.btnPlay.textContent = "Pause";
+      const spans = [...this.segs.children];
+      try {
+        await this.sleep(400);
+        for (const [i, ch] of this.sc.chapters.entries()) {
+          spans.forEach((s, j) => { s.className = j < i ? "done" : j === i ? "now" : ""; });
+          this.caption.innerHTML = `<b>${i + 1}/${spans.length}</b>${ch.say}`;
+          await ch.run(this.app);
+        }
+        spans.forEach((s) => { s.className = "done"; });
+        await this.sleep(600);
+        if (tk !== this.token) return;
+        this.running = false; this.ended = true; this.btnPlay.textContent = "Lecture";
+        const nxt = SCENARIOS[(this.index + 1) % SCENARIOS.length];
+        this.start.innerHTML = `<span class="dm-round">${ic("play", 26)}</span>Démo suivante : ${nxt.title}<small>ou « Rejouer » sous la vidéo</small>`;
+        this.start.hidden = false;
+      } catch (e) {
+        if (e !== CANCEL) console.error(e);
+      }
+    }
+    next() { this.select((this.index + 1) % SCENARIOS.length); this.play(); }
+  }
+  new Player(root);
+})();
+</script>
 </body>
 </html>
