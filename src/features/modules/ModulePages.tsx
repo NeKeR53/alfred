@@ -6,7 +6,7 @@
 import { SettingRow, SettingRows, SwitchControl } from "@alfred/ui";
 import { Boxes } from "lucide-react";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../../lib/types";
-import { NamedIcon } from "../../shell/icons";
+import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { setPageHidden, setSectionHidden } from "../../shell/navigationLayout";
 
@@ -67,7 +67,7 @@ function SectionTitle({ section }: { section: ResolvedSection }) {
   return (
     <span className={`module-entry module-entry--section product-color--${section.color ?? "steel"}`}>
       <span className="module-entry__icon" aria-hidden="true">
-        {section.icon ? <NamedIcon name={section.icon} size={16} /> : <Boxes size={16} />}
+        {section.icon ? <SectionIcon section={section} size={16} /> : <Boxes size={16} />}
       </span>
       {section.label}
     </span>

@@ -442,3 +442,69 @@ describe("sections par instance", () => {
     expect(vi.mocked(openPageWindow)).toHaveBeenCalledWith("jira/tickets@acme");
   });
 });
+
+describe("logo d’un service comme icône d’une entrée du menu", () => {
+  const LOGO = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
+  const withLogo = (extra: Partial<ResolvedSection> = {}): Snapshot => {
+    const snapshot = fixture();
+    snapshot.sections[2] = {
+      ...snapshot.sections[2],
+      label: "Jira",
+      icon: "icons/principal.svg",
+      iconUrl: LOGO,
+      ...extra,
+    };
+    return snapshot;
+  };
+  const entryIcon = (label: string) => {
+    const entry = within(screen.getByRole("navigation", { name: "Sections de l’espace de travail" })).getByRole(
+      "button",
+      { name: label },
+    );
+    return { image: entry.querySelector("img.section-icon-image"), lucide: entry.querySelector("svg.lucide") };
+  };
+
+  it("affiche le logo dans le menu, et revient à une icône Lucide depuis « Changer l’icône… »", async () => {
+    backend = withLogo();
+    useShell.setState({ snapshot: withLogo() });
+    renderShell();
+    const { image, lucide } = entryIcon("Jira");
+    expect(image).toHaveAttribute("src", LOGO);
+    expect(image).toHaveAttribute("width", "15");
+    expect(lucide).toBeNull();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
+    const field = screen.getByRole("textbox", { name: "Nom de l’icône" });
+    expect(field).toHaveValue("");
+    expect(screen.getByText(/pour revenir à une icône Lucide/)).toBeInTheDocument();
+    expect(screen.getByText("Aperçu : logo du service")).toBeInTheDocument();
+    // Vide, le champ garde le logo : rien n’est enregistré.
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    expect(lastLayoutCall()).toBeUndefined();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Nom de l’icône" }), { target: { value: "bug" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Jira en bug"));
+    expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "bug" });
+    expect(entryIcon("Jira").image).toBeNull();
+    expect(entryIcon("Jira").lucide).toHaveClass("lucide-bug");
+  });
+
+  it("retombe sur l’icône par défaut quand l’image manque ou ne se lit pas", () => {
+    useShell.setState({ snapshot: withLogo({ iconUrl: null }) });
+    const { unmount } = renderShell();
+    expect(entryIcon("Jira").image).toBeNull();
+    expect(entryIcon("Jira").lucide).toHaveClass("lucide-square");
+    unmount();
+
+    useShell.setState({ snapshot: withLogo() });
+    renderShell();
+    const image = entryIcon("Jira").image as HTMLImageElement;
+    fireEvent.error(image);
+    expect(entryIcon("Jira").image).toBeNull();
+    expect(entryIcon("Jira").lucide).toHaveClass("lucide-square");
+  });
+});

@@ -21,7 +21,7 @@ import {
 import { ArrowLeft, Boxes } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
-import { NamedIcon } from "../../shell/icons";
+import { SectionIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
@@ -315,7 +315,7 @@ export function ModulesSettings() {
     const section = snapshot?.sections.find((candidate) => candidate.module === module.id);
     return (
       <span className={`module-row__icon product-color--${section?.color ?? "steel"}`} aria-hidden="true">
-        {section?.icon ? <NamedIcon name={section.icon} size={15} /> : <Boxes size={15} />}
+        {section?.icon ? <SectionIcon section={section} size={15} /> : <Boxes size={15} />}
       </span>
     );
   };

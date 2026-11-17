@@ -63,6 +63,8 @@ candle-transformers = { version = "0.11", default-features = false }
 tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 # Réglages › Espaces de travail : un espace supprimé part à la corbeille du système, jamais définitivement.
 trash = "5"
+image = { version = "0.25", default-features = false, features = ["png", "webp", "ico"] }
+quick-xml = "0.42"
 
 [dev-dependencies]
 tempfile = "3"

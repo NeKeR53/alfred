@@ -117,8 +117,15 @@ async fn serve(State(state): State<Shared>, headers: HeaderMap, Json(body): Json
 }
 
 /// Outils qui enregistrent un commit dans l’espace.
-const COMMITTING_TOOLS: [&str; 6] =
-    ["declare_client", "declare_webhook", "remove_webhook", "declare_schedule", "remove_schedule", "set_visibility"];
+const COMMITTING_TOOLS: [&str; 7] = [
+    "declare_client",
+    "declare_webhook",
+    "remove_webhook",
+    "declare_schedule",
+    "remove_schedule",
+    "set_visibility",
+    "set_section_icon",
+];
 
 fn commit_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -451,6 +458,15 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["target", "hidden"],
         ),
         tool(
+            "set_section_icon",
+            "Met le logo d’un service ou d’une marque (Jira, Gmail, Slack, GitHub…) comme icône d’une entrée du menu de gauche, à la place d’une icône Lucide. Alfred télécharge l’image lui-même depuis `url` (https:// seulement, 256 Ko au plus, SVG, PNG, WebP ou ICO, format vérifié sur le contenu), nettoie un SVG (scripts, gestionnaires `on…`, `foreignObject` et références externes retirés), réduit une image trop grande, la range dans `modules/<module>/icons/` et met à jour `module.json` (commit dans l’espace). En cas d’échec, l’icône ne change pas et le message dit pourquoi. Source à privilégier : Simple Icons en couleur de marque, `https://cdn.simpleicons.org/<slug>` (ex. `https://cdn.simpleicons.org/jira`) ; sinon le site officiel ou le kit presse de la marque. Jamais une image d’origine douteuse, et pour un sujet sans marque (factures, contacts), garder une icône Lucide.",
+            json!({
+                "section": { "type": "string", "description": "Section déclarée, « module/section » (pas la copie par instance « …@instance »)." },
+                "url": { "type": "string", "description": "Adresse https:// du fichier image lui-même (pas d’une page qui le montre)." },
+            }),
+            &["section", "url"],
+        ),
+        tool(
             "open_onboarding",
             "Ouvre chez l’utilisateur le panneau de configuration (onboarding) d’un module : présentation, nom de ses entrées dans le menu, puis chaque service à connecter, en disant s’il accepte plusieurs comptes. À appeler à la fin, quand il ne reste que ce que seul l’utilisateur peut faire : un compte, un mot de passe ou une clé que tu n’as pas, une connexion OAuth. Ne lui demande pas ces valeurs dans la conversation : dis-lui en une phrase que le panneau est ouvert et ce qu’il y trouvera.",
             json!({ "module": { "type": "string", "description": "Identifiant du module à configurer." } }),
@@ -566,6 +582,39 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         }
     }
     list
+}
+
+/// `set_section_icon` : télécharger, vérifier, ranger, puis enregistrer un commit. Tout est vérifié avant d’écrire,
+/// si bien qu’un échec laisse l’icône telle qu’elle était. `https_only` n’est faux que dans les tests.
+async fn set_section_icon(
+    state: &Shared,
+    space: &crate::space::Space,
+    section: &str,
+    url: &str,
+    https_only: bool,
+) -> AppResult<Value> {
+    let failed = |error: AppError| AppError::new(format!("Icône inchangée. {}", error.message));
+    // La section est vérifiée avant le téléchargement : inutile d’aller chercher une image qui ne servira pas.
+    let (module_id, id) = section
+        .split_once('/')
+        .ok_or_else(|| AppError::new("La section doit être désignée par « module/section »."))?;
+    let manifest = space.module(module_id)?;
+    if !id.contains('@') && !manifest.sections.iter().any(|declared| declared.id == id) {
+        return Err(AppError::new(format!("La section « {section} » n’existe pas.")));
+    }
+    let downloaded = crate::section_icons::download(url, https_only).await.map_err(failed)?;
+    let (content, format) = crate::section_icons::prepare(&downloaded).map_err(failed)?;
+    let (icon, label) = space.set_section_icon(section, &content, format)?;
+    let source = url::Url::parse(url).ok().and_then(|parsed| parsed.host_str().map(str::to_string)).unwrap_or_default();
+    crate::git::commit_all(&space.root, &format!("Logo de {source} comme icône de la section {label}"))?;
+    state.emit("space:changed", Value::Null);
+    Ok(json!({
+        "section": section,
+        "icon": icon,
+        "format": format.extension(),
+        "bytes": content.len(),
+        "next": "Le logo s’affiche dans le menu de gauche. Appeler `check` : il signale une icône illisible.",
+    }))
 }
 
 fn overview(snapshot: &Snapshot, clients: Value) -> Value {
@@ -981,6 +1030,11 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             }
             Ok(json!({ "target": target, "hidden": hidden, "changed": changed.is_some() }))
         }
+        "set_section_icon" => {
+            let section: String = arg(args, "section")?;
+            let url: String = arg(args, "url")?;
+            set_section_icon(state, &space, &section, &url, true).await
+        }
         "open_onboarding" => {
             let module: String = arg(args, "module")?;
             let manifest = space.module(&module)?;
@@ -1314,6 +1368,106 @@ mod tests {
     }
 
     /// L’agent ouvre l’onboarding d’un module : un événement part vers la fenêtre ; un module inconnu est refusé.
+    /// Serveur local de test : un logo SVG à nettoyer, un grand PNG, une page HTML, une photo JPEG, un SVG trop
+    /// lourd et une adresse absente.
+    async fn icon_server() -> String {
+        use axum::routing::get;
+        const DIRTY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#0052CC" onload="alert(1)"><script>alert(2)</script><foreignObject><p>x</p></foreignObject><image href="https://evil.example/t.png"/><path d="M0 0h24v24z"/></svg>"##;
+        let large_png = {
+            let image = image::RgbaImage::from_pixel(1024, 512, image::Rgba([0, 82, 204, 255]));
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(image).write_to(&mut out, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        let heavy = format!("<svg xmlns=\"http://www.w3.org/2000/svg\"><!-- {} --></svg>", "x".repeat(300 * 1024));
+        let router = Router::new()
+            .route("/jira.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], DIRTY) }))
+            .route("/grand.png", get(move || async move { ([(header::CONTENT_TYPE, "image/png")], large_png) }))
+            .route("/logo", get(|| async { ([(header::CONTENT_TYPE, "text/html")], "<!doctype html><html><body>Jira</body></html>") }))
+            .route("/photo.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml")], vec![0xffu8, 0xd8, 0xff, 0xe0, 0, 16]) }))
+            .route("/lourd.svg", get(move || async move { heavy }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        format!("http://{address}")
+    }
+
+    /// L’agent pose le logo d’un service sur une entrée du menu : Alfred le télécharge, le nettoie ou le réduit, le
+    /// range dans le module et met à jour le manifeste ; un contenu refusé laisse l’icône telle qu’elle était.
+    #[tokio::test]
+    async fn an_agent_sets_the_logo_of_a_service_as_the_icon_of_a_menu_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        state.set_space(Some(space.clone()));
+        space
+            .place_page("Tickets", None, "", &PlaceTarget::Menu { label: "Jira".into(), icon: Some("list-checks".into()), color: None }, None)
+            .unwrap();
+        let module = space.module("jira").unwrap();
+        let section = format!("jira/{}", module.sections[0].id);
+        // L’utilisateur avait choisi une autre icône Lucide : le logo demandé la remplace.
+        let mut manifest = space.manifest().unwrap();
+        manifest.layout.overrides.entry(format!("section:{section}")).or_default().icon = Some("bug".into());
+        space.write_manifest(&manifest).unwrap();
+        crate::git::commit_all(&space.root, "Module Jira").unwrap();
+        let base = icon_server().await;
+        let icon_of = || space.module("jira").unwrap().sections[0].icon.clone();
+
+        // Par l’outil, seule une adresse https:// passe.
+        let refused = call(&state, "set_section_icon", json!({ "section": section, "url": format!("{base}/jira.svg") })).await;
+        assert!(refused.unwrap_err().contains("https://"));
+        assert!(call(&state, "set_section_icon", json!({ "section": "jira/absente", "url": "https://cdn.simpleicons.org/jira" }))
+            .await
+            .unwrap_err()
+            .contains("n’existe pas"));
+        let tools = rpc(&state, "tools/list", json!({})).await;
+        let described = tools["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "set_section_icon").cloned();
+        assert!(described.unwrap()["description"].as_str().unwrap().contains("cdn.simpleicons.org"));
+
+        let placed = set_section_icon(&state, &space, &section, &format!("{base}/jira.svg"), false).await.unwrap();
+        let icon = format!("icons/{}.svg", module.sections[0].id);
+        assert_eq!((placed["icon"].clone(), placed["format"].clone()), (json!(icon), json!("svg")));
+        assert_eq!(icon_of().as_deref(), Some(icon.as_str()));
+        let saved = std::fs::read_to_string(space.module_dir("jira").join(&icon)).unwrap();
+        for forbidden in ["alert", "script", "foreignObject", "evil.example", "onload"] {
+            assert!(!saved.contains(forbidden), "« {forbidden} » reste dans le SVG : {saved}");
+        }
+        assert!(saved.contains("fill=\"#0052CC\"") && saved.contains("<path"));
+        assert_eq!(space.manifest().unwrap().layout.overrides.get(&format!("section:{section}")), None);
+        let subject = crate::git::run(&space.root, &["log", "-1", "--format=%s"]).unwrap();
+        assert_eq!(subject, "Logo de 127.0.0.1 comme icône de la section Jira");
+        let snapshot = space.snapshot().unwrap();
+        let shown = snapshot.sections.iter().find(|candidate| candidate.id == section).unwrap();
+        assert!(shown.icon_url.as_deref().unwrap().starts_with("data:image/svg+xml;base64,"));
+
+        // Un grand PNG est réduit ; l’ancien SVG de la section disparaît.
+        let placed = set_section_icon(&state, &space, &section, &format!("{base}/grand.png"), false).await.unwrap();
+        assert_eq!(placed["format"], json!("png"));
+        let png = format!("icons/{}.png", module.sections[0].id);
+        let decoded = image::load_from_memory(&std::fs::read(space.module_dir("jira").join(&png)).unwrap()).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (128, 64));
+        assert!(!space.module_dir("jira").join(&icon).exists());
+
+        // Un contenu refusé : un message clair, et l’icône ne change pas.
+        for (path, reason) in [
+            ("/logo", "une page HTML"),
+            ("/photo.svg", "une image JPEG"),
+            ("/lourd.svg", "256 Ko"),
+            ("/absente.svg", "404"),
+        ] {
+            let error = set_section_icon(&state, &space, &section, &format!("{base}{path}"), false).await.unwrap_err();
+            assert!(error.message.starts_with("Icône inchangée.") && error.message.contains(reason), "{path} : {}", error.message);
+            assert_eq!(icon_of().as_deref(), Some(png.as_str()), "{path} ne touche pas à l’icône");
+        }
+
+        // Un fichier disparu retombe sur l’icône par défaut, et `check` le signale.
+        std::fs::remove_file(space.module_dir("jira").join(&png)).unwrap();
+        let snapshot = space.snapshot().unwrap();
+        let shown = snapshot.sections.iter().find(|candidate| candidate.id == section).unwrap();
+        assert_eq!(shown.icon_url, None);
+        assert!(snapshot.problems.iter().any(|problem| problem.message.contains("introuvable")));
+    }
+
     #[tokio::test]
     async fn an_agent_opens_the_onboarding_of_a_module() {
         let (state, _dir) = crate::clients::testing::test_state();

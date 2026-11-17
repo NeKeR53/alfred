@@ -34,7 +34,10 @@ export interface ResolvedSection {
   id: string;
   module: string;
   label: string;
+  /** Nom d’icône Lucide, ou chemin d’une image du module (`icons/jira.svg`). */
   icon: string | null;
+  /** Adresse `data:` de l’icône image, quand elle est lisible ; absente pour une icône Lucide. */
+  iconUrl?: string | null;
   color: string | null;
   hidden: boolean;
   pages: ResolvedPage[];

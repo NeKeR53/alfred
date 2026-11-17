@@ -304,6 +304,8 @@ export function project(snapshot: Snapshot, layout: FullLayout): Snapshot {
       ...section,
       label: override?.label ?? section.label,
       icon: override?.icon ?? section.icon,
+      // Une icône Lucide choisie par l’utilisateur prend le pas sur le logo du module.
+      iconUrl: override?.icon ? null : section.iconUrl,
       color: override?.color ?? section.color,
       hidden: Boolean(override?.hidden) || Boolean(declared?.hidden) || moduleHidden(section.module),
       pages: [],

@@ -6,7 +6,7 @@
 import { FormField, Text, TextInput } from "@alfred/ui";
 import { useEffect, useState } from "react";
 import type { ModuleSummary, ResolvedPage, ResolvedSection } from "../../lib/types";
-import { NamedIcon } from "../../shell/icons";
+import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { renamePage, renameSection } from "../../shell/navigationLayout";
 import { useShell } from "../../shell/store";
@@ -73,7 +73,7 @@ export function ModuleNaming({ module }: { module: ModuleSummary }) {
           <li key={section.id} className="onboarding-pages__section">
             <div className="onboarding-pages__head">
               <span className={`module-row__icon product-color--${section.color ?? "steel"}`} aria-hidden="true">
-                <NamedIcon name={section.icon ?? "box"} size={15} />
+                {section.icon ? <SectionIcon section={section} size={15} /> : <NamedIcon name="box" size={15} />}
               </span>
               <NameField
                 label="Nom dans le menu"

@@ -10,7 +10,7 @@ import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } fr
 import { create } from "zustand";
 import { invoke } from "../../lib/native";
 import type { ResolvedFunction } from "../../lib/types";
-import { NamedIcon } from "../../shell/icons";
+import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { useAgents } from "../agent/store";
@@ -307,7 +307,7 @@ export function CommandPalette() {
                       key={section.id}
                       value={`aller:section:${section.id}`}
                       keywords={[section.label, "section"]}
-                      icon={<NamedIcon name={section.icon} size={16} />}
+                      icon={<SectionIcon section={section} size={16} />}
                       meta="Section"
                       onSelect={run(() => shell().setView({ kind: "section", id: section.id }))}
                     >
@@ -322,7 +322,13 @@ export function CommandPalette() {
                           key={page.reference}
                           value={`aller:page:${page.reference}`}
                           keywords={[page.title, section.label, page.description]}
-                          icon={<NamedIcon name={page.icon ?? section.icon} size={16} />}
+                          icon={
+                            page.icon ? (
+                              <NamedIcon name={page.icon} size={16} />
+                            ) : (
+                              <SectionIcon section={section} size={16} />
+                            )
+                          }
                           meta={section.label}
                           onSelect={run(() => shell().openPage(page.reference))}
                         >

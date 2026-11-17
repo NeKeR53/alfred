@@ -494,7 +494,11 @@ pub struct ResolvedSection {
     pub id: String,
     pub module: String,
     pub label: String,
+    /// Nom d’icône Lucide, ou chemin d’une image du module (`icons/jira.svg`).
     pub icon: Option<String>,
+    /// Adresse `data:` de l’icône quand c’est une image du module lisible ; `None` sinon (l’interface retombe
+    /// alors sur l’icône Lucide, ou sur l’icône par défaut).
+    pub icon_url: Option<String>,
     pub color: Option<String>,
     pub hidden: bool,
     pub pages: Vec<ResolvedPage>,
@@ -1015,6 +1019,66 @@ impl Space {
         Ok(Some(format!("{} {what}", if hidden { "Masquage" } else { "Réaffichage" })))
     }
 
+    /// Pose une icône image (déjà vérifiée par `section_icons::prepare`) sur une section déclarée
+    /// (`module/section`) : le fichier va dans `icons/<section>.<ext>` du module, le manifeste pointe dessus,
+    /// l’ancienne image de la section disparaît si plus rien ne s’en sert, et l’icône que l’utilisateur avait
+    /// choisie pour cette entrée (et ses copies par instance) s’efface, pour que le logo se voie. Renvoie le
+    /// chemin de l’icône dans le module et le libellé de la section.
+    pub fn set_section_icon(
+        &self,
+        reference: &str,
+        content: &[u8],
+        format: crate::section_icons::Format,
+    ) -> AppResult<(String, String)> {
+        let (module_id, id) = reference
+            .split_once('/')
+            .ok_or_else(|| AppError::new("La section doit être désignée par « module/section »."))?;
+        if id.contains('@') {
+            return Err(AppError::new(format!(
+                "« {reference} » est la copie d’une section pour une instance : poser l’icône sur la section déclarée, « {module_id}/{} ».",
+                id.split('@').next().unwrap_or_default()
+            )));
+        }
+        let mut module = self.writable_module(module_id)?;
+        let section = module
+            .sections
+            .iter_mut()
+            .find(|section| section.id == id)
+            .ok_or_else(|| AppError::new(format!("La section « {reference} » n’existe pas.")))?;
+        let label = section.label.clone();
+        let icon = format!("{}/{id}.{}", crate::section_icons::ICONS_DIR, format.extension());
+        let previous = section.icon.replace(icon.clone());
+        let dir = self.module_dir(module_id);
+        fs::create_dir_all(dir.join(crate::section_icons::ICONS_DIR))?;
+        fs::write(dir.join(&icon), content)?;
+        if let Some(previous) = previous.filter(|previous| {
+            previous != &icon
+                && previous.starts_with(&format!("{}/", crate::section_icons::ICONS_DIR))
+                && !previous.contains("..")
+        }) {
+            if !module.sections.iter().any(|section| section.icon.as_deref() == Some(previous.as_str())) {
+                let _ = fs::remove_file(dir.join(&previous));
+            }
+        }
+        self.write_module(&module)?;
+        let mut manifest = self.manifest()?;
+        let key = format!("section:{reference}");
+        let copies = format!("{key}@");
+        let mut changed = false;
+        manifest.layout.overrides.retain(|target, entry| {
+            if target == &key || target.starts_with(&copies) {
+                changed |= entry.icon.take().is_some();
+                *entry != Override::default()
+            } else {
+                true
+            }
+        });
+        if changed {
+            self.write_manifest(&manifest)?;
+        }
+        Ok((icon, label))
+    }
+
     /// Remplace chaque section par instance par une copie pour chaque instance du client qu’elle suit. Sans
     /// instance (ou sans client), la section reste seule et dit quoi faire.
     fn expand_instances(
@@ -1051,7 +1115,11 @@ impl Space {
                         copy.label = own
                             .and_then(|o| o.label.clone())
                             .unwrap_or_else(|| format!("{} — {}", section.label, instance.display_label()));
-                        copy.icon = own.and_then(|o| o.icon.clone()).or_else(|| section.icon.clone());
+                        if let Some(icon) = own.and_then(|o| o.icon.clone()) {
+                            // L’utilisateur a choisi une icône Lucide pour cette copie : elle prend le pas sur l’image.
+                            copy.icon_url = None;
+                            copy.icon = Some(icon);
+                        }
                         copy.color = own.and_then(|o| o.color.clone()).or_else(|| section.color.clone());
                         copy.hidden = section.hidden || own.is_some_and(|o| o.hidden);
                         copy.pages =
@@ -1157,10 +1225,27 @@ impl Space {
             for section in &module.sections {
                 let id = format!("{}/{}", module.id, section.id);
                 let overridden = manifest.layout.overrides.get(&format!("section:{id}"));
+                let icon = overridden.and_then(|o| o.icon.clone()).or_else(|| section.icon.clone());
+                let icon_url = match icon.as_deref().filter(|icon| crate::section_icons::is_image(icon)) {
+                    Some(image) => match crate::section_icons::data_url(&self.module_dir(&module.id), image) {
+                        Ok(url) => Some(url),
+                        Err(reason) => {
+                            problems.push(Problem {
+                                module: module.id.clone(),
+                                message: format!(
+                                    "Icône de la section « {id} » : {reason}. L’icône par défaut s’affiche à sa place ; reposer le logo avec `set_section_icon`, ou mettre un nom d’icône Lucide."
+                                ),
+                            });
+                            None
+                        }
+                    },
+                    None => None,
+                };
                 sections.push(ResolvedSection {
                     module: module.id.clone(),
                     label: overridden.and_then(|o| o.label.clone()).unwrap_or_else(|| section.label.clone()),
-                    icon: overridden.and_then(|o| o.icon.clone()).or_else(|| section.icon.clone()),
+                    icon,
+                    icon_url,
                     color: overridden.and_then(|o| o.color.clone()).or_else(|| section.color.clone()),
                     hidden: overridden.is_some_and(|o| o.hidden) || module_hidden(&module.id),
                     pages: Vec::new(),

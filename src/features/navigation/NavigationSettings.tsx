@@ -6,7 +6,7 @@ import { EmptyState, IconButton, Page, Section, StatusBadge, Text } from "@alfre
 import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, History, Pencil } from "lucide-react";
 import { type PointerEvent, useMemo, useState } from "react";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
-import { NamedIcon } from "../../shell/icons";
+import { SectionIcon } from "../../shell/icons";
 import { applyLayoutChange, RenameDialog } from "../../shell/navigationEditing";
 import {
   isModuleHidden,
@@ -281,7 +281,7 @@ export function NavigationSettings() {
                         }}
                       />
                       <span className="nav-settings__icon">
-                        <NamedIcon name={section.icon} />
+                        <SectionIcon section={section} />
                       </span>
                       <Text as="span" tone={hidden ? "muted" : "default"}>
                         {section.label}

@@ -38,6 +38,7 @@ mod reorganize;
 mod schedules;
 mod script_sdk;
 mod scripts;
+mod section_icons;
 mod server;
 mod setup;
 mod space;

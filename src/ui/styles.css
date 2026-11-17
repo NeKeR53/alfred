@@ -1515,3 +1515,28 @@ html select:not([multiple], [data-slot="native-select"]) {
   tab-size: 2;
   user-select: text;
 }
+
+/* Logo d’un service posé comme icône d’une entrée du menu : dans ses couleurs, à la taille d’une icône Lucide (dont
+   le dessin laisse une marge), sans couleur imposée. En sombre, une petite plaque claire garde lisible un logo foncé
+   (le bleu nuit de Confluence, le noir de GitHub). */
+.section-icon-image {
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  padding: 1px;
+  border-radius: 4px;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.sidebar .product-nav > .section-icon-image {
+  padding: 2px;
+}
+:root[data-theme="dark"] .section-icon-image {
+  background: oklch(0.93 0.007 90);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .section-icon-image {
+    background: oklch(0.93 0.007 90);
+  }
+}

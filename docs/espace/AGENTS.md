@@ -67,6 +67,7 @@ L’espace de travail est l’application de l’utilisateur ; il peut en avoir 
    - `{ "kind": "settings" }` : onglet des Réglages (avec `module` pour le ranger dans un module existant).
 
    Sans `placement`, la page devient une nouvelle entrée du menu à son nom.
+2 bis. **Icône de l’entrée.** Quand l’entrée du menu correspond à un service ou à une marque connus (Jira, Gmail, Slack, GitHub, Notion, Stripe…), donne-lui son logo officiel : après `place_page`, appelle `set_section_icon` (`section` : « module/section », `url` : adresse https:// du fichier image). Cherche le logo toi-même, les sources sûres d’abord : Simple Icons en couleur de marque, `https://cdn.simpleicons.org/<slug>` (le slug est le nom en minuscules sans espace ni point : `jira`, `gmail`, `slack`, `github` ; vérifie qu’il existe sur simpleicons.org), sinon le site officiel ou le kit presse de la marque. Jamais une image d’un site tiers inconnu, d’un moteur de recherche d’images ou d’origine douteuse : dans le doute, garde l’icône Lucide. Pour un sujet sans marque (factures, contacts, tâches), garde une icône Lucide. Alfred télécharge l’image, vérifie son format, la nettoie et la range dans `modules/<module>/icons/` ; si l’outil échoue, l’icône ne change pas : lis le message, essaie une autre source sûre ou garde l’icône Lucide.
 3. Lis `docs/alfred/DESIGN.md` et `docs/alfred/SDK.md`, si ce n’est pas déjà fait dans cette conversation. Choisis le gabarit d’après ce que la page montre (DESIGN.md, section 2) : `CollectionPage` pour une liste, `DetailPanel` pour un panneau, `SettingsPage` pour les Réglages, `openForm` pour une saisie. Tu décris les données, leurs types et les actions ; tu ne décides ni de l’apparence ni de la place des boutons.
 4. Si la page a besoin d’une table, écris d’abord sa migration (voir plus bas).
 5. Écris le fichier dont `place_page` renvoie le chemin (`file`) : un composant exporté par défaut.
@@ -167,6 +168,7 @@ modules/<module>/
   migrations/NNNN_nom.sql    structure des tables, appliquée dans l’ordre des noms
   lib/…                      code partagé, importé par chemin relatif (compilé par `check`)
   vendor/                    librairies npm (écrites par `set_libraries`, ne pas modifier)
+  icons/<section>.svg        logo d’une entrée du menu (écrit par `set_section_icon`)
 .alfred/                     base SQLite, fichiers des modules et sauvegardes (ne pas toucher)
 ```
 
@@ -174,7 +176,7 @@ Les identifiants sont en minuscules, chiffres et tirets, 64 caractères au plus.
 
 ### `module.json`
 
-`place_page`, `declare_function`, `declare_webhook` et `declare_schedule` l’écrivent. Tu le modifies à la main pour `requires`, `clients`, `uses`, `search`, `semantic`, `history`, `events`, `sync` ou un titre. Champs en camelCase ; **un champ mal orthographié est ignoré sans erreur**. N’écris jamais `origin`, qui marque un module installé.
+`place_page`, `declare_function`, `declare_webhook` et `declare_schedule` l’écrivent. Tu le modifies à la main pour `requires`, `clients`, `uses`, `search`, `semantic`, `history`, `events`, `sync` ou un titre. Champs en camelCase ; **un champ mal orthographié est ignoré sans erreur**. N’écris jamais `origin`, qui marque un module installé. L’`icon` d’une section est un nom Lucide (`list-checks`) ou le chemin d’un logo du module (`icons/principal.svg`) : ce dernier, pose-le avec `set_section_icon`, qui télécharge et nettoie l’image ; une image absente ou illisible s’affiche comme l’icône par défaut et `check` la signale dans `structure`.
 
 ```json
 {

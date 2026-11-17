@@ -24,7 +24,7 @@ import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
-import { NamedIcon } from "./icons";
+import { SectionIcon } from "./icons";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
 import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
 import { mergeVisibleOrder, pagesOf, reorderSections, reorderTabs, SETTINGS_SECTION } from "./navigationLayout";
@@ -570,7 +570,7 @@ export function AppShell({
                     }
                   }}
                 >
-                  <NamedIcon name={section.icon} />
+                  <SectionIcon section={section} />
                 </NavButton>
                 <div className="sidebar-product__actions">
                   <IconButton

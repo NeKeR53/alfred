@@ -37,7 +37,7 @@ import { SECTION_COLORS, type Snapshot } from "../lib/types";
 import { focusStayed } from "../ui/components/AnchoredMenu";
 import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
 import { DialogHeader } from "./DialogHeader";
-import { NamedIcon } from "./icons";
+import { isImageIcon, NamedIcon, SectionIcon } from "./icons";
 import {
   baseReference,
   COLOR_LABELS,
@@ -318,11 +318,14 @@ export function RenameDialog({
 export function IconDialog({
   section,
   initial,
+  logo,
   onSubmit,
   onClose,
 }: {
   section: string;
   initial: string;
+  /** Logo du service en place (adresse `data:`) : un nom Lucide le remplace, laisser vide le garde. */
+  logo?: string | null;
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
@@ -354,7 +357,11 @@ export function IconDialog({
           <Stack gap="md">
             <FormField
               label="Nom de l’icône"
-              hint="Nom d’une icône Lucide en minuscules et tirets, par exemple list-checks. Laisser vide pour revenir à l’icône du module."
+              hint={
+                logo
+                  ? "Cette entrée a pour icône le logo du service. Écrire le nom d’une icône Lucide en minuscules et tirets, par exemple list-checks, pour revenir à une icône Lucide ; laisser vide pour garder le logo."
+                  : "Nom d’une icône Lucide en minuscules et tirets, par exemple list-checks. Laisser vide pour revenir à l’icône du module."
+              }
               error={error}
             >
               <TextInput
@@ -369,9 +376,21 @@ export function IconDialog({
               />
             </FormField>
             <Row gap="xs">
-              <span className="nav-dialog__preview">{known && name ? <NamedIcon name={name} size={18} /> : null}</span>
+              <span className="nav-dialog__preview">
+                {known && name ? (
+                  <NamedIcon name={name} size={18} />
+                ) : name === "" && logo ? (
+                  <SectionIcon section={{ iconUrl: logo }} size={18} />
+                ) : null}
+              </span>
               <Text as="span" tone={known ? "muted" : "warning"}>
-                {name === "" ? "Aperçu : icône du module" : known ? `Aperçu : ${name}` : "Icône inconnue"}
+                {name === ""
+                  ? logo
+                    ? "Aperçu : logo du service"
+                    : "Aperçu : icône du module"
+                  : known
+                    ? `Aperçu : ${name}`
+                    : "Icône inconnue"}
               </Text>
             </Row>
           </Stack>
@@ -593,8 +612,13 @@ export function useNavigationEditor() {
       dialogElement = (
         <IconDialog
           section={section.label}
-          initial={section.icon ?? ""}
-          onSubmit={(value) => void applyLayoutChange((state) => setSectionIcon(state, section.id, value))}
+          initial={isImageIcon(section.icon) ? "" : (section.icon ?? "")}
+          logo={section.iconUrl}
+          onSubmit={(value) => {
+            // Laisser le champ vide garde le logo en place : rien à enregistrer.
+            if (value === "" && isImageIcon(section.icon)) return;
+            void applyLayoutChange((state) => setSectionIcon(state, section.id, value));
+          }}
           onClose={closeDialog}
         />
       );
