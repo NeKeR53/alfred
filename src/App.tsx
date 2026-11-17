@@ -24,8 +24,8 @@ export function App() {
     void checkHarnesses();
   }, [start]);
   const installed = useInstalledProviders();
-  // Tant que la vérification n’est pas finie, l’entrée Agent reste : elle ne disparaît que si aucun n’est installé.
-  const agentAvailable = installed === null || installed.length > 0;
+  // L’entrée Agent n’apparaît qu’une fois la vérification faite, et seulement si un agent est installé.
+  const agentAvailable = installed === null ? null : installed.length > 0;
 
   // Les mises à jour de modules disponibles se lisent sur l’onglet, sans ouvrir les Réglages.
   const updates = useModuleUpdates();

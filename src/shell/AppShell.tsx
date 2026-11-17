@@ -446,10 +446,11 @@ export function AppShell({
   /** Contenu de la page Agent. */
   agent: ReactNode;
   /**
-   * Faux quand aucun agent (Claude Code, Codex, OpenCode) n’est installé : l’entrée Agent quitte le menu et la page
-   * Agent laisse la place à la première section, ou à un mot qui dit quoi installer.
+   * Faux quand aucun agent (Claude Code, Codex, OpenCode) n’est installé : la page Agent laisse la place à la
+   * première section, ou à un mot qui dit quoi installer. `null` pendant la vérification : l’entrée Agent reste cachée
+   * et la page Agent attend, sans rien afficher, d’être confirmée ou remplacée.
    */
-  agentAvailable?: boolean;
+  agentAvailable?: boolean | null;
   /** Conversations qui attendent l’utilisateur, travaillent ou sont à lire. */
   agentSummary?: AgentSummary;
   /** Onglets intégrés des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
@@ -496,7 +497,7 @@ export function AppShell({
   // Sans agent installé, la page Agent n’existe pas : la première section s’affiche à sa place.
   const fallback = sections[0]?.section;
   const effective: View =
-    wanted.kind === "agent" && !agentAvailable && fallback ? { kind: "section", id: fallback.id } : wanted;
+    wanted.kind === "agent" && agentAvailable === false && fallback ? { kind: "section", id: fallback.id } : wanted;
   const shownSection =
     effective.kind === "section" ? sections.find(({ section }) => section.id === effective.id)?.section : undefined;
 
@@ -590,7 +591,7 @@ export function AppShell({
             <p className="sidebar__empty">Aucune section trouvée.</p>
           ) : null}
         </nav>
-        {agentAvailable ? (
+        {agentAvailable === true ? (
           <NavButton
             label={agentEntryLabel(agentSummary)}
             active={!settingsOpen && sameView(effective, { kind: "agent" })}
@@ -612,7 +613,7 @@ export function AppShell({
         </NavButton>
       </aside>
       <main className="workspace" inert={settingsOpen}>
-        {effective.kind === "agent" ? (
+        {effective.kind === "agent" && agentAvailable !== null ? (
           agentAvailable ? (
             agent
           ) : (
