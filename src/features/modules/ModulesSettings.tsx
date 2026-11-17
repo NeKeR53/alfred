@@ -511,8 +511,8 @@ export function ModulesSettings() {
         ) : null}
         {update?.sourceMissing ? (
           <Text size="meta" tone="muted">
-            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace
-            pour recevoir les mises à jour, ou détacher le module.
+            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace pour
+            recevoir les mises à jour, ou détacher le module.
           </Text>
         ) : null}
         {hidden ? (
