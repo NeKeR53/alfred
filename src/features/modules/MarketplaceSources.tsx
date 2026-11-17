@@ -3,7 +3,6 @@ import {
   EmptyState,
   FormControlGroup,
   FormField,
-  Page,
   RefreshButton,
   Section,
   Spinner,
@@ -11,7 +10,7 @@ import {
   TextInput,
   useConfirm,
 } from "@alfred/ui";
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { errorMessage, type Marketplace, type ModulePublication, marketplaceApi } from "./api";
@@ -30,11 +29,11 @@ function checkedAt(iso: string | null) {
 }
 
 /**
- * Rubrique « Marketplaces » des Réglages, dans le groupe Alfred : les catalogues de modules partagés (dépôts git)
- * branchés sur ce poste. Ils sont communs à tous les espaces de travail ; un espace de travail y importe des
- * modules et y publie les siens, depuis la rubrique Modules.
+ * Marketplaces branchés sur ce poste (rubrique Marketplace, écran « Sources ») : les catalogues de modules partagés
+ * (dépôts git), communs à tous les espaces de travail. `onChanged` prévient le catalogue qu’un marketplace a été
+ * ajouté, rafraîchi ou retiré.
  */
-export function MarketplacesSettings() {
+export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => void; actions?: ReactNode }) {
   const updates = useModuleUpdatesStore((state) => state.updates);
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
   const spaceOpen = useShell((state) => Boolean(state.snapshot));
@@ -71,6 +70,7 @@ export function MarketplacesSettings() {
       const added = await marketplaceApi.add(url.trim());
       setUrl("");
       await Promise.all([load(), loadUpdates(false).catch(() => undefined)]);
+      onChanged?.();
       notify({ title: `Marketplace ${added.name} ajouté`, tone: "success" });
     } catch (failure) {
       setAddError(errorMessage(failure));
@@ -95,6 +95,7 @@ export function MarketplacesSettings() {
     try {
       await marketplaceApi.remove(marketplace.id);
       await Promise.all([load(), loadUpdates(false).catch(() => undefined)]);
+      onChanged?.();
       notify({ title: `Marketplace ${marketplace.name} retiré` });
     } catch (failure) {
       notify({ title: "Retrait impossible", description: errorMessage(failure), tone: "error" });
@@ -111,6 +112,7 @@ export function MarketplacesSettings() {
       } finally {
         // L’échec aussi s’inscrit sur le marketplace : la liste doit le montrer.
         await Promise.all([load(), loadUpdates(false).catch(() => undefined)]);
+        onChanged?.();
       }
       notify({ title: `${marketplace.name} est à jour`, tone: "success" });
     } catch (failure) {
@@ -140,10 +142,11 @@ export function MarketplacesSettings() {
   };
 
   return (
-    <Page>
+    <>
       <Section
-        title="Marketplaces"
-        description="Un marketplace est un catalogue de modules partagé, rangé dans un dépôt git. Il appartient à Alfred, pas à un espace de travail : chacun de vos espaces de travail peut y importer des modules et y publier les siens. Alfred s’y connecte avec les accès git déjà réglés sur ce poste."
+        title="Marketplaces branchés"
+        description="Chaque marketplace est un dépôt git de modules partagés, commun à tous vos espaces de travail. Alfred s’y connecte avec les accès git de ce poste."
+        actions={actions}
       >
         <form onSubmit={add}>
           <FormControlGroup>
@@ -227,6 +230,6 @@ export function MarketplacesSettings() {
         )}
       </Section>
       {confirmDialog}
-    </Page>
+    </>
   );
 }

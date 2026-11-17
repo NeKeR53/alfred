@@ -76,15 +76,11 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       .map((item) => item.textContent),
   ).toEqual([
     "Modules",
+    "Marketplace",
     "Général",
     "Apparence",
     "Ordre du menu",
-    "Fonctions",
-    "Webhooks",
-    "Tâches planifiées",
-    "Tâches de fond",
     "Journal",
-    "Marketplaces",
     "Agent",
     "Voix",
     "Mots de passe et clés",
@@ -96,22 +92,18 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       .getAllByText(/^(Espace de travail|Alfred|Pages de l’espace de travail)$/)
       .map((title) => title.textContent),
   ).toEqual(["Espace de travail", "Alfred", "Pages de l’espace de travail"]);
-  // Les modules d’abord, en liste ; « Importer des modules » mène au catalogue des marketplaces.
-  expect(await within(settings).findByRole("list", { name: "Modules de l’espace de travail" })).toBeVisible();
-  await user.click(within(settings).getByRole("button", { name: "Importer des modules" }));
-  expect((await within(settings).findAllByText("Importer des modules"))[0]).toBeVisible();
-  await user.click(within(settings).getByRole("button", { name: "Tous les modules" }));
+  // Les modules installés d’abord, en tableau ; « Parcourir le marketplace » mène au catalogue.
+  expect(await within(settings).findByRole("table", { name: "Modules de l’espace de travail" })).toBeVisible();
+  await user.click(within(settings).getByRole("button", { name: "Parcourir le marketplace" }));
+  expect(await within(settings).findByText("Aucun marketplace branché")).toBeVisible();
 
   const expected: Record<string, string> = {
     Agent: "Harnais par défaut",
     Général: "Historique",
-    Marketplaces: "Aucun marketplace",
+    Marketplace: "Aucun marketplace branché",
     Apparence: "Couleur d’accent",
     "Mots de passe et clés": "Aucun mot de passe ni clé",
     "Ordre du menu": "Pages des Réglages",
-    Fonctions: "Synchronise les tâches avec Jira.",
-    Webhooks: "Aucun webhook",
-    "Tâches planifiées": "Aucune planification",
     Journal: "Aucune exécution",
   };
   for (const [item, text] of Object.entries(expected)) {

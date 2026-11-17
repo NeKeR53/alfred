@@ -136,7 +136,7 @@ function desk() {
   return calls;
 }
 
-const list = () => screen.getByRole("list", { name: /Modules de l.espace/ });
+const list = () => screen.getByRole("table", { name: /Modules de l.espace/ });
 
 function openModuleMenu(name: string) {
   fireEvent.click(screen.getByRole("button", { name: `Actions du module ${name}` }));

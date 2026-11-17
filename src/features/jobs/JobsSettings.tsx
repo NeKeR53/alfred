@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { ModulePart } from "../modules/ModulePart";
 
 export interface JobItem {
   id: string;
@@ -56,10 +57,14 @@ export function advancement(job: JobItem): string {
   return job.progress === null ? steps : `${percent.format(job.progress)} · ${steps}`;
 }
 
-/** Rubrique « Tâches de fond » des Réglages : travaux longs des modules, leur progression, annuler ou reprendre. */
-export function JobsSettings() {
+/**
+ * Tâches de fond : travaux longs des modules, leur progression, annuler ou reprendre. Avec `module`, la partie
+ * « Tâches de fond » de la fiche de ce module (rien quand il n’en a lancé aucune) ; sans, toutes celles de l’espace.
+ */
+export function JobsSettings({ module }: { module?: string } = {}) {
   const snapshot = useShell((state) => state.snapshot);
-  const [jobs, setJobs] = useState<JobItem[]>();
+  const [all, setJobs] = useState<JobItem[]>();
+  const jobs = module ? all?.filter((job) => job.module === module) : all;
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string>();
@@ -112,7 +117,7 @@ export function JobsSettings() {
         <Stack gap="none">
           <Text weight="medium">{job.title}</Text>
           <Text size="meta" tone="muted">
-            Module {moduleName(job.module)} · fonction {job.function}
+            {module ? `Fonction ${job.function}` : `Module ${moduleName(job.module)} · fonction ${job.function}`}
           </Text>
           {job.status === "failed" && job.error ? (
             <Text size="meta" tone="danger">
@@ -188,6 +193,25 @@ export function JobsSettings() {
         ),
     },
   ];
+
+  if (module) {
+    if (!jobs || jobs.length === 0) return null;
+    return (
+      <ModulePart
+        part="jobs"
+        title="Tâches de fond"
+        description="Travaux longs lancés par le module ; ils reprennent où ils en étaient à la réouverture d’Alfred."
+      >
+        <DataTable
+          label="Tâches de fond du module"
+          columns={columns}
+          rows={jobs}
+          rowKey={(job) => job.id}
+          loading={loading}
+        />
+      </ModulePart>
+    );
+  }
 
   return (
     <Page width="text">

@@ -20,6 +20,7 @@ import { Copy } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
+import { ModulePart } from "../modules/ModulePart";
 import { errorMessage } from "../vault/api";
 import { getWebhookSecret, hookKey, listWebhooks, rotateWebhookSecret, type WebhookItem } from "./api";
 
@@ -129,9 +130,13 @@ function SecretSection({ hook, onClose }: { hook: WebhookItem; onClose: () => vo
   );
 }
 
-/** Onglet « Webhooks » des Réglages : adresses locales qui déclenchent les fonctions des modules. */
-export function WebhooksSettings() {
-  const [hooks, setHooks] = useState<WebhookItem[]>();
+/**
+ * Webhooks : adresses locales qui déclenchent les fonctions des modules. Avec `module`, la partie « Webhooks » de la
+ * fiche de ce module (rien quand il n’en a pas) ; sans, la liste de tous les webhooks de l’espace de travail.
+ */
+export function WebhooksSettings({ module }: { module?: string } = {}) {
+  const [all, setHooks] = useState<WebhookItem[]>();
+  const hooks = module ? all?.filter((hook) => hook.module === module) : all;
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string>();
@@ -158,6 +163,8 @@ export function WebhooksSettings() {
       stopJournal();
     };
   }, [load]);
+
+  if (module && (hooks === undefined || hooks.length === 0)) return null;
 
   if (hooks === undefined) {
     return (
@@ -204,9 +211,11 @@ export function WebhooksSettings() {
       render: (hook) => (
         <Stack gap="none">
           <Text weight="medium">{hook.description || hook.id}</Text>
-          <Text size="meta" tone="muted">
-            Module {hook.module}
-          </Text>
+          {module ? null : (
+            <Text size="meta" tone="muted">
+              Module {hook.module}
+            </Text>
+          )}
         </Stack>
       ),
     },
@@ -271,6 +280,24 @@ export function WebhooksSettings() {
       ),
     },
   ];
+
+  if (module) {
+    return (
+      <ModulePart
+        part="webhooks"
+        title="Webhooks"
+        description="Adresses qu’un service extérieur appelle pour déclencher une fonction du module."
+      >
+        <DataTable label="Webhooks du module" columns={columns} rows={hooks} rowKey={hookKey} loading={loading} />
+        <Text size="meta" tone="muted">
+          {tunnel}
+        </Text>
+        {current ? (
+          <SecretSection key={hookKey(current)} hook={current} onClose={() => setSelected(undefined)} />
+        ) : null}
+      </ModulePart>
+    );
+  }
 
   return (
     <Page>

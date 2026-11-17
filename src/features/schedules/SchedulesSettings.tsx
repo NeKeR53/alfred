@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
+import { ModulePart } from "../modules/ModulePart";
 import { errorMessage } from "../vault/api";
 import {
   cadence,
@@ -43,9 +44,13 @@ function summarize(output: unknown): string {
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
-/** Onglet « Planification » des Réglages : fonctions déclenchées à heure fixe ou à intervalle, Alfred ouvert. */
-export function SchedulesSettings() {
-  const [items, setItems] = useState<ScheduleItem[]>();
+/**
+ * Planifications : fonctions déclenchées à heure fixe ou à intervalle, Alfred ouvert. Avec `module`, la partie
+ * « Planifications » de la fiche de ce module (rien quand il n’en a pas) ; sans, toutes celles de l’espace de travail.
+ */
+export function SchedulesSettings({ module }: { module?: string } = {}) {
+  const [all, setItems] = useState<ScheduleItem[]>();
+  const items = module ? all?.filter((item) => item.module === module) : all;
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [runningNow, setRunningNow] = useState<string>();
@@ -112,6 +117,8 @@ export function SchedulesSettings() {
     }
   };
 
+  if (module && (items === undefined || items.length === 0)) return null;
+
   if (items === undefined) {
     return (
       <Page width="text">
@@ -150,7 +157,7 @@ export function SchedulesSettings() {
         <Stack gap="none">
           <Text weight="medium">{item.description || item.id}</Text>
           <Text size="meta" tone="muted">
-            Module {item.module} · fonction {item.function}
+            {module ? `Fonction ${item.function}` : `Module ${item.module} · fonction ${item.function}`}
           </Text>
           {item.functionExists ? null : (
             <Text size="meta" tone="danger">
@@ -244,6 +251,24 @@ export function SchedulesSettings() {
       },
     },
   ];
+
+  if (module) {
+    return (
+      <ModulePart
+        part="schedules"
+        title="Planifications"
+        description="Fonctions du module lancées à heure fixe ou à intervalle, tant qu’Alfred est ouvert."
+      >
+        <DataTable
+          label="Planifications du module"
+          columns={columns}
+          rows={items}
+          rowKey={scheduleKey}
+          loading={loading}
+        />
+      </ModulePart>
+    );
+  }
 
   return (
     <Page>

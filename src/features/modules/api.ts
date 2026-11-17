@@ -71,7 +71,8 @@ export interface CatalogModule {
   version?: string;
   description?: string;
   pages?: Array<{ id: string; title: string; description: string }>;
-  functions?: Array<{ id: string; description: string; tool: boolean }>;
+  /** `effect` : la fonction lit seulement (`read`) ou modifie (`write`) ; absent quand le module ne le dit pas. */
+  functions?: Array<{ id: string; description: string; tool: boolean; effect?: "read" | "write" | null }>;
   clients?: ClientNeed[];
   webhooks?: Array<{ id: string; description: string; function: string }>;
   schedules?: Array<{ id: string; description: string; function: string; everyMinutes?: number; at?: string }>;

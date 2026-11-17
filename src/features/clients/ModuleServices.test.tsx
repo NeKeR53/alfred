@@ -298,7 +298,8 @@ function renderModules(sections: ResolvedSection[] = []) {
 
 /** Ouvre la fiche d’un module. */
 async function openModule(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(await screen.findByRole("button", { name: `Ouvrir la fiche de ${name}` }));
+  const table = await screen.findByRole("table", { name: /Modules de l.espace/ });
+  await user.click(await within(table).findByText(name));
 }
 
 /** Ouvre le menu « … » d’une ligne (service ou compte) et rend l’entrée demandée. */

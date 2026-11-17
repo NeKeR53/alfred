@@ -803,7 +803,7 @@ fn describe(manifest: &ModuleManifest) -> Value {
             "id": page.id, "title": page.title, "description": page.description,
         })).collect::<Vec<_>>(),
         "functions": manifest.functions.iter().map(|function| json!({
-            "id": function.id, "description": function.description, "tool": function.tool,
+            "id": function.id, "description": function.description, "tool": function.tool, "effect": function.effect,
         })).collect::<Vec<_>>(),
         "requires": manifest.requires,
         "clients": manifest.clients,
