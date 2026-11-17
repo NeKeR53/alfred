@@ -138,6 +138,16 @@ beforeEach(() => {
         return [];
       case "backups.settings":
         return { keep: 14 };
+      case "decisions.model":
+        return {
+          model: "convaiinnovations/laya-multilingual",
+          sizeMb: 647,
+          status: "missing",
+          received: null,
+          total: null,
+          error: null,
+          damaged: null,
+        };
       case "semantic.model":
         return {
           model: "intfloat/multilingual-e5-small",

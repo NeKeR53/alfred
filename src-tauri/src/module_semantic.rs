@@ -23,11 +23,15 @@ const MODEL: &str = "intfloat/multilingual-e5-small";
 const MODEL_DIR: &str = "multilingual-e5-small";
 /// Version figée du modèle, et empreinte SHA-256 de chaque fichier : un fichier différent est écarté.
 const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
-const FILES: [(&str, &str); 3] = [
-    ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
-    ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
-    ("model.safetensors", "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"),
-];
+const SPEC: crate::model_files::ModelSpec = crate::model_files::ModelSpec {
+    repo: MODEL,
+    revision: REVISION,
+    files: &[
+        ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
+        ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
+        ("model.safetensors", "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"),
+    ],
+};
 /// Taille annoncée à l’utilisateur avant le téléchargement.
 pub const MODEL_SIZE_MB: u64 = 470;
 const BATCH: usize = 16;
@@ -125,7 +129,7 @@ fn model_dir(state: &AppState) -> PathBuf {
 }
 
 fn installed(state: &AppState) -> bool {
-    FILES.iter().all(|(file, _)| model_dir(state).join(file).is_file())
+    SPEC.installed(&model_dir(state))
 }
 
 /// Remplace le modèle (tests).
@@ -187,48 +191,17 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
 }
 
 async fn fetch_all(state: &Arc<AppState>) -> AppResult<()> {
-    use sha2::{Digest, Sha256};
-    let dir = model_dir(state);
-    tokio::fs::create_dir_all(&dir).await?;
-    let http = reqwest::Client::builder().user_agent("Alfred").build().map_err(model_error)?;
-    let mut received_before = 0u64;
-    for (file, expected) in FILES {
-        let target = dir.join(file);
-        if target.is_file() {
-            continue;
+    let notified = std::sync::atomic::AtomicU64::new(0);
+    crate::model_files::fetch(&SPEC, &model_dir(state), MODEL_SIZE_MB * 1024 * 1024, model_error, |received, total| {
+        if let Ok(mut current) = model_state().lock() {
+            current.downloading = Some((received, total));
         }
-        let url = format!("https://huggingface.co/{MODEL}/resolve/{REVISION}/{file}");
-        let mut response = http.get(&url).send().await.map_err(model_error)?;
-        if !response.status().is_success() {
-            return Err(model_error(format!("{file} : réponse {}", response.status())));
+        if received >= notified.load(std::sync::atomic::Ordering::Relaxed) + 8 * 1024 * 1024 {
+            notified.store(received, std::sync::atomic::Ordering::Relaxed);
+            state.emit("semantic:changed", Value::Null);
         }
-        let total = response.content_length().unwrap_or(0);
-        let partial = dir.join(format!("{file}.part"));
-        let mut out = tokio::fs::File::create(&partial).await?;
-        let mut hasher = Sha256::new();
-        let mut received = 0u64;
-        while let Some(chunk) = response.chunk().await.map_err(model_error)? {
-            use tokio::io::AsyncWriteExt;
-            hasher.update(&chunk);
-            out.write_all(&chunk).await?;
-            received += chunk.len() as u64;
-            if let Ok(mut current) = model_state().lock() {
-                current.downloading = Some((received_before + received, (received_before + total).max(MODEL_SIZE_MB * 1024 * 1024)));
-            }
-            if received % (8 * 1024 * 1024) < chunk.len() as u64 {
-                state.emit("semantic:changed", Value::Null);
-            }
-        }
-        drop(out);
-        let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-        if digest != expected {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(model_error(format!("{file} : empreinte inattendue, fichier écarté.")));
-        }
-        tokio::fs::rename(&partial, &target).await?;
-        received_before += received;
-    }
-    Ok(())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------------------------------------------

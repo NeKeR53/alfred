@@ -38,6 +38,7 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     ("search.query", "frame.search.query", &["index", "text", "limit", "offset", "raw", "prefix"]),
     ("semantic.search", "frame.semantic.search", &["index", "text", "limit"]),
     ("semantic.status", "frame.semantic.status", &["index"]),
+    ("ai.decide", "frame.ai.decide", &["text", "question", "type", "choices", "questions", "preset"]),
     ("history.list", "frame.history.list", &["table", "key", "limit"]),
     ("history.revert", "frame.history.revert", &["id"]),
     ("events.publish", "frame.events.publish", &["event", "payload"]),

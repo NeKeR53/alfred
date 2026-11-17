@@ -1,0 +1,665 @@
+[
+ {
+  "name": "ticket_fr",
+  "state": "Bonjour, j'ai été prélevé deux fois pour la facture 4411, merci de me rembourser au plus vite.",
+  "questions": [
+   [
+    "team",
+    {
+     "type": "choice",
+     "question": "Quelle équipe doit traiter ce message ?",
+     "choices": [
+      [
+       "facturation",
+       "factures, paiements, remboursements"
+      ],
+      [
+       "technique",
+       "pannes, bogues, intégrations"
+      ],
+      [
+       "commercial",
+       "tarifs, devis, nouveaux achats"
+      ]
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "team": {
+    "type": "choice",
+    "choice": "facturation",
+    "probabilities": {
+     "facturation": 1.0,
+     "technique": 0.0,
+     "commercial": 0.0
+    },
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   }
+  }
+ },
+ {
+  "name": "panne_fr",
+  "state": "Depuis la mise à jour d'hier, l'application plante dès que j'ouvre les paramètres.",
+  "questions": [
+   [
+    "team",
+    {
+     "type": "choice",
+     "question": "Quelle équipe doit traiter ce message ?",
+     "choices": [
+      [
+       "facturation",
+       "factures, paiements, remboursements"
+      ],
+      [
+       "technique",
+       "pannes, bogues, intégrations"
+      ],
+      [
+       "commercial",
+       "tarifs, devis, nouveaux achats"
+      ]
+     ]
+    }
+   ],
+   [
+    "urgent",
+    {
+     "type": "yesno",
+     "question": "Le message exprime-t-il une urgence ?"
+    }
+   ]
+  ],
+  "answers": {
+   "team": {
+    "type": "choice",
+    "choice": "technique",
+    "probabilities": {
+     "facturation": 0.0066,
+     "technique": 0.9751,
+     "commercial": 0.0183
+    },
+    "confidence": 0.8807,
+    "answer_confidence": 0.9751
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.0008,
+    "confidence": 0.9992,
+    "answer_confidence": 0.9992
+   }
+  }
+ },
+ {
+  "name": "devis_fr",
+  "state": {
+   "corps": "Pourriez-vous m'envoyer vos tarifs pour 50 licences ?",
+   "objet": "Demande de devis"
+  },
+  "questions": [
+   [
+    "team",
+    {
+     "type": "choice",
+     "question": "Quelle équipe doit traiter ce message ?",
+     "choices": [
+      [
+       "facturation",
+       "factures, paiements, remboursements"
+      ],
+      [
+       "technique",
+       "pannes, bogues, intégrations"
+      ],
+      [
+       "commercial",
+       "tarifs, devis, nouveaux achats"
+      ]
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "team": {
+    "type": "choice",
+    "choice": "commercial",
+    "probabilities": {
+     "facturation": 0.0001,
+     "technique": 0.0,
+     "commercial": 0.9999
+    },
+    "confidence": 0.9986,
+    "answer_confidence": 0.9999
+   }
+  }
+ },
+ {
+  "name": "courriel_liste",
+  "state": "Rappel : la réunion d'équipe est déplacée à jeudi 14 h, salle B.",
+  "questions": [
+   [
+    "kind",
+    {
+     "type": "choice",
+     "question": "De quel type de courriel s'agit-il ?",
+     "choices": [
+      "réunion",
+      "facture",
+      "publicité",
+      "personnel"
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "kind": {
+    "type": "choice",
+    "choice": "personnel",
+    "probabilities": {
+     "réunion": 0.4169,
+     "facture": 0.0001,
+     "publicité": 0.0001,
+     "personnel": 0.5829
+    },
+    "confidence": 0.5086,
+    "answer_confidence": 0.5829
+   }
+  }
+ },
+ {
+  "name": "colere_score",
+  "state": "C'est la troisième fois que je vous écris et personne ne répond, c'est inadmissible !",
+  "questions": [
+   [
+    "anger",
+    {
+     "type": "score",
+     "question": "À quel point l'auteur est-il en colère ?",
+     "choices": [
+      "calme",
+      "agacé",
+      "très en colère"
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "anger": {
+    "type": "score",
+    "score": 1.0698,
+    "legend": {
+     "0": "calme",
+     "1": "agacé",
+     "2": "très en colère"
+    },
+    "probabilities": {
+     "0": 0.1432,
+     "1": 0.6439,
+     "2": 0.2129
+    },
+    "confidence": 0.1889,
+    "answer_confidence": 0.6439
+   }
+  }
+ },
+ {
+  "name": "phishing_noul",
+  "state": "Votre compte bancaire est bloqué. Cliquez ici et saisissez votre mot de passe pour le débloquer.",
+  "questions": [
+   [
+    "phishing",
+    {
+     "type": "yesno",
+     "question": "Ce message est-il une tentative d'hameçonnage ?",
+     "choices": {
+      "yes": "hameçonnage ou arnaque",
+      "no": "message légitime"
+     }
+    }
+   ]
+  ],
+  "answers": {
+   "phishing": {
+    "type": "noul",
+    "noul": 1.0,
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   }
+  }
+ },
+ {
+  "name": "ticket_en",
+  "state": "I was charged twice for invoice 4411, please refund the duplicate.",
+  "questions": [
+   [
+    "department",
+    {
+     "type": "choice",
+     "question": "Which team should handle `body`?",
+     "choices": [
+      [
+       "billing",
+       "invoices, payments, refunds"
+      ],
+      [
+       "technical",
+       "bugs and outages"
+      ],
+      [
+       "sales",
+       "pricing"
+      ]
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "department": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 1.0,
+     "technical": 0.0,
+     "sales": 0.0
+    },
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   }
+  }
+ },
+ {
+  "name": "ticket_es",
+  "state": "La aplicación se cierra cada vez que abro la configuración.",
+  "questions": [
+   [
+    "department",
+    {
+     "type": "choice",
+     "question": "Which team should handle this?",
+     "choices": [
+      [
+       "billing",
+       "invoices, payments, refunds"
+      ],
+      [
+       "technical",
+       "bugs and outages"
+      ],
+      [
+       "sales",
+       "pricing"
+      ]
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "department": {
+    "type": "choice",
+    "choice": "technical",
+    "probabilities": {
+     "billing": 0.0004,
+     "technical": 0.9984,
+     "sales": 0.0011
+    },
+    "confidence": 0.9884,
+    "answer_confidence": 0.9984
+   }
+  }
+ },
+ {
+  "name": "long_fr",
+  "state": "Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels. Le serveur de production renvoie une erreur 502 depuis ce matin, les clients ne peuvent plus se connecter à leur espace et le support est submergé d'appels.",
+  "questions": [
+   [
+    "team",
+    {
+     "type": "choice",
+     "question": "Quelle équipe doit traiter ce message ?",
+     "choices": [
+      [
+       "facturation",
+       "factures, paiements, remboursements"
+      ],
+      [
+       "technique",
+       "pannes, bogues, intégrations"
+      ],
+      [
+       "commercial",
+       "tarifs, devis, nouveaux achats"
+      ]
+     ]
+    }
+   ],
+   [
+    "severity",
+    {
+     "type": "score",
+     "question": "Quelle est la gravité de l'incident ?",
+     "choices": [
+      "mineure",
+      "importante",
+      "critique"
+     ]
+    }
+   ]
+  ],
+  "answers": {
+   "team": {
+    "type": "choice",
+    "choice": "technique",
+    "probabilities": {
+     "facturation": 0.0162,
+     "technique": 0.7691,
+     "commercial": 0.2148
+    },
+    "confidence": 0.4548,
+    "answer_confidence": 0.7691
+   },
+   "severity": {
+    "type": "score",
+    "score": 1.4324,
+    "legend": {
+     "0": "mineure",
+     "1": "importante",
+     "2": "critique"
+    },
+    "probabilities": {
+     "0": 0.0665,
+     "1": 0.4346,
+     "2": 0.4989
+    },
+    "confidence": 0.1905,
+    "answer_confidence": 0.4989
+   }
+  }
+ },
+ {
+  "name": "preset_email",
+  "state": {
+   "body": "Bonjour, pouvez-vous m'envoyer la facture de mars ? Merci d'avance."
+  },
+  "questions": [
+   [
+    "category",
+    {
+     "type": "choice",
+     "question": "Which team should handle the email in `body`?",
+     "choices": [
+      [
+       "billing",
+       "invoices, payments, refunds"
+      ],
+      [
+       "technical",
+       "bugs, outages, integrations"
+      ],
+      [
+       "sales",
+       "pricing, demos, new purchases"
+      ],
+      [
+       "security",
+       "phishing, scams, account compromise"
+      ],
+      [
+       "hr",
+       "hiring, leave, payroll"
+      ],
+      [
+       "other",
+       "none of the above"
+      ]
+     ]
+    }
+   ],
+   [
+    "is_spam",
+    {
+     "type": "yesno",
+     "question": "Is this email unsolicited spam or bulk marketing?"
+    }
+   ],
+   [
+    "is_phishing",
+    {
+     "type": "yesno",
+     "question": "Is this email a phishing or scam attempt to steal money, credentials, or personal data?",
+     "choices": {
+      "yes": "phishing, scam, or fraud",
+      "no": "a legitimate email"
+     }
+    }
+   ],
+   [
+    "urgency",
+    {
+     "type": "score",
+     "question": "How urgent is the request in `body`?",
+     "choices": [
+      "no time pressure",
+      "needs attention soon",
+      "blocking issue or hard deadline"
+     ]
+    }
+   ],
+   [
+    "needs_reply",
+    {
+     "type": "yesno",
+     "question": "Does the sender expect a reply?"
+    }
+   ]
+  ],
+  "answers": {
+   "category": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 1.0,
+     "technical": 0.0,
+     "sales": 0.0,
+     "security": 0.0,
+     "hr": 0.0,
+     "other": 0.0
+    },
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   },
+   "is_spam": {
+    "type": "noul",
+    "noul": 0.0,
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   },
+   "is_phishing": {
+    "type": "noul",
+    "noul": 0.0,
+    "confidence": 1.0,
+    "answer_confidence": 1.0
+   },
+   "urgency": {
+    "type": "score",
+    "score": 1.7761,
+    "legend": {
+     "0": "no time pressure",
+     "1": "needs attention soon",
+     "2": "blocking issue or hard deadline"
+    },
+    "probabilities": {
+     "0": 0.0071,
+     "1": 0.2098,
+     "2": 0.7831
+    },
+    "confidence": 0.4957,
+    "answer_confidence": 0.7831
+   },
+   "needs_reply": {
+    "type": "noul",
+    "noul": 0.3384,
+    "confidence": 0.6616,
+    "answer_confidence": 0.6616
+   }
+  }
+ },
+ {
+  "name": "preset_triage",
+  "state": {
+   "message": "Je veux résilier mon abonnement, vos concurrents sont moins chers."
+  },
+  "questions": [
+   [
+    "intent",
+    {
+     "type": "choice",
+     "question": "What does the customer want in `message`?",
+     "choices": [
+      [
+       "refund",
+       "money returned or a duplicate charge reversed"
+      ],
+      [
+       "technical_help",
+       "a bug, outage or integration problem"
+      ],
+      [
+       "billing_question",
+       "a question about an invoice, plan or payment method"
+      ],
+      [
+       "information",
+       "general information, pricing or how-to"
+      ],
+      [
+       "cancellation",
+       "wants to cancel or downgrade"
+      ],
+      [
+       "other",
+       "none of the other options fits"
+      ]
+     ]
+    }
+   ],
+   [
+    "is_urgent",
+    {
+     "type": "yesno",
+     "question": "Does `message` communicate time pressure or a deadline?"
+    }
+   ],
+   [
+    "frustration",
+    {
+     "type": "score",
+     "question": "How frustrated does the customer sound in `message`?",
+     "choices": [
+      "calm and neutral",
+      "concerned but civil",
+      "clearly annoyed",
+      "very angry or using strong language"
+     ]
+    }
+   ],
+   [
+    "refund_requested",
+    {
+     "type": "yesno",
+     "question": "Does the customer ask for money back?"
+    }
+   ],
+   [
+    "churn_risk",
+    {
+     "type": "yesno",
+     "question": "Does `message` suggest the customer may leave for a competitor or cancel?"
+    }
+   ]
+  ],
+  "answers": {
+   "intent": {
+    "type": "choice",
+    "choice": "cancellation",
+    "probabilities": {
+     "refund": 0.1698,
+     "technical_help": 0.0,
+     "billing_question": 0.0,
+     "information": 0.0001,
+     "cancellation": 0.8297,
+     "other": 0.0004
+    },
+    "confidence": 0.7432,
+    "answer_confidence": 0.8297
+   },
+   "is_urgent": {
+    "type": "noul",
+    "noul": 0.0093,
+    "confidence": 0.9907,
+    "answer_confidence": 0.9907
+   },
+   "frustration": {
+    "type": "score",
+    "score": 2.4541,
+    "legend": {
+     "0": "calm and neutral",
+     "1": "concerned but civil",
+     "2": "clearly annoyed",
+     "3": "very angry or using strong language"
+    },
+    "probabilities": {
+     "0": 0.04,
+     "1": 0.0772,
+     "2": 0.2716,
+     "3": 0.6113
+    },
+    "confidence": 0.2922,
+    "answer_confidence": 0.6113
+   },
+   "refund_requested": {
+    "type": "noul",
+    "noul": 0.9276,
+    "confidence": 0.9276,
+    "answer_confidence": 0.9276
+   },
+   "churn_risk": {
+    "type": "noul",
+    "noul": 0.8655,
+    "confidence": 0.8655,
+    "answer_confidence": 0.8655
+   }
+  }
+ },
+ {
+  "name": "conversation",
+  "state": [
+   {
+    "role": "user",
+    "text": "Bonjour"
+   },
+   {
+    "role": "user",
+    "text": "Mon colis n'est jamais arrivé, je veux être remboursé."
+   }
+  ],
+  "questions": [
+   [
+    "refund",
+    {
+     "type": "yesno",
+     "question": "Le client demande-t-il un remboursement ?"
+    }
+   ]
+  ],
+  "answers": {
+   "refund": {
+    "type": "noul",
+    "noul": 0.9984,
+    "confidence": 0.9984,
+    "answer_confidence": 0.9984
+   }
+  }
+ }
+]

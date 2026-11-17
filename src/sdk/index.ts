@@ -464,6 +464,100 @@ export interface OneShotOptions {
   schema: Record<string, unknown>;
 }
 
+/** Un choix : son libellé seul, ou un libellé et ce qu’il recouvre (aide le modèle à trancher). */
+export type DecisionChoice = string | { label: string; description?: string };
+
+/** Une question posée au modèle de décision local. */
+export type DecisionQuestion =
+  | {
+      /** Un choix parmi des options (par défaut). */
+      type?: "choice";
+      question: string;
+      /** Les choix, dans l’ordre, ou un objet libellé → description. Moins de 20 de préférence. */
+      choices: DecisionChoice[] | Record<string, string>;
+    }
+  | {
+      /** Un niveau sur une échelle ordonnée. */
+      type: "score";
+      question: string;
+      /** Les niveaux, du plus bas au plus haut. */
+      choices: string[];
+    }
+  | {
+      /** Oui ou non. */
+      type: "yesno";
+      question: string;
+      /** Ce que veut dire oui, ce que veut dire non (facultatif). */
+      choices?: { yes?: string; no?: string };
+    };
+
+export type DecisionAnswer =
+  | {
+      type: "choice";
+      /** Le libellé retenu. */
+      choice: string;
+      /** Probabilité du choix retenu, entre 0 et 1. */
+      confidence: number;
+      /** Probabilité de chaque choix. */
+      probabilities: Record<string, number>;
+    }
+  | {
+      type: "score";
+      /** Niveau espéré (moyenne pondérée, 0 pour le premier niveau). */
+      score: number;
+      /** Niveau le plus probable (son indice). */
+      level: number;
+      confidence: number;
+      /** Probabilité de chaque niveau, dans l’ordre. */
+      probabilities: number[];
+    }
+  | {
+      type: "yesno";
+      answer: boolean;
+      /** Probabilité du oui. */
+      probability: number;
+      confidence: number;
+    };
+
+/** Questions toutes prêtes (celles du modèle, en anglais ; le texte peut être en français). */
+export type DecisionPreset = "triage" | "email" | "guard" | "moderation" | "router";
+
+/** Texte à lire : une chaîne, un objet (ses champs), ou une liste de messages (les derniers comptent). */
+export type DecisionText = string | Record<string, unknown> | unknown[];
+
+export interface DecideOptions {
+  text: DecisionText;
+  question: string;
+  choices: DecisionChoice[] | Record<string, string>;
+}
+
+export interface DecideManyOptions {
+  text: DecisionText;
+  /** Plusieurs questions, chacune sous son identifiant. */
+  questions?: Record<string, DecisionQuestion>;
+  /** Ou un jeu de questions tout prêt. */
+  preset?: DecisionPreset;
+}
+
+export interface Decision {
+  choice: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  /** Le texte dépassait ce que le modèle lit (environ 1 000 jetons, question comprise) et a été coupé. */
+  truncated: boolean;
+}
+
+export interface Decisions {
+  answers: Record<string, DecisionAnswer>;
+  truncated: boolean;
+}
+
+/** Les choix sous forme de liste, pour garder leur ordre jusqu’au modèle. */
+function orderedChoices(choices: unknown): unknown {
+  if (Array.isArray(choices) || choices === null || typeof choices !== "object") return choices;
+  return Object.entries(choices as Record<string, unknown>);
+}
+
 export interface AgentStartOptions {
   /** Consigne de départ de l’agent. */
   instruction: string;
@@ -477,11 +571,31 @@ export interface AgentStartOptions {
   resultSchema?: Record<string, unknown>;
 }
 
+/**
+ * Décision locale : le modèle de décision d’Alfred lit `text` et choisit parmi `choices`, avec la probabilité de
+ * chaque choix. Calculé sur cet ordinateur, en une fraction de seconde, sans service ni coût. Avec `questions` ou
+ * `preset`, plusieurs questions typées en un appel. Rejette tant que le modèle n’est pas téléchargé (Réglages →
+ * Général).
+ */
+function decide(options: DecideOptions): Promise<Decision>;
+function decide(options: DecideManyOptions): Promise<Decisions>;
+function decide(options: DecideOptions | DecideManyOptions): Promise<Decision | Decisions> {
+  const params: Record<string, unknown> = { ...options };
+  if ("choices" in options) params.choices = orderedChoices(options.choices);
+  if ("questions" in options && options.questions)
+    params.questions = Object.entries(options.questions).map(([id, question]) => [
+      id,
+      { ...question, choices: orderedChoices(question.choices) },
+    ]);
+  return request("ai.decide", params);
+}
+
 export const ai = {
   /** Appel unique : une consigne et un contexte entrent, un objet conforme au schéma sort. Sans outil. */
   oneShot<Output = unknown>(options: OneShotOptions): Promise<Output> {
     return request<Output>("ai.oneShot", options);
   },
+  decide,
   /**
    * Lance une conversation d’agent, affichée dans le panneau de droite de la page. La promesse se résout à la fin
    * du premier tour, avec le dernier message de l’agent et, si un schéma est fourni, son résultat structuré.

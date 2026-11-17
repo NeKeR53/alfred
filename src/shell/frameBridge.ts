@@ -261,6 +261,11 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.semantic.search", { ...pick(params, ["index", "text", "limit"]), subject });
     case "semantic.status":
       return invoke("frame.semantic.status", { ...pick(params, ["index"]), subject });
+    case "ai.decide":
+      return invoke("frame.ai.decide", {
+        ...pick(params, ["text", "question", "type", "choices", "questions", "preset"]),
+        subject,
+      });
     case "search.query":
       return invoke("frame.search.query", {
         ...pick(params, ["index", "text", "limit", "offset", "raw", "prefix"]),

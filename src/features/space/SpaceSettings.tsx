@@ -25,6 +25,7 @@ import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { BackupsSection } from "./BackupsSection";
+import { DecisionsSection } from "./DecisionsSection";
 import { SemanticSection } from "./SemanticSection";
 
 export interface Grant {
@@ -689,6 +690,7 @@ export function SpaceSettings() {
       <HistorySection confirm={confirm} />
       <BackupsSection snapshot={snapshot} confirm={confirm} />
       <SemanticSection />
+      <DecisionsSection />
       <GrantsSection snapshot={snapshot} confirm={confirm} />
       {confirmDialog}
     </Page>

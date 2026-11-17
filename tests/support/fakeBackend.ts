@@ -551,6 +551,15 @@ export class FakeBackend {
     "backups.list": () => [],
     "jobs.list": () => [],
     "semantic.model": () => ({ model: "e5", sizeMb: 470, status: "missing", received: null, total: null, error: null }),
+    "decisions.model": () => ({
+      model: "laya",
+      sizeMb: 647,
+      status: "missing",
+      received: null,
+      total: null,
+      error: null,
+      damaged: null,
+    }),
     "backups.settings": () => ({ keep: 14 }),
     "grants.revoke": (args) => {
       this.grants = this.grants.filter(

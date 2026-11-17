@@ -68,6 +68,37 @@ describe("identité du demandeur", () => {
   });
 });
 
+describe("décisions locales", () => {
+  it("transmettent la question et ses choix, au nom du cadre émetteur", async () => {
+    await handleFrameRequest(page, "ai.decide", {
+      subject: forged,
+      text: "Prélevé deux fois",
+      question: "Quelle équipe ?",
+      choices: [
+        ["facturation", "paiements"],
+        ["technique", null],
+      ],
+      autre: "x",
+    });
+    await handleFrameRequest(page, "ai.decide", { text: { corps: "x" }, preset: "email" });
+    expect(native.invoke.mock.calls).toEqual([
+      [
+        "frame.ai.decide",
+        {
+          subject: own,
+          text: "Prélevé deux fois",
+          question: "Quelle équipe ?",
+          choices: [
+            ["facturation", "paiements"],
+            ["technique", null],
+          ],
+        },
+      ],
+      ["frame.ai.decide", { subject: own, text: { corps: "x" }, preset: "email" }],
+    ]);
+  });
+});
+
 describe("liens externes", () => {
   it("n’ouvrent une adresse qu’après l’accord donné par Rust, au nom du cadre émetteur", async () => {
     native.invoke.mockResolvedValue({ url: "https://docs.example.com/" });

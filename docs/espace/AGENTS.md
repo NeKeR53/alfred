@@ -34,10 +34,16 @@ L’utilisateur ne connaît pas tout ce que tu peux faire pour lui : c’est à 
   - une action d’un module qui doit en déclencher une autre ailleurs → un **événement** ;
   - un traitement long (import complet, relevé de toutes les pages) → une **tâche de fond** ;
   - des pièces jointes ou des rapports → les **fichiers** et les **documents** (PDF, Excel, CSV) ;
-  - du texte à résumer, trier, classer ou rédiger → l’**IA** dans la page (une réponse structurée, ou une conversation dans le panneau de droite) ;
+  - du texte à classer, trier ou filtrer par une question fermée (quelle équipe, quelle catégorie, urgent ou non, hameçonnage ou non) → la **décision locale** (`ai.decide`) : rapide, sur l’ordinateur, gratuite, qui ne rédige rien, avec un degré de certitude pour laisser l’utilisateur trancher les cas douteux ;
+  - du texte à résumer, extraire, rédiger, ou une décision qui demande de raisonner ou de lire un long document → l’**IA** dans la page (une réponse structurée, ou une conversation dans le panneau de droite) ;
   - une opération que l’utilisateur voudra vous demander de vive voix → une fonction **proposée à l’agent**, et la **voix** pour lire ou dicter ;
   - un même service utilisé par plusieurs pages ou modules → un **connecteur** complet ;
   - un besoin que ses modules couvrent déjà ailleurs, ou qu’un module de son marketplace couvre → s’en servir plutôt que refaire.
+- **`ai.decide` ou `ai.oneShot`** (SDK.md, section 7).
+  - Préfère `ai.decide` pour une question fermée posée à chaque ligne, chaque message ou chaque ticket : il répond en moins d’un dixième de seconde (une seconde pour un long texte), sans service ni coût, et rend la probabilité de chaque choix. Ses présets couvrent le tri de tickets (`triage`), de courriels (`email`), la modération (`moderation`) et les garde-fous d’une consigne envoyée à une IA (`guard`).
+  - Préfère `ai.oneShot` dès qu’il faut écrire (un résumé, une réponse, des champs extraits), raisonner sur plusieurs étapes, ou lire plus d’environ 4 000 caractères.
+  - Limites de `ai.decide` : environ 1 000 jetons lus, le reste est coupé (`truncated`) ; moins de 20 choix ; plus faible sur les langues rares et sur les échelles ; des probabilités trop sûres d’elles, à utiliser comme seuil de doute (sous 0,8, laisser l’utilisateur trancher), pas comme preuve.
+  - Son modèle se télécharge une fois, dans Réglages → Général (« Décisions locales ») : tant qu’il manque, `ai.decide` rejette ; la page attrape ce rejet et dit à l’utilisateur où l’installer.
 
 ## 1. Alfred et l’espace de travail
 

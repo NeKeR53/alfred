@@ -43,7 +43,7 @@ Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichi
 - **Sortie** : stdout. S’il contient du JSON, c’est la valeur rendue ; sinon, le texte sans ses blancs finaux ; vide, `null`. Au plus 1 Mo.
 - **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
 - **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER`, `ALFRED_SPACE`, et le pont du SDK (`ALFRED_SDK_URL`, `ALFRED_SDK_TOKEN`, ci-dessous). Jamais de secret : un service passe par `clients.request`. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
-- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
+- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
 - **Interpréteur** : cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
 
 ```bash
@@ -363,6 +363,52 @@ export function analyser(ticket: { titre: string; description: string }) {
 }
 ```
 
+### `ai.decide` : une décision locale, rapide et gratuite
+
+```ts
+ai.decide(options: { text: string | object | unknown[]; question: string; choices: Choice[] | Record<string, string> }):
+  Promise<{ choice: string; confidence: number; probabilities: Record<string, number>; truncated: boolean }>;
+ai.decide(options: { text: string | object | unknown[]; questions?: Record<string, DecisionQuestion>; preset?: DecisionPreset }):
+  Promise<{ answers: Record<string, DecisionAnswer>; truncated: boolean }>;
+// Choice : "libellé" ou { label, description? } ; un objet { libellé: description } garde l’ordre de ses clés.
+// DecisionQuestion : { type?: "choice"; question; choices } | { type: "score"; question; choices: niveaux }
+//                  | { type: "yesno"; question; choices?: { yes?, no? } }
+```
+
+Un modèle de décision (Laya multilingue) lit `text` et répond à une question fermée : un choix parmi des options, un niveau sur une échelle (`score`), ou oui ou non (`yesno`). Il ne rédige rien ; il rend la réponse et sa probabilité. Le calcul se fait sur l’ordinateur de l’utilisateur, sans service ni coût : moins d’un dixième de seconde par question pour un texte court, environ une seconde pour un texte long.
+
+- **Réponses.** `choice` rend `choice`, `confidence` (la probabilité du choix retenu, entre 0 et 1) et `probabilities` (celle de chaque choix). `score` rend `score` (le niveau espéré, 0 pour le premier), `level` (le plus probable), `confidence` et `probabilities` (une par niveau). `yesno` rend `answer`, `probability` (celle du oui) et `confidence`. Avec `question` et `choices`, la promesse rend directement la réponse ; avec `questions` (plusieurs questions, chacune sous son identifiant) ou `preset`, elle rend `answers`.
+- **Présets.** `preset` pose un jeu de questions tout prêt, en anglais (le texte peut être en français) : `triage` (ticket de support : `intent`, `is_urgent`, `frustration`, `refund_requested`, `churn_risk`), `email` (courriel entrant : `category`, `is_spam`, `is_phishing`, `urgency`, `needs_reply`), `guard` (consigne envoyée à une IA : `jailbreak`, `prompt_injection`, `sensitive_data`, `harm_severity`, `topic`), `moderation` (message publié : `toxic`, `harassment`, `threat`, `spam`, `severity`), `router` (demande à confier à un modèle : `difficulty`, `domain`, `needs_tools`, `is_sensitive`).
+- **Bien poser la question.** Une question courte et fermée, des choix qui s’excluent, chacun avec une description quand le libellé seul est ambigu (« facturation : factures, paiements, remboursements »). Moins de 20 choix ; prévoir un choix « autre ». Un objet en `text` est lu champ par champ (`{ objet, corps }`) ; une liste est lue comme une conversation.
+- **Limites.** Le modèle lit environ 1 000 jetons (à peu près 4 000 caractères), question et choix compris : au-delà, le texte est coupé (la fin, ou le début d’une conversation) et `truncated` vaut `true` ; pour un long document, passe-lui l’extrait utile. Plus de 100 langues, le français et l’anglais en tête ; il est plus faible sur les langues rares et sur les échelles (`score`). Ses probabilités ne sont pas calibrées : il est souvent trop sûr de lui. `confidence` sert à ordonner et à écarter les cas douteux (par exemple, sous 0,8, demander à l’utilisateur), pas à prouver qu’une réponse est juste.
+- **Modèle à installer.** Tant que l’utilisateur n’a pas téléchargé le modèle (Réglages → Général, rubrique « Décisions locales », 647 Mo une seule fois), la promesse est rejetée (« Les décisions locales ne sont pas encore installées… ») : attrape ce rejet et dis-lui où l’installer, au lieu d’afficher l’erreur brute. Une fonction en script l’appelle par le pont (`ai.decide`, mêmes champs).
+
+```tsx
+import { ai } from "@alfred/sdk";
+
+// Trier un ticket de support vers la bonne équipe.
+export async function router(ticket: { titre: string; description: string }) {
+  const { choice, confidence } = await ai.decide({
+    text: ticket,
+    question: "Quelle équipe doit traiter ce ticket ?",
+    choices: {
+      facturation: "factures, paiements, remboursements",
+      technique: "pannes, bogues, intégrations",
+      commercial: "tarifs, devis, nouveaux achats",
+      autre: "rien de tout cela",
+    },
+  });
+  return confidence >= 0.8 ? choice : "à trier"; // sous 0,8, un humain tranche
+}
+
+// Lire un courriel entrant avec le préset `email`.
+export async function lireCourriel(corps: string) {
+  const { answers } = await ai.decide({ text: corps, preset: "email" });
+  const phishing = answers.is_phishing.type === "yesno" && answers.is_phishing.probability > 0.5;
+  return { categorie: answers.category.type === "choice" ? answers.category.choice : null, phishing };
+}
+```
+
 ### `ai.startAgent` : une conversation d’agent
 
 ```ts
@@ -375,7 +421,7 @@ ai.startAgent<Result>(options: {
 }): Promise<{ conversationId: string; message: string; result?: Result }>;
 ```
 
-Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. L’agent est en autonomie stricte (chaque action lui est demandée à l’utilisateur) et n’agit que sur le module : `check`, `db_schema`, `db_query` et `call_function` sur ce module, rien qui change la structure de l’espace de travail. Les `functions` (`"fonction"` ou `"module/fonction"`) deviennent des outils de cet agent ; celle d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot`.
+Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. L’agent est en autonomie stricte (chaque action lui est demandée à l’utilisateur) et n’agit que sur le module : `check`, `db_schema`, `db_query` et `call_function` sur ce module, rien qui change la structure de l’espace de travail. Les `functions` (`"fonction"` ou `"module/fonction"`) deviennent des outils de cet agent ; celle d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot` ; pour un choix fermé, `ai.decide`.
 
 ```tsx
 import { ai } from "@alfred/sdk";

@@ -1,0 +1,337 @@
+[
+ {
+  "name": "triage",
+  "field": "message",
+  "questions": [
+   [
+    "intent",
+    {
+     "type": "choice",
+     "question": "What does the customer want in `message`?",
+     "choices": [
+      [
+       "refund",
+       "money returned or a duplicate charge reversed"
+      ],
+      [
+       "technical_help",
+       "a bug, outage or integration problem"
+      ],
+      [
+       "billing_question",
+       "a question about an invoice, plan or payment method"
+      ],
+      [
+       "information",
+       "general information, pricing or how-to"
+      ],
+      [
+       "cancellation",
+       "wants to cancel or downgrade"
+      ],
+      [
+       "other",
+       "none of the other options fits"
+      ]
+     ]
+    }
+   ],
+   [
+    "is_urgent",
+    {
+     "type": "yesno",
+     "question": "Does `message` communicate time pressure or a deadline?"
+    }
+   ],
+   [
+    "frustration",
+    {
+     "type": "score",
+     "question": "How frustrated does the customer sound in `message`?",
+     "choices": [
+      "calm and neutral",
+      "concerned but civil",
+      "clearly annoyed",
+      "very angry or using strong language"
+     ]
+    }
+   ],
+   [
+    "refund_requested",
+    {
+     "type": "yesno",
+     "question": "Does the customer ask for money back?"
+    }
+   ],
+   [
+    "churn_risk",
+    {
+     "type": "yesno",
+     "question": "Does `message` suggest the customer may leave for a competitor or cancel?"
+    }
+   ]
+  ]
+ },
+ {
+  "name": "email",
+  "field": "body",
+  "questions": [
+   [
+    "category",
+    {
+     "type": "choice",
+     "question": "Which team should handle the email in `body`?",
+     "choices": [
+      [
+       "billing",
+       "invoices, payments, refunds"
+      ],
+      [
+       "technical",
+       "bugs, outages, integrations"
+      ],
+      [
+       "sales",
+       "pricing, demos, new purchases"
+      ],
+      [
+       "security",
+       "phishing, scams, account compromise"
+      ],
+      [
+       "hr",
+       "hiring, leave, payroll"
+      ],
+      [
+       "other",
+       "none of the above"
+      ]
+     ]
+    }
+   ],
+   [
+    "is_spam",
+    {
+     "type": "yesno",
+     "question": "Is this email unsolicited spam or bulk marketing?"
+    }
+   ],
+   [
+    "is_phishing",
+    {
+     "type": "yesno",
+     "question": "Is this email a phishing or scam attempt to steal money, credentials, or personal data?",
+     "choices": {
+      "yes": "phishing, scam, or fraud",
+      "no": "a legitimate email"
+     }
+    }
+   ],
+   [
+    "urgency",
+    {
+     "type": "score",
+     "question": "How urgent is the request in `body`?",
+     "choices": [
+      "no time pressure",
+      "needs attention soon",
+      "blocking issue or hard deadline"
+     ]
+    }
+   ],
+   [
+    "needs_reply",
+    {
+     "type": "yesno",
+     "question": "Does the sender expect a reply?"
+    }
+   ]
+  ]
+ },
+ {
+  "name": "guard",
+  "field": "prompt",
+  "questions": [
+   [
+    "jailbreak",
+    {
+     "type": "yesno",
+     "question": "Does `prompt` try to make an AI assistant ignore its rules, policies or system instructions?"
+    }
+   ],
+   [
+    "prompt_injection",
+    {
+     "type": "yesno",
+     "question": "Does `prompt` contain instructions aimed at the AI system rather than a genuine user request?"
+    }
+   ],
+   [
+    "sensitive_data",
+    {
+     "type": "yesno",
+     "question": "Does `prompt` contain credentials, personal data or other sensitive information?"
+    }
+   ],
+   [
+    "harm_severity",
+    {
+     "type": "score",
+     "question": "How much harm would complying with `prompt` cause?",
+     "choices": [
+      "none: ordinary request",
+      "minor: mildly inappropriate",
+      "serious: unsafe advice or abuse",
+      "severe: dangerous or illegal"
+     ]
+    }
+   ],
+   [
+    "topic",
+    {
+     "type": "choice",
+     "question": "What is `prompt` about?",
+     "choices": [
+      [
+       "product_support",
+       null
+      ],
+      [
+       "coding",
+       null
+      ],
+      [
+       "general_knowledge",
+       null
+      ],
+      [
+       "personal_advice",
+       null
+      ],
+      [
+       "security_testing",
+       null
+      ],
+      [
+       "other",
+       null
+      ]
+     ]
+    }
+   ]
+  ]
+ },
+ {
+  "name": "moderation",
+  "field": "post",
+  "questions": [
+   [
+    "toxic",
+    {
+     "type": "yesno",
+     "question": "Is `post` toxic: rude, disrespectful or likely to make someone leave the discussion?"
+    }
+   ],
+   [
+    "harassment",
+    {
+     "type": "yesno",
+     "question": "Does `post` target or harass a specific person?"
+    }
+   ],
+   [
+    "threat",
+    {
+     "type": "yesno",
+     "question": "Does `post` threaten violence, harm or intimidation?"
+    }
+   ],
+   [
+    "spam",
+    {
+     "type": "yesno",
+     "question": "Is `post` spam or advertising?"
+    }
+   ],
+   [
+    "severity",
+    {
+     "type": "score",
+     "question": "How severe is any rule-breaking in `post`?",
+     "choices": [
+      "no rule-breaking: ordinary on-topic post",
+      "mild: rude tone or off-topic, no target",
+      "clear violation: insults, harassment or spam aimed at someone",
+      "severe: threats, hate speech or calls for violence"
+     ]
+    }
+   ]
+  ]
+ },
+ {
+  "name": "router",
+  "field": "request",
+  "questions": [
+   [
+    "difficulty",
+    {
+     "type": "score",
+     "question": "How hard is `request` for a language model?",
+     "choices": [
+      "trivial: a lookup or one-liner",
+      "easy: short answer, no reasoning",
+      "moderate: several steps",
+      "hard: long multi-step reasoning or specialist knowledge"
+     ]
+    }
+   ],
+   [
+    "domain",
+    {
+     "type": "choice",
+     "question": "What domain does `request` belong to?",
+     "choices": [
+      [
+       "code",
+       "software engineering, programming, refactoring, architecture, debugging"
+      ],
+      [
+       "math_or_logic",
+       "mathematics, logic puzzles, proofs, complex calculation"
+      ],
+      [
+       "writing",
+       "creative writing, essays, emails, blog posts, copywriting"
+      ],
+      [
+       "factual_lookup",
+       "facts, definitions, trivia, history"
+      ],
+      [
+       "data_analysis",
+       "statistics, SQL, data manipulation, metrics"
+      ],
+      [
+       "chitchat",
+       "casual conversation, greetings, small talk"
+      ]
+     ]
+    }
+   ],
+   [
+    "needs_tools",
+    {
+     "type": "yesno",
+     "question": "Does answering `request` require external tools, search or private data?"
+    }
+   ],
+   [
+    "is_sensitive",
+    {
+     "type": "yesno",
+     "question": "Does `request` involve money, legal, medical or safety consequences?"
+    }
+   ]
+  ]
+ }
+]
