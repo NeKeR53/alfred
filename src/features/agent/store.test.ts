@@ -650,6 +650,40 @@ describe("lot 3 · enregistrement et chargement", () => {
     await useAgents.getState().load();
     expect(useAgents.getState().activeId).toBe("ancienne");
   });
+
+  it("oublie les conversations de l’espace quitté quand un autre espace s’ouvre", async () => {
+    const header = (id: string, cwd: string) => ({
+      id,
+      title: id,
+      provider: "codex",
+      cwd,
+      autonomy: "ask",
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      unread: false,
+      started: true,
+    });
+    let space = "/espace";
+    native.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "conversations.list")
+        return space === "/espace" ? [header("ici", space)] : [header("la-bas", space)];
+      if (command === "conversations.get") return { ...header(String(args?.id), space), turns: [] };
+      return null;
+    });
+    sessionStorage.removeItem("alfred.agents.selected");
+    await useAgents.getState().load();
+    expect(useAgents.getState().activeId).toBe("ici");
+    // Une conversation neuve, pas encore enregistrée, reste à l’espace où elle est née.
+    useAgents.getState().create();
+
+    space = "/autre";
+    useShell.setState({ snapshot: { path: "/autre", name: "Autre" } as unknown as Snapshot });
+    await useAgents.getState().load();
+    expect(useAgents.getState().headers.map((conversation) => conversation.id)).toEqual(["la-bas"]);
+    expect(Object.keys(useAgents.getState().loaded)).toEqual(["la-bas"]);
+    expect(useAgents.getState().activeId).toBe("la-bas");
+  });
 });
 
 describe("lot 3 · sessions", () => {

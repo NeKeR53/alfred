@@ -27,6 +27,7 @@ import { useShell } from "../../shell/store";
 import { BackupsSection } from "./BackupsSection";
 import { DecisionsSection } from "./DecisionsSection";
 import { SemanticSection } from "./SemanticSection";
+import { confirmLeaving } from "./switchGuard";
 
 export interface Grant {
   /** `page:module/page`, `function:module/fonction` ou `function:module/*`. */
@@ -271,6 +272,8 @@ function SwitchSpaceSection({
   const others = recent.filter((space) => space.path !== snapshot.path);
 
   const open = async (path: string) => {
+    const target = recent.find((space) => space.path === path)?.name ?? path.split(/[\\/]/).pop() ?? path;
+    if (!(await confirmLeaving(target, confirm))) return;
     setOpening(path);
     try {
       await openSpace(path);

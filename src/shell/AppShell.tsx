@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 import { SetupBanner } from "../features/setup/SetupBanner";
+import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
@@ -611,6 +612,7 @@ export function AppShell({
         >
           <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
         </NavButton>
+        <SpaceSwitcher />
       </aside>
       <main className="workspace" inert={settingsOpen}>
         {effective.kind === "agent" && agentAvailable !== null ? (

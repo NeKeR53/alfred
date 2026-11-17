@@ -958,7 +958,9 @@ export const useAgents = create<AgentState>((set, get) => {
     }
   };
 
-  /** Ferme les CLI de toutes les conversations (fermeture de la fenêtre). */
+  /** Espace dont les conversations sont en mémoire ; `undefined` avant le premier chargement. */
+  let loadedSpace: string | null | undefined;
+  /** Ferme les CLI de toutes les conversations (fermeture de la fenêtre, passage à un autre espace). */
   const closeAllSessions = () => Promise.all([...sessions.keys()].map((id) => dropSession(id)));
 
   /** Tâches de fond, lancées au premier chargement : libération des CLI au repos, nommage, fermeture de la fenêtre. */
@@ -1035,6 +1037,15 @@ export const useAgents = create<AgentState>((set, get) => {
     follow: {},
 
     async load() {
+      // Un autre espace ouvert : ses conversations remplacent celles de l’espace quitté, sans rien en garder.
+      const spacePath = useShell.getState().snapshot?.path ?? null;
+      if (loadedSpace !== undefined && loadedSpace !== spacePath) {
+        flushStream();
+        await closeAllSessions();
+        rememberSelected(null);
+        set({ headers: [], loaded: {}, runtime: {}, activeId: null, follow: {}, ready: false });
+      }
+      loadedSpace = spacePath;
       let headers: ConversationHeader[];
       let defaults: AgentDefaults | null;
       let titling: TitlingModel | null;
