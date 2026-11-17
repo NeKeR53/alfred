@@ -664,11 +664,15 @@ pub fn pdf_pages(bytes: &[u8]) -> AppResult<Vec<String>> {
     use std::process::{Command, Stdio};
     let unreadable = || AppError::new("Ce PDF n’a pas pu être lu.");
     let exe = std::env::current_exe().map_err(|_| unreadable())?;
-    let mut child = Command::new(exe)
-        .arg(EXTRACT_PDF_FLAG)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut command = Command::new(exe);
+    command.arg(EXTRACT_PDF_FLAG).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Sous Windows, sans fenêtre de console.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
         .spawn()
         .map_err(|error| AppError::new(format!("Ce PDF n’a pas pu être lu : {error}")))?;
     let mut stdin = child.stdin.take().ok_or_else(unreadable)?;

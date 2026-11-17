@@ -35,6 +35,9 @@ async fn command_output(state: &AppState, command: &str) -> AppResult<String> {
         process.args(["-c", command]);
         process
     };
+    // Sous Windows, `cmd` sans fenêtre de console.
+    #[cfg(windows)]
+    process.creation_flags(0x0800_0000);
     process
         .current_dir(&space.root)
         .env("PATH", crate::agents::search_path())

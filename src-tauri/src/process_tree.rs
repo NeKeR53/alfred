@@ -160,6 +160,13 @@ impl OwnedProcess {
 
 /// Lance `command` en gardant de quoi arrêter tout son arbre.
 pub(crate) fn spawn(command: &mut std::process::Command) -> std::io::Result<(std::process::Child, OwnedProcess)> {
+    // Sous Windows, un programme en mode console (script, interpréteur, outil du poste) ouvrirait sa propre
+    // fenêtre noire à chaque lancement : il tourne sans fenêtre, sa sortie est lue par Alfred.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     let child = command.spawn()?;
     let pid = child.id();
     Ok((child, OwnedProcess { pid }))
