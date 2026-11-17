@@ -36,6 +36,7 @@ import { ModuleSchedules } from "../schedules/ModuleSchedules";
 import { remainingSummary } from "../setup/api";
 import { openOnboarding } from "../setup/Onboarding";
 import { useModuleSetup } from "../setup/useModuleSetup";
+import { TeamSync } from "../teamSync/TeamSync";
 import { ModuleWebhooks } from "../webhooks/ModuleWebhooks";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
@@ -584,6 +585,7 @@ export function ModulesSettings() {
             </div>
           )}
         </div>
+        <TeamSync module={module} />
         <ModuleWebhooks module={module.id} />
         <ModuleSchedules module={module.id} />
         <ModuleJobs module={module.id} />

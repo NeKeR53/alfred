@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { frameBase } from "../lib/native";
+import { frameBase, onNativeEvent } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
 import {
@@ -133,6 +133,11 @@ export function PageFrame({
     const stopTheme = useShell.subscribe((state, previous) => {
       if (state.theme !== previous.theme || state.snapshot?.accent !== previous.snapshot?.accent) pushContext();
     });
+    // Des données du module ont changé hors de la page (partage en équipe) : la page relit ce qu’elle affiche.
+    const stopData = onNativeEvent("space:dataChanged", (payload) => {
+      if ((payload as { module?: string } | null)?.module === identity.module)
+        post({ alfred: ALFRED_MESSAGE, kind: "event", name: "dataChanged", payload: null });
+    });
     const stopPeer = capture
       ? () => undefined
       : registerPeer(identity, (message) =>
@@ -142,6 +147,7 @@ export function PageFrame({
       snapshot.dispose();
       window.removeEventListener("message", onMessage);
       stopPeer();
+      stopData();
       stopSelection();
       stopTheme();
       if (!capture) releaseFrame(identity);

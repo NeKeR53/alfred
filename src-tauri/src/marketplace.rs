@@ -312,7 +312,7 @@ fn refresh(state: &AppState, only: Option<&str>) -> AppResult<Value> {
 /// Git pour les opérations réseau (clone, fetch, push). Seuls les identifiants déjà configurés sur le poste
 /// servent : aucune question au terminal, aucune fenêtre du gestionnaire d’identifiants, aucune phrase secrète
 /// demandée par SSH. Une connexion qui ne répond plus est abandonnée au lieu de bloquer l’interface.
-fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
+pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
     let mut command = Command::new("git");
     command
         .current_dir(dir)
@@ -360,12 +360,12 @@ fn ssh_command(dir: &Path) -> Option<String> {
     Some(format!("{configured} -o BatchMode=yes -o ConnectTimeout=20"))
 }
 
-fn stderr_of(error: &AppError) -> String {
+pub(crate) fn stderr_of(error: &AppError) -> String {
     error.detail.as_ref().and_then(|detail| detail.get("stderr")).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
 /// Traduit l’échec d’une opération distante en une phrase qui dit quoi vérifier ; la sortie de git reste en détail.
-fn explain_remote(error: AppError, action: &str) -> AppError {
+pub(crate) fn explain_remote(error: AppError, action: &str) -> AppError {
     let stderr = stderr_of(&error);
     if stderr.is_empty() {
         return error;
@@ -405,7 +405,7 @@ fn explain_remote(error: AppError, action: &str) -> AppError {
 }
 
 /// Clone dans un dossier voisin puis le renomme : un clone interrompu ne laisse jamais un marketplace à moitié là.
-fn clone_into(url: &str, target: &Path) -> AppResult<()> {
+pub(crate) fn clone_into(url: &str, target: &Path) -> AppResult<()> {
     let parent = target.parent().ok_or_else(|| AppError::new("Dossier des marketplaces invalide."))?;
     fs::create_dir_all(parent)?;
     let staging_name = format!(".clone-{}", uuid::Uuid::new_v4().simple());
@@ -430,7 +430,7 @@ fn remote_ref_exists(clone: &Path, name: &str) -> bool {
     git::run(clone, &["rev-parse", "-q", "--verify", &format!("refs/remotes/origin/{name}^{{commit}}")]).is_ok()
 }
 
-fn fetch_and_align(clone: &Path) -> AppResult<()> {
+pub(crate) fn fetch_and_align(clone: &Path) -> AppResult<()> {
     remote_git(clone, &["fetch", "--prune", "--quiet", "origin"])
         .map_err(|error| explain_remote(error, "rafraîchissement"))?;
     if !remote_ref_exists(clone, "HEAD") {
@@ -442,7 +442,7 @@ fn fetch_and_align(clone: &Path) -> AppResult<()> {
 
 /// Branche du distant que le clone suit : sa branche par défaut, sinon celle du clone si le distant l’a, sinon la
 /// première qu’il propose. `None` tant que le distant n’a aucun commit.
-fn remote_branch(clone: &Path) -> Option<String> {
+pub(crate) fn remote_branch(clone: &Path) -> Option<String> {
     if remote_ref_exists(clone, "HEAD") {
         let target = git::run(clone, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).unwrap_or_default();
         if let Some(branch) = target.strip_prefix("refs/remotes/origin/") {
@@ -489,7 +489,7 @@ fn align(clone: &Path) -> AppResult<()> {
 /// Commit dans le clone d’un marketplace, sous l’identité git de l’utilisateur pour que l’équipe voie qui a
 /// publié ; sous celle d’Alfred si le poste n’en a pas. La signature est désactivée : elle pourrait demander une
 /// phrase secrète.
-fn commit_clone(clone: &Path, message: &str) -> AppResult<Option<String>> {
+pub(crate) fn commit_clone(clone: &Path, message: &str) -> AppResult<Option<String>> {
     git::run(clone, &["add", "-A"])?;
     if !git::has_changes(clone)? {
         return Ok(None);
@@ -540,7 +540,7 @@ fn rename_dir(from: &Path, to: &Path) -> AppResult<()> {
     Ok(retrying(windows_transient, || fs::rename(from, to))?)
 }
 
-fn remove_tree(path: &Path) -> AppResult<()> {
+pub(crate) fn remove_tree(path: &Path) -> AppResult<()> {
     match retrying(windows_transient, || fs::remove_dir_all(path)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1726,7 +1726,7 @@ fn verify(space: &Space, manifest: &ModuleManifest, published_manifest: &str, no
 }
 
 /// Le distant a avancé depuis le dernier rafraîchissement : le push est refusé, mais il suffit de se réaligner.
-fn remote_advanced(error: &AppError) -> bool {
+pub(crate) fn remote_advanced(error: &AppError) -> bool {
     let stderr = stderr_of(error);
     stderr.contains("[rejected]") || stderr.contains("fetch first") || stderr.contains("non-fast-forward")
 }

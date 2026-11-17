@@ -42,6 +42,7 @@ mod space;
 mod space_db;
 mod state;
 mod system_notifications;
+mod team_sync;
 mod transpile;
 mod vault;
 #[cfg(feature = "verify")]
@@ -188,6 +189,7 @@ pub fn run() {
             jobs::start(state.clone());
             module_events::start(state.clone());
             module_semantic::start(state.clone());
+            team_sync::start(state.clone());
             schedules::start(state);
             Ok(())
         })

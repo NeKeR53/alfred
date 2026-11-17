@@ -96,6 +96,8 @@ export interface ModuleSummary {
   schedules: Array<{ id: string; description: string; function: string; everyMinutes?: number; at?: string }>;
   /** Parcours de configuration : texte d’accueil (`setup` du manifeste). */
   setup?: { welcome?: string } | null;
+  /** Tables partagées entre les membres d’une équipe par un dépôt git (`sync.tables` du manifeste). */
+  sync?: string[];
 }
 
 export interface ResolvedFunction {

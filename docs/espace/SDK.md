@@ -817,3 +817,32 @@ export async function versionDePandoc() {
   return resultat.stdout.split("\n")[0];
 }
 ```
+
+## 17. Données partagées en équipe : `sync`
+
+Pour que les membres d’une équipe travaillent sur les mêmes lignes, chacun dans son Alfred (un carnet de contacts, un suivi de commandes), nomme les tables à partager dans `module.json` :
+
+```json
+"sync": { "tables": ["carnet_contacts", "carnet_notes"] }
+```
+
+```sql
+CREATE TABLE carnet_contacts (
+  id TEXT PRIMARY KEY,          -- crypto.randomUUID() à l’insertion
+  nom TEXT NOT NULL,
+  email TEXT,
+  modifie_le TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+```ts
+import { db } from "@alfred/sdk";
+
+await db.execute("INSERT INTO carnet_contacts (id, nom, email) VALUES (?1, ?2, ?3)", [crypto.randomUUID(), nom, email]);
+```
+
+- Chaque table partagée a une clé primaire sur une seule colonne, en **texte généré** : avec un entier auto-incrémenté, deux membres créeraient la même ligne. `check` signale une table absente ou une clé entière (`structure`).
+- L’utilisateur relie le module au dépôt git de l’équipe (une adresse, la même pour tous) dans la fiche du module : Réglages → Modules → Partage en équipe. Alfred s’y connecte avec les accès git du poste, y range une ligne par fichier et synchronise toutes les deux minutes tant qu’il est ouvert, et à la demande.
+- Ce qui change ici part dans le dépôt ; ce qui change dans le dépôt arrive dans la base, comme une écriture (déclencheurs de recherche et d’historique compris, auteur `partage`). Une même ligne modifiée des deux côtés : la version de l’équipe l’emporte, la version locale est notée au journal (`kind: "sync"`).
+- Une page qui charge ses données avec un gabarit ou `useAsync` se recharge d’elle-même quand des données arrivent de l’équipe. Rien d’autre à écrire : pas d’appel de synchronisation dans la page.
+- Ne partage que les données de l’équipe : un réglage personnel ou un brouillon reste dans une table non partagée.

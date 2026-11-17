@@ -106,6 +106,23 @@ pub struct ModuleManifest {
     /// Événements que le module publie, et ceux d’autres modules auxquels ses fonctions s’abonnent.
     #[serde(skip_serializing_if = "EventsDecl::is_empty")]
     pub events: EventsDecl,
+    /// Tables partagées entre les membres d’une équipe par un dépôt git (`team_sync`).
+    #[serde(skip_serializing_if = "SyncDecl::is_empty")]
+    pub sync: SyncDecl,
+}
+
+/// Partage des données du module en équipe : les tables dont chaque ligne va dans le dépôt de l’équipe.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncDecl {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<String>,
+}
+
+impl SyncDecl {
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -535,6 +552,8 @@ pub struct ModuleSummary {
     pub webhooks: Vec<WebhookDecl>,
     pub schedules: Vec<ScheduleDecl>,
     pub setup: Option<SetupDecl>,
+    /// Tables partagées en équipe (`sync.tables`).
+    pub sync: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1069,6 +1088,12 @@ impl Space {
         }
 
         problems.extend(dependency_problems(&modules));
+        // Partage en équipe : une table partagée doit exister et avoir une clé texte, sinon deux membres s’écrasent.
+        for module in modules.iter().filter(|module| !module.sync.tables.is_empty()) {
+            for message in crate::team_sync::problems(self, module) {
+                problems.push(Problem { module: module.id.clone(), message });
+            }
+        }
         let module_hidden =
             |module: &str| manifest.layout.overrides.get(&module_key(module)).is_some_and(|o| o.hidden);
         let page_override = |reference: &str| manifest.layout.overrides.get(&format!("page:{reference}"));
@@ -1241,6 +1266,7 @@ impl Space {
                     webhooks: module.webhooks.clone(),
                     schedules: module.schedules.clone(),
                     setup: module.setup.clone(),
+                    sync: module.sync.tables.clone(),
                 })
                 .collect(),
             functions,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isFrameMessage } from "../../sdk/protocol";
 
 export interface LoadState<Data> {
   data: Data | undefined;
@@ -29,5 +30,14 @@ export function useLoad<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unk
     };
   }, [tick, ...deps]);
   const reload = useCallback(() => setTick((value) => value + 1), []);
+  // Données du module changées ailleurs (reçues de l’équipe) : la coquille prévient le cadre, le gabarit relit.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window.parent || !isFrameMessage(event.data)) return;
+      if (event.data.kind === "event" && event.data.name === "dataChanged") reload();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [reload]);
   return { data: state.data, error: state.error, loading: state.loading, reload };
 }

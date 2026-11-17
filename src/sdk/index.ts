@@ -674,5 +674,7 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
     };
   }, [tick, ...deps]);
   const reload = useCallback(() => setTick((value) => value + 1), []);
+  // Données du module changées ailleurs (reçues de l’équipe) : le chargement se relance de lui-même.
+  useEffect(() => onShellEvent("dataChanged", reload), [reload]);
   return { data: state.data, error: state.error, loading: state.loading, reload };
 }
