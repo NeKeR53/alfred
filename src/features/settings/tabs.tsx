@@ -12,8 +12,9 @@ import { VoiceSettings } from "../voice/VoiceSettings";
 const icon = (Icon: typeof Bot) => <Icon size={15} aria-hidden="true" />;
 
 /**
- * Rubriques des Réglages, dans l’ordre de la barre latérale : d’abord celles de l’espace de travail ouvert (ses
- * modules installés, le Marketplace d’où en importer, son dossier, son apparence, son menu, son journal), puis
+ * Rubriques des Réglages, dans l’ordre de la barre latérale : d’abord celles de l’espace de travail ouvert (Général,
+ * la première, sur laquelle les Réglages s’ouvrent : la liste des espaces de travail et l’historique ; puis ses
+ * modules installés, le Marketplace d’où en importer, son apparence, son menu, son journal), puis
  * celles d’Alfred, communes à tous les espaces de travail (agent, voix, mots de passe). Tout ce qui appartient à un
  * module (fonctions, services, webhooks, planifications, tâches de fond) se trouve dans la fiche de ce module.
  * Un trait sépare deux groupes ; un titre annonce l’espace de travail et Alfred ; les pages de l’espace de travail
@@ -21,10 +22,17 @@ const icon = (Icon: typeof Bot) => <Icon size={15} aria-hidden="true" />;
  */
 export const settingsTabs: BuiltInTab[] = [
   {
+    id: "space",
+    label: "Général",
+    group: "espace",
+    groupTitle: "Espace de travail",
+    icon: icon(FolderOpen),
+    render: () => <SpaceSettings />,
+  },
+  {
     id: "modules",
     label: "Modules",
     group: "espace",
-    groupTitle: "Espace de travail",
     icon: icon(Boxes),
     render: () => <ModulesSettings />,
   },
@@ -34,13 +42,6 @@ export const settingsTabs: BuiltInTab[] = [
     group: "espace",
     icon: icon(Store),
     render: () => <MarketplaceSettings />,
-  },
-  {
-    id: "space",
-    label: "Général",
-    group: "espace",
-    icon: icon(FolderOpen),
-    render: () => <SpaceSettings />,
   },
   {
     id: "appearance",

@@ -75,9 +75,9 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       .getAllByRole("button")
       .map((item) => item.textContent),
   ).toEqual([
+    "Général",
     "Modules",
     "Marketplace",
-    "Général",
     "Apparence",
     "Ordre du menu",
     "Journal",
@@ -92,7 +92,10 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       .getAllByText(/^(Espace de travail|Alfred|Pages de l’espace de travail)$/)
       .map((title) => title.textContent),
   ).toEqual(["Espace de travail", "Alfred", "Pages de l’espace de travail"]);
-  // Les modules installés d’abord, en tableau ; « Parcourir le marketplace » mène au catalogue.
+  // Les Réglages s’ouvrent sur Général : la liste des espaces de travail.
+  expect(await within(settings).findByRole("group", { name: "Vos espaces de travail" })).toBeVisible();
+  // Les modules installés, en tableau ; « Parcourir le marketplace » mène au catalogue.
+  await user.click(within(nav).getByRole("button", { name: "Modules" }));
   expect(await within(settings).findByRole("table", { name: "Modules de l’espace de travail" })).toBeVisible();
   await user.click(within(settings).getByRole("button", { name: "Parcourir le marketplace" }));
   expect(await within(settings).findByText("Aucun marketplace branché")).toBeVisible();
