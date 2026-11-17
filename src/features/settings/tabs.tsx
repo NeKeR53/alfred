@@ -1,11 +1,9 @@
 import { Bot, Boxes, FolderOpen, KeyRound, ListOrdered, Mic, Palette, ScrollText, Store } from "lucide-react";
 import type { BuiltInTab } from "../../shell/AppShell";
-import { SETTINGS_SECTION } from "../../shell/navigationLayout";
-import { useShell } from "../../shell/store";
 import { AgentSettings } from "../agentSettings/AgentSettings";
 import { JournalSettings } from "../journal/JournalSettings";
 import { MarketplaceSettings } from "../modules/MarketplaceSettings";
-import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
+import { ModulesSettings } from "../modules/ModulesSettings";
 import { NavigationSettings } from "../navigation/NavigationSettings";
 import { AppearanceSettings, SpaceSettings } from "../space/SpaceSettings";
 import { VaultSettings } from "../vault/VaultSettings";
@@ -77,15 +75,4 @@ export const settingsTabs: BuiltInTab[] = [
   },
 ];
 
-/** Ouvre les Réglages sur une rubrique. */
-export function openSettings(tab: string) {
-  const shell = useShell.getState();
-  shell.setView({ kind: "settings" });
-  shell.setActiveTab(SETTINGS_SECTION, tab);
-}
-
-/** Ouvre la fiche d’un module dans la rubrique Modules. */
-export function openModuleSettings(module: string) {
-  openSettings("modules");
-  useShell.getState().setActiveTab(MODULE_FOCUS, module);
-}
+export { openModuleSettings, openSettings } from "./open";

@@ -34,6 +34,7 @@ import { useClients } from "../clients/useClients";
 import { ModuleFunctions } from "../functions/ModuleFunctions";
 import { ModuleJobs } from "../jobs/ModuleJobs";
 import { ModuleSchedules } from "../schedules/ModuleSchedules";
+import { MODULE_FOCUS } from "../settings/open";
 import { remainingSummary } from "../setup/api";
 import { openOnboarding } from "../setup/Onboarding";
 import { useModuleSetup } from "../setup/useModuleSetup";
@@ -72,8 +73,7 @@ const fold = (text: string) =>
     .replace(/\p{Diacritic}/gu, "")
     .toLocaleLowerCase("fr");
 
-/** Clé de `activeTab` qui demande d’ouvrir la fiche d’un module (voir `openModuleSettings`). */
-export const MODULE_FOCUS = "réglages:module";
+export { MODULE_FOCUS } from "../settings/open";
 
 /** Ouvre la rubrique Marketplace des Réglages : catalogue des modules à importer, et marketplaces branchés. */
 export function openMarketplaces() {

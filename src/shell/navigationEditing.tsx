@@ -15,11 +15,23 @@ import {
   TextInput,
   useConfirm,
 } from "@alfred/ui";
-import { AppWindow, ArrowRightLeft, Check, EyeOff, History, icons, Pencil, Shapes, Trash2 } from "lucide-react";
+import {
+  AppWindow,
+  ArrowRightLeft,
+  Check,
+  EyeOff,
+  History,
+  icons,
+  Pencil,
+  Settings2,
+  Shapes,
+  Trash2,
+} from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { PageHistoryDialog } from "../features/navigation/PageHistory";
+import { openModuleSettings } from "../features/settings/open";
 import { inTauri, invoke, openPageWindow } from "../lib/native";
 import { SECTION_COLORS, type Snapshot } from "../lib/types";
 import { focusStayed } from "../ui/components/AnchoredMenu";
@@ -434,6 +446,8 @@ export function useNavigationEditor() {
     const section = findSection(snapshot, menu.id);
     if (section) {
       const color = section.color ?? "steel";
+      // Importé d’un marketplace ou masqué, le module a sa fiche ; une section sans module connu n’en a pas.
+      const module = snapshot.modules.find((candidate) => candidate.id === section.module);
       menuElement = (
         <ContextMenu
           label={`Actions de la section ${section.label}`}
@@ -441,6 +455,12 @@ export function useNavigationEditor() {
           returnFocus={menu.returnFocus}
           onClose={closeMenu}
         >
+          {module ? (
+            <MenuItem onClick={() => openModuleSettings(module.id)}>
+              <Settings2 size={16} aria-hidden="true" />
+              Configurer le module…
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setDialog({ kind: "rename-section", id: section.id })}>
             <Pencil size={16} aria-hidden="true" />
             Renommer…

@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NavigationSettings } from "../features/navigation/NavigationSettings";
+import { MODULE_FOCUS } from "../features/settings/open";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
 import { applyLayoutChange } from "./navigationEditing";
-import { type FullLayout, project, setModuleHidden } from "./navigationLayout";
+import { type FullLayout, project, SETTINGS_SECTION, setModuleHidden } from "./navigationLayout";
 import { useNotifications } from "./notifications";
 import { useShell } from "./store";
 
@@ -184,6 +185,26 @@ describe("réorganisation de la navigation", () => {
     expect(screen.getByRole("button", { name: "Projets" })).toBeInTheDocument();
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Renommage de la section Suivi en Projets"));
     expect(lastLayoutCall()?.layout.overrides).toEqual({ "section:suivi/principal": { label: "Projets" } });
+  });
+
+  it("ouvre les Réglages sur la fiche du module de la section, et seulement s’il est connu", () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Clients" }));
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent("Configurer le module…");
+    fireEvent.click(items[0]);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    const { view, activeTab } = useShell.getState();
+    expect(view).toEqual({ kind: "settings" });
+    expect(activeTab[SETTINGS_SECTION]).toBe("modules");
+    expect(activeTab[MODULE_FOCUS]).toBe("crm");
+
+    // « Suivi » n’a pas de module dans l’espace : pas de fiche à ouvrir.
+    act(() => useShell.getState().setView({ kind: "section", id: "suivi/principal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Suivi" }));
+    expect(
+      within(screen.getByRole("menu")).queryByRole("menuitem", { name: /Configurer le module/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("change la couleur et refuse une icône inconnue", async () => {
