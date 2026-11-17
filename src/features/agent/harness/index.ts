@@ -3,6 +3,15 @@ import { createCodexSession, listCodexModels } from "./codex";
 import { createOpenCodeSession, listOpenCodeModels } from "./opencode";
 import type { HarnessModel, HarnessSession, Provider, SessionOptions } from "./types";
 
+export {
+  ALL_PROVIDERS,
+  checkHarnesses,
+  installedOf,
+  type Probe,
+  usableProvider,
+  useHarnesses,
+  useInstalledProviders,
+} from "./installed";
 export { probe } from "./process";
 export * from "./types";
 

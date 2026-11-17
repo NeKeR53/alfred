@@ -602,3 +602,11 @@
     border: 1px solid CanvasText;
   }
 }
+
+/* Page Agent sans agent installé : le message au centre de l’espace de travail. */
+.workspace__empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  padding: 24px;
+}

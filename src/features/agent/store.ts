@@ -19,6 +19,7 @@ import {
   type HarnessSession,
   PROVIDER_LABEL,
   type Provider,
+  usableProvider,
 } from "./harness";
 import { CODEX_FILE_TOOLS } from "./harness/codex";
 import {
@@ -1161,7 +1162,8 @@ export const useAgents = create<AgentState>((set, get) => {
 
     create(options = {}) {
       const { defaults } = get();
-      const provider = options.provider ?? defaults.provider;
+      // Le harnais par défaut n’est peut-être pas installé ici : le premier installé le remplace.
+      const provider = options.provider ?? usableProvider(defaults.provider);
       const preset = defaults.models[provider] ?? {};
       const now = Date.now();
       const conversation: Conversation = {
@@ -1435,7 +1437,8 @@ export const useAgents = create<AgentState>((set, get) => {
 /** Modèle de nommage : celui des réglages, sinon le modèle par défaut. */
 function titlingModel(defaults: AgentDefaults, titling: TitlingModel | null | undefined): TitlingModel {
   if (titling?.provider) return titling;
-  return { provider: defaults.provider, ...(defaults.models[defaults.provider] ?? {}) };
+  const provider = usableProvider(defaults.provider);
+  return { provider, ...(defaults.models[provider] ?? {}) };
 }
 
 /** Annonces retenues pendant une réponse, écrites tout de suite (tests, avant de lire le relevé). */

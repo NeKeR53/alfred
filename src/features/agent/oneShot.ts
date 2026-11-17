@@ -9,6 +9,7 @@ import { AlfredError, invoke } from "../../lib/native";
 import { useShell } from "../../shell/store";
 import { createClaudeSession } from "./harness/claude";
 import { createCodexSession } from "./harness/codex";
+import { usableProvider } from "./harness/installed";
 import { createOpenCodeSession } from "./harness/opencode";
 import { type HarnessEvent, type HarnessSession, PROVIDER_LABEL, type Provider } from "./harness/types";
 import { useAgents } from "./store";
@@ -146,7 +147,9 @@ export async function oneShot(request: OneShotRequest, caller: string): Promise<
     throw new AlfredError({ message: "L’appel unique demande le schéma JSON de la réponse (`schema`)." });
   const agents = useAgents.getState();
   if (!agents.ready) await agents.load();
-  const { provider, models } = useAgents.getState().defaults;
+  const { provider: wanted, models } = useAgents.getState().defaults;
+  // Le harnais par défaut n’est peut-être pas installé ici : le premier installé le remplace.
+  const provider = usableProvider(wanted);
   const { model, effort } = models[provider] ?? {};
   const cwd = useShell.getState().snapshot?.path ?? "";
   const started = performance.now();

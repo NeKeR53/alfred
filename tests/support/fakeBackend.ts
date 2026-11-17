@@ -113,6 +113,8 @@ export class FakeBackend {
   changed: string[] = [];
   readonly pending = new Map<string, (answer: { result?: unknown; error?: string }) => void>();
   readonly agent = new FakeClaude(this);
+  /** Faux : aucun agent (Claude Code, Codex, OpenCode) n’est installé sur le poste simulé. */
+  agentsInstalled = true;
   /** Réponse aux appels de fonctions faits par l’interface (`functions.call`). */
   functionResult: (reference: string, input: unknown) => unknown = () => null;
   #sequence = 0;
@@ -501,7 +503,8 @@ export class FakeBackend {
       this.conversations.delete(String(args.id));
       return null;
     },
-    "agents.probe": () => ({ installed: true, version: "2.1.0", loggedIn: true }),
+    "agents.probe": () =>
+      this.agentsInstalled ? { installed: true, version: "2.1.0", loggedIn: true } : { installed: false },
     "agents.spawn": (args) => this.agent.spawn(args),
     "agents.write": (args) => {
       this.agent.receive(String(args.session), String(args.data));

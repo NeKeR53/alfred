@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { AgentPage } from "./features/agent/AgentPage";
+import { checkHarnesses, useInstalledProviders } from "./features/agent/harness";
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
 import { useAgentSummary } from "./features/agent/summary";
 import { UiFixTool } from "./features/agent/uiFix";
@@ -19,7 +20,12 @@ export function App() {
   useEffect(() => {
     bindPageAi();
     void start();
+    // Quels agents sont installés : un agent absent n’est proposé nulle part.
+    void checkHarnesses();
   }, [start]);
+  const installed = useInstalledProviders();
+  // Tant que la vérification n’est pas finie, l’entrée Agent reste : elle ne disparaît que si aucun n’est installé.
+  const agentAvailable = installed === null || installed.length > 0;
 
   // Les mises à jour de modules disponibles se lisent sur l’onglet, sans ouvrir les Réglages.
   const updates = useModuleUpdates();
@@ -53,6 +59,7 @@ export function App() {
       <AppShell
         agent={<AgentPage />}
         agentSummary={agentSummary}
+        agentAvailable={agentAvailable}
         settingsTabs={tabs}
         renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}
         renderPageTools={(page, container) => <UiFixTool key={page.reference} page={page} container={container} />}

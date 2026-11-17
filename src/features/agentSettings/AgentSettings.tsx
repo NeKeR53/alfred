@@ -24,7 +24,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { effortLabel } from "../agent/effort";
-import { type Autonomy, type HarnessModel, listModels, PROVIDER_LABEL, type Provider, probe } from "../agent/harness";
+import {
+  ALL_PROVIDERS,
+  type Autonomy,
+  checkHarnesses,
+  type HarnessModel,
+  listModels,
+  PROVIDER_LABEL,
+  type Provider,
+  type probe,
+  useHarnesses,
+  useInstalledProviders,
+} from "../agent/harness";
 import { EffortSlider } from "../agent/panel/EffortSlider";
 import {
   type AgentPreferences,
@@ -36,8 +47,6 @@ import {
 } from "../agent/panel/ModelPicker";
 import { type AgentDefaults, useAgents } from "../agent/store";
 import { ArchivedConversations } from "./ArchivedConversations";
-
-const PROVIDERS: Provider[] = ["claude", "codex", "opencode"];
 
 type ProbeResult = Awaited<ReturnType<typeof probe>>;
 type Loadable<T> = { status: "loading" } | { status: "ready"; value: T } | { status: "error"; message: string };
@@ -217,9 +226,12 @@ function TitlingFields({
   value,
   models,
   shownModels,
+  providers,
   onChange,
 }: {
   value: ModelChoice | null;
+  /** Harnais installés : les seuls proposés. */
+  providers: readonly Provider[];
   models: Partial<Record<Provider, Loadable<HarnessModel[]>>>;
   shownModels: ShownModels;
   onChange: (value: ModelChoice | null) => void;
@@ -250,7 +262,7 @@ function TitlingFields({
         }}
       >
         <option value="">Comme les conversations</option>
-        {PROVIDERS.map((item) => (
+        {providers.map((item) => (
           <option key={item} value={item}>
             {PROVIDER_LABEL[item]}
           </option>
@@ -467,7 +479,10 @@ export function AgentSettings() {
   const defaults = useAgents((state) => state.defaults);
   const ready = useAgents((state) => state.ready);
   const cwd = useShell((state) => state.snapshot?.path ?? state.info?.home ?? "");
-  const [probes, setProbes] = useState<Partial<Record<Provider, Loadable<ProbeResult>>>>({});
+  const probes = useHarnesses((state) => state.probes);
+  const installed = useInstalledProviders();
+  /** Harnais affichés : les installés ; tous tant que la première vérification n’est pas finie. */
+  const PROVIDERS = installed ?? ALL_PROVIDERS;
   const [models, setModels] = useState<Partial<Record<Provider, Loadable<HarnessModel[]>>>>({});
   const preferences = usePreferences();
   const savePreference = useAgentPreferences((state) => state.save);
@@ -481,16 +496,7 @@ export function AgentSettings() {
         .catch(() => {});
   }, [ready]);
 
-  const check = useCallback(() => {
-    for (const provider of PROVIDERS) {
-      setProbes((current) => ({ ...current, [provider]: { status: "loading" } }));
-      probe(provider).then(
-        (value) => setProbes((current) => ({ ...current, [provider]: { status: "ready", value } })),
-        (error) =>
-          setProbes((current) => ({ ...current, [provider]: { status: "error", message: errorMessage(error) } })),
-      );
-    }
-  }, []);
+  const check = useCallback(() => void checkHarnesses(), []);
 
   const loadModels = useCallback(
     (provider: Provider) => {
@@ -504,10 +510,12 @@ export function AgentSettings() {
     [cwd],
   );
 
-  useEffect(() => check(), [check]);
+  // Les harnais sont vérifiés au démarrage d’Alfred ; les modèles se lisent pour ceux qui sont installés.
+  const installedKey = (installed ?? []).join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `installedKey` résume la liste des harnais installés.
   useEffect(() => {
-    for (const provider of PROVIDERS) loadModels(provider);
-  }, [loadModels]);
+    for (const provider of installed ?? []) loadModels(provider);
+  }, [loadModels, installedKey]);
 
   /** Réglage immédiat : un échec remet la valeur précédente et le signale. */
   const save = async (next: AgentDefaults) => {
@@ -538,7 +546,8 @@ export function AgentSettings() {
     [],
   );
 
-  const checking = PROVIDERS.some((provider) => probes[provider]?.status === "loading");
+  const checking = ALL_PROVIDERS.some((provider) => probes[provider]?.status === "loading");
+  const none = installed !== null && installed.length === 0;
 
   return (
     <Page width="text">
@@ -552,76 +561,92 @@ export function AgentSettings() {
             onClick={() => {
               // Comme « Actualiser les modèles » de OneApp : vérifier le harnais relit aussi ses modèles.
               check();
-              for (const provider of PROVIDERS) loadModels(provider);
+              for (const provider of installed ?? []) loadModels(provider);
             }}
           />
         }
       >
-        <SettingRows>
-          {PROVIDERS.map((provider) => {
-            const loaded = models[provider];
-            return (
-              <HarnessStatus
-                key={provider}
-                provider={provider}
-                state={probes[provider]}
-                catalog={loaded?.status === "ready" ? loaded.value : []}
-                shown={preferences.shownModels[provider]}
-                onChoose={() => setChoosing(provider)}
-              />
-            );
-          })}
-        </SettingRows>
-      </Section>
-
-      <Section
-        title="Conversations"
-        description="Choix utilisés pour toute nouvelle conversation. Ils s’appliquent dès qu’ils sont modifiés ; chaque conversation peut les changer."
-      >
-        <SettingRows>
-          <SettingRow title="Harnais par défaut" description="L’agent qui répond quand vous ouvrez une conversation.">
-            <ChoiceGroup label="Harnais par défaut" appearance="segmented">
-              {PROVIDERS.map((provider) => (
-                <ChoiceButton
-                  key={provider}
-                  variant="label"
-                  selectionMode="radio"
-                  label={PROVIDER_LABEL[provider]}
-                  selected={defaults.provider === provider}
-                  onClick={() => void save({ ...defaults, provider })}
-                >
-                  {PROVIDER_LABEL[provider]}
-                </ChoiceButton>
-              ))}
-            </ChoiceGroup>
-          </SettingRow>
-        </SettingRows>
-      </Section>
-
-      <Section
-        title="Modèle et raisonnement"
-        description="Le modèle et le niveau de raisonnement de chaque harnais. Un modèle masqué reste utilisable s’il est déjà choisi."
-      >
-        <SettingRows>
-          {PROVIDERS.map((provider) => (
-            <ModelFields
-              key={provider}
-              provider={provider}
-              models={models[provider]}
-              shown={preferences.shownModels[provider]}
-              value={defaults.models[provider] ?? {}}
-              onRetry={() => loadModels(provider)}
-              onChange={(value) => void save({ ...defaults, models: { ...defaults.models, [provider]: value } })}
-            />
-          ))}
-          <TitlingFields
-            value={preferences.titling}
-            models={models}
-            shownModels={preferences.shownModels}
-            onChange={(value) => void savePreferenceOrReport("titling", value)}
+        {none ? (
+          <EmptyState
+            size="compact"
+            title="Aucun agent installé"
+            description="Installez Claude Code, Codex ou OpenCode sur ce poste, puis connectez-vous-y dans un terminal. Vérifiez ensuite de nouveau : l’agent apparaîtra ici et dans le menu."
           />
-        </SettingRows>
+        ) : (
+          <SettingRows>
+            {PROVIDERS.map((provider) => {
+              const loaded = models[provider];
+              return (
+                <HarnessStatus
+                  key={provider}
+                  provider={provider}
+                  state={probes[provider]}
+                  catalog={loaded?.status === "ready" ? loaded.value : []}
+                  shown={preferences.shownModels[provider]}
+                  onChoose={() => setChoosing(provider)}
+                />
+              );
+            })}
+          </SettingRows>
+        )}
       </Section>
+
+      {none ? null : (
+        <>
+          <Section
+            title="Conversations"
+            description="Choix utilisés pour toute nouvelle conversation. Ils s’appliquent dès qu’ils sont modifiés ; chaque conversation peut les changer."
+          >
+            <SettingRows>
+              <SettingRow
+                title="Harnais par défaut"
+                description="L’agent qui répond quand vous ouvrez une conversation."
+              >
+                <ChoiceGroup label="Harnais par défaut" appearance="segmented">
+                  {PROVIDERS.map((provider) => (
+                    <ChoiceButton
+                      key={provider}
+                      variant="label"
+                      selectionMode="radio"
+                      label={PROVIDER_LABEL[provider]}
+                      selected={defaults.provider === provider}
+                      onClick={() => void save({ ...defaults, provider })}
+                    >
+                      {PROVIDER_LABEL[provider]}
+                    </ChoiceButton>
+                  ))}
+                </ChoiceGroup>
+              </SettingRow>
+            </SettingRows>
+          </Section>
+
+          <Section
+            title="Modèle et raisonnement"
+            description="Le modèle et le niveau de raisonnement de chaque harnais. Un modèle masqué reste utilisable s’il est déjà choisi."
+          >
+            <SettingRows>
+              {PROVIDERS.map((provider) => (
+                <ModelFields
+                  key={provider}
+                  provider={provider}
+                  models={models[provider]}
+                  shown={preferences.shownModels[provider]}
+                  value={defaults.models[provider] ?? {}}
+                  onRetry={() => loadModels(provider)}
+                  onChange={(value) => void save({ ...defaults, models: { ...defaults.models, [provider]: value } })}
+                />
+              ))}
+              <TitlingFields
+                value={preferences.titling}
+                models={models}
+                shownModels={preferences.shownModels}
+                providers={PROVIDERS}
+                onChange={(value) => void savePreferenceOrReport("titling", value)}
+              />
+            </SettingRows>
+          </Section>
+        </>
+      )}
 
       {choosing ? (
         <ShownModelsDialog

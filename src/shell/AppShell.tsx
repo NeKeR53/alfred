@@ -441,9 +441,15 @@ export function AppShell({
   renderAgentPanel,
   renderPageTools,
   agentSummary,
+  agentAvailable = true,
 }: {
   /** Contenu de la page Agent. */
   agent: ReactNode;
+  /**
+   * Faux quand aucun agent (Claude Code, Codex, OpenCode) n’est installé : l’entrée Agent quitte le menu et la page
+   * Agent laisse la place à la première section, ou à un mot qui dit quoi installer.
+   */
+  agentAvailable?: boolean;
   /** Conversations qui attendent l’utilisateur, travaillent ou sont à lire. */
   agentSummary?: AgentSummary;
   /** Onglets intégrés des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
@@ -486,7 +492,13 @@ export function AppShell({
   if (!snapshot) return null;
 
   const current = view.kind === "section" ? sections.find(({ section }) => section.id === view.id)?.section : undefined;
-  const effective: View = view.kind === "section" && !current ? { kind: "agent" } : view;
+  const wanted: View = view.kind === "section" && !current ? { kind: "agent" } : view;
+  // Sans agent installé, la page Agent n’existe pas : la première section s’affiche à sa place.
+  const fallback = sections[0]?.section;
+  const effective: View =
+    wanted.kind === "agent" && !agentAvailable && fallback ? { kind: "section", id: fallback.id } : wanted;
+  const shownSection =
+    effective.kind === "section" ? sections.find(({ section }) => section.id === effective.id)?.section : undefined;
 
   return (
     <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
@@ -578,16 +590,18 @@ export function AppShell({
             <p className="sidebar__empty">Aucune section trouvée.</p>
           ) : null}
         </nav>
-        <NavButton
-          label={agentEntryLabel(agentSummary)}
-          active={!settingsOpen && sameView(effective, { kind: "agent" })}
-          onClick={() => setView({ kind: "agent" })}
-          className="sidebar-orchestrator"
-          badge={agentSummary}
-          glyph
-        >
-          <Bot size={16} aria-hidden="true" />
-        </NavButton>
+        {agentAvailable ? (
+          <NavButton
+            label={agentEntryLabel(agentSummary)}
+            active={!settingsOpen && sameView(effective, { kind: "agent" })}
+            onClick={() => setView({ kind: "agent" })}
+            className="sidebar-orchestrator"
+            badge={agentSummary}
+            glyph
+          >
+            <Bot size={16} aria-hidden="true" />
+          </NavButton>
+        ) : null}
         <NavButton
           label="Réglages"
           active={settingsOpen}
@@ -598,14 +612,35 @@ export function AppShell({
         </NavButton>
       </aside>
       <main className="workspace" inert={settingsOpen}>
-        {effective.kind === "agent" ? agent : null}
-        {effective.kind === "section" && current ? (
+        {effective.kind === "agent" ? (
+          agentAvailable ? (
+            agent
+          ) : (
+            <div className="workspace__empty">
+              <EmptyState
+                title="Aucun agent installé"
+                description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
+              >
+                <Button
+                  onClick={() => {
+                    const shell = useShell.getState();
+                    shell.setView({ kind: "settings" });
+                    shell.setActiveTab(SETTINGS_SECTION, "agents");
+                  }}
+                >
+                  Vérifier dans les Réglages
+                </Button>
+              </EmptyState>
+            </div>
+          )
+        ) : null}
+        {effective.kind === "section" && shownSection ? (
           <SectionView
-            key={current.id}
-            title={current.label}
-            sectionId={current.id}
-            pages={current.pages}
-            waiting={current.waiting}
+            key={shownSection.id}
+            title={shownSection.label}
+            sectionId={shownSection.id}
+            pages={shownSection.pages}
+            waiting={shownSection.waiting}
             renderAgentPanel={renderAgentPanel}
             renderPageTools={renderPageTools}
             onPageMenu={editor.openPageMenu}

@@ -3,7 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/native");
-vi.mock("../agent/harness");
+// Seuls le catalogue des modèles et la détection des CLI sont simulés ; le reste des harnais est le vrai.
+vi.mock("../agent/harness", async (original) => ({
+  ...(await original<typeof import("../agent/harness")>()),
+  listModels: vi.fn(),
+}));
+vi.mock("../agent/harness/process", async (original) => ({
+  ...(await original<typeof import("../agent/harness/process")>()),
+  probe: vi.fn(),
+}));
 // Le magasin de la coquille lit le thème du système à son chargement ; jsdom n’a pas `matchMedia`.
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -17,7 +25,8 @@ vi.hoisted(() => {
 import { invoke } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { listModels, type Provider, probe } from "../agent/harness";
+import { checkHarnesses, listModels, type Provider, useHarnesses } from "../agent/harness";
+import { probe } from "../agent/harness/process";
 import { useAgentPreferences } from "../agent/panel/ModelPicker";
 import { useAgents } from "../agent/store";
 import { AgentSettings, validateTextEditorCommand } from "./AgentSettings";
@@ -26,7 +35,7 @@ let settings: Array<Record<string, unknown>>;
 let codexModelsFail: boolean;
 let settingsFail: boolean;
 
-beforeEach(() => {
+beforeEach(async () => {
   settings = [];
   codexModelsFail = true;
   settingsFail = false;
@@ -57,6 +66,9 @@ beforeEach(() => {
         ? { installed: true, version: "0.50.0", loggedIn: false }
         : { installed: false },
   );
+  // Alfred vérifie les harnais à son démarrage : Claude Code et Codex sont installés, OpenCode ne l’est pas.
+  useHarnesses.setState({ probes: {} });
+  await checkHarnesses();
   vi.mocked(listModels).mockImplementation(async (provider: Provider) => {
     if (provider === "codex" && codexModelsFail) throw new Error("Non connecté.");
     if (provider === "opencode") throw new Error("CLI introuvable.");
@@ -75,12 +87,14 @@ it("montre l’état des harnais et enregistre harnais, modèle, effort et auton
   const user = userEvent.setup();
   render(<AgentSettings />);
 
-  // État des trois CLI, en toutes lettres.
+  // État des CLI installés, en toutes lettres ; OpenCode, absent de ce poste, n’apparaît nulle part.
   expect(await screen.findByText("Installé · 2.1.0")).toBeInTheDocument();
   expect(screen.getByText("Connecté")).toBeInTheDocument();
   expect(screen.getByText("Non connecté")).toBeInTheDocument();
-  expect(screen.getByText("Non installé")).toBeInTheDocument();
-  expect(screen.getByText(/Installez OpenCode, puis connectez-vous dans un terminal/)).toBeInTheDocument();
+  expect(screen.queryByText("Non installé")).not.toBeInTheDocument();
+  expect(screen.queryByText("OpenCode")).not.toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: "OpenCode" })).not.toBeInTheDocument();
+  expect(listModels).not.toHaveBeenCalledWith("opencode", expect.anything());
   expect(listModels).toHaveBeenCalledWith("codex", "/tmp/espace");
 
   // Un catalogue illisible est signalé sans bloquer le reste de l’écran.

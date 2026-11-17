@@ -5,7 +5,14 @@ import { create } from "zustand";
 import { invoke } from "../../../lib/native";
 import { useContextMenuDismiss } from "../../../ui/components/useContextMenuDismiss";
 import { effortLabel } from "../effort";
-import { type HarnessModel, listModels, PROVIDER_LABEL, type Provider } from "../harness";
+import {
+  ALL_PROVIDERS,
+  type HarnessModel,
+  listModels,
+  PROVIDER_LABEL,
+  type Provider,
+  useInstalledProviders,
+} from "../harness";
 import { usePickerPosition } from "./ChoicePicker";
 import { EffortSlider } from "./EffortSlider";
 import "./choice-picker.css";
@@ -150,6 +157,12 @@ export function ModelPicker({
   const { shownModels } = usePreferences();
   const current = models.find(({ id: model }) => model === value.model);
   const choices = shownModelsOf(models, shownModels[value.provider], value.model);
+  // Seuls les harnais installés sont proposés ; celui de la conversation reste affiché même s’il ne l’est plus.
+  const installed = useInstalledProviders();
+  const providers = ALL_PROVIDERS.filter(
+    (provider) => provider === value.provider || installed === null || installed.includes(provider),
+  );
+  const others = providers.filter((provider) => provider !== value.provider);
   return (
     <div className="choice-picker" data-model-picker={id}>
       <button
@@ -185,39 +198,37 @@ export function ModelPicker({
             trigger.current?.focus();
           }}
         >
-          <ChoiceGroup label="Harnais" className="choice-segmented">
-            {(Object.keys(PROVIDER_LABEL) as Provider[]).map((provider) => (
-              <ChoiceButton
-                key={provider}
-                variant="label"
-                size="compact"
-                selectionMode="radio"
-                label={PROVIDER_LABEL[provider]}
-                title={
-                  providerLocked && provider !== value.provider
-                    ? "Le harnais ne change plus une fois la conversation commencée."
-                    : undefined
-                }
-                selected={provider === value.provider}
-                disabled={providerLocked && provider !== value.provider}
-                onClick={() => {
-                  if (provider !== value.provider) onChange({ provider });
-                }}
-              >
-                {PROVIDER_LABEL[provider]}
-              </ChoiceButton>
-            ))}
-          </ChoiceGroup>
-          {providerLocked ? (
+          {providers.length > 1 ? (
+            <ChoiceGroup label="Harnais" className="choice-segmented">
+              {providers.map((provider) => (
+                <ChoiceButton
+                  key={provider}
+                  variant="label"
+                  size="compact"
+                  selectionMode="radio"
+                  label={PROVIDER_LABEL[provider]}
+                  title={
+                    providerLocked && provider !== value.provider
+                      ? "Le harnais ne change plus une fois la conversation commencée."
+                      : undefined
+                  }
+                  selected={provider === value.provider}
+                  disabled={providerLocked && provider !== value.provider}
+                  onClick={() => {
+                    if (provider !== value.provider) onChange({ provider });
+                  }}
+                >
+                  {PROVIDER_LABEL[provider]}
+                </ChoiceButton>
+              ))}
+            </ChoiceGroup>
+          ) : null}
+          {providerLocked && others.length > 0 ? (
             <p className="agent-model-picker__lock">
               <Lock size={12} aria-hidden="true" />
               <span>
                 Harnais fixé : cette conversation a commencé avec {PROVIDER_LABEL[value.provider]}. Pour{" "}
-                {(Object.keys(PROVIDER_LABEL) as Provider[])
-                  .filter((provider) => provider !== value.provider)
-                  .map((provider) => PROVIDER_LABEL[provider])
-                  .join(" ou ")}
-                , ouvrez une nouvelle conversation.
+                {others.map((provider) => PROVIDER_LABEL[provider]).join(" ou ")}, ouvrez une nouvelle conversation.
               </span>
             </p>
           ) : null}
