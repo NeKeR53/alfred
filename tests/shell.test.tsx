@@ -49,6 +49,8 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   act(() => backend.emit("space:changed"));
   const suivi = await within(navigation).findByRole("button", { name: "Suivi" });
   expect(within(navigation).getByRole("button", { name: "Notes" })).toBeVisible();
+  // Les sections suivent directement le nom de l’espace, sans libellé de groupe.
+  expect(within(navigation).queryByText("Espace de travail")).not.toBeInTheDocument();
   expect(backend.commandsCalled()).toContain("db.applyMigrations");
 
   // Section à deux onglets : la page s’affiche dans son cadre, avec son panneau de droite.

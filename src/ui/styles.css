@@ -1014,27 +1014,6 @@ html select:not([multiple], [data-slot="native-select"]) {
   flex-direction: column;
   gap: 1px;
 }
-.sidebar__section {
-  margin: 16px 10px 4px;
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
-}
-/* Menu replié : le titre garde sa hauteur (rien ne monte ni ne descend), son texte cède la place à un trait. */
-.app-shell--sidebar-collapsed .sidebar__section {
-  position: relative;
-  overflow: hidden;
-  color: transparent;
-  white-space: nowrap;
-}
-.app-shell--sidebar-collapsed .sidebar__section::after {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: var(--line);
-  content: "";
-}
 .sidebar-product__mark {
   width: 18px;
   height: 18px;

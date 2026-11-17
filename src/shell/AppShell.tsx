@@ -514,7 +514,6 @@ export function AppShell({
           <SpaceSwitcher />
         </div>
         <nav aria-label="Sections de l’espace de travail">
-          {sections.length > 0 ? <p className="sidebar__section">Espace de travail</p> : null}
           {drag.orderedItems.map(({ section }) => {
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
             const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
