@@ -1,0 +1,1226 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture d’Alfred</title>
+<meta name="description" content="Les couches d’Alfred, ses services, la création des pages, les composants, les agents et le partage, en schémas.">
+<style>
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --bg: #f6f6f3; --surface: #ffffff; --surface-2: #efefea; --ink: #1c1c1e; --muted: #5d5e66;
+  --line: #d5d5cf; --edge: #85868e;
+  --c1: #2560c4; --c1-bg: #e7effb;   /* coquille */
+  --c2: #7548c0; --c2-bg: #f0eafa;   /* cadres isolés */
+  --c3: #b8611a; --c3-bg: #fbefe2;   /* backend */
+  --c4: #2b8253; --c4-bg: #e5f4eb;   /* stockage */
+  --c5: #bd3467; --c5-bg: #fbe8ef;   /* agents */
+  --no: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131315; --surface: #1c1c1f; --surface-2: #26262a; --ink: #ececef; --muted: #a2a3aa;
+    --line: #393940; --edge: #7e7f87;
+    --c1: #7ea9f1; --c1-bg: #1a2840; --c2: #b597ea; --c2-bg: #281f3e; --c3: #e9a265; --c3-bg: #382614;
+    --c4: #6dc893; --c4-bg: #163222; --c5: #ef86ac; --c5-bg: #3b1c29; --no: #f28b82;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131315; --surface: #1c1c1f; --surface-2: #26262a; --ink: #ececef; --muted: #a2a3aa;
+  --line: #393940; --edge: #7e7f87;
+  --c1: #7ea9f1; --c1-bg: #1a2840; --c2: #b597ea; --c2-bg: #281f3e; --c3: #e9a265; --c3-bg: #382614;
+  --c4: #6dc893; --c4-bg: #163222; --c5: #ef86ac; --c5-bg: #3b1c29; --no: #f28b82;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+.layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+nav.toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 40px 0 24px; font-size: 13.5px; }
+nav.toc strong { display: block; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+nav.toc li { counter-increment: toc; }
+nav.toc a { display: block; padding: 4px 0 4px 10px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(toc) ". "; font-variant-numeric: tabular-nums; }
+nav.toc a:hover { color: var(--ink); border-left-color: var(--c1); }
+main { padding: 40px 0 96px; min-width: 0; }
+header.hero { padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+header.hero p.kicker { margin: 0 0 6px; font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -.01em; }
+h2 { font-size: 24px; line-height: 1.25; margin: 64px 0 12px; letter-spacing: -.005em; scroll-margin-top: 24px; }
+h3 { font-size: 17px; margin: 32px 0 8px; }
+p { margin: 0 0 14px; max-width: 76ch; }
+.lead { font-size: 17px; color: var(--muted); max-width: 72ch; }
+code { font: 13px var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+ul.plain { margin: 0 0 14px; padding-left: 20px; max-width: 76ch; }
+ul.plain li { margin: 4px 0; }
+
+figure.fig { margin: 22px 0 26px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 20px 14px; }
+figure.fig svg { display: block; width: 100%; height: auto; }
+figure.fig figcaption { margin-top: 12px; font-size: 13px; color: var(--muted); max-width: 90ch; }
+figure.fig figcaption b { color: var(--ink); font-weight: 600; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0 4px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+
+/* Cartes des services */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin: 18px 0 8px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--k, var(--c3)); border-radius: 10px; padding: 14px 16px 12px; }
+.card h4 { margin: 0 0 2px; font-size: 14.5px; }
+.card .ns { font: 12px var(--mono); color: var(--k, var(--c3)); margin-bottom: 8px; }
+.card ul { margin: 0; padding-left: 16px; font-size: 13.5px; }
+.card li { margin: 3px 0; }
+.card .rs { margin-top: 8px; font: 11.5px var(--mono); color: var(--muted); }
+
+/* Arborescence */
+.tree { font: 13px/1.75 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; overflow-x: auto; margin: 18px 0; }
+.tree .row { display: grid; grid-template-columns: minmax(300px, max-content) 1fr; gap: 20px; white-space: nowrap; }
+.tree .note { font-family: var(--sans); font-size: 13px; color: var(--muted); white-space: normal; }
+.tag { font: 600 10.5px var(--sans); letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; margin-left: 6px; vertical-align: 1px; }
+.tag.git { color: var(--c4); background: var(--c4-bg); }
+.tag.off { color: var(--c3); background: var(--c3-bg); }
+.tag.al { color: var(--c1); background: var(--c1-bg); }
+
+/* Catalogue de composants */
+.catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin: 18px 0; }
+.catalog section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.catalog h4 { margin: 0 0 10px; font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { font: 12px var(--mono); padding: 3px 8px; border-radius: 6px; background: var(--c2-bg); color: var(--c2); }
+.chips span.tpl { background: var(--c1-bg); color: var(--c1); }
+.chips span.res { background: var(--surface-2); color: var(--muted); }
+
+table.ref { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 14px 0 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+table.ref th, table.ref td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.ref th { background: var(--surface-2); font-size: 12.5px; color: var(--muted); font-weight: 600; }
+table.ref tr:last-child td { border-bottom: 0; }
+.tablewrap { overflow-x: auto; }
+
+/* SVG */
+.box { fill: var(--surface); stroke: var(--line); }
+.soft { fill: var(--surface-2); stroke: var(--line); }
+.b1 { fill: var(--c1-bg); stroke: var(--c1); } .b2 { fill: var(--c2-bg); stroke: var(--c2); }
+.b3 { fill: var(--c3-bg); stroke: var(--c3); } .b4 { fill: var(--c4-bg); stroke: var(--c4); }
+.b5 { fill: var(--c5-bg); stroke: var(--c5); }
+.band1 { fill: var(--c1-bg); stroke: var(--c1); stroke-opacity: .35; }
+.band2 { fill: var(--c2-bg); stroke: var(--c2); stroke-opacity: .35; }
+.band3 { fill: var(--c3-bg); stroke: var(--c3); stroke-opacity: .35; }
+.band4 { fill: var(--c4-bg); stroke: var(--c4); stroke-opacity: .35; }
+.band5 { fill: var(--c5-bg); stroke: var(--c5); stroke-opacity: .35; }
+.in1 { fill: var(--surface); stroke: var(--c1); stroke-opacity: .55; }
+.in2 { fill: var(--surface); stroke: var(--c2); stroke-opacity: .55; }
+.in3 { fill: var(--surface); stroke: var(--c3); stroke-opacity: .55; }
+.in4 { fill: var(--surface); stroke: var(--c4); stroke-opacity: .55; }
+.in5 { fill: var(--surface); stroke: var(--c5); stroke-opacity: .55; }
+.dash { stroke-dasharray: 6 5; }
+.wall { fill: none; stroke: var(--c2); stroke-width: 2; stroke-dasharray: 7 5; }
+.t { font: 600 13px var(--sans); fill: var(--ink); }
+.t2 { font: 600 12px var(--sans); fill: var(--ink); }
+.s { font: 11.5px var(--sans); fill: var(--muted); }
+.m { font: 11px var(--mono); fill: var(--muted); }
+.mi { font: 11.5px var(--mono); fill: var(--ink); }
+.l1, .l2, .l3, .l4, .l5, .l0 { font: 700 10.5px var(--sans); letter-spacing: .07em; text-transform: uppercase; }
+.l1 { fill: var(--c1); } .l2 { fill: var(--c2); } .l3 { fill: var(--c3); } .l4 { fill: var(--c4); } .l5 { fill: var(--c5); } .l0 { fill: var(--muted); }
+.c { text-anchor: middle; } .r { text-anchor: end; }
+.e { stroke: var(--edge); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+.e2 { marker-start: url(#a); }
+.ed { stroke-dasharray: 5 4; }
+.life { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.no { fill: var(--no); font: 600 11.5px var(--sans); }
+.nol { stroke: var(--no); stroke-width: 1.6; fill: none; }
+.ah { fill: var(--edge); }
+.bar { fill: var(--line); }
+.dot1 { fill: var(--c1); } .dot4 { fill: var(--c4); } .dot5 { fill: var(--c5); }
+
+@media (max-width: 960px) {
+  .layout { grid-template-columns: 1fr; gap: 0; padding: 0 16px; }
+  nav.toc { position: static; height: auto; padding: 24px 0 0; }
+  nav.toc ol { columns: 2; }
+  h1 { font-size: 28px; }
+  figure.fig { padding: 12px; }
+  .tree .row { grid-template-columns: 1fr; gap: 0; }
+  .tree .note { padding-left: 2ch; margin-bottom: 6px; }
+}
+@media (max-width: 560px) { nav.toc ol { columns: 1; } }
+@media print { nav.toc { display: none; } .layout { display: block; } figure.fig { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="ah"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="layout">
+<nav class="toc" aria-label="Sommaire">
+  <strong>Sommaire</strong>
+  <ol>
+    <li><a href="#couches">Les couches</a></li>
+    <li><a href="#espace">L’espace de travail</a></li>
+    <li><a href="#fenetre">Fenêtre et zones d’une page</a></li>
+    <li><a href="#creation">Créer une page</a></li>
+    <li><a href="#cadre">Le cadre isolé et le pont</a></li>
+    <li><a href="#composants">Les composants</a></li>
+    <li><a href="#services">Les services</a></li>
+    <li><a href="#donnees">Les données d’un module</a></li>
+    <li><a href="#recherche">Recherche plein texte</a></li>
+    <li><a href="#semantique">Recherche par le sens</a></li>
+    <li><a href="#fichiers">Fichiers et documents</a></li>
+    <li><a href="#fonctions">Fonctions et automatisations</a></li>
+    <li><a href="#clients">Services extérieurs et coffre</a></li>
+    <li><a href="#configuration">Configuration d’un module</a></li>
+    <li><a href="#agents">Agents de code et MCP</a></li>
+    <li><a href="#ia-page">L’IA dans une page</a></li>
+    <li><a href="#partage">Partage : git, équipe, marketplace</a></li>
+    <li><a href="#confiance">Accords et secrets</a></li>
+    <li><a href="#voix">La voix</a></li>
+    <li><a href="#fichiers-source">Où lire le code</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <p class="kicker">Document d’architecture</p>
+  <h1>Comment Alfred est construit</h1>
+  <p class="lead">Alfred est une application de bureau (Tauri 2, React 19, Rust) livrée vide. L’utilisateur la construit en
+  parlant à un agent de code : pages, fonctions, tables, services, webhooks et planifications vivent dans un dossier
+  d’espace sous git, rangé par modules. Cette page décrit chaque couche, chaque service et leur façon de s’assembler.</p>
+  <div class="legend" aria-label="Légende des couleurs">
+    <span><i style="background:var(--c1-bg);border-color:var(--c1)"></i>Coquille (interface d’Alfred)</span>
+    <span><i style="background:var(--c2-bg);border-color:var(--c2)"></i>Cadres isolés (pages, fonctions)</span>
+    <span><i style="background:var(--c3-bg);border-color:var(--c3)"></i>Backend Rust (services)</span>
+    <span><i style="background:var(--c4-bg);border-color:var(--c4)"></i>Stockage</span>
+    <span><i style="background:var(--c5-bg);border-color:var(--c5)"></i>Agents</span>
+  </div>
+</header>
+
+<!-- ============================================================ 1 -->
+<h2 id="couches">1. Les couches</h2>
+<p>Cinq couches empilées. En haut, la <b>coquille</b> : la fenêtre d’Alfred, son menu, la page Agent, les Réglages. Elle
+accueille les <b>cadres isolés</b>, où tournent les pages et les fonctions que l’agent écrit, sans réseau ni disque.
+Tout ce qui sort d’un cadre passe par un seul <b>pont</b> jusqu’au <b>backend Rust</b>, qui vérifie les accords puis
+rend le service demandé. Le backend seul touche au <b>stockage</b>. À droite, les agents de code agissent sur la
+structure par les outils MCP d’Alfred et écrivent le contenu comme des fichiers.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 716" role="img" aria-labelledby="f1t">
+  <title id="f1t">Les cinq couches d’Alfred et les agents de code</title>
+  <!-- Vous -->
+  <rect x="20" y="20" width="700" height="50" rx="10" class="soft"/>
+  <text x="36" y="50" class="l0">Vous</text>
+  <text x="120" y="50" class="s">fenêtre principale · fenêtres de page séparées · voix · notifications du système</text>
+  <path d="M370 70 V88" class="e"/>
+
+  <!-- Coquille -->
+  <rect x="20" y="90" width="700" height="90" rx="10" class="band1"/>
+  <text x="36" y="110" class="l1">Coquille · React dans la fenêtre Tauri</text>
+  <g>
+    <rect x="36" y="122" width="103" height="44" rx="7" class="in1"/><text x="87.5" y="149" class="t2 c">Navigation</text>
+    <rect x="149" y="122" width="103" height="44" rx="7" class="in1"/><text x="200.5" y="149" class="t2 c">Page Agent</text>
+    <rect x="262" y="122" width="103" height="44" rx="7" class="in1"/><text x="313.5" y="149" class="t2 c">Réglages</text>
+    <rect x="375" y="122" width="103" height="44" rx="7" class="in1"/><text x="426.5" y="149" class="t2 c">Modules</text>
+    <rect x="488" y="122" width="103" height="44" rx="7" class="in1"/><text x="539.5" y="149" class="t2 c">Configuration</text>
+    <rect x="601" y="122" width="103" height="44" rx="7" class="in1"/><text x="652.5" y="149" class="t2 c">Notifications</text>
+  </g>
+  <path d="M370 180 V198" class="e"/>
+
+  <!-- Cadres -->
+  <rect x="20" y="200" width="700" height="100" rx="10" class="band2"/>
+  <text x="36" y="220" class="l2">Cadres isolés · iframe sans réseau ni disque</text>
+  <rect x="36" y="232" width="160" height="54" rx="7" class="in2"/>
+  <text x="116" y="254" class="t2 c">Pages</text><text x="116" y="272" class="m c">pages/*.tsx</text>
+  <rect x="206" y="232" width="160" height="54" rx="7" class="in2"/>
+  <text x="286" y="254" class="t2 c">Panneau de droite</text><text x="286" y="272" class="m c">une autre page</text>
+  <rect x="376" y="232" width="160" height="54" rx="7" class="in2"/>
+  <text x="456" y="254" class="t2 c">Fonctions</text><text x="456" y="272" class="m c">cadre invisible</text>
+  <rect x="546" y="232" width="158" height="54" rx="7" class="in2"/>
+  <text x="625" y="254" class="t2 c">@alfred/ui</text><text x="625" y="272" class="m c">composants, gabarits</text>
+  <path d="M370 300 V318" class="e"/>
+
+  <!-- Pont -->
+  <rect x="20" y="320" width="700" height="36" rx="8" class="box"/>
+  <text x="370" y="343" class="mi c">@alfred/sdk · request(méthode) → frameBridge.ts → invoke → dispatch.rs</text>
+  <path d="M370 356 V374" class="e"/>
+
+  <!-- Backend -->
+  <rect x="20" y="376" width="700" height="220" rx="10" class="band3"/>
+  <text x="36" y="396" class="l3">Backend Rust · un point d’entrée, des services</text>
+  <g>
+    <rect x="36" y="408" width="126" height="40" rx="6" class="in3"/><text x="99" y="424" class="t2 c">Base de l’espace</text><text x="99" y="440" class="m c">space_db.rs</text>
+    <rect x="171" y="408" width="126" height="40" rx="6" class="in3"/><text x="234" y="424" class="t2 c">Historique</text><text x="234" y="440" class="m c">module_history.rs</text>
+    <rect x="306" y="408" width="126" height="40" rx="6" class="in3"/><text x="369" y="424" class="t2 c">Sauvegardes</text><text x="369" y="440" class="m c">backups.rs</text>
+    <rect x="441" y="408" width="126" height="40" rx="6" class="in3"/><text x="504" y="424" class="t2 c">Plein texte</text><text x="504" y="440" class="m c">module_search.rs</text>
+    <rect x="576" y="408" width="126" height="40" rx="6" class="in3"/><text x="639" y="424" class="t2 c">Par le sens</text><text x="639" y="440" class="m c">module_semantic.rs</text>
+
+    <rect x="36" y="454" width="126" height="40" rx="6" class="in3"/><text x="99" y="470" class="t2 c">Fichiers</text><text x="99" y="486" class="m c">module_files.rs</text>
+    <rect x="171" y="454" width="126" height="40" rx="6" class="in3"/><text x="234" y="470" class="t2 c">Documents</text><text x="234" y="486" class="m c">documents.rs</text>
+    <rect x="306" y="454" width="126" height="40" rx="6" class="in3"/><text x="369" y="470" class="t2 c">Clients HTTP</text><text x="369" y="486" class="m c">clients.rs</text>
+    <rect x="441" y="454" width="126" height="40" rx="6" class="in3"/><text x="504" y="470" class="t2 c">OAuth 2</text><text x="504" y="486" class="m c">oauth.rs</text>
+    <rect x="576" y="454" width="126" height="40" rx="6" class="in3"/><text x="639" y="470" class="t2 c">Cache</text><text x="639" y="486" class="m c">client_cache.rs</text>
+
+    <rect x="36" y="500" width="126" height="40" rx="6" class="in3"/><text x="99" y="516" class="t2 c">Fonctions</text><text x="99" y="532" class="m c">functions.rs</text>
+    <rect x="171" y="500" width="126" height="40" rx="6" class="in3"/><text x="234" y="516" class="t2 c">Tâches de fond</text><text x="234" y="532" class="m c">jobs.rs</text>
+    <rect x="306" y="500" width="126" height="40" rx="6" class="in3"/><text x="369" y="516" class="t2 c">Planification</text><text x="369" y="532" class="m c">schedules.rs</text>
+    <rect x="441" y="500" width="126" height="40" rx="6" class="in3"/><text x="504" y="516" class="t2 c">Webhooks</text><text x="504" y="532" class="m c">webhooks.rs</text>
+    <rect x="576" y="500" width="126" height="40" rx="6" class="in3"/><text x="639" y="516" class="t2 c">Événements</text><text x="639" y="532" class="m c">module_events.rs</text>
+
+    <rect x="36" y="546" width="126" height="40" rx="6" class="in3"/><text x="99" y="562" class="t2 c">Accords</text><text x="99" y="578" class="m c">permissions.rs</text>
+    <rect x="171" y="546" width="126" height="40" rx="6" class="in3"/><text x="234" y="562" class="t2 c">Coffre</text><text x="234" y="578" class="m c">vault.rs</text>
+    <rect x="306" y="546" width="126" height="40" rx="6" class="in3"/><text x="369" y="562" class="t2 c">Commandes</text><text x="369" y="578" class="m c">commands.rs</text>
+    <rect x="441" y="546" width="126" height="40" rx="6" class="in3"/><text x="504" y="562" class="t2 c">Voix</text><text x="504" y="578" class="m c">voice/</text>
+    <rect x="576" y="546" width="126" height="40" rx="6" class="in3"/><text x="639" y="562" class="t2 c">Partage, git</text><text x="639" y="578" class="m c">team_sync.rs</text>
+  </g>
+  <path d="M370 596 V614" class="e"/>
+
+  <!-- Stockage -->
+  <rect x="20" y="616" width="700" height="80" rx="10" class="band4"/>
+  <text x="36" y="636" class="l4">Stockage</text>
+  <rect x="36" y="646" width="126" height="40" rx="6" class="in4"/><text x="99" y="662" class="t2 c">Dossier d’espace</text><text x="99" y="678" class="m c">sous git</text>
+  <rect x="171" y="646" width="126" height="40" rx="6" class="in4"/><text x="234" y="662" class="t2 c">Base de l’espace</text><text x="234" y="678" class="m c">data.sqlite</text>
+  <rect x="306" y="646" width="126" height="40" rx="6" class="in4"/><text x="369" y="662" class="t2 c">Fichiers, copies</text><text x="369" y="678" class="m c">files · backups</text>
+  <rect x="441" y="646" width="126" height="40" rx="6" class="in4"/><text x="504" y="662" class="t2 c">Base d’Alfred</text><text x="504" y="678" class="m c">accords, journal</text>
+  <rect x="576" y="646" width="126" height="40" rx="6" class="in4"/><text x="639" y="662" class="t2 c">Trousseau</text><text x="639" y="678" class="m c">secrets du coffre</text>
+
+  <!-- Agents -->
+  <rect x="740" y="90" width="200" height="90" rx="10" class="b5"/>
+  <text x="840" y="120" class="t c">Agents de code</text>
+  <text x="840" y="140" class="s c">Claude Code · Codex</text>
+  <text x="840" y="156" class="s c">OpenCode</text>
+  <path d="M720 135 H738" class="e e2"/>
+  <rect x="740" y="376" width="200" height="86" rx="10" class="b3"/>
+  <text x="840" y="406" class="t c">Serveur MCP</text>
+  <text x="840" y="426" class="s c">HTTP, JSON-RPC</text>
+  <text x="840" y="442" class="m c">127.0.0.1</text>
+  <path d="M840 180 V374" class="e"/>
+  <text x="848" y="280" class="s">outils MCP</text>
+  <path d="M740 420 H722" class="e"/>
+  <rect x="740" y="490" width="200" height="72" rx="10" class="box"/>
+  <text x="840" y="518" class="t c">Monde extérieur</text>
+  <text x="840" y="538" class="s c">API des services, webhooks,</text>
+  <text x="840" y="552" class="s c">retours OAuth</text>
+  <path d="M740 526 H722" class="e e2"/>
+  <path d="M948 135 V666 H722" class="e ed"/>
+  <text x="940" y="610" class="s r">écrit les fichiers</text>
+</svg>
+<figcaption><b>Une seule porte.</b> La fenêtre Tauri et, en développement, le pont HTTP du navigateur de test passent tous deux
+par <code>dispatch.rs</code> : un test dans le navigateur exerce exactement le code de l’application.</figcaption>
+</figure>
+
+<!-- ============================================================ 2 -->
+<h2 id="espace">2. L’espace de travail</h2>
+<p>L’espace est le dossier de l’application que l’utilisateur construit ; il peut en avoir plusieurs, sans lien entre eux.
+Tout y est rangé par <b>module</b>. La navigation affichée se calcule à partir des manifestes des modules et de
+<code>alfred.json</code>. Ce que l’agent écrit est versionné ; les données, les fichiers et les copies restent hors de git,
+dans <code>.alfred/</code>.</p>
+
+<div class="tree" role="figure" aria-label="Arborescence d’un espace">
+  <div class="row"><span>alfred.json <span class="tag git">git</span></span><span class="note">Navigation et liaisons choisies par l’utilisateur. L’agent n’y touche pas.</span></div>
+  <div class="row"><span>AGENTS.md, CLAUDE.md <span class="tag al">Alfred</span></span><span class="note">Guide de l’agent, réécrit à chaque ouverture à la version de l’application.</span></div>
+  <div class="row"><span>docs/alfred/DESIGN.md, SDK.md <span class="tag al">Alfred</span></span><span class="note">Règles de présentation et référence du pont.</span></div>
+  <div class="row"><span>clients/&lt;id&gt;.json <span class="tag git">git</span></span><span class="note">Un service : adresse, façons de s’authentifier, comptes. Jamais de secret.</span></div>
+  <div class="row"><span>modules/&lt;module&gt;/ <span class="tag git">git</span></span><span class="note">Un module : tout ce qu’il faut pour un sujet.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;module.json</span><span class="note">Manifeste : sections, pages, fonctions, clients, recherche, historique, partage…</span></div>
+  <div class="row"><span>&nbsp;&nbsp;pages/&lt;page&gt;.tsx</span><span class="note">Page, panneau de droite ou page des Réglages.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;functions/&lt;fonction&gt;.ts</span><span class="note">Fonction TypeScript, ou <code>.sh</code>, <code>.ps1</code>, <code>.py</code> pour un script.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;migrations/NNNN_nom.sql</span><span class="note">Structure des tables, appliquée dans l’ordre des noms.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;lib/…</span><span class="note">Code partagé, importé par chemin relatif.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;vendor/</span><span class="note">Paquets npm installés par <code>set_libraries</code> (esm.sh, copiés et figés).</span></div>
+  <div class="row"><span>.alfred/ <span class="tag off">hors git</span></span><span class="note">Ce que l’utilisateur produit en se servant de l’application.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;data.sqlite</span><span class="note">Base de l’espace : les tables de chaque module, préfixées par son identifiant.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;files/&lt;module&gt;/&lt;id&gt;/&lt;nom&gt;</span><span class="note">Pièces jointes, PDF, images, avec leur <code>meta.json</code>.</span></div>
+  <div class="row"><span>&nbsp;&nbsp;backups/</span><span class="note">Copies datées : chaque jour et avant chaque migration.</span></div>
+</div>
+
+<p>Hors de l’espace, Alfred garde sa propre base (réglages, accords, journal, index des conversations, résultats des tests,
+secrets des webhooks) et range les secrets du coffre dans le trousseau du système. L’agent, qui écrit dans l’espace, ne
+peut atteindre ni l’une ni l’autre (section <a href="#confiance">18</a>).</p>
+
+<!-- ============================================================ 3 -->
+<h2 id="fenetre">3. Fenêtre et zones d’une page</h2>
+<p>Une entrée du menu de gauche est une <b>section</b> ; ses pages sont ses <b>onglets</b>, dans la barre du haut. Chaque
+page peut avoir un <b>panneau de droite</b>, qui est une autre page et reçoit sa sélection. Les Réglages s’ouvrent dans
+une fenêtre à part, avec les rubriques d’Alfred puis les pages de l’espace qui y sont placées. Une page peut aussi
+s’ouvrir seule, dans sa propre fenêtre.</p>
+<p>Le composant <code>Page</code> découpe la page en zones. Aucune n’est obligatoire et chacune accepte un contenu libre.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 420" role="img" aria-labelledby="f3t">
+  <title id="f3t">Anatomie de la fenêtre et zones d’une page</title>
+  <rect x="20" y="20" width="920" height="380" rx="12" class="box"/>
+  <!-- Menu -->
+  <path d="M32 20 H180 V400 H32 Q20 400 20 388 V32 Q20 20 32 20 Z" class="soft"/>
+  <text x="36" y="46" class="l0">Sections</text>
+  <rect x="32" y="60" width="136" height="28" rx="6" class="box"/><circle cx="48" cy="74" r="5" class="dot1"/><text x="62" y="78" class="s">Suivi</text>
+  <rect x="32" y="94" width="136" height="28" rx="6" class="b1"/><circle cx="48" cy="108" r="5" class="dot4"/><text x="62" y="112" class="t2">Factures</text>
+  <rect x="32" y="128" width="136" height="28" rx="6" class="box"/><circle cx="48" cy="142" r="5" class="dot5"/><text x="62" y="146" class="s">Contacts</text>
+  <rect x="32" y="162" width="136" height="28" rx="6" class="box"/><text x="62" y="180" class="s">Agent</text>
+  <text x="36" y="376" class="s">⚙ Réglages</text>
+
+  <!-- Onglets et outils -->
+  <line x1="180" y1="64" x2="940" y2="64" stroke="var(--line)"/>
+  <text x="200" y="47" class="s">Tableau de bord</text>
+  <text x="320" y="47" class="t2">Factures</text>
+  <line x1="318" y1="62" x2="376" y2="62" stroke="var(--c1)" stroke-width="2.5"/>
+  <text x="400" y="47" class="s">Archive</text>
+  <g>
+    <circle cx="796" cy="42" r="11" class="b3"/><text x="796" y="46" class="m c">⚡</text>
+    <circle cx="826" cy="42" r="11" class="b5"/><text x="826" y="46" class="m c">⌖</text>
+    <circle cx="856" cy="42" r="11" class="b5"/><text x="856" y="46" class="m c">✦</text>
+    <circle cx="886" cy="42" r="11" class="box"/><text x="886" y="46" class="m c">▯</text>
+    <text x="780" y="47" class="s r">configurer · corriger · agent · panneau</text>
+  </g>
+
+  <!-- Page -->
+  <text x="196" y="84" class="l1">Page · composant Page</text>
+  <rect x="196" y="92" width="508" height="52" rx="8" class="band1"/>
+  <text x="210" y="112" class="t">Factures</text>
+  <text x="210" y="130" class="s">en-tête : titre, description, actions de la page</text>
+  <rect x="600" y="104" width="90" height="26" rx="6" class="b1"/><text x="645" y="121" class="t2 c">Nouvelle</text>
+  <text x="702" y="88" class="m r">header</text>
+
+  <rect x="196" y="150" width="508" height="40" rx="8" class="band2"/>
+  <rect x="208" y="157" width="330" height="26" rx="6" class="box"/>
+  <text x="220" y="174" class="m">⌕</text>
+  <rect x="234" y="161" width="118" height="18" rx="9" class="b2"/><text x="293" y="174" class="m c">État : à payer ×</text>
+  <rect x="358" y="161" width="110" height="18" rx="9" class="b2"/><text x="413" y="174" class="m c">Client : Lyon ×</text>
+  <text x="476" y="174" class="m">ville:|</text>
+  <rect x="552" y="157" width="64" height="26" rx="6" class="box"/><text x="584" y="174" class="m c">Vue ▾</text>
+  <rect x="624" y="157" width="68" height="26" rx="6" class="box"/><text x="658" y="174" class="m c">Exporter</text>
+  <text x="702" y="200" class="m r">search · bar · actions</text>
+
+  <rect x="196" y="206" width="508" height="134" rx="8" class="box"/>
+  <rect x="206" y="214" width="488" height="22" rx="4" class="soft"/>
+  <text x="216" y="229" class="m">Numéro</text><text x="320" y="229" class="m">Client</text><text x="480" y="229" class="m">Échéance</text><text x="684" y="229" class="m r">Montant</text>
+  <g>
+    <rect x="216" y="248" width="60" height="6" rx="3" class="bar"/><rect x="320" y="248" width="120" height="6" rx="3" class="bar"/><rect x="480" y="248" width="70" height="6" rx="3" class="bar"/><rect x="634" y="248" width="50" height="6" rx="3" class="bar"/>
+    <rect x="206" y="264" width="488" height="22" rx="4" class="b1" stroke-opacity=".4"/>
+    <rect x="216" y="272" width="60" height="6" rx="3" class="bar"/><rect x="320" y="272" width="100" height="6" rx="3" class="bar"/><rect x="480" y="272" width="70" height="6" rx="3" class="bar"/><rect x="644" y="272" width="40" height="6" rx="3" class="bar"/>
+    <rect x="216" y="298" width="60" height="6" rx="3" class="bar"/><rect x="320" y="298" width="140" height="6" rx="3" class="bar"/><rect x="480" y="298" width="70" height="6" rx="3" class="bar"/><rect x="630" y="298" width="54" height="6" rx="3" class="bar"/>
+    <rect x="216" y="322" width="60" height="6" rx="3" class="bar"/><rect x="320" y="322" width="90" height="6" rx="3" class="bar"/><rect x="480" y="322" width="70" height="6" rx="3" class="bar"/><rect x="640" y="322" width="44" height="6" rx="3" class="bar"/>
+  </g>
+  <text x="702" y="352" class="m r">contenu : DataTable, List, Tabs…</text>
+
+  <rect x="196" y="358" width="508" height="30" rx="8" class="band4"/>
+  <text x="210" y="377" class="s">pied fixe</text>
+  <text x="560" y="377" class="mi r">1–50 sur 312</text>
+  <text x="600" y="377" class="mi">‹   ›</text>
+  <text x="702" y="377" class="m r">footer</text>
+
+  <!-- Panneau -->
+  <rect x="720" y="76" width="208" height="312" rx="10" class="band5"/>
+  <text x="734" y="98" class="l5">Panneau de droite</text>
+  <text x="734" y="122" class="t2">Facture F-2026-118</text>
+  <text x="734" y="142" class="s">DetailPanel : la ligne choisie</text>
+  <text x="734" y="158" class="s">reçue par shell.publish({ id })</text>
+  <line x1="734" y1="176" x2="914" y2="176" stroke="var(--line)"/>
+  <text x="734" y="198" class="s">ou une conversation</text>
+  <text x="734" y="214" class="s">d’agent lancée par la page</text>
+  <rect x="734" y="228" width="180" height="40" rx="8" class="box"/>
+  <text x="744" y="252" class="s">Classe ce ticket…</text>
+  <rect x="764" y="276" width="150" height="40" rx="8" class="in5"/>
+  <text x="774" y="300" class="s">Catégorie : réseau</text>
+  <rect x="734" y="340" width="180" height="32" rx="8" class="box"/><text x="744" y="361" class="s">Répondre…</text>
+</svg>
+<figcaption><b>Les zones de <code>Page</code></b> : <code>header</code> (titre et actions, ou un contenu libre),
+<code>search</code>, <code>bar</code> et <code>actions</code> dans la petite barre sous l’en-tête (une recherche simple, une
+recherche à étiquettes, des choix de vue), le contenu, et <code>footer</code>, un pied fixe pour une pagination ou un total.
+Avec <code>fill</code>, seul le contenu défile. Les quatre boutons de la barre du haut configurent le module de la page, ouvrent
+« Corriger un élément », la conversation d’agent et le panneau.</figcaption>
+</figure>
+
+<p><b>La page se souvient.</b> Un cadre est détruit quand on change d’onglet. Ce que l’utilisateur avait tapé ou choisi
+(recherche, filtres, vue, ligne ouverte) se garde par <code>usePageState(clé, valeur)</code> : la coquille le garde pour la
+page et le lui rend au retour. <code>CollectionPage</code> le fait seule. Ce qui doit durer au-delà du lancement va en base.</p>
+
+<!-- ============================================================ 4 -->
+<h2 id="creation">4. Créer une page</h2>
+<p>L’utilisateur décrit ce qu’il veut ; l’agent fait le reste, sans rien lui laisser à finir. Il agit sur la
+<b>structure</b> par les outils MCP (placer une page, déclarer une fonction) et écrit le <b>contenu</b> comme des fichiers.
+Il ne rend la main qu’une fois <code>check</code> passé et la page vue en capture. Chaque tour d’agent devient un commit de
+l’espace, que l’on peut annuler.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 540" role="img" aria-labelledby="f4t">
+  <title id="f4t">Séquence de création d’une page</title>
+  <g>
+    <rect x="15" y="16" width="130" height="36" rx="8" class="soft"/><text x="80" y="39" class="t c">Vous</text>
+    <rect x="205" y="16" width="130" height="36" rx="8" class="b5"/><text x="270" y="39" class="t c">Agent</text>
+    <rect x="405" y="16" width="130" height="36" rx="8" class="b3"/><text x="470" y="39" class="t c">MCP d’Alfred</text>
+    <rect x="605" y="16" width="130" height="36" rx="8" class="b4"/><text x="670" y="39" class="t c">Espace (git)</text>
+    <rect x="805" y="16" width="130" height="36" rx="8" class="b1"/><text x="870" y="39" class="t c">Coquille</text>
+  </g>
+  <path d="M80 52 V526 M270 52 V526 M470 52 V526 M670 52 V526 M870 52 V526" class="life"/>
+
+  <text x="175" y="84" class="s c">« Une page pour suivre mes factures »</text>
+  <path d="M80 92 H268" class="e"/>
+  <text x="370" y="118" class="mi c">space_overview</text>
+  <path d="M270 126 H468" class="e"/>
+  <text x="370" y="152" class="s c">sections, modules, services existants</text>
+  <path d="M470 160 H272" class="e ed"/>
+  <text x="370" y="186" class="mi c">place_page { titre, emplacement }</text>
+  <path d="M270 194 H468" class="e"/>
+  <text x="570" y="220" class="s c">module.json + pages/factures.tsx</text>
+  <path d="M470 228 H668" class="e"/>
+  <text x="470" y="254" class="s c">écrit la page, la migration SQL, les fonctions</text>
+  <path d="M270 262 H668" class="e"/>
+  <text x="370" y="288" class="mi c">check</text>
+  <path d="M270 296 H468" class="e"/>
+  <text x="370" y="322" class="s c">compile · design · schéma · tests</text>
+  <path d="M470 330 H272" class="e ed"/>
+  <text x="370" y="356" class="mi c">page_screenshot</text>
+  <path d="M270 364 H468" class="e"/>
+  <text x="670" y="390" class="s c">rend la page dans un cadre</text>
+  <path d="M470 398 H868" class="e"/>
+  <text x="570" y="424" class="s c">capture PNG</text>
+  <path d="M870 432 H472" class="e ed"/>
+  <path d="M670 448 h36 v22 h-34" class="e"/>
+  <text x="714" y="464" class="s">commit du tour</text>
+  <text x="475" y="496" class="s c">la page apparaît dans le menu, prête</text>
+  <path d="M870 504 H82" class="e"/>
+</svg>
+<figcaption><b><code>check</code></b> transpile chaque fichier (TSX vers module ES, <code>transpile.rs</code>), relit le design
+sans exécuter la page (<code>design_lint.rs</code> : pas de style propre, pas de bouton texte là où une icône suffit), vérifie les
+migrations, les imports permis et lance les tests des fonctions de lecture. <code>page_logs</code> donne la console et les
+erreurs d’exécution, <code>page_snapshot</code> l’arbre d’accessibilité.</figcaption>
+</figure>
+
+<!-- ============================================================ 5 -->
+<h2 id="cadre">5. Le cadre isolé et le pont</h2>
+<p>Une page est un composant React affiché dans une iframe <code>sandbox="allow-scripts allow-forms"</code>, servie par le
+protocole <code>alfred-page</code> avec une politique <code>default-src 'none'</code>. Elle n’a pas d’origine, donc ni
+<code>localStorage</code> ni cookies ; pas de réseau ; WebRTC est coupé dans la webview elle-même. Une fonction tourne dans un
+cadre invisible du même type. Tout passe par <code>@alfred/sdk</code>, qui envoie un message à la coquille ; la coquille
+connaît l’identité du cadre (<code>module/page</code>) et la transmet au backend, qui vérifie l’accord avant de servir.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 300" role="img" aria-labelledby="f5t">
+  <title id="f5t">Du cadre isolé au service, à travers le pont</title>
+  <rect x="20" y="20" width="330" height="262" rx="12" class="wall"/>
+  <text x="36" y="44" class="l2">Cadre isolé de la page</text>
+  <rect x="40" y="60" width="290" height="44" rx="8" class="in2"/>
+  <text x="185" y="80" class="t2 c">pages/factures.tsx</text><text x="185" y="96" class="m c">React + @alfred/ui</text>
+  <path d="M185 104 V126" class="e"/>
+  <rect x="40" y="128" width="290" height="44" rx="8" class="b2"/>
+  <text x="185" y="148" class="t2 c">@alfred/sdk</text><text x="185" y="164" class="m c">db · files · functions · ai · shell…</text>
+  <text x="40" y="200" class="no">✕ fetch, WebSocket</text>
+  <text x="190" y="200" class="no">✕ localStorage</text>
+  <text x="40" y="222" class="no">✕ window.open, &lt;a href&gt;</text>
+  <text x="190" y="222" class="no">✕ &lt;img src=https…&gt;</text>
+  <text x="40" y="244" class="no">✕ innerHTML</text>
+  <text x="190" y="244" class="no">✕ &lt;input type=file&gt;</text>
+  <text x="40" y="270" class="m">sandbox · CSP 'none' · sans WebRTC</text>
+
+  <path d="M330 150 H398" class="e"/>
+  <rect x="400" y="96" width="170" height="108" rx="10" class="b1"/>
+  <text x="485" y="122" class="t c">Coquille</text>
+  <text x="485" y="142" class="m c">frameBridge.ts</text>
+  <text x="485" y="166" class="s c">identité du cadre :</text>
+  <text x="485" y="182" class="mi c">factures/liste</text>
+  <path d="M570 150 H608" class="e"/>
+  <rect x="610" y="96" width="150" height="108" rx="10" class="b3"/>
+  <text x="685" y="122" class="t c">dispatch.rs</text>
+  <text x="685" y="146" class="s c">la méthode existe ?</text>
+  <text x="685" y="164" class="s c">le module y a droit ?</text>
+  <text x="685" y="182" class="s c">accord donné ?</text>
+  <path d="M760 128 L798 98" class="e"/>
+  <rect x="800" y="56" width="140" height="70" rx="10" class="b3"/>
+  <text x="870" y="84" class="t c">Service</text>
+  <text x="870" y="104" class="s c">ses tables, ses fichiers,</text>
+  <text x="870" y="118" class="s c">ses clients</text>
+  <path d="M760 176 L798 204" class="e ed"/>
+  <rect x="800" y="176" width="140" height="80" rx="10" class="box"/>
+  <text x="870" y="200" class="t2 c">Première fois</text>
+  <text x="870" y="220" class="s c">« Autoriser cette page</text>
+  <text x="870" y="236" class="s c">à utiliser le micro ? »</text>
+</svg>
+<figcaption><b>Le cloisonnement suit le module.</b> Une page ne lit que les tables préfixées par son module, ne voit que ses
+fichiers, n’appelle un autre module que par une fonction déclarée, et n’atteint un service que par le connecteur qui le
+détient. La réponse à une question d’accord est gardée hors de l’espace, là où l’agent ne peut pas l’écrire.</figcaption>
+</figure>
+
+<!-- ============================================================ 6 -->
+<h2 id="composants">6. Les composants</h2>
+<p>La coquille et les pages de l’espace utilisent exactement la même bibliothèque, <code>@alfred/ui</code> ; une page n’importe
+rien d’autre pour son apparence. Elle <b>emploie</b> les composants, elle ne les dessine pas : un besoin absent se compose
+avec eux. <code>DESIGN.md</code> en donne l’usage ; <code>check</code> signale un style propre.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 220" role="img" aria-labelledby="f6t">
+  <title id="f6t">Trois étages de la bibliothèque d’interface</title>
+  <rect x="20" y="20" width="920" height="54" rx="10" class="b1"/>
+  <text x="40" y="44" class="t">Gabarits</text>
+  <text x="40" y="62" class="s">une page entière, données comprises</text>
+  <text x="330" y="44" class="mi">CollectionPage · DetailPanel · SettingsPage</text>
+  <text x="330" y="62" class="mi">openForm · openModal · openSubpage · confirmAction · usePageState</text>
+  <rect x="20" y="84" width="920" height="54" rx="10" class="b2"/>
+  <text x="40" y="108" class="t">Composants</text>
+  <text x="40" y="126" class="s">ce qu’une page assemble</text>
+  <text x="330" y="108" class="mi">Page · DataTable · List · Tabs · TagSearchField · Pagination · DocumentViewer</text>
+  <text x="330" y="126" class="mi">FormField · Combobox · StatusBadge · Avatar · ProgressBar · Markdown · HtmlContent…</text>
+  <rect x="20" y="148" width="920" height="54" rx="10" class="soft"/>
+  <text x="40" y="172" class="t">Primitives</text>
+  <text x="40" y="190" class="s">réservées à la bibliothèque</text>
+  <text x="330" y="180" class="mi">button · input · checkbox · radio · switch · native-select · textarea · resizable</text>
+</svg>
+<figcaption><b>Les gabarits portent le chargement.</b> <code>CollectionPage</code> reçoit des colonnes et une fonction
+<code>load</code> ; recherche, filtres, tri, vue, sélection, panneau, état vide et erreurs sont faits pour la page.</figcaption>
+</figure>
+
+<div class="catalog">
+  <section><h4>Rechercher et filtrer</h4><div class="chips">
+    <span>Page search</span><span>SearchField</span><span>TagSearchField</span><span>MultiSelectCombobox</span><span>ChoiceGroup</span><span>ChoiceButton</span><span>SelectControl</span><span class="tpl">usePageState</span>
+  </div></section>
+  <section><h4>Montrer des données</h4><div class="chips">
+    <span class="tpl">CollectionPage</span><span>DataTable</span><span>Pagination</span><span>pageOf</span><span>List</span><span>ListItem</span><span>KeyValueList</span><span>FormattedValue</span><span>StatusBadge</span><span>StatusDot</span><span>Avatar</span><span>ProgressBar</span>
+  </div></section>
+  <section><h4>Lire un contenu</h4><div class="chips">
+    <span>Text</span><span>Heading</span><span>Code</span><span>Link</span><span>Image</span><span>Markdown</span><span>HtmlContent</span><span>DocumentViewer</span>
+  </div></section>
+  <section><h4>Organiser et naviguer</h4><div class="chips">
+    <span>Tabs</span><span>Disclosure</span><span>StepList</span><span>Stack</span><span>Row</span><span>Grid</span><span>Divider</span><span>Surface</span><span>Section</span><span class="tpl">openSubpage</span><span class="tpl">DetailPanel</span>
+  </div></section>
+  <section><h4>Agir</h4><div class="chips">
+    <span class="tpl">Action</span><span class="tpl">ActionBar</span><span>Button</span><span>IconButton</span><span>MenuButton</span><span>OverflowMenu</span><span>MenuItem</span><span>InlineEdit</span><span>RefreshButton</span>
+  </div></section>
+  <section><h4>Saisir</h4><div class="chips">
+    <span class="tpl">openForm</span><span>FormField</span><span>TextInput</span><span>TextArea</span><span>SelectControl</span><span>CheckboxControl</span><span>RadioControl</span><span>SwitchControl</span><span>Combobox</span><span>SearchCombobox</span><span>Fieldset</span>
+  </div></section>
+  <section><h4>Dire ce qui se passe</h4><div class="chips">
+    <span>FeedbackBanner</span><span>EmptyState</span><span>LoadingSkeleton</span><span>Spinner</span><span>ProgressBar</span><span class="tpl">shell.notify</span><span class="tpl">confirmAction</span>
+  </div></section>
+  <section><h4>Réservé à la coquille et aux gabarits</h4><div class="chips">
+    <span class="res">PageToolbar</span><span class="res">PageTopBar</span><span class="res">PanelHeader</span><span class="res">SettingRow</span><span class="res">Modal</span><span class="res">Dialog</span><span class="res">ConfirmDialog</span><span class="res">Menu</span><span class="res">AnchoredPanel</span><span class="res">ObjectHeader</span><span class="res">FormActions</span>
+  </div></section>
+</div>
+<p>Pour une librairie que la bibliothèque n’a pas (un éditeur de texte riche, un graphique), l’agent l’installe avec
+<code>set_libraries</code> : Alfred télécharge sa version ES depuis esm.sh, la copie dans <code>vendor/</code> et la sert au cadre
+comme le reste du module, toujours sans réseau.</p>
+
+<!-- ============================================================ 7 -->
+<h2 id="services">7. Les services</h2>
+<p>Ce qu’une page ou une fonction peut demander, par famille. Le nom en couleur est l’espace du SDK ; en bas, le fichier
+Rust qui rend le service. L’agent propose ces services de lui-même quand la demande s’y prête (des données que plusieurs
+personnes remplissent : le partage ; beaucoup de texte : la recherche…).</p>
+
+<div class="cards">
+  <div class="card" style="--k:var(--c4)"><h4>Données</h4><div class="ns">db · history</div>
+    <ul><li>Tables du module dans SQLite, créées par migrations</li><li>Historique ligne par ligne, retour en arrière</li><li>Sauvegardes chaque jour et avant migration, export JSON</li></ul>
+    <div class="rs">space_db · module_history · backups</div></div>
+  <div class="card" style="--k:var(--c4)"><h4>Recherche</h4><div class="ns">search · semantic</div>
+    <ul><li>Plein texte FTS5, tenu à jour par déclencheurs</li><li>Par le sens, modèle local multilingue</li><li>Rien ne quitte l’ordinateur</li></ul>
+    <div class="rs">module_search · module_semantic</div></div>
+  <div class="card" style="--k:var(--c4)"><h4>Fichiers et documents</h4><div class="ns">files · documents</div>
+    <ul><li>Pièces jointes du module, 50 Mo par fichier</li><li>Produire un PDF, un CSV, un classeur Excel</li><li>Lire le texte d’un PDF ou d’un Word</li></ul>
+    <div class="rs">module_files · documents</div></div>
+  <div class="card" style="--k:var(--c3)"><h4>Services extérieurs</h4><div class="ns">client(id)</div>
+    <ul><li>Requêtes HTTP authentifiées par Alfred</li><li>Plusieurs comptes par service, OAuth 2</li><li>Cache des lectures pour ménager les quotas</li></ul>
+    <div class="rs">clients · oauth · client_cache · vault</div></div>
+  <div class="card" style="--k:var(--c3)"><h4>Fonctions</h4><div class="ns">functions.call</div>
+    <ul><li>TypeScript dans un cadre, ou bash, PowerShell, Python</li><li>Appelées par pages, agents, webhooks, horloge</li><li>Cas de test déclarés et rejoués</li></ul>
+    <div class="rs">functions · scripts · script_sdk · function_tests</div></div>
+  <div class="card" style="--k:var(--c3)"><h4>Automatisations</h4><div class="ns">jobs · events · schedules · webhooks</div>
+    <ul><li>Tâches de fond par étapes, reprises après fermeture</li><li>Événements entre modules, file durable</li><li>Planification et webhooks locaux</li></ul>
+    <div class="rs">jobs · module_events · schedules · webhooks</div></div>
+  <div class="card" style="--k:var(--c5)"><h4>IA</h4><div class="ns">ai · voice</div>
+    <ul><li>Réponse structurée validée par schéma</li><li>Conversation d’agent dans le panneau</li><li>Lecture à voix haute et dictée</li></ul>
+    <div class="rs">agent/oneShot · agent/pageAgent · voice/</div></div>
+  <div class="card" style="--k:var(--c1)"><h4>Coquille</h4><div class="ns">shell · badge · usePageState</div>
+    <ul><li>Notifications, compteurs sur le menu</li><li>Navigation, fenêtre séparée, lien externe</li><li>Page et panneau qui se parlent</li></ul>
+    <div class="rs">system_notifications · badges · page_windows</div></div>
+  <div class="card" style="--k:var(--c3)"><h4>Le poste</h4><div class="ns">commands</div>
+    <ul><li>Lancer git, ffmpeg, pandoc… sans shell</li><li>Accordé programme par programme</li><li>Délai et environnement réduit</li></ul>
+    <div class="rs">commands · process_tree</div></div>
+  <div class="card" style="--k:var(--c4)"><h4>Partage</h4><div class="ns">sync · marketplace</div>
+    <ul><li>Tables partagées en équipe par un dépôt git</li><li>Catalogues de modules à importer, publier</li><li>Fusion et scission de modules</li></ul>
+    <div class="rs">team_sync · marketplace · reorganize · git</div></div>
+</div>
+
+<!-- ============================================================ 8 -->
+<h2 id="donnees">8. Les données d’un module</h2>
+<p>Chaque module a ses tables dans la base de l’espace, préfixées par son identifiant ; il les crée par des fichiers de
+migration versionnés avec lui. Les tables d’Alfred portent le préfixe <code>_alfred_</code> : le module ne peut ni les lire, ni
+les modifier, ni les imiter. C’est là que vivent l’historique, les index de recherche et la file de la recherche par le sens.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 300" role="img" aria-labelledby="f8t">
+  <title id="f8t">Tables d’un module, tables d’Alfred et sauvegardes</title>
+  <rect x="20" y="40" width="190" height="70" rx="10" class="b4"/>
+  <text x="115" y="68" class="t c">migrations/</text>
+  <text x="115" y="88" class="m c">0001_factures.sql</text>
+  <path d="M210 75 H278" class="e"/>
+  <text x="244" y="67" class="m c">appliquées</text>
+  <rect x="20" y="150" width="190" height="70" rx="10" class="b2"/>
+  <text x="115" y="178" class="t c">Page ou fonction</text>
+  <text x="115" y="198" class="m c">db.query · db.execute</text>
+  <path d="M210 185 H278" class="e e2"/>
+  <text x="244" y="177" class="m c">ses tables</text>
+
+  <rect x="280" y="24" width="400" height="256" rx="12" class="band4"/>
+  <text x="300" y="48" class="l4">.alfred/data.sqlite</text>
+  <text x="300" y="76" class="t2">Tables du module</text>
+  <rect x="300" y="86" width="170" height="30" rx="6" class="in4"/><text x="385" y="105" class="mi c">factures_lignes</text>
+  <rect x="490" y="86" width="170" height="30" rx="6" class="in4"/><text x="575" y="105" class="mi c">factures_clients</text>
+  <path d="M480 124 V150" class="e ed"/>
+  <text x="490" y="142" class="s">chaque écriture déclenche…</text>
+  <text x="300" y="170" class="t2">Tables d’Alfred, interdites au module</text>
+  <rect x="296" y="180" width="118" height="30" rx="6" class="soft"/><text x="355" y="199" class="m c">_alfred_history</text>
+  <rect x="422" y="180" width="110" height="30" rx="6" class="soft"/><text x="477" y="199" class="m c">_alfred_fts_*</text>
+  <rect x="540" y="180" width="128" height="30" rx="6" class="soft"/><text x="604" y="199" class="m c">_alfred_semantic</text>
+  <text x="355" y="232" class="s c">avant, après,</text><text x="355" y="246" class="s c">qui, quand</text>
+  <text x="477" y="232" class="s c">index</text><text x="477" y="246" class="s c">plein texte</text>
+  <text x="604" y="232" class="s c">file et</text><text x="604" y="246" class="s c">vecteurs</text>
+
+  <path d="M680 90 H738" class="e"/>
+  <rect x="740" y="40" width="200" height="90" rx="10" class="b4"/>
+  <text x="840" y="66" class="t c">Sauvegardes</text>
+  <text x="840" y="86" class="s c">.alfred/backups/</text>
+  <text x="840" y="104" class="s c">chaque jour, avant chaque</text>
+  <text x="840" y="118" class="s c">migration ; un module ou tout</text>
+  <path d="M680 200 H738" class="e"/>
+  <rect x="740" y="160" width="200" height="80" rx="10" class="box"/>
+  <text x="840" y="188" class="t c">Export JSON</text>
+  <text x="840" y="208" class="s c">passer d’un espace ou d’un</text>
+  <text x="840" y="222" class="s c">poste à l’autre</text>
+</svg>
+<figcaption><b>Réorganiser sans perdre.</b> La fusion et la scission de modules (<code>reorganize.rs</code>) renomment les
+tables en même temps que leur module, dans une transaction, et écrivent les migrations qui reproduisent la même structure sur
+une base neuve. Chaque opération est un commit de l’espace.</figcaption>
+</figure>
+
+<!-- ============================================================ 9 -->
+<h2 id="recherche">9. Recherche plein texte</h2>
+<p>Le module déclare ses index dans <code>search</code> de <code>module.json</code>. Alfred crée une table FTS5 à contenu
+externe et les déclencheurs qui la tiennent à jour à chaque écriture, puis la reconstruit quand la déclaration ou la table
+change. La page n’a qu’à demander.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 200" role="img" aria-labelledby="f9t">
+  <title id="f9t">Chaîne de la recherche plein texte</title>
+  <rect x="210" y="14" width="350" height="34" rx="8" class="box dash"/>
+  <text x="385" y="36" class="mi c">module.json → "search": [{ table, colonnes }]</text>
+  <path d="M290 48 V78 M480 48 V78" class="e ed"/>
+  <rect x="20" y="80" width="160" height="76" rx="10" class="b2"/>
+  <text x="100" y="108" class="t c">Écriture</text><text x="100" y="128" class="m c">db.execute</text><text x="100" y="142" class="m c">INSERT · UPDATE</text>
+  <path d="M180 118 H208" class="e"/>
+  <rect x="210" y="80" width="160" height="76" rx="10" class="b3"/>
+  <text x="290" y="108" class="t c">Déclencheurs</text><text x="290" y="128" class="m c">_alfred_*</text><text x="290" y="142" class="s c">posés par Alfred</text>
+  <path d="M370 118 H398" class="e"/>
+  <rect x="400" y="80" width="160" height="76" rx="10" class="b4"/>
+  <text x="480" y="108" class="t c">Index FTS5</text><text x="480" y="128" class="s c">contenu externe,</text><text x="480" y="142" class="s c">toujours à jour</text>
+  <path d="M590 118 H562" class="e"/>
+  <rect x="590" y="80" width="160" height="76" rx="10" class="b2"/>
+  <text x="670" y="108" class="t c">Question</text><text x="670" y="128" class="m c">search.query(</text><text x="670" y="142" class="m c">"factur* lyon")</text>
+  <path d="M750 118 H778" class="e"/>
+  <rect x="780" y="80" width="160" height="76" rx="10" class="b1"/>
+  <text x="860" y="108" class="t c">Résultats</text><text x="860" y="128" class="s c">classés, avec</text><text x="860" y="142" class="s c">extraits surlignés</text>
+  <text x="480" y="186" class="s c">Une ligne arrivée de l’équipe (partage) passe par les mêmes déclencheurs : elle est aussitôt trouvable.</text>
+</svg>
+</figure>
+
+<!-- ============================================================ 10 -->
+<h2 id="semantique">10. Recherche par le sens</h2>
+<p>Retrouver des lignes par ce qu’elles veulent dire : « facture d’électricité » trouve « note EDF de mars ». Alfred calcule
+pour chaque ligne un vecteur avec un modèle local, <b>multilingual-e5-small</b> (français compris), exécuté en Rust par
+candle. Le modèle, environ 470 Mo, se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 290" role="img" aria-labelledby="f10t">
+  <title id="f10t">Recherche sémantique : à l’écriture et à la recherche</title>
+  <text x="20" y="28" class="l4">À l’écriture</text>
+  <rect x="20" y="40" width="160" height="76" rx="10" class="b2"/>
+  <text x="100" y="70" class="t c">Ligne écrite</text><text x="100" y="90" class="s c">« note EDF</text><text x="100" y="104" class="s c">de mars »</text>
+  <path d="M180 78 H208" class="e"/>
+  <rect x="210" y="40" width="160" height="76" rx="10" class="b3"/>
+  <text x="290" y="70" class="t c">Mise en file</text><text x="290" y="90" class="s c">déclencheur</text><text x="290" y="104" class="s c">d’Alfred</text>
+  <path d="M370 78 H398" class="e"/>
+  <rect x="400" y="40" width="160" height="76" rx="10" class="b3"/>
+  <text x="480" y="70" class="t c">Boucle de fond</text><text x="480" y="90" class="s c">calcule les</text><text x="480" y="104" class="s c">vecteurs en attente</text>
+  <path d="M560 78 H588" class="e"/>
+  <rect x="590" y="40" width="160" height="76" rx="10" class="b5"/>
+  <text x="670" y="70" class="t c">Modèle local</text><text x="670" y="90" class="m c">e5-small · candle</text><text x="670" y="104" class="s c">sur l’ordinateur</text>
+  <path d="M750 78 H778" class="e"/>
+  <rect x="780" y="40" width="160" height="76" rx="10" class="b4"/>
+  <text x="860" y="70" class="t c">Vecteurs</text><text x="860" y="90" class="s c">rangés dans la</text><text x="860" y="104" class="s c">base de l’espace</text>
+
+  <text x="20" y="172" class="l1">À la recherche</text>
+  <rect x="20" y="184" width="160" height="76" rx="10" class="b2"/>
+  <text x="100" y="212" class="t c">Question</text><text x="100" y="232" class="m c">semantic.search(</text><text x="100" y="246" class="m c">"facture d’électricité")</text>
+  <path d="M180 222 H398" class="e"/>
+  <text x="290" y="214" class="s c">même modèle</text>
+  <rect x="400" y="184" width="160" height="76" rx="10" class="b3"/>
+  <text x="480" y="212" class="t c">Comparaison</text><text x="480" y="232" class="s c">avec chaque ligne</text><text x="480" y="246" class="s c">indexée</text>
+  <path d="M860 116 V150 H480 V182" class="e ed"/>
+  <path d="M670 116 V140 H210 Q200 140 200 150 V222" class="e ed" style="marker-end:none"/>
+  <path d="M560 222 H778" class="e"/>
+  <rect x="780" y="184" width="160" height="76" rx="10" class="b1"/>
+  <text x="860" y="212" class="t c">Les plus proches</text><text x="860" y="232" class="s c">« note EDF de mars »</text><text x="860" y="246" class="s c">avec leur score</text>
+</svg>
+<figcaption><b>Les données ne quittent pas l’ordinateur.</b> Le module déclare ses index dans <code>semantic</code> ;
+<code>semantic.status</code> dit où en est le calcul. Combinée à <code>documents.extractText</code>, la recherche par le sens
+retrouve aussi le contenu des PDF et des documents Word reçus.</figcaption>
+</figure>
+
+<!-- ============================================================ 11 -->
+<h2 id="fichiers">11. Fichiers et documents</h2>
+<p>Une page n’a pas de disque : elle confie ses fichiers à Alfred, qui les range dans le dossier du module, hors de git,
+avec leurs métadonnées. Chaque module ne voit que les siens. Alfred sait aussi <b>produire</b> des documents (un PDF écrit
+sans dépendance, un CSV, un classeur Excel) et <b>lire</b> le texte d’un PDF ou d’un Word.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 340" role="img" aria-labelledby="f11t">
+  <title id="f11t">Comment un fichier entre, est rangé et se lit</title>
+  <text x="20" y="22" class="l2">Entrer</text>
+  <rect x="20" y="34" width="230" height="56" rx="10" class="b2"/>
+  <text x="34" y="58" class="mi">files.pick()</text><text x="34" y="76" class="s">l’utilisateur choisit un fichier</text>
+  <rect x="20" y="104" width="230" height="56" rx="10" class="b2"/>
+  <text x="34" y="128" class="mi">files.save()</text><text x="34" y="146" class="s">une page ou une fonction écrit</text>
+  <rect x="20" y="174" width="230" height="56" rx="10" class="b3"/>
+  <text x="34" y="198" class="mi">documents.pdf · csv · xlsx</text><text x="34" y="216" class="s">titres, listes, tableaux → fichier</text>
+  <path d="M250 62 L318 110 M250 132 H318 M250 202 L318 154" class="e"/>
+
+  <rect x="320" y="40" width="300" height="190" rx="12" class="band4"/>
+  <text x="340" y="64" class="l4">Rangement</text>
+  <text x="340" y="90" class="mi">.alfred/files/&lt;module&gt;/&lt;id&gt;/&lt;nom&gt;</text>
+  <text x="340" y="112" class="m">meta.json : nom, type, taille, sha256</text>
+  <text x="340" y="142" class="s">• hors git, copié par les sauvegardes</text>
+  <text x="340" y="160" class="s">• supprimé avec le module</text>
+  <text x="340" y="178" class="s">• 50 Mo par fichier</text>
+  <text x="340" y="196" class="s">• l’id se garde dans une table du module</text>
+  <text x="340" y="214" class="s">   (la facture d’une ligne, la pièce d’un ticket)</text>
+
+  <text x="690" y="22" class="l1">Lire</text>
+  <path d="M620 90 L688 62 M620 120 L688 120 M620 150 L688 178 M620 180 L688 236" class="e"/>
+  <rect x="690" y="34" width="250" height="56" rx="10" class="b1"/>
+  <text x="704" y="58" class="mi">DocumentViewer</text><text x="704" y="76" class="s">PDF, image, texte, Markdown ; zoom</text>
+  <rect x="690" y="96" width="250" height="50" rx="10" class="b1"/>
+  <text x="704" y="118" class="mi">files.dataUrl → Image</text><text x="704" y="134" class="s">une image dans la page</text>
+  <rect x="690" y="152" width="250" height="56" rx="10" class="b3"/>
+  <text x="704" y="176" class="mi">documents.extractText</text><text x="704" y="194" class="s">le texte d’un PDF ou d’un Word</text>
+  <rect x="690" y="214" width="250" height="50" rx="10" class="box"/>
+  <text x="704" y="236" class="mi">files.open · files.export</text><text x="704" y="252" class="s">application du système, Enregistrer sous</text>
+  <path d="M815 208 V230" style="display:none"/>
+  <path d="M940 180 H952 V306 H862" class="e"/>
+  <rect x="560" y="284" width="300" height="44" rx="10" class="b5"/>
+  <text x="710" y="304" class="t2 c">puis : recherche, sens, ai.oneShot</text>
+  <text x="710" y="320" class="s c">résumer, classer, retrouver un contrat</text>
+</svg>
+<figcaption><b>Un fichier qui s’exécuterait</b> (script, application) n’est jamais ouvert par <code>files.open</code> : Alfred le
+montre dans le Finder. Le HTML venu de l’extérieur, le corps d’un courriel, ne s’affiche que par <code>HtmlContent</code>,
+nettoyé par liste blanche et isolé dans une racine fantôme.</figcaption>
+</figure>
+
+<!-- ============================================================ 12 -->
+<h2 id="fonctions">12. Fonctions et automatisations</h2>
+<p>Une fonction est déclarée dans le manifeste de son module. Pages, agents, webhooks, planification, événements et tâches de
+fond l’appellent tous de la même façon. Une fonction TypeScript tourne dans un cadre invisible, avec le même pont qu’une page ;
+une fonction en script (bash, PowerShell, Python) est un vrai processus, qui lit son entrée en JSON sur stdin et rend sa sortie
+sur stdout, avec un jeton à usage unique pour appeler le même SDK.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 400" role="img" aria-labelledby="f12t">
+  <title id="f12t">Qui appelle une fonction, et ce qu’elle peut faire</title>
+  <text x="30" y="20" class="l0">Qui appelle</text>
+  <g>
+    <rect x="30" y="30" width="230" height="46" rx="9" class="b2"/><text x="44" y="50" class="t2">Une page</text><text x="44" y="66" class="m">functions.call("synchroniser")</text>
+    <rect x="30" y="90" width="230" height="46" rx="9" class="b5"/><text x="44" y="110" class="t2">Un agent</text><text x="44" y="126" class="m">outil MCP · "tool": true</text>
+    <rect x="30" y="150" width="230" height="46" rx="9" class="box"/><text x="44" y="170" class="t2">Un webhook</text><text x="44" y="186" class="m">POST /hooks/module/id</text>
+    <rect x="30" y="210" width="230" height="46" rx="9" class="box"/><text x="44" y="230" class="t2">L’horloge</text><text x="44" y="246" class="m">everyMinutes · at "08:30"</text>
+    <rect x="30" y="270" width="230" height="46" rx="9" class="box"/><text x="44" y="290" class="t2">Un événement</text><text x="44" y="306" class="m">abonné à "ticket-cree"</text>
+    <rect x="30" y="330" width="230" height="46" rx="9" class="box"/><text x="44" y="350" class="t2">Une tâche de fond</text><text x="44" y="366" class="m">rappelée étape par étape</text>
+  </g>
+  <path d="M260 53 L358 170 M260 113 L358 178 M260 173 L358 186 M260 233 L358 194 M260 293 L358 202 M260 353 L358 210" class="e"/>
+  <rect x="360" y="140" width="250" height="100" rx="12" class="b3"/>
+  <text x="485" y="170" class="t c">Fonction du module</text>
+  <text x="485" y="192" class="s c">TypeScript dans un cadre invisible</text>
+  <text x="485" y="210" class="s c">ou script bash · pwsh · python</text>
+  <text x="485" y="228" class="m c">entrée JSON → sortie JSON</text>
+  <text x="485" y="270" class="s c">120 s par appel · 40 appels simultanés</text>
+  <text x="485" y="288" class="s c">tests : lecture d’office, écriture sur accord</text>
+  <text x="485" y="306" class="s c">une fonction modifiée redevient « à vérifier »</text>
+  <text x="700" y="20" class="l0">Ce qu’elle fait</text>
+  <path d="M610 170 L698 58 M610 180 L698 118 M610 190 L698 178 M610 200 L698 238 M610 210 L698 298" class="e"/>
+  <g>
+    <rect x="700" y="34" width="240" height="46" rx="9" class="b4"/><text x="714" y="54" class="t2">Lit et écrit ses tables</text><text x="714" y="70" class="m">db.query · db.execute</text>
+    <rect x="700" y="94" width="240" height="46" rx="9" class="b3"/><text x="714" y="114" class="t2">Appelle un service extérieur</text><text x="714" y="130" class="m">client("jira") · connecteur</text>
+    <rect x="700" y="154" width="240" height="46" rx="9" class="b4"/><text x="714" y="174" class="t2">Produit des documents</text><text x="714" y="190" class="m">documents · files</text>
+    <rect x="700" y="214" width="240" height="46" rx="9" class="box"/><text x="714" y="234" class="t2">Prévient d’autres modules</text><text x="714" y="250" class="m">events.publish</text>
+    <rect x="700" y="274" width="240" height="46" rx="9" class="b1"/><text x="714" y="294" class="t2">Prévient l’utilisateur</text><text x="714" y="310" class="m">shell.notify · badge</text>
+  </g>
+</svg>
+<figcaption><b>Un connecteur par service.</b> Seules les fonctions du module qui détient un client l’appellent ; les autres
+modules passent par ces fonctions (<code>"jira/lister-tickets"</code>). Chaque fonction déclare son effet
+(<code>read</code> ou <code>write</code>) et ses cas de test.</figcaption>
+</figure>
+
+<h3>Événements entre modules</h3>
+<p>Un module publie un événement qu’il a déclaré ; ceux qui s’y abonnent le reçoivent dans une de leurs fonctions. Le module
+qui publie ne connaît pas ses abonnés : c’est ce qui remplace l’appel direct à un autre module.</p>
+<figure class="fig">
+<svg viewBox="0 0 960 210" role="img" aria-labelledby="f12bt">
+  <title id="f12bt">File des événements entre modules</title>
+  <rect x="20" y="70" width="230" height="70" rx="10" class="b3"/>
+  <text x="135" y="98" class="t c">Module Support</text>
+  <text x="135" y="118" class="m c">events.publish("ticket-cree")</text>
+  <path d="M250 105 H318" class="e"/>
+  <rect x="320" y="50" width="300" height="110" rx="12" class="band4"/>
+  <text x="340" y="74" class="l4">File dans la base de l’espace</text>
+  <rect x="340" y="88" width="56" height="26" rx="5" class="in4"/><text x="368" y="106" class="m c">#41</text>
+  <rect x="404" y="88" width="56" height="26" rx="5" class="in4"/><text x="432" y="106" class="m c">#42</text>
+  <rect x="468" y="88" width="56" height="26" rx="5" class="in4"/><text x="496" y="106" class="m c">#43</text>
+  <text x="340" y="136" class="s">ordre gardé par abonné · 3 essais</text>
+  <text x="340" y="152" class="s">survit à la fermeture d’Alfred</text>
+  <path d="M620 90 L718 52 M620 130 L718 158" class="e"/>
+  <rect x="720" y="20" width="220" height="62" rx="10" class="b3"/>
+  <text x="830" y="46" class="t c">Module Suivi</text><text x="830" y="66" class="s c">dépend de Support : d’office</text>
+  <rect x="720" y="128" width="220" height="62" rx="10" class="b3"/>
+  <text x="830" y="154" class="t c">Module Compta</text><text x="830" y="174" class="s c">sans dépendance : sur accord</text>
+</svg>
+</figure>
+
+<h3>Tâches de fond</h3>
+<p>Un travail long (importer des milliers de lignes, relever tout un service) est découpé en étapes. Alfred rappelle la
+fonction étape par étape, chacune sous les 120 secondes, en lui rendant l’état qu’elle a laissé. Cet état est gardé en base :
+une tâche interrompue reprend où elle s’était arrêtée, et l’utilisateur peut l’annuler entre deux étapes, depuis la fiche du
+module. La planification, elle, repose sur l’horloge d’Alfred ouvert : une heure fixe manquée part au premier réveil du
+même jour.</p>
+
+<!-- ============================================================ 13 -->
+<h2 id="clients">13. Services extérieurs et coffre</h2>
+<p>Pages et fonctions n’ont pas de réseau. Une fonction nomme un client ; Alfred exécute la requête et y ajoute
+l’authentification lue dans le coffre. Le fichier d’un client est versionné avec l’espace et ne contient donc aucun secret :
+seulement l’adresse, les façons de s’authentifier et, pour chaque compte, l’entrée du coffre à utiliser.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 400" role="img" aria-labelledby="f13t">
+  <title id="f13t">Du besoin du module au compte, puis le trajet d’une requête</title>
+  <text x="20" y="22" class="l0">Ce qui est déclaré</text>
+  <rect x="20" y="34" width="210" height="72" rx="10" class="b3"/>
+  <text x="125" y="58" class="t c">Besoin du module</text><text x="125" y="76" class="m c">module.json · clients[]</text><text x="125" y="92" class="s c">+ modèle du service</text>
+  <path d="M230 70 H268" class="e"/><text x="249" y="62" class="m c">crée</text>
+  <rect x="270" y="34" width="210" height="72" rx="10" class="b4"/>
+  <text x="375" y="58" class="t c">Service</text><text x="375" y="76" class="m c">clients/jira.json</text><text x="375" y="92" class="s c">adresse, méthodes, sans secret</text>
+  <path d="M480 70 H518" class="e"/>
+  <rect x="520" y="34" width="210" height="72" rx="10" class="b1"/>
+  <text x="625" y="58" class="t c">Vos comptes</text><text x="625" y="76" class="s c">Jira perso · Jira client</text><text x="625" y="92" class="s c">en-têtes, certificat, défaut</text>
+  <path d="M730 70 H768" class="e"/>
+  <rect x="770" y="34" width="170" height="72" rx="10" class="b5"/>
+  <text x="855" y="58" class="t c">Coffre</text><text x="855" y="76" class="s c">trousseau du système</text><text x="855" y="92" class="s c">jamais renvoyé</text>
+
+  <text x="20" y="152" class="l0">Le trajet d’une requête</text>
+  <rect x="20" y="164" width="168" height="80" rx="10" class="b3"/>
+  <text x="104" y="190" class="t2 c">Fonction connecteur</text><text x="104" y="210" class="m c">client("jira")</text><text x="104" y="226" class="m c">.get("/issue/42")</text>
+  <path d="M188 204 H208" class="e"/>
+  <rect x="210" y="164" width="168" height="80" rx="10" class="b3"/>
+  <text x="294" y="190" class="t2 c">clients.rs</text><text x="294" y="210" class="s c">choisit le compte,</text><text x="294" y="226" class="s c">vérifie l’accord</text>
+  <path d="M378 204 H398" class="e"/>
+  <rect x="400" y="164" width="168" height="80" rx="10" class="b5"/>
+  <text x="484" y="190" class="t2 c">Coffre</text><text x="484" y="210" class="s c">jeton, clé ou mot de passe</text><text x="484" y="226" class="s c">OAuth : rafraîchi</text>
+  <path d="M568 204 H588" class="e"/>
+  <rect x="590" y="164" width="168" height="80" rx="10" class="box"/>
+  <text x="674" y="190" class="t2 c">HTTPS</text><text x="674" y="210" class="s c">auth + en-têtes</text><text x="674" y="226" class="s c">du compte</text>
+  <path d="M758 204 H778" class="e"/>
+  <rect x="780" y="164" width="160" height="80" rx="10" class="b4"/>
+  <text x="860" y="190" class="t2 c">Cache</text><text x="860" y="210" class="s c">lectures 2xx gardées</text><text x="860" y="226" class="s c">quelques minutes</text>
+  <path d="M860 244 V284 H150 V248" class="e ed"/>
+  <text x="500" y="278" class="s c">réponse (le secret n’en fait jamais partie)</text>
+
+  <rect x="20" y="316" width="290" height="64" rx="10" class="b2"/>
+  <text x="34" y="340" class="t2">Une page n’a pas de réseau</text>
+  <text x="34" y="360" class="m">functions.call("jira/lister-tickets")</text>
+  <path d="M70 316 V248" class="e"/>
+  <rect x="330" y="316" width="610" height="64" rx="10" class="box"/>
+  <text x="346" y="340" class="t2">Authentifications</text>
+  <text x="346" y="360" class="m">none · bearer · apiKey · basic · oauth2 (PKCE) · clientCredentials</text>
+</svg>
+<figcaption><b>Plusieurs comptes par service.</b> Un même service peut avoir un compte par défaut et d’autres comptes, chacun à
+sa propre adresse, avec sa propre façon de se connecter, ses en-têtes en plus et, au besoin, l’acceptation d’un certificat non
+vérifié. Une section du menu peut suivre les comptes (« une section par instance »). Le cache est cloisonné par module : un
+module ne reçoit jamais une réponse obtenue par un autre.</figcaption>
+</figure>
+
+<!-- ============================================================ 14 -->
+<h2 id="configuration">14. Configuration d’un module</h2>
+<p>Un module importé d’un marketplace ouvre un parcours de configuration. Le module fixe la façon de se connecter : l’agent
+qui l’a écrit décrit chaque service en entier. L’utilisateur n’ajoute que ses comptes. Le parcours se déduit de ce que le module
+déclare et de l’état réel des services : rien n’est mémorisé à part les résultats des tests, et il reprend toujours à la
+première étape incomplète.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 190" role="img" aria-labelledby="f14t">
+  <title id="f14t">Étapes de la configuration d’un module</title>
+  <g>
+    <rect x="20" y="30" width="122" height="80" rx="10" class="b4"/><text x="81" y="60" class="t2 c">Installer</text><text x="81" y="78" class="s c">depuis le</text><text x="81" y="92" class="s c">marketplace</text>
+    <path d="M142 70 H151" class="e"/>
+    <rect x="153" y="30" width="122" height="80" rx="10" class="b1"/><text x="214" y="60" class="t2 c">Accueil</text><text x="214" y="78" class="s c">ce que fait</text><text x="214" y="92" class="s c">le module</text>
+    <path d="M275 70 H284" class="e"/>
+    <rect x="286" y="30" width="122" height="80" rx="10" class="b1"/><text x="347" y="60" class="t2 c">Vos pages</text><text x="347" y="78" class="s c">nommer les</text><text x="347" y="92" class="s c">entrées du menu</text>
+    <path d="M408 70 H417" class="e"/>
+    <rect x="419" y="30" width="122" height="80" rx="10" class="b3"/><text x="480" y="60" class="t2 c">Votre compte</text><text x="480" y="78" class="s c">le service naît</text><text x="480" y="92" class="s c">du modèle</text>
+    <path d="M541 70 H550" class="e"/>
+    <rect x="552" y="30" width="122" height="80" rx="10" class="b5"/><text x="613" y="60" class="t2 c">Identifiants</text><text x="613" y="78" class="s c">jeton, clé, ou</text><text x="613" y="92" class="s c">se connecter</text>
+    <path d="M674 70 H683" class="e"/>
+    <rect x="685" y="30" width="122" height="80" rx="10" class="b3"/><text x="746" y="60" class="t2 c">Tester</text><text x="746" y="78" class="s c">testPath qui</text><text x="746" y="92" class="s c">demande l’auth</text>
+    <path d="M807 70 H816" class="e"/>
+    <rect x="818" y="30" width="122" height="80" rx="10" class="b4"/><text x="879" y="60" class="t2 c">Prêt</text><text x="879" y="78" class="s c">la page se</text><text x="879" y="92" class="s c">recharge seule</text>
+  </g>
+  <path d="M480 110 V140 H613 V114" class="e ed"/>
+  <text x="546" y="160" class="s c">pour chaque service de clients[], puis ceux des modules requis</text>
+</svg>
+<figcaption><b>Le module sert dès qu’un service est prêt.</b> Une page dont tous les services de <code>uses.clients</code> sont
+prêts s’affiche sans bandeau ; les autres montrent le bouton de configuration dans leur barre. Le parcours s’ouvre aussi
+depuis le menu « … » du module, ou par l’agent (<code>open_onboarding</code>).</figcaption>
+</figure>
+
+<!-- ============================================================ 15 -->
+<h2 id="agents">15. Agents de code et MCP</h2>
+<p>Alfred ne contient pas son propre modèle de code : il pilote les agents déjà installés sur le poste (Claude Code, Codex,
+OpenCode). La coquille parle le protocole de chaque CLI ligne à ligne, à travers un processus lancé par Rust ; elle nomme un
+harnais et des options connues, jamais un programme ou des arguments libres. L’agent atteint Alfred par un serveur MCP local.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 380" role="img" aria-labelledby="f15t">
+  <title id="f15t">Page Agent, harnais, processus et outils MCP</title>
+  <rect x="20" y="30" width="220" height="64" rx="10" class="b1"/>
+  <text x="130" y="56" class="t c">Page Agent</text><text x="130" y="76" class="s c">conversations, saisie @ / $</text>
+  <path d="M130 94 V122" class="e"/>
+  <rect x="20" y="124" width="220" height="64" rx="10" class="b1"/>
+  <text x="130" y="150" class="t c">Harnais</text><text x="130" y="170" class="m c">claude · codex · opencode</text>
+  <path d="M130 188 V216" class="e e2"/>
+  <rect x="20" y="218" width="220" height="64" rx="10" class="b5"/>
+  <text x="130" y="244" class="t c">Processus du CLI</text><text x="130" y="264" class="m c">agents.rs · process_tree.rs</text>
+  <path d="M240 250 H298" class="e"/>
+  <rect x="300" y="110" width="200" height="180" rx="12" class="b3"/>
+  <text x="400" y="150" class="t c">Serveur MCP</text>
+  <text x="400" y="170" class="m c">« alfred »</text>
+  <text x="400" y="200" class="s c">HTTP, JSON-RPC</text>
+  <text x="400" y="216" class="s c">127.0.0.1 seulement</text>
+  <text x="400" y="246" class="s c">outils selon qui</text>
+  <text x="400" y="262" class="s c">a ouvert la conversation</text>
+  <path d="M500 140 L558 56 M500 170 L558 136 M500 220 L558 216 M500 260 L558 296" class="e"/>
+  <rect x="560" y="20" width="380" height="70" rx="10" class="box"/>
+  <text x="576" y="42" class="t2">Comprendre</text>
+  <text x="576" y="60" class="m">space_overview · db_schema · db_query · read_journal</text>
+  <text x="576" y="76" class="m">page_logs · page_snapshot · page_screenshot</text>
+  <rect x="560" y="100" width="380" height="70" rx="10" class="box"/>
+  <text x="576" y="118" class="t2">Construire</text>
+  <text x="576" y="135" class="m">place_page · delete_page · declare_function</text>
+  <text x="576" y="149" class="m">declare_client · declare_webhook · declare_schedule</text>
+  <text x="576" y="163" class="m">remove_* · set_libraries · set_visibility</text>
+  <rect x="560" y="180" width="380" height="70" rx="10" class="box"/>
+  <text x="576" y="202" class="t2">Vérifier</text>
+  <text x="576" y="220" class="m">check · call_function</text>
+  <text x="576" y="236" class="s">tant que check échoue, le travail n’est pas fini</text>
+  <rect x="560" y="260" width="380" height="70" rx="10" class="box"/>
+  <text x="576" y="282" class="t2">Régler à la place de l’utilisateur</text>
+  <text x="576" y="300" class="m">vault_store · validate_client · grant_access</text>
+  <text x="576" y="316" class="m">connect_client · open_onboarding</text>
+  <path d="M130 282 V340 H298" class="e ed"/>
+  <rect x="300" y="318" width="200" height="44" rx="10" class="b4"/>
+  <text x="400" y="345" class="t2 c">Fichiers de l’espace</text>
+  <text x="560" y="356" class="s">Chaque fin de tour : commit git de l’espace, annulable.</text>
+</svg>
+<figcaption><b>Ce que l’agent règle seul ne révèle rien.</b> Les outils de réglage ne sont offerts qu’aux conversations ouvertes
+par l’utilisateur ; chaque action est inscrite au journal et signalée par une notification, et aucune ne renvoie la valeur
+d’un secret. Le dossier de travail de chaque conversation est relu après chaque tour pour la carte « Modifications ».</figcaption>
+</figure>
+
+<!-- ============================================================ 16 -->
+<h2 id="ia-page">16. L’IA dans une page</h2>
+<p>Une page peut se servir d’un modèle de trois façons, de la plus simple à la plus libre.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 400" role="img" aria-labelledby="f16t">
+  <title id="f16t">Trois façons d’intégrer l’IA dans une page</title>
+  <rect x="20" y="16" width="290" height="40" rx="9" class="b2"/>
+  <text x="165" y="35" class="t c">ai.oneShot</text><text x="165" y="50" class="s c">une réponse structurée</text>
+  <rect x="335" y="16" width="290" height="40" rx="9" class="b5"/>
+  <text x="480" y="35" class="t c">ai.startAgent</text><text x="480" y="50" class="s c">une conversation dans le panneau</text>
+  <rect x="650" y="16" width="290" height="40" rx="9" class="b1"/>
+  <text x="795" y="35" class="t c">Corriger un élément</text><text x="795" y="50" class="s c">le bouton cible de la barre</text>
+
+  <g>
+    <rect x="20" y="76" width="290" height="58" rx="9" class="box"/><text x="34" y="100" class="t2">La page envoie</text><text x="34" y="118" class="s">consigne + contexte (120 000 car.) + schéma</text>
+    <path d="M165 134 V152" class="e"/>
+    <rect x="20" y="154" width="290" height="58" rx="9" class="box"/><text x="34" y="178" class="t2">Un tour, sans outil</text><text x="34" y="196" class="s">avec le modèle réglé par défaut</text>
+    <path d="M165 212 V230" class="e"/>
+    <rect x="20" y="232" width="290" height="58" rx="9" class="box"/><text x="34" y="256" class="t2">Alfred valide</text><text x="34" y="274" class="s">contre le schéma ; une relance avec les écarts</text>
+    <path d="M165 290 V308" class="e"/>
+    <rect x="20" y="310" width="290" height="58" rx="9" class="b2"/><text x="34" y="334" class="t2">Un objet typé</text><text x="34" y="352" class="s">résumé, priorité, actions proposées</text>
+  </g>
+  <g>
+    <rect x="335" y="76" width="290" height="58" rx="9" class="box"/><text x="349" y="100" class="t2">Accord, une fois</text><text x="349" y="118" class="s">cette page peut lancer un agent</text>
+    <path d="M480 134 V152" class="e"/>
+    <rect x="335" y="154" width="290" height="58" rx="9" class="box"/><text x="349" y="178" class="t2">Conversation à droite</text><text x="349" y="196" class="s">vous la suivez, vous pouvez répondre</text>
+    <path d="M480 212 V230" class="e"/>
+    <rect x="335" y="232" width="290" height="58" rx="9" class="box"/><text x="349" y="256" class="t2">Outils limités au module</text><text x="349" y="274" class="s">check, db_schema, db_query, call_function</text>
+    <path d="M480 290 V308" class="e"/>
+    <rect x="335" y="310" width="290" height="58" rx="9" class="b5"/><text x="349" y="334" class="t2">Dernier message + résultat</text><text x="349" y="352" class="s">bloc JSON validé par resultSchema</text>
+  </g>
+  <g>
+    <rect x="650" y="76" width="290" height="58" rx="9" class="box"/><text x="664" y="100" class="t2">Capture de toute la fenêtre</text><text x="664" y="118" class="s">menu, page et panneau compris</text>
+    <path d="M795 134 V152" class="e"/>
+    <rect x="650" y="154" width="290" height="58" rx="9" class="box"/><text x="664" y="178" class="t2">Vous encadrez l’élément</text><text x="664" y="196" class="s">qui ne va pas</text>
+    <path d="M795 212 V230" class="e"/>
+    <rect x="650" y="232" width="290" height="58" rx="9" class="box"/><text x="664" y="256" class="t2">Conversation ouverte</text><text x="664" y="274" class="s">capture annotée et description jointes</text>
+    <path d="M795 290 V308" class="e"/>
+    <rect x="650" y="310" width="290" height="58" rx="9" class="b1"/><text x="664" y="334" class="t2">L’agent corrige la page</text><text x="664" y="352" class="s">vous écrivez ce que vous voulez changer</text>
+  </g>
+  <text x="480" y="392" class="s c">Chaque action de l’agent lancé par une page vous est demandée ; il ne touche jamais la structure de l’espace.</text>
+</svg>
+<figcaption><b>Une conversation lancée par une page porte la consigne de la page, pas celle de l’utilisateur.</b> Elle n’a que
+quatre outils, limités au module, et les fonctions passées dans <code>functions</code> deviennent ses outils (celle d’un autre
+module demande l’accord). Lancée par une fonction, elle n’apparaît que dans la page Agent. Les deux appels sont inscrits au
+journal.</figcaption>
+</figure>
+
+<!-- ============================================================ 17 -->
+<h2 id="partage">17. Partage : git, équipe, marketplace</h2>
+<p>Trois usages de git, trois dépôts différents. L’accès distant repose sur les identifiants déjà configurés sur le poste
+(gestionnaire d’identifiants, agent SSH) ; Alfred n’exécute aucun crochet et refuse un dépôt dont la configuration ferait
+lancer un programme.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 360" role="img" aria-labelledby="f17t">
+  <title id="f17t">Git de l’espace, partage en équipe et marketplace</title>
+  <rect x="20" y="16" width="290" height="330" rx="12" class="box"/>
+  <text x="36" y="40" class="l4">L’espace sous git</text>
+  <path d="M60 70 V250" stroke="var(--c4)" stroke-width="2"/>
+  <circle cx="60" cy="74" r="7" class="b4"/><text x="80" y="78" class="s">tour 1 : page Factures</text>
+  <circle cx="60" cy="124" r="7" class="b4"/><text x="80" y="128" class="s">tour 2 : table et import</text>
+  <circle cx="60" cy="174" r="7" class="b4"/><text x="80" y="178" class="s">tour 3 : correction du design</text>
+  <circle cx="60" cy="224" r="7" class="b5"/><text x="80" y="228" class="s">annuler le tour 3</text>
+  <text x="36" y="282" class="s">Chaque tour d’agent, chaque fusion</text>
+  <text x="36" y="298" class="s">ou mise à jour de module : un commit.</text>
+  <text x="36" y="314" class="s">Les données (.alfred/) n’y sont pas.</text>
+
+  <rect x="335" y="16" width="290" height="330" rx="12" class="box"/>
+  <text x="351" y="40" class="l4">Partage en équipe</text>
+  <rect x="351" y="56" width="120" height="58" rx="9" class="b1"/><text x="411" y="80" class="t2 c">Vous</text><text x="411" y="98" class="m c">data.sqlite</text>
+  <rect x="489" y="56" width="120" height="58" rx="9" class="b1"/><text x="549" y="80" class="t2 c">Un collègue</text><text x="549" y="98" class="m c">data.sqlite</text>
+  <path d="M411 114 L462 176 M549 114 L498 176" class="e e2"/>
+  <text x="480" y="150" class="s c">2 min</text>
+  <rect x="371" y="178" width="218" height="66" rx="9" class="b4"/>
+  <text x="480" y="202" class="t2 c">Dépôt git de l’équipe</text>
+  <text x="480" y="220" class="m c">module/table/clé.json</text>
+  <text x="480" y="234" class="s c">une ligne par fichier</text>
+  <text x="351" y="274" class="s">Tables nommées dans sync.tables,</text>
+  <text x="351" y="290" class="s">clé primaire en texte généré.</text>
+  <text x="351" y="306" class="s">Conflit : l’équipe l’emporte,</text>
+  <text x="351" y="322" class="s">la version locale va au journal.</text>
+
+  <rect x="650" y="16" width="290" height="330" rx="12" class="box"/>
+  <text x="666" y="40" class="l4">Marketplace</text>
+  <rect x="666" y="56" width="258" height="50" rx="9" class="b4"/>
+  <text x="795" y="78" class="t2 c">Dépôt git du catalogue</text><text x="795" y="96" class="s c">un dossier par module</text>
+  <path d="M795 106 V126" class="e"/>
+  <rect x="666" y="128" width="258" height="50" rx="9" class="box"/>
+  <text x="795" y="150" class="t2 c">Clone dans les données d’Alfred</text><text x="795" y="168" class="s c">suit la branche, jamais modifié</text>
+  <path d="M795 178 V198" class="e"/>
+  <rect x="666" y="200" width="258" height="58" rx="9" class="b3"/>
+  <text x="795" y="222" class="t2 c">Installer = copier dans l’espace</text><text x="795" y="240" class="s c">avec ses dépendances,</text><text x="795" y="253" class="s c">en lecture seule (origin)</text>
+  <text x="666" y="286" class="s">Mise à jour : remplace le dossier entier,</text>
+  <text x="666" y="302" class="s">sur accord, dans un commit annulable.</text>
+  <text x="666" y="318" class="s">Publier : depuis le menu « … » du module,</text>
+  <text x="666" y="334" class="s">par l’utilisateur, jamais par l’agent.</text>
+</svg>
+<figcaption><b>Une page n’a rien à écrire pour le partage.</b> Une page qui charge ses données par un gabarit ou
+<code>useAsync</code> se recharge d’elle-même quand des lignes arrivent de l’équipe ; elles passent par les mêmes déclencheurs
+que toute écriture (recherche, historique, auteur « partage »).</figcaption>
+</figure>
+
+<!-- ============================================================ 18 -->
+<h2 id="confiance">18. Accords et secrets</h2>
+<p>L’agent écrit dans l’espace ; il ne doit donc rien pouvoir y écrire qui lui donne un droit. Tout ce qui décide d’un accès
+vit hors de l’espace.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 290" role="img" aria-labelledby="f18t">
+  <title id="f18t">Ce que l’agent peut écrire, ce que seul l’utilisateur décide</title>
+  <rect x="20" y="20" width="400" height="250" rx="12" class="band5"/>
+  <text x="40" y="46" class="l5">L’agent peut écrire · le dossier de l’espace</text>
+  <text x="40" y="80" class="mi">modules/*/module.json</text><text x="260" y="80" class="s">« uses » n’accorde rien</text>
+  <text x="40" y="106" class="mi">modules/*/pages, functions</text>
+  <text x="40" y="132" class="mi">clients/*.json</text><text x="260" y="132" class="s">sans aucun secret</text>
+  <text x="40" y="158" class="mi">migrations, lib, vendor</text>
+  <text x="40" y="196" class="s">Un client modifié hors d’Alfred redevient</text>
+  <text x="40" y="212" class="s">« à approuver » : son empreinte a changé.</text>
+  <text x="40" y="238" class="s">Une fonction modifiée redevient « à vérifier ».</text>
+
+  <path d="M420 120 H538" class="nol"/>
+  <text x="479" y="110" class="no c">✕</text>
+  <text x="479" y="142" class="s c">ni lire</text>
+  <text x="479" y="158" class="s c">ni écrire</text>
+
+  <rect x="540" y="20" width="400" height="250" rx="12" class="band4"/>
+  <text x="560" y="46" class="l4">Seul l’utilisateur décide · hors de l’espace</text>
+  <rect x="560" y="62" width="360" height="92" rx="9" class="in4"/>
+  <text x="576" y="86" class="t2">Base d’Alfred</text>
+  <text x="576" y="106" class="s">accords (page → micro, client, programme, hôte)</text>
+  <text x="576" y="122" class="s">journal, résultats des tests, secrets des webhooks</text>
+  <text x="576" y="138" class="s">approbations des clients (empreintes)</text>
+  <rect x="560" y="166" width="360" height="86" rx="9" class="in4"/>
+  <text x="576" y="190" class="t2">Trousseau du système</text>
+  <text x="576" y="210" class="s">valeurs du coffre : jetons, clés, mots de passe</text>
+  <text x="576" y="226" class="s">l’interface ne reçoit que leur présence</text>
+  <text x="576" y="242" class="s">OAuth : jetons écrits et relus par oauth.rs</text>
+</svg>
+<figcaption><b>La première utilisation demande.</b> Micro, client d’un autre module, programme du poste, hôte d’un lien
+externe, lancement d’un agent, abonnement à un module dont on ne dépend pas : la question se pose une fois, et la réponse est
+mémorisée par page (ou pour les fonctions d’un module). Les webhooks n’écoutent que sur 127.0.0.1 et exigent leur
+secret.</figcaption>
+</figure>
+
+<!-- ============================================================ 19 -->
+<h2 id="voix">19. La voix</h2>
+<p>Dictée et lecture à voix haute, sur l’ordinateur. Un seul micro pour toute l’application : la page Agent ou une page de
+l’espace l’ouvre, et seul celui qui l’a ouvert peut le fermer. La lecture est une file unique ; une nouvelle lecture coupe la
+précédente.</p>
+<figure class="fig">
+<svg viewBox="0 0 960 170" role="img" aria-labelledby="f19t">
+  <title id="f19t">Dictée et lecture à voix haute</title>
+  <text x="20" y="22" class="l0">Dicter</text>
+  <rect x="20" y="32" width="170" height="46" rx="9" class="b1"/><text x="105" y="60" class="t2 c">Appui sur le micro</text>
+  <path d="M190 55 H228" class="e"/>
+  <rect x="230" y="32" width="200" height="46" rx="9" class="b3"/><text x="330" y="52" class="t2 c">16 kHz mono</text><text x="330" y="68" class="s c">niveau sonore en direct</text>
+  <path d="M430 55 H468" class="e"/>
+  <rect x="470" y="32" width="230" height="46" rx="9" class="b5"/><text x="585" y="52" class="t2 c">Whisper local</text><text x="585" y="68" class="m c">whisper-server</text>
+  <path d="M700 55 H738" class="e"/>
+  <rect x="740" y="32" width="200" height="46" rx="9" class="b2"/><text x="840" y="52" class="t2 c">Texte</text><text x="840" y="68" class="s c">partiel puis final</text>
+
+  <text x="20" y="110" class="l0">Lire</text>
+  <rect x="20" y="120" width="170" height="46" rx="9" class="b2"/><text x="105" y="140" class="t2 c">voice.speak</text><text x="105" y="156" class="s c">texte par fragments</text>
+  <path d="M190 143 H228" class="e"/>
+  <rect x="230" y="120" width="200" height="46" rx="9" class="b3"/><text x="330" y="140" class="t2 c">Découpage en phrases</text><text x="330" y="156" class="s c">abréviations comprises</text>
+  <path d="M430 143 H468" class="e"/>
+  <rect x="470" y="120" width="230" height="46" rx="9" class="b5"/><text x="585" y="140" class="t2 c">Voix du système</text><text x="585" y="156" class="s c">ou Kokoro</text>
+  <path d="M700 143 H738" class="e"/>
+  <rect x="740" y="120" width="200" height="46" rx="9" class="b1"/><text x="840" y="140" class="t2 c">Chaque phrase</text><text x="840" y="156" class="s c">dite dès qu’elle est complète</text>
+</svg>
+</figure>
+
+<!-- ============================================================ 20 -->
+<h2 id="fichiers-source">20. Où lire le code</h2>
+<div class="tablewrap">
+<table class="ref">
+  <thead><tr><th>Couche</th><th>Dossier</th><th>À retenir</th></tr></thead>
+  <tbody>
+    <tr><td>Coquille</td><td><code>src/shell/</code>, <code>src/features/</code></td><td><code>AppShell.tsx</code>, <code>PageFrame.tsx</code> (le cadre d’une page), <code>frameBridge.ts</code> (le pont), <code>pageMemory.ts</code> ; une fonctionnalité par dossier de <code>features/</code> (agent, modules, clients, setup, vault…).</td></tr>
+    <tr><td>Bibliothèque d’interface</td><td><code>src/ui/</code></td><td><code>components/</code>, <code>templates/</code> (gabarits), <code>primitives/</code> ; exportée par <code>index.ts</code> sous <code>@alfred/ui</code>.</td></tr>
+    <tr><td>Pont des pages</td><td><code>src/sdk/</code></td><td><code>@alfred/sdk</code> : <code>request(méthode)</code> et les espaces <code>db</code>, <code>files</code>, <code>client</code>, <code>ai</code>, <code>shell</code>…</td></tr>
+    <tr><td>Environnement du cadre</td><td><code>src/runtime/</code></td><td><code>pageHost.tsx</code>, <code>functionHost.ts</code>, <code>sealNetwork.ts</code> ; compilé par <code>pnpm build:runtime</code> dans <code>src-tauri/runtime/</code>.</td></tr>
+    <tr><td>Backend</td><td><code>src-tauri/src/</code></td><td><code>dispatch.rs</code> (entrée unique), <code>mcp.rs</code> (outils des agents), <code>server.rs</code> (serveur local), <code>pages.rs</code> et <code>transpile.rs</code> (servir les cadres), un fichier par service.</td></tr>
+    <tr><td>Docs de l’agent</td><td><code>DESIGN.md</code>, <code>docs/espace/</code></td><td>Recopiés dans chaque espace à l’ouverture (<code>docs.rs</code>) : le design, la marche à suivre (<code>AGENTS.md</code>), le SDK.</td></tr>
+  </tbody>
+</table>
+</div>
+<p style="color:var(--muted);font-size:13px">Développement : l’interface sur <code>http://localhost:14730</code>, le backend sur le
+port <code>14731</code> ; un navigateur ouvert sur l’interface passe par le même backend, par un pont réservé au développement.</p>
+</main>
+</div>
+</body>
+</html>
