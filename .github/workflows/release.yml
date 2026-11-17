@@ -44,6 +44,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Le modèle de la recherche par le sens (470 Mo) est livré dans l’application ; il ne change qu’avec le script.
+      - uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/models/multilingual-e5-small
+          key: e5-model-${{ hashFiles('scripts/fetch-model.mjs') }}
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -12,3 +12,6 @@ src/runtime/generated
 .scratch/
 *.config.d.ts
 .claude/
+
+# Modèle de la recherche par le sens, récupéré par scripts/fetch-model.mjs
+src-tauri/resources/models/*/

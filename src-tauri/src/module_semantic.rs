@@ -3,7 +3,8 @@
 //! Alfred calcule pour chaque ligne un vecteur avec un modèle local (multilingual-e5-small, français compris, lancé
 //! en Rust par candle), le range dans la base de l’espace, et compare la question à toutes les lignes.
 //!
-//! Le modèle (environ 470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général. Des
+//! Le modèle (environ 470 Mo) est livré avec Alfred, dans ses ressources : l’utilisateur n’a rien à télécharger.
+//! `scripts/fetch-model.mjs` le récupère à la construction, à la version et aux empreintes ci-dessous. Des
 //! déclencheurs d’Alfred mettent chaque ligne écrite en file ; une boucle de fond calcule les vecteurs en attente.
 
 use std::path::{Path, PathBuf};
@@ -21,15 +22,9 @@ use crate::state::AppState;
 
 const MODEL: &str = "intfloat/multilingual-e5-small";
 const MODEL_DIR: &str = "multilingual-e5-small";
-/// Version figée du modèle, et empreinte SHA-256 de chaque fichier : un fichier différent est écarté.
-const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
-const FILES: [(&str, &str); 3] = [
-    ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
-    ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
-    ("model.safetensors", "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"),
-];
-/// Taille annoncée à l’utilisateur avant le téléchargement.
-pub const MODEL_SIZE_MB: u64 = 470;
+/// Fichiers du modèle, à la révision `614241f622f53c4eeff9890bdc4f31cfecc418b3` (empreintes dans
+/// `scripts/fetch-model.mjs`, qui les vérifie avant de les livrer).
+const FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 const BATCH: usize = 16;
 const MAX_TOKENS: usize = 512;
 const MAX_RESULTS: usize = 100;
@@ -111,7 +106,6 @@ impl Embedder for E5 {
 #[derive(Default)]
 struct ModelState {
     loaded: Option<Arc<dyn Embedder>>,
-    downloading: Option<(u64, u64)>,
     error: Option<String>,
 }
 
@@ -120,12 +114,25 @@ fn model_state() -> &'static Mutex<ModelState> {
     STATE.get_or_init(|| Mutex::new(ModelState::default()))
 }
 
-fn model_dir(state: &AppState) -> PathBuf {
-    state.data_dir.join("models").join(MODEL_DIR)
+/// Dossier des ressources de l’application, fixé au démarrage (`models/` y est livré avec Alfred).
+static RESOURCES: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCES.set(dir);
 }
 
-fn installed(state: &AppState) -> bool {
-    FILES.iter().all(|(file, _)| model_dir(state).join(file).is_file())
+/// Où se trouve le modèle : dans les ressources de l’application ; en développement, aussi dans
+/// `src-tauri/resources/` ; et, pour une installation d’avant, là où il avait été téléchargé.
+fn model_dir(state: &AppState) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(resources) = RESOURCES.get() {
+        candidates.push(resources.join("models").join(MODEL_DIR));
+    }
+    if cfg!(debug_assertions) {
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("resources").join("models").join(MODEL_DIR));
+    }
+    candidates.push(state.data_dir.join("models").join(MODEL_DIR));
+    candidates.into_iter().find(|dir| FILES.iter().all(|file| dir.join(file).is_file()))
 }
 
 /// Remplace le modèle (tests).
@@ -139,96 +146,31 @@ fn embedder(state: &AppState) -> AppResult<Option<Arc<dyn Embedder>>> {
     if let Some(loaded) = model_state().lock().map_err(|_| model_error("indisponible"))?.loaded.clone() {
         return Ok(Some(loaded));
     }
-    if !installed(state) {
+    let Some(dir) = model_dir(state) else {
         return Ok(None);
-    }
-    let loaded: Arc<dyn Embedder> = Arc::new(E5::load(&model_dir(state))?);
+    };
+    let loaded: Arc<dyn Embedder> = match E5::load(&dir) {
+        Ok(model) => Arc::new(model),
+        Err(error) => {
+            if let Ok(mut current) = model_state().lock() {
+                current.error = Some(error.message.clone());
+            }
+            return Err(error);
+        }
+    };
     model_state().lock().map_err(|_| model_error("indisponible"))?.loaded = Some(loaded.clone());
     Ok(Some(loaded))
 }
 
 pub fn model_status(state: &AppState) -> Value {
     let current = model_state().lock().ok();
-    let downloading = current.as_ref().and_then(|current| current.downloading);
     let error = current.as_ref().and_then(|current| current.error.clone());
-    let ready = current.as_ref().is_some_and(|current| current.loaded.is_some()) || installed(state);
+    let ready = current.as_ref().is_some_and(|current| current.loaded.is_some()) || model_dir(state).is_some();
     json!({
         "model": MODEL,
-        "sizeMb": MODEL_SIZE_MB,
-        "status": if downloading.is_some() { "downloading" } else if ready { "ready" } else { "missing" },
-        "received": downloading.map(|(received, _)| received),
-        "total": downloading.map(|(_, total)| total),
+        "status": if error.is_some() { "broken" } else if ready { "ready" } else { "missing" },
         "error": error,
     })
-}
-
-/// Télécharge le modèle depuis Hugging Face, fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
-pub fn download(state: Arc<AppState>) -> AppResult<()> {
-    {
-        let mut current = model_state().lock().map_err(|_| model_error("indisponible"))?;
-        if current.downloading.is_some() {
-            return Ok(());
-        }
-        current.downloading = Some((0, MODEL_SIZE_MB * 1024 * 1024));
-        current.error = None;
-    }
-    tokio::spawn(async move {
-        let result = fetch_all(&state).await;
-        if let Ok(mut current) = model_state().lock() {
-            current.downloading = None;
-            current.error = result.as_ref().err().map(|error| error.message.clone());
-        }
-        state.emit("semantic:changed", Value::Null);
-        if result.is_ok() {
-            kick();
-        }
-    });
-    Ok(())
-}
-
-async fn fetch_all(state: &Arc<AppState>) -> AppResult<()> {
-    use sha2::{Digest, Sha256};
-    let dir = model_dir(state);
-    tokio::fs::create_dir_all(&dir).await?;
-    let http = reqwest::Client::builder().user_agent("Alfred").build().map_err(model_error)?;
-    let mut received_before = 0u64;
-    for (file, expected) in FILES {
-        let target = dir.join(file);
-        if target.is_file() {
-            continue;
-        }
-        let url = format!("https://huggingface.co/{MODEL}/resolve/{REVISION}/{file}");
-        let mut response = http.get(&url).send().await.map_err(model_error)?;
-        if !response.status().is_success() {
-            return Err(model_error(format!("{file} : réponse {}", response.status())));
-        }
-        let total = response.content_length().unwrap_or(0);
-        let partial = dir.join(format!("{file}.part"));
-        let mut out = tokio::fs::File::create(&partial).await?;
-        let mut hasher = Sha256::new();
-        let mut received = 0u64;
-        while let Some(chunk) = response.chunk().await.map_err(model_error)? {
-            use tokio::io::AsyncWriteExt;
-            hasher.update(&chunk);
-            out.write_all(&chunk).await?;
-            received += chunk.len() as u64;
-            if let Ok(mut current) = model_state().lock() {
-                current.downloading = Some((received_before + received, (received_before + total).max(MODEL_SIZE_MB * 1024 * 1024)));
-            }
-            if received % (8 * 1024 * 1024) < chunk.len() as u64 {
-                state.emit("semantic:changed", Value::Null);
-            }
-        }
-        drop(out);
-        let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-        if digest != expected {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(model_error(format!("{file} : empreinte inattendue, fichier écarté.")));
-        }
-        tokio::fs::rename(&partial, &target).await?;
-        received_before += received;
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -542,15 +484,12 @@ pub fn start(state: Arc<AppState>) {
 }
 
 fn missing_model() -> AppError {
-    AppError::new(
-        "La recherche par le sens n’est pas encore installée : l’utilisateur télécharge son modèle dans Réglages → Général.",
-    )
+    AppError::new("Le modèle de la recherche par le sens manque à cette installation d’Alfred : réinstallez Alfred.")
 }
 
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     match command {
         "semantic.model" => Some(Ok(model_status(state))),
-        "semantic.download" => Some(download(state.clone()).map(|()| model_status(state))),
         "frame.semantic.search" | "frame.semantic.status" => {
             let state = state.clone();
             let command = command.to_string();
@@ -640,7 +579,8 @@ mod tests {
         assert!(run(&space, "notes", "SELECT * FROM _alfred_vectors", &[], false).is_err());
     }
 
-    /// Le vrai modèle, s’il est déjà téléchargé dans `ALFRED_E5_DIR` : le sens l’emporte sur les mots.
+    /// Le vrai modèle, s’il est présent dans `ALFRED_E5_DIR` (`src-tauri/resources/models/multilingual-e5-small`
+    /// après `pnpm fetch:model`) : le sens l’emporte sur les mots.
     #[test]
     #[ignore]
     fn the_local_model_ranks_by_meaning() {

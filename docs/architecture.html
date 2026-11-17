@@ -915,7 +915,7 @@ change. La page n’a qu’à demander.</p>
 <h2 id="semantique">10. Recherche par le sens</h2>
 <p>Retrouver des lignes par ce qu’elles veulent dire : « facture d’électricité » trouve « note EDF de mars ». Alfred calcule
 pour chaque ligne un vecteur avec un modèle local, <b>multilingual-e5-small</b> (français compris), exécuté en Rust par
-candle. Le modèle, environ 470 Mo, se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général.</p>
+candle. Le modèle, environ 470 Mo, est livré avec Alfred dans ses ressources : il est récupéré une fois, à la construction de l’application, à une révision figée et empreintes vérifiées. L’utilisateur n’a rien à télécharger.</p>
 
 <figure class="fig">
 <svg viewBox="0 0 960 290" role="img" aria-labelledby="f10t">

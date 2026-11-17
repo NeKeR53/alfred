@@ -159,6 +159,10 @@ pub fn run() {
             vault::init(&data_dir);
             let state = AppState::new(&data_dir)?;
             app.manage(state.clone());
+            // Le modèle de la recherche par le sens est livré dans les ressources de l’application.
+            if let Ok(resources) = app.path().resource_dir() {
+                module_semantic::set_resource_dir(resources);
+            }
             // La voix d’Alfred se charge pendant que la fenêtre s’ouvre.
             {
                 let state = state.clone();

@@ -139,14 +139,7 @@ beforeEach(() => {
       case "backups.settings":
         return { keep: 14 };
       case "semantic.model":
-        return {
-          model: "intfloat/multilingual-e5-small",
-          sizeMb: 470,
-          status: "missing",
-          received: null,
-          total: null,
-          error: null,
-        };
+        return { model: "intfloat/multilingual-e5-small", status: "ready", error: null };
       case "files.reveal":
       case "settings.set":
       case "space.close":
