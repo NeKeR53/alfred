@@ -274,8 +274,8 @@ export const semantic = {
   ): Promise<{ pending: number; results: { key: Key; score: number }[] }> {
     return request("semantic.search", { index, text, ...options });
   },
-  /** Lignes calculées et en attente ; `model` : « ready », ou « missing » / « broken » si l’installation d’Alfred est abîmée. */
-  status(index: string): Promise<{ indexed: number; pending: number; model: "ready" | "missing" | "broken" }> {
+  /** Lignes calculées et en attente ; `model` : « ready », « missing » (pas téléchargé) ou « downloading ». */
+  status(index: string): Promise<{ indexed: number; pending: number; model: "ready" | "missing" | "downloading" }> {
     return request("semantic.status", { index });
   },
 };

@@ -13,6 +13,7 @@ src/runtime/generated
 *.config.d.ts
 .claude/
 
-# Modèle de la recherche par le sens, réassemblé depuis src-tauri/model-parts/ par scripts/assemble-model.mjs
-src-tauri/resources/models/*/model.safetensors
-src-tauri/resources/models/*/*.partial
+# Modèle de la recherche par le sens : jamais dans le dépôt (l’utilisateur le télécharge dans Réglages → Général)
+src-tauri/resources/models/
+src-tauri/model-parts/
+*.safetensors

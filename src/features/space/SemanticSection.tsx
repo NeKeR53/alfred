@@ -1,11 +1,14 @@
-import { Button, FeedbackBanner, Section, SettingRow, SettingRows, StatusBadge } from "@alfred/ui";
+import { Button, FeedbackBanner, Section, SettingRow, SettingRows } from "@alfred/ui";
 import { useCallback, useEffect, useState } from "react";
 import { invoke, onNativeEvent } from "../../lib/native";
+import { formatSize } from "./BackupsSection";
 
 export interface SemanticModel {
   model: string;
-  /** `missing` : l’installation n’a pas le modèle ; `broken` : il n’a pas pu être chargé. */
-  status: "ready" | "missing" | "broken";
+  sizeMb: number;
+  status: "ready" | "missing" | "downloading";
+  received: number | null;
+  total: number | null;
   error: string | null;
 }
 
@@ -13,7 +16,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Modèle local de la recherche par le sens : livré avec Alfred, rien à télécharger. */
+/** Modèle local de la recherche par le sens : téléchargé une fois, avec l’accord de l’utilisateur. */
 export function SemanticSection() {
   const [model, setModel] = useState<SemanticModel>();
   const [error, setError] = useState<string>();
@@ -32,40 +35,65 @@ export function SemanticSection() {
     return onNativeEvent("semantic:changed", () => void load());
   }, [load]);
 
-  const problem = error
-    ? `L’état du modèle n’a pas pu être lu : ${error}`
-    : model?.status === "broken"
-      ? `Le modèle n’a pas pu être chargé : ${model.error ?? "erreur inconnue"}. Réinstallez Alfred.`
-      : model?.status === "missing"
-        ? "Le modèle manque à cette installation d’Alfred. Réinstallez Alfred pour retrouver la recherche par le sens."
-        : undefined;
+  // Pendant le téléchargement, la progression se relit chaque seconde.
+  useEffect(() => {
+    if (model?.status !== "downloading") return;
+    const timer = setInterval(() => void load(), 1000);
+    return () => clearInterval(timer);
+  }, [model?.status, load]);
+
+  const download = async () => {
+    try {
+      setModel(await invoke<SemanticModel>("semantic.download"));
+    } catch (failure) {
+      setError(errorMessage(failure));
+    }
+  };
+
+  const progress =
+    model?.status === "downloading" && model.received !== null && model.total
+      ? `${formatSize(model.received)} sur ${formatSize(model.total)}`
+      : undefined;
 
   return (
     <Section
       title="Recherche par le sens"
       description="Les modules qui le prévoient retrouvent vos données par leur sens, même sans les mots exacts. Le calcul se fait sur cet ordinateur : rien n’est envoyé à un service."
     >
-      {problem ? (
+      {error || model?.error ? (
         <FeedbackBanner
           tone="error"
           appearance="contained"
-          action={error ? <Button onClick={() => void load()}>Réessayer</Button> : undefined}
+          action={<Button onClick={() => void load()}>Réessayer</Button>}
         >
-          {problem}
+          {model?.error
+            ? `Le téléchargement a échoué : ${model.error}`
+            : `L’état du modèle n’a pas pu être lu : ${error}`}
         </FeedbackBanner>
       ) : null}
       <SettingRows label="Modèle de recherche par le sens">
         <SettingRow
           title="Modèle de langue local"
-          badge={
-            model?.status === "ready" ? (
-              <StatusBadge tone="success" size="compact">
-                Prêt
-              </StatusBadge>
-            ) : null
+          description={
+            model?.status === "ready"
+              ? "Installé. Les données des modules s’indexent en arrière-plan."
+              : model?.status === "downloading"
+                ? `Téléchargement en cours${progress ? ` : ${progress}` : "…"}`
+                : `Environ ${model?.sizeMb ?? 470} Mo à télécharger une seule fois (${model?.model ?? "multilingual-e5-small"}, français compris).`
           }
-          description={`${model?.model ?? "multilingual-e5-small"}, français compris. Livré avec Alfred : rien à télécharger. Les données des modules s’indexent en arrière-plan.`}
-        />
+        >
+          {model?.status === "ready" ? null : (
+            <Button
+              variant="primary"
+              disabled={!model}
+              loading={model?.status === "downloading"}
+              loadingLabel="Téléchargement…"
+              onClick={() => void download()}
+            >
+              Télécharger
+            </Button>
+          )}
+        </SettingRow>
       </SettingRows>
     </Section>
   );

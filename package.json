@@ -9,7 +9,6 @@
     "check:fix": "biome check --write .",
     "test": "vitest run",
     "dev": "vite",
-    "assemble:model": "node scripts/assemble-model.mjs",
     "build:runtime": "node scripts/gen-runtime-shims.mjs && vite build --config vite.runtime.config.ts",
     "build": "tsc -b && pnpm build:runtime && vite build",
     "preview": "vite preview",
