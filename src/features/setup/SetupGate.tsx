@@ -3,11 +3,14 @@
  * n’est pas prêt, la coquille montre cette page à la place du cadre, qui n’est pas chargé. Dès que tout est prêt
  * (onboarding terminé, compte ajouté ailleurs), la vraie page s’affiche d’elle-même, même si d’autres services du
  * module attendent encore. Elle ne nomme que les comptes qui manquent à cette page. Un service facultatif qui manque
- * ne retient pas la page.
+ * ne retient pas la page. Un module en mode « données d’exemple » n’attend rien : sa page s’affiche avec les
+ * exemples de ses fonctions, et la page d’attente propose d’entrer dans ce mode.
  */
 import { Button, EmptyState } from "@alfred/ui";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Uses } from "../../lib/types";
+import { setExampleMode, useExampleMode } from "../../shell/examples";
+import { notify } from "../../shell/notifications";
 import { listClients, testClient } from "../clients/api";
 import type { SetupStep, SetupStepState } from "./api";
 import { openOnboarding } from "./Onboarding";
@@ -75,8 +78,14 @@ export function SetupGate({
   children: ReactNode;
 }) {
   const { modules, of, load } = useModuleSetup();
+  const examples = useExampleMode(module);
+  const [entering, setEntering] = useState(false);
   const setup = of(module);
-  const left = setup ? stepsOfPage(setup, module, uses).filter((step) => !step.optional && step.state !== "ready") : [];
+  const left = examples
+    ? []
+    : setup
+      ? stepsOfPage(setup, module, uses).filter((step) => !step.optional && step.state !== "ready")
+      : [];
   // Seul un test manque (module construit par l’agent, compte modifié) : je vérifie moi-même, une fois.
   const onlyUntested = left.length > 0 && left.every((step) => step.state === "untested");
   const verified = useRef(false);
@@ -93,6 +102,7 @@ export function SetupGate({
       });
   }, [onlyUntested, left, load]);
 
+  if (examples) return <>{children}</>;
   // L’état n’est pas encore lu : rien plutôt qu’une page qui céderait aussitôt la place à la page d’attente.
   if (modules === undefined) return null;
   if (left.length === 0) return <>{children}</>;
@@ -109,6 +119,23 @@ export function SetupGate({
       {/* Le parcours s’ouvre directement sur le premier compte qui manque à cette page, pas sur la présentation. */}
       <Button variant="primary" onClick={() => openOnboarding(module, "resume", left[0]?.key)}>
         Configurer
+      </Button>
+      <Button
+        loading={entering}
+        onClick={() => {
+          setEntering(true);
+          setExampleMode(module, true)
+            .catch((error: unknown) =>
+              notify({
+                title: "Les données d’exemple n’ont pas pu être affichées",
+                description: error instanceof Error ? error.message : String(error),
+                tone: "error",
+              }),
+            )
+            .finally(() => setEntering(false));
+        }}
+      >
+        Voir avec des données d’exemple
       </Button>
     </EmptyState>
   );

@@ -13,6 +13,13 @@ use crate::{app_db, git};
 
 const LAST_SPACE: &str = "space.last";
 
+/// Vue de l’espace pour l’interface, avec les réglages du poste qui la complètent (données d’exemple).
+fn ui_snapshot(state: &AppState, space: &Space) -> AppResult<Value> {
+    let mut snapshot = space.snapshot()?;
+    snapshot.examples = crate::examples::modules(state);
+    Ok(serde_json::to_value(snapshot)?)
+}
+
 pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppResult<Value> {
     // Chaque domaine traite ses propres commandes ; le reste relève du socle ci-dessous.
     macro_rules! delegate {
@@ -22,7 +29,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, clients, space_db, function_tests, backups, module_files, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup, team_sync, spaces);
+    delegate!(vault, agent_workspace, examples, clients, space_db, function_tests, backups, module_files, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, setup, team_sync, spaces);
     match command {
         "app.info" => {
             let server = state.server()?;
@@ -73,7 +80,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             match last.as_ref().and_then(Value::as_str).map(PathBuf::from) {
                 Some(path) if path.join(crate::space::SPACE_FILE).is_file() => {
                     open_space(&state, &path, None)?;
-                    Ok(serde_json::to_value(state.space()?.snapshot()?)?)
+                    ui_snapshot(&state, &state.space()?)
                 }
                 _ => Ok(Value::Null),
             }
@@ -91,7 +98,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
                 )));
             }
             open_space(&state, &path, name.as_deref())?;
-            Ok(serde_json::to_value(state.space()?.snapshot()?)?)
+            ui_snapshot(&state, &state.space()?)
         }
         "space.close" => {
             if state.try_space().is_some() {
@@ -105,7 +112,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             app_db::set_setting(&db, LAST_SPACE, &Value::Null)?;
             Ok(Value::Null)
         }
-        "space.snapshot" => Ok(serde_json::to_value(state.space()?.snapshot()?)?),
+        "space.snapshot" => ui_snapshot(&state, &state.space()?),
         "space.placePage" => {
             let space = state.space()?;
             let title: String = arg(&args, "title")?;
@@ -143,7 +150,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             let message: Option<String> = opt_arg(&args, "message")?;
             commit(&space, message.as_deref().unwrap_or("Réorganisation de la navigation"))?;
             state.emit("space:changed", Value::Null);
-            Ok(serde_json::to_value(space.snapshot()?)?)
+            ui_snapshot(&state, &space)
         }
         "space.commit" => {
             let space = state.space()?;

@@ -5,6 +5,7 @@
  */
 import { AlfredError, frameBase, invoke } from "../lib/native";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protocol";
+import { inExampleMode } from "./examples";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
 import { frameKey } from "./frameKeys";
 import { useShell } from "./store";
@@ -22,7 +23,8 @@ const MAX_ACTIVE_CALLS = 40;
 let active = 0;
 let sequence = 0;
 
-function createHost(module: string): Host {
+/** `examples` : cadre à part, dont tout ce que demandent les fonctions reste en mode « données d’exemple ». */
+function createHost(module: string, examples: boolean): Host {
   const { info, theme, revision } = useShell.getState();
   if (!info) throw new AlfredError({ message: "Alfred n’a pas fini de démarrer." });
   const frame = document.createElement("iframe");
@@ -34,7 +36,12 @@ function createHost(module: string): Host {
   const keyed = frameKey(module).then((key) => {
     frame.src = `${frameBase(info.pageBase)}/host/functions?${new URLSearchParams({ module, key, theme, v: String(revision) })}`;
   });
-  const identity: FrameIdentity = { kind: "function", module, reference: `${module}/*` };
+  const identity: FrameIdentity = {
+    kind: "function",
+    module,
+    reference: `${module}/*`,
+    ...(examples ? { examples: true } : {}),
+  };
   let markReady: () => void = () => undefined;
   const host: Host = {
     frame,
@@ -84,18 +91,24 @@ function createHost(module: string): Host {
   });
   document.body.append(frame);
   // Clé refusée (Alfred redémarré, module invalide) : le prochain appel recrée le cadre.
+  const key = hostKey(module, examples);
   host.ready.catch(() => {
-    if (hosts.get(module) === host) hosts.delete(module);
+    if (hosts.get(key) === host) hosts.delete(key);
     frame.remove();
   });
   return host;
 }
 
-function hostFor(module: string): Host {
-  let host = hosts.get(module);
+function hostKey(module: string, examples: boolean): string {
+  return examples ? `${module}#exemples` : module;
+}
+
+function hostFor(module: string, examples: boolean): Host {
+  const key = hostKey(module, examples);
+  let host = hosts.get(key);
   if (!host) {
-    host = createHost(module);
-    hosts.set(module, host);
+    host = createHost(module, examples);
+    hosts.set(key, host);
   }
   return host;
 }
@@ -112,21 +125,32 @@ export function resetFunctionHosts() {
 
 /**
  * Appelle `module/fonction` avec `input`. `caller` dit qui appelle (page, agent, webhook, planification) : il est
- * noté au journal avec la durée et l’erreur éventuelle.
+ * noté au journal avec la durée et l’erreur éventuelle. `examples` : l’appelant montre des données d’exemple ;
+ * l’appel les suit aussi quand le module de la fonction est réglé en mode exemple.
  */
-export async function callFunction(reference: string, input: unknown, caller: string): Promise<unknown> {
+export async function callFunction(
+  reference: string,
+  input: unknown,
+  caller: string,
+  examples = false,
+): Promise<unknown> {
   const [module, name] = reference.split("/");
-  const declared = useShell.getState().snapshot?.functions.find((candidate) => candidate.reference === reference);
+  const { snapshot } = useShell.getState();
+  const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
   if (!module || !name || !declared) throw new AlfredError({ message: `La fonction « ${reference} » n’existe pas.` });
+  const sample = examples || inExampleMode(snapshot, module);
+  // Une fonction de connecteur en mode exemple n’est pas lancée : Alfred rend l’exemple le plus proche de l’entrée.
+  if (sample && (declared.uses.clients ?? []).length > 0)
+    return invoke("functions.example", { function: reference, input, caller });
   if (declared.missing) throw new AlfredError({ message: `La fonction « ${reference} » n’est pas encore écrite.` });
   // Un script (bash, PowerShell, Python) est lancé par Alfred lui-même, qui le note au journal.
   if (declared.runtime && declared.runtime !== "ts")
-    return invoke("functions.call", { function: reference, input, caller });
+    return invoke("functions.call", { function: reference, input, caller, ...(sample ? { examples: true } : {}) });
   if (active >= MAX_ACTIVE_CALLS)
     throw new AlfredError({
       message: "Trop d’appels de fonctions en cours : une fonction s’appelle peut-être en boucle.",
     });
-  const host = hostFor(module);
+  const host = hostFor(module, sample);
   const callId = `c${++sequence}`;
   const started = performance.now();
   active += 1;
@@ -163,7 +187,8 @@ export async function callFunction(reference: string, input: unknown, caller: st
   }
 }
 
-frameServices.callFunction = (identity, reference, input) => callFunction(reference, input, identity.reference);
+frameServices.callFunction = (identity, reference, input) =>
+  callFunction(reference, input, identity.reference, identity.examples === true);
 
 function record(reference: string, caller: string, started: number, ok: boolean, error?: unknown) {
   const message = error instanceof Error ? error.message : error ? String(error) : undefined;

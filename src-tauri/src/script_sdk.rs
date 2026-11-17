@@ -74,8 +74,9 @@ impl Drop for Grant {
     }
 }
 
-/// Ouvre le pont pour un appel de la fonction `module/fonction`.
-pub fn grant(module: &str, function: &str) -> Grant {
+/// Ouvre le pont pour un appel de la fonction `module/fonction` ; `examples` : l’appel montre des données d’exemple,
+/// et ce que le script demande par le pont aussi (aucune requête vers un service).
+pub fn grant(module: &str, function: &str, examples: bool) -> Grant {
     use rand::Rng;
     let token: String = rand::rng().sample_iter(rand::distr::Alphanumeric).take(48).map(char::from).collect();
     let subject = Subject {
@@ -83,6 +84,7 @@ pub fn grant(module: &str, function: &str) -> Grant {
         module: module.to_string(),
         reference: format!("{module}/{function}"),
         instance: None,
+        examples,
     };
     if let Ok(mut all) = tokens().lock() {
         all.insert(token.clone(), subject);
@@ -111,7 +113,8 @@ pub async fn call(state: &Shared, subject: &Subject, method: &str, params: &Valu
             json!({ "subject": subject, "function": reference }),
         )
         .await?;
-        return crate::functions::call(state, &reference, params.get("input").cloned().unwrap_or(json!({})), &subject.reference).await;
+        let input = params.get("input").cloned().unwrap_or(json!({}));
+        return crate::functions::call_in(state, &reference, input, &subject.reference, subject.examples).await;
     }
     let Some((_, command, fields)) = METHODS.iter().find(|(name, _, _)| *name == method) else {
         return Err(AppError::new(format!("Méthode inconnue du pont des scripts : « {method} ».")));
@@ -208,7 +211,7 @@ printf '{"lu":%s,"interdit":%s}
 
     #[test]
     fn a_token_lives_only_as_long_as_its_call() {
-        let grant = grant("notes", "importer");
+        let grant = grant("notes", "importer", false);
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, format!("Bearer {}", grant.token).parse().unwrap());
         assert_eq!(subject_of(&headers).unwrap().reference, "notes/importer");

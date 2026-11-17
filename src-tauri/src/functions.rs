@@ -30,23 +30,33 @@ fn split(reference: &str) -> AppResult<(&str, &str)> {
 }
 
 /// Appelle une fonction depuis Rust (agent, webhook, planification) : l’interface l’exécute et renvoie sa sortie.
+/// Le module de la fonction réglé en mode « données d’exemple », l’appel en suit le mode.
 pub async fn call(state: &Arc<AppState>, reference: &str, input: Value, caller: &str) -> AppResult<Value> {
+    call_in(state, reference, input, caller, false).await
+}
+
+/// Comme `call` ; `examples` : l’appelant montre des données d’exemple, et l’appel aussi, quel que soit le réglage
+/// du module appelé (une dépendance suit le mode du module qui l’appelle). Une fonction de connecteur rend alors
+/// son exemple sans être lancée ; une autre s’exécute, et ce qu’elle appelle reste en mode exemple.
+pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, caller: &str, examples: bool) -> AppResult<Value> {
     let (module, function) = split(reference)?;
     let space = state.space()?;
     let manifest = space.module(module)?;
     let Some(declared) = manifest.functions.iter().find(|declared| declared.id == function) else {
         return Err(AppError::new(format!("La fonction « {reference} » n’est pas déclarée dans son module.")));
     };
-    if declared.runtime.is_script() {
-        return call_script(state, &space, &manifest, declared, input, caller).await;
+    let examples = examples || crate::examples::is_on(state, module);
+    if examples && declared.is_connector() {
+        return crate::examples::respond(state, reference, declared, &input, caller);
     }
-    state
-        .ask_ui(
-            "function:call",
-            json!({ "function": reference, "input": input, "caller": caller }),
-            Duration::from_secs(180),
-        )
-        .await
+    if declared.runtime.is_script() {
+        return call_script(state, &space, &manifest, declared, input, caller, examples).await;
+    }
+    let mut payload = json!({ "function": reference, "input": input, "caller": caller });
+    if examples {
+        payload["examples"] = json!(true);
+    }
+    state.ask_ui("function:call", payload, Duration::from_secs(180)).await
 }
 
 fn declaration_for(manifest: &ModuleManifest, id: &str) -> AppResult<FunctionDecl> {
@@ -61,11 +71,12 @@ async fn call_script(
     declared: &FunctionDecl,
     input: Value,
     caller: &str,
+    examples: bool,
 ) -> AppResult<Value> {
     let reference = format!("{}/{}", manifest.id, declared.id);
     let started = std::time::Instant::now();
     // Pont du SDK : un jeton propre à cet appel, qui cesse de valoir à la fin du script.
-    let bridge = crate::script_sdk::grant(&manifest.id, &declared.id);
+    let bridge = crate::script_sdk::grant(&manifest.id, &declared.id, examples);
     let mut env = vec![
         ("ALFRED_MODULE".to_string(), manifest.id.clone()),
         ("ALFRED_FUNCTION".to_string(), declared.id.clone()),
@@ -75,6 +86,9 @@ async fn call_script(
     ];
     if let Some(url) = crate::script_sdk::url(state) {
         env.push(("ALFRED_SDK_URL".to_string(), url));
+    }
+    if examples {
+        env.push(("ALFRED_EXAMPLES".to_string(), "1".to_string()));
     }
     let result = scripts::run(ScriptCall {
         runtime: declared.runtime,
@@ -163,16 +177,22 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 tests: opt_arg::<Vec<crate::space::FunctionTest>>(args, "tests")
                     .map_err(|error| AppError::new(format!("Tests illisibles : {}", error.message)))?
                     .unwrap_or_default(),
+                examples: opt_arg::<Vec<crate::space::FunctionExample>>(args, "examples")
+                    .map_err(|error| AppError::new(format!("Exemples illisibles : {}", error.message)))?
+                    .unwrap_or_default(),
             };
             let mut declaration = declaration;
             match manifest.functions.iter_mut().find(|declared| declared.id == id) {
                 Some(existing) => {
-                    // Une redéclaration qui ne parle pas de l’effet ou des tests les garde.
+                    // Une redéclaration qui ne parle pas de l’effet, des tests ou des exemples les garde.
                     if args.get("effect").is_none() {
                         declaration.effect = existing.effect;
                     }
                     if args.get("tests").is_none() {
                         declaration.tests = std::mem::take(&mut existing.tests);
+                    }
+                    if args.get("examples").is_none() {
+                        declaration.examples = std::mem::take(&mut existing.examples);
                     }
                     *existing = declaration
                 }
@@ -229,7 +249,9 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 Ok(reference) => {
                     let caller = opt_arg::<String>(args, "caller").ok().flatten();
                     let caller = caller.as_deref().unwrap_or("interface");
-                    call(state, &reference, args.get("input").cloned().unwrap_or(json!({})), caller).await
+                    // La coquille dit si l’appelant montre des données d’exemple (un cadre ne l’atteint pas).
+                    let examples = opt_arg::<bool>(args, "examples").ok().flatten().unwrap_or(false);
+                    call_in(state, &reference, args.get("input").cloned().unwrap_or(json!({})), caller, examples).await
                 }
                 Err(error) => Err(error),
             }

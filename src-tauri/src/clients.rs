@@ -1389,6 +1389,11 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             dependency_reference(&name).map(|(module, _)| module.to_string()).unwrap_or_else(|| subject.module.clone())
         )));
     }
+    // Données d’exemple : rien ne part vers un service, quoi que tente la fonction (indicateur fixé par la coquille,
+    // ou module réglé en mode exemple).
+    if subject.examples || crate::examples::is_on(state, &subject.module) {
+        return Err(crate::examples::blocked(&name));
+    }
     let space = state.space()?;
     let def = resolve(&space, &subject.module, &name)?;
     // Une fonction appelée depuis une section par instance appelle son instance, sauf si elle en nomme une autre.
@@ -2285,12 +2290,12 @@ pub mod testing {
     }
 
     pub fn page_subject(module: &str) -> Subject {
-        Subject { kind: "page".to_string(), module: module.to_string(), reference: format!("{module}/accueil"), instance: None }
+        Subject { kind: "page".to_string(), module: module.to_string(), reference: format!("{module}/accueil"), instance: None, ..Default::default() }
     }
 
     /// Les fonctions du module : seules à joindre ses clients.
     pub fn function_subject(module: &str) -> Subject {
-        Subject { kind: "function".to_string(), module: module.to_string(), reference: format!("{module}/*"), instance: None }
+        Subject { kind: "function".to_string(), module: module.to_string(), reference: format!("{module}/*"), instance: None, ..Default::default() }
     }
 
     /// L’accord passe normalement par une question à l’interface ; les tests l’accordent d’avance.

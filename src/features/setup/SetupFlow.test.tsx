@@ -407,7 +407,10 @@ it("une page à qui il manque un service affiche la page d’attente, et son bou
   expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
   expect(screen.getByText("Pour l’afficher, ajoutez votre compte Gmail.")).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
-  expect(screen.getAllByRole("button")).toHaveLength(1);
+  expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
+    "Configurer",
+    "Voir avec des données d’exemple",
+  ]);
   await user.click(screen.getByRole("button", { name: "Configurer" }));
   expect(useOnboarding.getState()).toEqual({ module: "boite", start: "resume", step: "boite/gmail" });
 });

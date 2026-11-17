@@ -16,6 +16,7 @@ mod documents;
 mod docs;
 mod error;
 mod events;
+mod examples;
 mod function_tests;
 mod functions;
 mod git;

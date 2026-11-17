@@ -219,6 +219,7 @@ async fn authorized(state: &Arc<AppState>, space: &Space, subscriber: &str, even
         module: module.to_string(),
         reference: format!("{module}/*"),
         instance: None,
+        ..Default::default()
     };
     let name = space.module(publisher).map(|manifest| manifest.name).unwrap_or_else(|_| publisher.to_string());
     crate::permissions::ensure(state, &subject, &format!("event:{event}"), &format!("l’événement « {id} » du module {name}")).await

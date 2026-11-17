@@ -14,7 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 /// Demandeur d’un accès, tel que la coquille l’identifie : `{ kind, module, reference }`.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct Subject {
     /// `page`, `panel`, `function`.
     pub kind: String,
@@ -24,6 +24,10 @@ pub struct Subject {
     /// Instance d’un client que montre la page (section par instance). Les accords ne dépendent pas d’elle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    /// Le demandeur montre des données d’exemple (page ou fonction appelée depuis une page en mode exemple) : la
+    /// coquille le fixe, jamais le cadre. Aucune requête ne part alors vers un service.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub examples: bool,
 }
 
 impl Subject {
@@ -261,6 +265,7 @@ mod tests {
             module: "jira".into(),
             reference: "jira/tickets".into(),
             instance: Some("acme".into()),
+            ..Default::default()
         };
         let ask = |resource: &'static str| {
             let (state, subject) = (state.clone(), subject.clone());

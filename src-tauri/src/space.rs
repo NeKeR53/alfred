@@ -356,6 +356,29 @@ pub struct FunctionDecl {
     /// Cas de test : une entrée d’exemple et ce que la sortie doit montrer.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<FunctionTest>,
+    /// Données d’exemple : des réponses rendues à la place du service quand le module est en mode « données
+    /// d’exemple » (aucune requête ne part alors vers le service).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<FunctionExample>,
+}
+
+/// Réponse d’exemple d’une fonction de connecteur : pour une entrée, la sortie au format exact du service.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FunctionExample {
+    /// Ce que montre l’exemple, en mots simples (« Trois tickets ouverts »).
+    pub name: String,
+    /// Entrée à laquelle l’exemple répond ; l’appel choisit l’exemple dont les champs fournis correspondent.
+    pub input: Value,
+    /// Sortie rendue, conforme au schéma `output` de la fonction.
+    pub output: Value,
+}
+
+impl FunctionDecl {
+    /// Fonction de connecteur : elle joint un service (`uses.clients`).
+    pub fn is_connector(&self) -> bool {
+        !self.uses.clients.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -486,6 +509,9 @@ pub struct Snapshot {
     pub problems: Vec<Problem>,
     /// Réorganisation enregistrée par l’utilisateur, que l’interface modifie puis renvoie en entier.
     pub layout: Layout,
+    /// Modules affichés avec leurs données d’exemple (réglage du poste, dans la base d’Alfred) ; rempli par la
+    /// commande qui envoie la vue à l’interface.
+    pub examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -577,6 +603,8 @@ pub struct ResolvedFunction {
     pub runtime: Runtime,
     pub effect: Option<Effect>,
     pub tests: Vec<FunctionTest>,
+    /// Nombre de réponses d’exemple déclarées.
+    pub examples: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1318,6 +1346,7 @@ impl Space {
                     runtime: function.runtime,
                     effect: function.effect,
                     tests: function.tests.clone(),
+                    examples: function.examples.len(),
                 });
             }
         }
@@ -1358,6 +1387,7 @@ impl Space {
             bindings: manifest.bindings,
             problems,
             layout: manifest.layout,
+            examples: Vec::new(),
         })
     }
 }

@@ -26,6 +26,11 @@ export interface FrameIdentity {
   host?: string;
   /** Instance du client que montre la page (section par instance) ; `reference` porte alors `@instance`. */
   instance?: string;
+  /**
+   * Le cadre montre des données d’exemple : ses fonctions de connecteur rendent leurs exemples et aucune requête ne
+   * part vers un service. La coquille le fixe, jamais le cadre.
+   */
+  examples?: boolean;
 }
 
 /** Référence déclarée de la page, sans l’instance qu’elle montre. */
@@ -140,6 +145,7 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     module: identity.module,
     reference: declaredReference(identity),
     ...(identity.instance ? { instance: identity.instance } : {}),
+    ...(identity.examples ? { examples: true } : {}),
   };
   switch (method) {
     case "shell.context":

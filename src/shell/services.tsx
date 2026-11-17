@@ -38,11 +38,17 @@ function bind() {
   if (bound) return;
   bound = true;
   onNativeEvent("function:call", async (payload) => {
-    const call = payload as { requestId: string; function: string; input: unknown; caller: string };
+    const call = payload as {
+      requestId: string;
+      function: string;
+      input: unknown;
+      caller: string;
+      examples?: boolean;
+    };
     // La demande est diffusée à toutes les interfaces ouvertes : seule celle qui la réserve l’exécute.
     const claimed = await invoke<boolean>("ui.claim", { requestId: call.requestId }).catch(() => false);
     if (!claimed) return;
-    callFunction(call.function, call.input, call.caller).then(
+    callFunction(call.function, call.input, call.caller, call.examples === true).then(
       (output) => resolve(call.requestId, output),
       (error) => reject(call.requestId, error),
     );
@@ -59,20 +65,20 @@ function bind() {
     void resolve(request.requestId, readFrameLogs(request));
   });
   onNativeEvent("agent:pageSnapshot", async (payload) => {
-    const request = payload as { requestId: string; page: string };
+    const request = payload as { requestId: string; page: string; examples?: boolean };
     // Une seule interface capture la page, même si plusieurs fenêtres sont ouvertes.
     const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
     if (!claimed) return;
-    capturePage(request.page).then(
+    capturePage(request.page, undefined, { examples: request.examples === true }).then(
       (snapshot) => resolve(request.requestId, snapshot),
       (error) => reject(request.requestId, error),
     );
   });
   onNativeEvent("agent:pageScreenshot", async (payload) => {
-    const request = payload as { requestId: string; page: string; fullPage?: boolean };
+    const request = payload as { requestId: string; page: string; fullPage?: boolean; examples?: boolean };
     const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
     if (!claimed) return;
-    screenshotPage(request.page, { fullPage: request.fullPage === true }).then(
+    screenshotPage(request.page, { fullPage: request.fullPage === true, examples: request.examples === true }).then(
       (image) => resolve(request.requestId, image),
       (error) => reject(request.requestId, error),
     );

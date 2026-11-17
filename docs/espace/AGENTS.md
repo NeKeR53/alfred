@@ -89,7 +89,7 @@ Tout accès à un service externe (Jira, Outlook, une API maison) passe par **le
 1. Avant d’écrire quoi que ce soit pour un service, cherche dans `space_overview` le module qui détient déjà son client. S’il existe dans un autre module, sers-t’en par `requires` ; sinon déclare le client dans le module que tu construis (`declare_client` puis `declare_function`), autant de clients que de services demandés. Un connecteur destiné à servir à plusieurs modules peut aussi être un module à part, nommé comme le service (`jira`).
 2. Les pages du connecteur appellent ses fonctions (`functions.call("lister-tickets", …)`). Les autres modules déclarent `requires: [{ "module": "jira" }]` et appellent `functions.call("jira/lister-tickets", …)` ; ils n’appellent **jamais** `client("jira")` ni `client("jira/jira")` eux-mêmes, et ne redéclarent pas le client.
 3. Une opération qui manque s’ajoute **au connecteur**, pas dans la page qui en a besoin. Un connecteur complet couvre les lectures et les écritures dont ses utilisateurs ont besoin, avec des noms et des schémas homogènes (`lister-…`, `lire-…`, `creer-…`, `modifier-…`, `supprimer-…`).
-4. Chaque fonction du connecteur a une `description` précise, des schémas `input` et `output` complets, `effect` (`read` ou `write`) et au moins un test (voir « Tests d’une fonction »).
+4. Chaque fonction du connecteur a une `description` précise, des schémas `input` et `output` complets, `effect` (`read` ou `write`), au moins un test (voir « Tests d’une fonction ») et, **dès son écriture**, deux ou trois données d’exemple (`examples`, voir « Données d’exemple ») : sans elles, ses pages ne s’affichent pas tant que l’utilisateur n’a pas de compte, et `check` la signale.
 5. Fonction ou code de page ? Une fonction pour tout ce qui touche un service, ce que plusieurs pages ou modules partagent, ce qu’un agent, un webhook ou une planification appelle. Le code de la page pour l’affichage, la mise en forme et l’état de l’écran. Les fonctions **locales** d’un module (sans service) restent pour sa propre logique : ne crée pas une fonction par bouton, ni une fonction que personne n’appellera.
 
 Une page d’un module existant qui appelle encore un client ne reçoit plus de réponse : quand tu en croises une (erreur « Une page n’appelle pas un client directement » dans `page_logs`, remarque de `check`), migre-la vers le connecteur (une fonction par opération, avec `effect` et `tests`) et dis-le à l’utilisateur. Un module installé, en lecture seule, se met à jour depuis son marketplace.
@@ -104,6 +104,21 @@ Une page d’un module existant qui appelle encore un client ne reçoit plus de 
 - test d’écriture : `target` (`field` : chemin dans l’entrée, `label` : « Ticket de test », `hint`) ; l’utilisateur saisit la cible au moment de lancer le test, et elle remplace `input[field]`.
 
 Les tests d’une fonction `effect: "read"` se lancent d’office : `check` lance ceux qui ne sont pas réussis dans l’état actuel de la fonction et les rapporte dans `tests.failed`, avec la sortie reçue. **Ne rends pas la main avec un test de lecture en échec** : corrige la fonction (ou le test, s’il attend à tort). Ceux d’une écriture (ou d’une fonction sans `effect`) ne se lancent jamais d’office ni en boucle : seul l’utilisateur les lance, dans Réglages → Modules → la fiche du module → « Tout vérifier », sur la cible de test qu’il choisit. Dis-lui qu’il peut le faire. Modifier une fonction (déclaration ou fichier) la remet « à vérifier ».
+
+Les tests vérifient la fonction **contre le vrai service** ; les données d’exemple (ci-dessous) servent à afficher ses pages **sans** lui. Les deux s’écrivent ensemble, mais ne se remplacent pas : tant que le module est en mode « données d’exemple », ses tests ne se lancent pas (`skipped`).
+
+### Données d’exemple
+
+Toute fonction de connecteur (qui déclare un service dans `uses.clients`) reçoit, **dès son écriture**, deux ou trois réponses d’exemple dans `declare_function` (`examples`) : `name` (ce que montre l’exemple, « Trois tickets ouverts »), `input` (l’entrée à laquelle il répond), `output` (la sortie rendue). Elles permettent de voir et de développer les pages d’un module **sans pouvoir se connecter** au service.
+
+- **Réalistes et au format exact du service** : la sortie est celle que la fonction rendrait vraiment (mêmes champs, mêmes types, valeurs plausibles : clés `ALF-12`, dates ISO, noms crédibles), conforme au schéma `output` ; `check` vérifie chaque sortie d’exemple contre ce schéma et signale une fonction de connecteur sans exemple.
+- **Cohérentes entre elles** : mêmes identifiants d’une fonction à l’autre, pour qu’une liste et son détail s’enchaînent (le ticket `ALF-12` de `lister-tickets` a son exemple dans `lire-ticket` avec `input: { "cle": "ALF-12" }`).
+- **Variées** : un cas courant, un cas vide ou limite (aucun ticket), un cas chargé si la page doit le supporter.
+- Pour une écriture (`effect: "write"`), l’exemple rend ce que le service répondrait (le ticket créé) : rien n’est créé nulle part.
+
+En mode exemple, l’appel d’une fonction de connecteur rend l’exemple dont l’`input` est identique à l’appel, sinon celui qui partage le plus de champs fournis (même valeur), sinon le premier ; sans exemple, l’appel échoue (« Cette fonction n’a pas encore de données d’exemple »). Une fonction qui n’utilise aucun service s’exécute normalement, mais ce qu’elle appelle passe aussi par les exemples, et **aucune requête ne part vers un service** : `client(id)` échoue avec une erreur claire. Les dépendances (`requires`) suivent le même mode quand le module les appelle. Les écritures dans la base du module (`db.execute`), elles, restent réelles. Tant que le mode est actif, tout ce qui appelle les fonctions du module (agent, webhook, planification, tâche de fond) reçoit aussi les exemples.
+
+Le mode se règle module par module, par l’utilisateur : bouton « Voir avec des données d’exemple » de la page d’attente d’une page à qui il manque un compte, ou interrupteur « Données d’exemple » de la fiche du module (Réglages → Modules) ; un bandeau « Données d’exemple » le rappelle en haut de la page, avec de quoi le quitter. **Quand l’utilisateur ne peut pas se connecter** (pas encore de compte, accès en attente, service indisponible), propose-le-lui. Toi, vérifie la page dans ce mode avec `page_screenshot` ou `page_snapshot` et `examples: true` (la page se charge alors même sans compte), et essaie une fonction avec `call_function` et `examples: true` : aucune ne joint le service.
 
 ### Variantes
 
@@ -264,9 +279,14 @@ Les identifiants sont en minuscules, chiffres et tirets, 64 caractères au plus.
     "input": { "type": "object", "required": ["projet"], "properties": { "projet": { "type": "string" }, "statut": { "type": "string" } } },
     "output": { "type": "object", "required": ["tickets"], "properties": { "tickets": { "type": "array", "items": { "type": "object", "required": ["cle", "titre"] } } } },
     "uses": { "clients": ["jira"] },
-    "tests": [{ "name": "Tickets ouverts du projet ALF", "input": { "projet": "ALF", "statut": "Open" }, "expect": { "nonEmpty": ["tickets"], "equals": { "tickets.0.statut": "Open" } } }]
+    "tests": [{ "name": "Tickets ouverts du projet ALF", "input": { "projet": "ALF", "statut": "Open" }, "expect": { "nonEmpty": ["tickets"], "equals": { "tickets.0.statut": "Open" } } }],
+    "examples": [
+      { "name": "Deux tickets ouverts", "input": { "projet": "ALF", "statut": "Open" }, "output": { "tickets": [{ "cle": "ALF-12", "titre": "Export PDF des factures", "statut": "Open" }, { "cle": "ALF-15", "titre": "Relance automatique", "statut": "Open" }] } },
+      { "name": "Aucun ticket fermé", "input": { "projet": "ALF", "statut": "Done" }, "output": { "tickets": [] } }
+    ]
   }
   ```
+- `functions[].examples` : données d’exemple d’une fonction de connecteur (voir « Données d’exemple »), rendues à la place du service en mode exemple.
 - `webhooks[].function`, `schedules[].function` : identifiant d’une fonction **du même module**, sans préfixe.
 - `schedules` : `everyMinutes` (au moins 1) **ou** `at` (« HH:MM », heure locale, une fois par jour), jamais les deux ; `input` est passé à la fonction (`{}` par défaut).
 

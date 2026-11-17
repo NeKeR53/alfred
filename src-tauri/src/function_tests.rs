@@ -251,6 +251,13 @@ pub async fn run(
         .find(|(index, case)| test_key(case, *index) == test)
         .ok_or_else(|| AppError::new(format!("La fonction « {reference} » n’a pas de test « {test} ».")))?;
     let key = test_key(case, index);
+    // Données d’exemple : le test ne joindrait pas le service et ne dirait rien de la fonction.
+    if crate::examples::is_on(state, &manifest.id) {
+        return Ok(json!({
+            "function": reference, "test": key, "status": "skipped",
+            "message": "Données d’exemple actives pour ce module : ses tests attendent que vous les quittiez.",
+        }));
+    }
     let read = is_read(&declared);
     if !read && !approved {
         return Ok(json!({

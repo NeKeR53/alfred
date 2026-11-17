@@ -120,6 +120,8 @@ export interface ResolvedFunction {
   effect?: FunctionEffect | null;
   /** Cas de test déclarés avec la fonction. */
   tests?: FunctionTestCase[];
+  /** Nombre de réponses d’exemple déclarées (mode « données d’exemple »). */
+  examples?: number;
 }
 
 export type FunctionRuntime = "ts" | "bash" | "pwsh" | "python";
@@ -145,6 +147,8 @@ export interface Snapshot {
   problems: Array<{ module: string; message: string }>;
   /** Réorganisation enregistrée par l’utilisateur (`alfred.json`) ; l’interface la modifie puis la renvoie entière. */
   layout?: Layout;
+  /** Modules affichés avec leurs données d’exemple (réglage du poste, hors de l’espace). */
+  examples?: string[];
 }
 
 export interface Override {

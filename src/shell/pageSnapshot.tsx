@@ -30,6 +30,8 @@ interface Target {
   ready: boolean;
   readyAt: number;
   hidden: boolean;
+  /** Le cadre montre des données d’exemple. */
+  examples: boolean;
   waiting: Map<string, (payload: unknown) => void>;
   onReady: Set<() => void>;
 }
@@ -48,6 +50,7 @@ export function registerSnapshotTarget(
   post: (message: FrameMessage) => void,
   hidden = false,
   frame: () => HTMLIFrameElement | null = () => null,
+  examples = false,
 ) {
   const target: Target = {
     reference,
@@ -56,6 +59,7 @@ export function registerSnapshotTarget(
     ready: false,
     readyAt: 0,
     hidden,
+    examples,
     waiting: new Map(),
     onReady: new Set(),
   };
@@ -87,6 +91,8 @@ interface HiddenPage {
   page: ResolvedPage;
   kind: "page" | "panel";
   host?: string;
+  /** Capture demandée en données d’exemple. */
+  examples?: boolean;
 }
 
 function setHidden(next: HiddenPage[]) {
@@ -130,11 +136,13 @@ function waitReady(target: Target, timeout: number): Promise<void> {
   });
 }
 
-function waitTarget(reference: string, timeout: number): Promise<Target> {
+function waitTarget(reference: string, timeout: number, examples: boolean): Promise<Target> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const tick = () => {
-      const found = [...targets].find((target) => target.reference === reference);
+      const found = [...targets].find(
+        (target) => target.reference === reference && (!examples || (target.hidden && target.examples)),
+      );
       if (found) return resolve(found);
       if (Date.now() - started > timeout) return reject(new Error("La page n’a pas pu être chargée pour la capture."));
       setTimeout(tick, 50);
@@ -178,18 +186,22 @@ async function askFrame(
   name: "describe" | "screenshot" | "inspect",
   extra: Record<string, unknown>,
   timeout: number,
+  examples = false,
 ): Promise<{ located: NonNullable<ReturnType<typeof findPage>>; displayed: boolean; answer: Record<string, unknown> }> {
   const located = findPage(useShell.getState().snapshot, reference);
   if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace de travail.`);
-  const visible = [...targets].find((target) => target.reference === reference && !target.hidden);
+  // En données d’exemple, la page affichée ne sert que si elle les montre déjà ; sinon un cadre invisible les charge.
+  const visible = [...targets].find(
+    (target) => target.reference === reference && !target.hidden && (!examples || target.examples),
+  );
   let token: string | undefined;
   let target = visible;
   try {
     if (!target) {
       sequence += 1;
       token = `capture-${sequence}`;
-      setHidden([...hiddenPages, { token, ...located }]);
-      target = await waitTarget(reference, timeout);
+      setHidden([...hiddenPages, { token, ...located, ...(examples ? { examples: true } : {}) }]);
+      target = await waitTarget(reference, timeout, examples);
     }
     const payload = await request(target, name, extra, timeout);
     return { located, displayed: visible !== undefined, answer: (payload ?? {}) as Record<string, unknown> };
@@ -199,8 +211,12 @@ async function askFrame(
 }
 
 /** Décrit ce que montre la page `reference` ; la charge hors de la vue si elle n’est pas affichée. */
-export async function capturePage(reference: string, timeout = 12_000): Promise<PageSnapshot> {
-  const { located, displayed, answer } = await askFrame(reference, "describe", {}, timeout);
+export async function capturePage(
+  reference: string,
+  timeout = 12_000,
+  options: { examples?: boolean } = {},
+): Promise<PageSnapshot> {
+  const { located, displayed, answer } = await askFrame(reference, "describe", {}, timeout, options.examples === true);
   return {
     page: reference,
     title: located.page.title,
@@ -269,7 +285,7 @@ export async function inspectFrameElement(
 /** Image de la page `reference`, dessinée par son cadre ; la charge hors de la vue si elle n’est pas affichée. */
 export async function screenshotPage(
   reference: string,
-  options: { fullPage?: boolean } = {},
+  options: { fullPage?: boolean; examples?: boolean } = {},
   timeout = 15_000,
 ): Promise<PageScreenshotResult> {
   const { located, displayed, answer } = await askFrame(
@@ -277,6 +293,7 @@ export async function screenshotPage(
     "screenshot",
     { fullPage: options.fullPage === true },
     timeout,
+    options.examples === true,
   );
   const image = frameImage(answer);
   return {
@@ -325,7 +342,14 @@ export function SnapshotFrames() {
   return (
     <div className="page-snapshot-host" aria-hidden="true" inert>
       {pages.map((item) => (
-        <PageFrame key={item.token} page={item.page} kind={item.kind} host={item.host} capture />
+        <PageFrame
+          key={item.token}
+          page={item.page}
+          kind={item.kind}
+          host={item.host}
+          capture
+          examples={item.examples === true}
+        />
       ))}
     </div>
   );

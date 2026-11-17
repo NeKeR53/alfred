@@ -3,6 +3,7 @@ import { useReadyServicesReload } from "../features/setup/useModuleSetup";
 import { frameBase, onNativeEvent } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
+import { useExampleMode } from "./examples";
 import {
   type FrameIdentity,
   frameContext,
@@ -26,12 +27,15 @@ export function PageFrame({
   kind,
   host,
   capture = false,
+  examples: forced = false,
 }: {
   page: ResolvedPage;
   kind: "page" | "panel";
   host?: string;
   /** Cadre invisible chargé pour une capture de l’agent : il ne rejoint pas les pairs de la page affichée. */
   capture?: boolean;
+  /** Montrer les données d’exemple même si le module n’est pas réglé ainsi (capture demandée par l’agent). */
+  examples?: boolean;
 }) {
   const info = useShell((state) => state.info);
   const revision = useShell((state) => state.revision);
@@ -40,9 +44,17 @@ export function PageFrame({
   const theme = useShell((state) => state.theme);
   const accent = useShell((state) => state.snapshot?.accent ?? null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const examples = useExampleMode(page.module) || forced;
   const identity = useMemo<FrameIdentity>(
-    () => ({ kind, module: page.module, reference: page.reference, host, instance: page.instance ?? undefined }),
-    [kind, page.module, page.reference, host, page.instance],
+    () => ({
+      kind,
+      module: page.module,
+      reference: page.reference,
+      host,
+      instance: page.instance ?? undefined,
+      ...(examples ? { examples: true } : {}),
+    }),
+    [kind, page.module, page.reference, host, page.instance, examples],
   );
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
@@ -70,12 +82,20 @@ export function PageFrame({
       theme: initialTheme.current.theme,
     });
     if (initialTheme.current.accent) query.set("accent", initialTheme.current.accent);
+    // Entrer dans les données d’exemple ou en sortir recharge la page : elle relit tout dans le nouveau mode.
+    if (examples) query.set("examples", "1");
     return `${frameBase(info.pageBase)}/host/page?${query}`;
-  }, [info, moduleKey, page.module, page.id, revision, ready]);
+  }, [info, moduleKey, page.module, page.id, revision, ready, examples]);
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
-    const snapshot = registerSnapshotTarget(identity.reference, post, capture, () => frame.current);
+    const snapshot = registerSnapshotTarget(
+      identity.reference,
+      post,
+      capture,
+      () => frame.current,
+      identity.examples === true,
+    );
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
       const message = event.data;

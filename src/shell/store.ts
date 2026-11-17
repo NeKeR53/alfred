@@ -127,6 +127,15 @@ export const useShell = create<ShellState>((set, get) => ({
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => void get().refresh(), 150);
       });
+      // Données d’exemple activées ou quittées ailleurs (fiche du module, autre fenêtre) : la vue est relue, et seules
+      // les pages du module se rechargent (leur adresse change).
+      onNativeEvent("examples:changed", () => {
+        if (!get().snapshot) return;
+        void invoke<Snapshot>("space.snapshot").then(
+          (snapshot) => set({ snapshot }),
+          () => undefined,
+        );
+      });
       // Une instance ajoutée ou retirée change les sections par instance : le menu est relu, sans recharger les
       // pages ouvertes.
       onNativeEvent("clients:changed", () => {

@@ -53,3 +53,40 @@ it("refuse un script pas encore écrit sans rien lancer", async () => {
   await expect(callFunction("outils/saluer", {}, "agent")).rejects.toBeDefined();
   expect(vi.mocked(invoke)).not.toHaveBeenCalled();
 });
+
+it("en données d’exemple, une fonction de connecteur rend son exemple sans être lancée", async () => {
+  const connector: ResolvedFunction = {
+    ...script,
+    reference: "jira/lister",
+    module: "jira",
+    uses: { clients: ["jira"] },
+  };
+  useShell.setState({ snapshot: { functions: [connector], examples: ["jira"] } as unknown as Snapshot });
+  vi.mocked(invoke).mockResolvedValue({ tickets: [] });
+  await expect(callFunction("jira/lister", { projet: "ALF" }, "jira/tableau")).resolves.toEqual({ tickets: [] });
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.example", {
+    function: "jira/lister",
+    input: { projet: "ALF" },
+    caller: "jira/tableau",
+  });
+  // Un appelant en mode exemple y entraîne la fonction d’un module qui n’y est pas (dépendance).
+  useShell.setState({ snapshot: { functions: [connector], examples: [] } as unknown as Snapshot });
+  await callFunction("jira/lister", {}, "sprint/tableau", true);
+  expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("functions.example", {
+    function: "jira/lister",
+    input: {},
+    caller: "sprint/tableau",
+  });
+});
+
+it("en données d’exemple, un script sans service est lancé avec l’indicateur", async () => {
+  useShell.setState({ snapshot: { functions: [script], examples: ["outils"] } as unknown as Snapshot });
+  vi.mocked(invoke).mockResolvedValue(null);
+  await callFunction("outils/saluer", {}, "outils/accueil");
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.call", {
+    function: "outils/saluer",
+    input: {},
+    caller: "outils/accueil",
+    examples: true,
+  });
+});

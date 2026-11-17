@@ -12,6 +12,7 @@ import type { ServiceEditing } from "../clients/ServiceEditor";
 import type { ClientsController } from "../clients/useClients";
 import { FunctionGroup } from "../functions/ModuleFunctions";
 import { useFunctionTests } from "../functions/tests";
+import { ExampleModePart } from "./ExampleModePart";
 import { listing, ModulePages, moduleGroups, pagesUsing } from "./ModulePages";
 import { ModulePart } from "./ModulePart";
 
@@ -138,6 +139,7 @@ export function ModuleContents({
           )}
         </ModulePart>
       ) : null}
+      {snapshot ? <ExampleModePart module={module} snapshot={snapshot} /> : null}
       {others.length > 0 ? (
         <ModulePart
           part="other-functions"
