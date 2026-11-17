@@ -4,7 +4,8 @@
 //! en Rust par candle), le range dans la base de l’espace, et compare la question à toutes les lignes.
 //!
 //! Le modèle (environ 470 Mo) est livré avec Alfred, dans ses ressources : l’utilisateur n’a rien à télécharger.
-//! `scripts/fetch-model.mjs` le récupère à la construction, à la version et aux empreintes ci-dessous. Des
+//! Il est dans le dépôt git (`model.safetensors` découpé en morceaux dans `src-tauri/model-parts/`) ;
+//! `scripts/assemble-model.mjs` le réassemble à la construction et vérifie ses empreintes. Des
 //! déclencheurs d’Alfred mettent chaque ligne écrite en file ; une boucle de fond calcule les vecteurs en attente.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +24,7 @@ use crate::state::AppState;
 const MODEL: &str = "intfloat/multilingual-e5-small";
 const MODEL_DIR: &str = "multilingual-e5-small";
 /// Fichiers du modèle, à la révision `614241f622f53c4eeff9890bdc4f31cfecc418b3` (empreintes dans
-/// `scripts/fetch-model.mjs`, qui les vérifie avant de les livrer).
+/// `scripts/assemble-model.mjs`, qui les vérifie avant de les livrer).
 const FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 const BATCH: usize = 16;
 const MAX_TOKENS: usize = 512;
@@ -580,7 +581,7 @@ mod tests {
     }
 
     /// Le vrai modèle, s’il est présent dans `ALFRED_E5_DIR` (`src-tauri/resources/models/multilingual-e5-small`
-    /// après `pnpm fetch:model`) : le sens l’emporte sur les mots.
+    /// après `pnpm assemble:model`) : le sens l’emporte sur les mots.
     #[test]
     #[ignore]
     fn the_local_model_ranks_by_meaning() {

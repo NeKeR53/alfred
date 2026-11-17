@@ -4,9 +4,9 @@
   "version": "../package.json",
   "identifier": "app.alfred.desktop",
   "build": {
-    "beforeDevCommand": "pnpm fetch:model && pnpm build:runtime && pnpm dev",
+    "beforeDevCommand": "pnpm assemble:model && pnpm build:runtime && pnpm dev",
     "devUrl": "http://localhost:14730",
-    "beforeBuildCommand": "pnpm fetch:model && pnpm build",
+    "beforeBuildCommand": "pnpm assemble:model && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {

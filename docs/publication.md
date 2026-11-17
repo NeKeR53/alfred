@@ -183,6 +183,7 @@ Sans le jeton, chaque route répond 401 ; sans la fonctionnalité, elles n’exi
 - Pas encore de mise à jour automatique : il faudrait le module `updater` de Tauri et une clé de signature des mises à jour
   (`pnpm tauri signer generate`), distincte des certificats ci-dessus.
 - Le modèle de la recherche par le sens (multilingual-e5-small, 470 Mo) est livré dans l’application
-  (`bundle.resources`, dossier `models/`). Il n’est pas dans git : `pnpm fetch:model` le récupère dans
-  `src-tauri/resources/models/` à une révision figée, empreintes vérifiées, et `beforeDevCommand` comme
-  `beforeBuildCommand` l’appellent d’eux-mêmes. La CI le garde en cache. Il ajoute autant à la taille de l’installeur.
+  (`bundle.resources`, dossier `models/`). Il est dans git, sans téléchargement ni Git LFS : `model.safetensors` y est
+  découpé en morceaux de 45 Mo (`src-tauri/model-parts/`, hors du dossier livré), que `pnpm assemble:model` recolle
+  dans `src-tauri/resources/models/` en vérifiant les empreintes ; `beforeDevCommand` comme `beforeBuildCommand`
+  l’appellent d’eux-mêmes. Il ajoute autant à la taille de l’installeur.

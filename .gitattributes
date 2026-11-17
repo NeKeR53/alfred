@@ -1,0 +1,4 @@
+# Fichiers du modèle de la recherche par le sens : octet pour octet, sans conversion des fins de ligne (sous Windows,
+# autocrlf changerait leurs empreintes SHA-256, que scripts/assemble-model.mjs vérifie).
+src-tauri/resources/models/*/*.json -text -diff
+src-tauri/model-parts/** -text -diff
