@@ -2,16 +2,15 @@ import {
   Button,
   Dialog,
   FormField,
-  IconButton,
   Markdown,
+  MenuItem,
+  OverflowMenu,
   Row,
   Stack,
   StatusBadge,
-  SwitchControl,
   Text,
   TextArea,
 } from "@alfred/ui";
-import { Play, Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "../../lib/native";
 import type { FunctionRuntime, ResolvedFunction } from "../../lib/types";
@@ -115,9 +114,9 @@ export function EffectBadge({ fn }: { fn: ResolvedFunction }) {
   );
 }
 
-/** État des tests d’une fonction, quand elle en a. */
+/** État des tests d’une fonction, quand il demande quelque chose : une fonction vérifiée n’en porte pas. */
 function TestBadge({ tests }: { tests: FunctionTests | undefined }) {
-  if (!tests || tests.state === "none") return null;
+  if (!tests || tests.state === "none" || tests.state === "passed") return null;
   const { label, tone } = TEST_STATE_LABELS[tests.state];
   const total = tests.tests.length;
   return (
@@ -249,9 +248,10 @@ export function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () =
 }
 
 /**
- * Une fonction sur une ligne : nom, langage, description (coupée, en entier au survol), état seulement quand elle
- * n’est pas prête, interrupteur « outil des agents », essai et suppression. Les erreurs s’ajoutent dessous. Dans la
- * fiche d’un module, la ligne montre aussi l’effet (lecture, écriture) et l’état des tests.
+ * Une fonction sur une ligne, dans la fiche d’un module : nom, langage d’un script, description (coupée, en entier
+ * au survol), puis seulement ce qui mérite l’attention, en petites pastilles : une écriture, des tests à refaire ou
+ * en échec, une fonction pas prête. Essayer, proposer à l’agent et supprimer sont dans le menu « … » de la ligne.
+ * Les erreurs s’ajoutent dessous.
  */
 export function FunctionItem({
   fn,
@@ -259,31 +259,21 @@ export function FunctionItem({
   onTry,
   onRemove,
   tests,
-  withTests = false,
 }: {
   fn: ResolvedFunction;
   readOnly: boolean;
   onTry: () => void;
   onRemove: () => void;
   tests?: FunctionTests;
-  withTests?: boolean;
 }) {
-  const [tool, setTool] = useState(fn.tool);
   const [saving, setSaving] = useState(false);
-  const [shownTool, setShownTool] = useState(fn.tool);
-  if (shownTool !== fn.tool) {
-    setShownTool(fn.tool);
-    setTool(fn.tool);
-  }
   const ready = stateOf(fn) === "ready";
-  const toggleTool = async (next: boolean) => {
-    setTool(next);
+  const setToolOn = async (next: boolean) => {
     setSaving(true);
     try {
       await invoke("functions.setTool", { reference: fn.reference, tool: next });
       await useShell.getState().refresh();
     } catch (failure) {
-      setTool(!next);
       notify({
         title: "Le réglage de la fonction n’a pas été enregistré",
         description: errorMessage(failure),
@@ -293,8 +283,17 @@ export function FunctionItem({
       setSaving(false);
     }
   };
+  const items = [
+    { label: "Essayer…", disabled: !ready, run: onTry },
+    {
+      label: fn.tool ? "Ne plus proposer à l’agent" : "Proposer à l’agent",
+      disabled: readOnly || saving,
+      run: () => void setToolOn(!fn.tool),
+    },
+    { label: "Supprimer la fonction…", disabled: readOnly, run: onRemove },
+  ];
   return (
-    <li className="function-row">
+    <li className="function-row" data-function={fn.reference}>
       <div className="function-row__line">
         <span className="function-row__name">{fn.id}</span>
         {isScript(fn) ? (
@@ -308,36 +307,16 @@ export function FunctionItem({
         >
           {fn.description || "Aucune description."}
         </span>
-        {withTests ? <EffectBadge fn={fn} /> : null}
-        {ready ? withTests ? <TestBadge tests={tests} /> : null : <FunctionStatus fn={fn} />}
-        <span
-          className="function-row__tool"
-          title={
-            readOnly
-              ? "Module installé en lecture seule : ce réglage suit sa version d’origine."
-              : "L’agent peut appeler cette fonction pendant une conversation."
-          }
-        >
-          <SwitchControl
-            label="Outil"
-            aria-label={`Proposer la fonction ${fn.id} aux agents comme outil`}
-            checked={tool}
-            disabled={readOnly || saving}
-            onChange={(event) => void toggleTool(event.target.checked)}
-          />
-        </span>
-        <IconButton size="small" label={`Essayer la fonction ${fn.id}`} disabled={!ready} onClick={onTry}>
-          <Play size={13} aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          size="small"
-          label={`Supprimer la fonction ${fn.id}`}
-          tooltip={readOnly ? "Module en lecture seule" : `Supprimer la fonction ${fn.id}`}
-          disabled={readOnly}
-          onClick={onRemove}
-        >
-          <Trash2 size={13} aria-hidden="true" />
-        </IconButton>
+        {fn.effect === "read" ? null : <EffectBadge fn={fn} />}
+        {ready ? <TestBadge tests={tests} /> : <FunctionStatus fn={fn} />}
+        <OverflowMenu label={`Actions de la fonction ${fn.id}`} size="small">
+          {items.map((item) => (
+            // L’action part dès la capture : le menu se ferme avant la remontée du clic (voir `ModulesSettings`).
+            <MenuItem key={item.label} disabled={item.disabled} onClickCapture={item.run}>
+              {item.label}
+            </MenuItem>
+          ))}
+        </OverflowMenu>
       </div>
       {fn.missing ? (
         <Text size="meta" tone="muted">

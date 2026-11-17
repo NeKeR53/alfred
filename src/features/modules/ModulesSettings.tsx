@@ -27,11 +27,9 @@ import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/n
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import type { ClientNeedItem } from "../clients/api";
-import { templateOf } from "../clients/fromTemplate";
-import { ServiceBlock, serviceNeedsAttention } from "../clients/ServiceBlock";
+import { serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
-import { ModuleFunctions } from "../functions/ModuleFunctions";
 import { ModuleJobs } from "../jobs/ModuleJobs";
 import { ModuleSchedules } from "../schedules/ModuleSchedules";
 import { MODULE_FOCUS } from "../settings/open";
@@ -42,7 +40,7 @@ import { TeamSync } from "../teamSync/TeamSync";
 import { ModuleWebhooks } from "../webhooks/ModuleWebhooks";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
-import { ModulePages } from "./ModulePages";
+import { ModuleContents } from "./ModuleContents";
 import { ModulePart } from "./ModulePart";
 import { MergeDialog, modulePages, SplitDialog } from "./reorganize";
 import { countPendingUpdates, useModuleUpdatesStore } from "./useModuleUpdates";
@@ -484,15 +482,13 @@ export function ModulesSettings() {
     },
   ];
 
-  /** Fiche d’un module : ses pages, puis ses services et leurs comptes. */
+  /**
+   * Fiche d’un module, rangée par la hiérarchie : ce qui manque, puis ce qu’il ajoute au menu, ses services (comptes
+   * et fonctions de chacun), ses autres fonctions, ses automatismes, ses données partagées et ses dépendances.
+   */
   const moduleBody = (module: ModuleSummary) => {
     const hidden = hiddenOf(module);
     const update = updateOf.get(module.id);
-    const moduleNeeds = needs.filter((need) => need.module === module.id);
-    // Un seul service à plusieurs comptes : la fiche montre ses comptes directement, sans niveau intermédiaire.
-    const onlyClient = moduleNeeds.length === 1 ? clientOf(moduleNeeds[0]) : undefined;
-    const single = onlyClient && !onlyClient.simple ? onlyClient : undefined;
-    const perInstance = Boolean(snapshot?.sections.some((section) => section.module === module.id && section.instance));
     const setup = setups.of(module.id);
     return (
       <div className="module-page__body">
@@ -523,60 +519,15 @@ export function ModulesSettings() {
               : ""}
           </Text>
         ) : null}
-        {module.pages > 0 ? (
-          <ModulePart
-            part="pages"
-            title="Pages"
-            description="Choisissez les pages qui apparaissent dans le menu de gauche."
-          >
-            {snapshot ? <ModulePages snapshot={snapshot} module={module.id} disabled={hidden} /> : null}
-          </ModulePart>
-        ) : null}
-        <ModuleFunctions module={module} clientLabels={module.clients.map((need) => need.label || need.id)} />
-        <div className="module-part">
-          <div className="module-part__head">
-            <h3>Comptes</h3>
-            <p>
-              {single
-                ? `Vos comptes ${single.label} (une boîte mail, un site…).${perInstance ? " Le module affiche une page par compte." : ""}`
-                : "Vos comptes chez les services dont ce module a besoin. Le module sait comment s’y connecter : il ne vous demande que vos identifiants."}
-            </p>
-          </div>
-          {services.overview === undefined ? (
-            services.error ? (
-              <Text size="meta" tone="danger">
-                Les services n’ont pas pu être lus. {services.error}
-              </Text>
-            ) : (
-              <Spinner label="Chargement des services" />
-            )
-          ) : moduleNeeds.length === 0 ? (
-            <Text size="meta" tone="muted">
-              Ce module n’a besoin d’aucun service.
-            </Text>
-          ) : (
-            <div className="service-list">
-              {moduleNeeds.map((need) => (
-                <ServiceBlock
-                  key={need.key}
-                  need={need}
-                  client={clientOf(need)}
-                  template={templateOf(modules, need.module, need.id)}
-                  help={module.clients.find((item) => item.id === need.id)?.help || undefined}
-                  controller={services}
-                  onEdit={setEditingService}
-                  titled={moduleNeeds.length > 1}
-                  describeInstance={(instance) => {
-                    const page = snapshot?.sections.find(
-                      (section) => section.module === module.id && section.instance === instance,
-                    );
-                    return page ? `Page « ${page.label} » dans le menu` : undefined;
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        <ModuleContents
+          module={module}
+          modules={modules}
+          snapshot={snapshot ?? null}
+          services={services}
+          onEditService={setEditingService}
+          hidden={hidden}
+          nameOf={nameOf}
+        />
         <TeamSync module={module} />
         <ModuleWebhooks module={module.id} />
         <ModuleSchedules module={module.id} />

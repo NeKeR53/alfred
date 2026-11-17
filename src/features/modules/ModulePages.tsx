@@ -1,8 +1,9 @@
 /**
- * Pages d’un module dans sa fiche : un interrupteur par page pour l’afficher ou la masquer du menu. Une section qui
- * n’a qu’une page tient sur une seule ligne.
+ * « Dans le menu », dans la fiche d’un module : ses entrées du menu de gauche en arbre (section, ses onglets, le
+ * panneau de droite de chacun), puis ses pages placées ailleurs, Réglages compris. Un interrupteur par ligne affiche
+ * ou masque la section ou l’onglet. Une section qui n’a qu’une page tient sur une seule ligne.
  */
-import { SettingRow, SettingRows, SwitchControl, Text } from "@alfred/ui";
+import { SettingRow, SettingRows, SwitchControl } from "@alfred/ui";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../../lib/types";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { setPageHidden, setSectionHidden } from "../../shell/navigationLayout";
@@ -29,6 +30,41 @@ export function moduleGroups(snapshot: Snapshot, module: string): Group[] {
   return groups;
 }
 
+/** Toutes les pages du module, panneaux compris, une fois chacune (les copies d’une section par compte comptent une fois). */
+function modulePagesFlat(snapshot: Snapshot, module: string): ResolvedPage[] {
+  const pages = [...snapshot.sections.flatMap((section) => section.pages), ...snapshot.settingsPages].flatMap((page) =>
+    page.panel ? [page, page.panel] : [page],
+  );
+  const seen = new Set<string>();
+  return pages.filter((page) => {
+    if (page.module !== module || seen.has(page.id)) return false;
+    seen.add(page.id);
+    return true;
+  });
+}
+
+/** Titres des pages du module qui passent par un service (`uses.clients`), pour dire à quoi il sert. */
+export function pagesUsing(snapshot: Snapshot, module: string, need: string): string[] {
+  return [
+    ...new Set(
+      modulePagesFlat(snapshot, module)
+        .filter((page) => page.uses.clients?.includes(need))
+        .map((page) => page.title),
+    ),
+  ];
+}
+
+/** « A », « A et B », « A, B et C ». */
+export function listing(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} et ${items.at(-1)}`;
+}
+
+/** « avec le panneau « Email » à droite », pour une page qui en a un. */
+function panelNote(page: ResolvedPage | undefined): string | undefined {
+  return page?.panel ? `Avec le panneau « ${page.panel.title} » à droite.` : undefined;
+}
+
 export function ModulePages({
   snapshot,
   module,
@@ -40,12 +76,7 @@ export function ModulePages({
   disabled: boolean;
 }) {
   const groups = moduleGroups(snapshot, module);
-  if (groups.length === 0)
-    return (
-      <Text size="meta" tone="muted">
-        Ce module n’a pas de page.
-      </Text>
-    );
+  if (groups.length === 0) return null;
 
   /** Interrupteur à droite d’une ligne : le titre de la ligne est son libellé. */
   const toggle = (label: string, checked: boolean, off: boolean, onChange: (shown: boolean) => void) => (
@@ -75,13 +106,31 @@ export function ModulePages({
     <SettingRows label="Pages du module">
       {groups.flatMap((group) => {
         const { section } = group;
-        if (!section) return group.pages.map((page) => pageRow(page, disabled, `Onglet dans ${group.place}`));
+        if (!section)
+          return group.pages.map((page) =>
+            pageRow(
+              page,
+              disabled,
+              [group.place === "Réglages" ? "Dans les Réglages." : `Onglet dans « ${group.place} ».`, panelNote(page)]
+                .filter(Boolean)
+                .join(" "),
+            ),
+          );
         // Une section d’une seule page : une seule ligne, qui affiche ou masque la section et sa page ensemble.
         const only = section.pages.length === 1 ? section.pages[0] : undefined;
         if (section.pages.length <= 1)
           return [
             <div key={group.key}>
-              <SettingRow title={section.label}>
+              <SettingRow
+                title={section.label}
+                description={
+                  only
+                    ? [only.title !== section.label ? `Page « ${only.title} ».` : null, panelNote(only)]
+                        .filter(Boolean)
+                        .join(" ") || undefined
+                    : (section.waiting ?? undefined)
+                }
+              >
                 {toggle(section.label, !section.hidden && !only?.hidden, disabled, (shown) => {
                   void applyLayoutChange((current) => setSectionHidden(current, section.id, !shown));
                   if (shown && only?.hidden)
@@ -92,10 +141,7 @@ export function ModulePages({
           ];
         return [
           <div key={group.key}>
-            <SettingRow
-              title={section.label}
-              description={`Une entrée du menu de gauche, avec ${section.pages.length} onglets.`}
-            >
+            <SettingRow title={section.label} description={`${section.pages.length} onglets`}>
               {toggle(
                 section.label,
                 !section.hidden,
@@ -104,7 +150,7 @@ export function ModulePages({
               )}
             </SettingRow>
           </div>,
-          ...section.pages.map((page) => pageRow(page, disabled || section.hidden, "Onglet", true)),
+          ...section.pages.map((page) => pageRow(page, disabled || section.hidden, panelNote(page), true)),
         ];
       })}
     </SettingRows>

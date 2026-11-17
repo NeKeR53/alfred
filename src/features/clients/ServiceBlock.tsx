@@ -40,6 +40,8 @@ export function ServiceBlock({
   note,
   describeInstance,
   titled = false,
+  purpose,
+  children,
 }: {
   /** Besoin du module auquel ce service répond. */
   need: ClientNeedItem;
@@ -54,8 +56,12 @@ export function ServiceBlock({
   note?: ReactNode;
   /** Ce que sert un compte, en mots simples (la page qui l’affiche). */
   describeInstance?: (instance: string) => string | undefined;
-  /** Le module a plusieurs services : chacun porte son nom au-dessus de ses comptes. */
+  /** Le service porte son nom au-dessus de ses comptes (fiche d’un module). */
   titled?: boolean;
+  /** À quoi sert le service dans le module, sous son nom : les pages qui l’utilisent. */
+  purpose?: ReactNode;
+  /** Ce que le module fait avec le service, sous ses comptes. */
+  children?: ReactNode;
 }) {
   const { statusBadge, statusDetails, validate, removeInstance, makeDefault, test, connect, disconnect, testing } =
     controller;
@@ -90,6 +96,7 @@ export function ServiceBlock({
             : `${client.instances.length} compte${client.instances.length > 1 ? "s" : ""}`}
         </span>
       ) : null}
+      {purpose ? <p className="service-block__purpose">{purpose}</p> : null}
     </div>
   ) : null;
 
@@ -126,6 +133,7 @@ export function ServiceBlock({
             ) : null}
           </SettingRow>
         </SettingRows>
+        {children}
       </div>
     );
   }
@@ -234,6 +242,7 @@ export function ServiceBlock({
           </Button>
         </div>
       )}
+      {children}
     </div>
   );
 }

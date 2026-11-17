@@ -1,7 +1,7 @@
 /**
- * Fonctions d’un module, dans sa fiche (Réglages → Modules) : pour un connecteur, les services qu’il détient et
- * toutes les opérations qu’il offre aux autres modules, lecture ou écriture, avec l’état de leurs tests ; et
- * « Tout vérifier », qui lance les tests fonction par fonction sous les yeux de l’utilisateur.
+ * Fonctions d’un module, dans sa fiche (Réglages → Modules), par groupe : ce que le module fait avec chacun de ses
+ * services, puis ses autres fonctions ; chaque groupe dit ses lectures, ses écritures et l’état de ses tests, et
+ * « Vérifier… » lance ses tests fonction par fonction sous les yeux de l’utilisateur.
  */
 import {
   Button,
@@ -24,7 +24,7 @@ import { DialogHeader } from "../../shell/DialogHeader";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { FunctionItem, stateOf, TryDialog } from "./FunctionParts";
-import { type FunctionTests, functionTestsApi, type TestResult, useFunctionTests } from "./tests";
+import { type FunctionTests, functionTestsApi, type TestResult } from "./tests";
 import "../vault/settings-dialog.css";
 import "./functions.css";
 
@@ -285,37 +285,59 @@ function VerifyDialog({
   );
 }
 
-function summaryOf(tests: FunctionTests[] | undefined) {
+/** État des tests d’un groupe de fonctions, en mots : « 3 vérifiées, 4 à vérifier ». */
+function summaryOf(functions: ResolvedFunction[], tests: FunctionTests[] | undefined) {
   if (!tests) return null;
-  const withTests = tests.filter((item) => item.state !== "none");
+  const mine = functions.map((fn) => tests.find((item) => item.function === fn.reference));
+  const withTests = mine.filter((item): item is FunctionTests => item !== undefined && item.state !== "none");
   if (withTests.length === 0) return "aucun test déclaré";
   const count = (state: FunctionTests["state"]) => withTests.filter((item) => item.state === state).length;
   return [
     count("passed") ? `${count("passed")} vérifiée${count("passed") > 1 ? "s" : ""}` : null,
     count("failed") ? `${count("failed")} en échec` : null,
     count("toVerify") + count("partial") ? `${count("toVerify") + count("partial")} à vérifier` : null,
-    tests.length - withTests.length ? `${tests.length - withTests.length} sans test` : null,
+    functions.length - withTests.length ? `${functions.length - withTests.length} sans test` : null,
   ]
     .filter(Boolean)
     .join(", ");
 }
 
-/** Partie « Fonctions » de la fiche d’un module. */
-export function ModuleFunctions({ module, clientLabels }: { module: ModuleSummary; clientLabels: string[] }) {
-  const snapshot = useShell((state) => state.snapshot);
-  const functions = useMemo(
-    () => snapshot?.functions.filter((fn) => fn.module === module.id) ?? [],
-    [snapshot, module.id],
-  );
-  const { tests } = useFunctionTests(module.id);
+/**
+ * Un groupe de fonctions dans la fiche d’un module : ce que le module fait avec un service, ou ses autres
+ * fonctions. Replié sous son titre et son nombre quand il est long ; ouvert, une ligne de bilan (lectures,
+ * écritures, état des tests) avec « Vérifier… », qui lance les tests du groupe, puis une ligne par fonction.
+ */
+export function FunctionGroup({
+  module,
+  functions,
+  tests,
+  label,
+  open,
+}: {
+  module: ModuleSummary;
+  functions: ResolvedFunction[];
+  /** État des tests des fonctions du module (`useFunctionTests`), lu une fois pour toute la fiche. */
+  tests: FunctionTests[] | undefined;
+  /** Titre du groupe ; le nombre de fonctions s’y ajoute. */
+  label: string;
+  /** Ouvert d’entrée ; par défaut, seulement s’il est court. */
+  open?: boolean;
+}) {
   const [trying, setTrying] = useState<ResolvedFunction>();
   const [verifying, setVerifying] = useState(false);
   const { confirm, confirmDialog } = useConfirm();
   if (functions.length === 0) return null;
 
   const reads = functions.filter((fn) => fn.effect === "read").length;
+  // Repliée, la ligne dit encore ce qui demande l’attention : des tests à refaire ou en échec.
+  const failing = functions.filter(
+    (fn) => tests?.find((item) => item.function === fn.reference)?.state === "failed",
+  ).length;
+  const toVerify = functions.filter((fn) => {
+    const state = tests?.find((item) => item.function === fn.reference)?.state;
+    return state === "toVerify" || state === "partial";
+  }).length;
   const testCount = functions.reduce((total, fn) => total + (fn.tests?.length ?? 0), 0);
-  const connector = clientLabels.length > 0;
   const testsOf = (fn: ResolvedFunction) => tests?.find((item) => item.function === fn.reference);
 
   const remove = async (fn: ResolvedFunction) => {
@@ -336,43 +358,48 @@ export function ModuleFunctions({ module, clientLabels }: { module: ModuleSummar
   };
 
   return (
-    <div className="module-part" data-part="functions">
-      <div className="module-part__head module-part__head--actions">
-        <div>
-          <h3>{connector ? "Connecteur" : "Fonctions"}</h3>
-          <p>
-            {connector
-              ? `Tout accès à ${clientLabels.join(", ")} passe par ces fonctions : les autres modules les appellent au lieu de parler au service eux-mêmes.`
-              : "Les traitements propres à ce module."}
-          </p>
+    <div className="function-group" data-part="functions">
+      <Disclosure
+        appearance="subtle"
+        open={open ?? functions.length <= 5}
+        label={
+          <span className="function-group__label">
+            {label}
+            <span className="function-group__count">({functions.length})</span>
+            {failing > 0 ? <span className="function-group__alert">{failing} en échec</span> : null}
+            {toVerify > 0 ? <span className="function-group__note">{toVerify} à vérifier</span> : null}
+          </span>
+        }
+      >
+        <div className="function-group__bar">
+          <Text size="meta" tone="muted">
+            {[
+              reads ? `${reads} en lecture` : null,
+              functions.length - reads ? `${functions.length - reads} en écriture` : null,
+              summaryOf(functions, tests),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </Text>
+          {testCount > 0 ? (
+            <Button aria-label={`Vérifier : ${label}`} onClick={() => setVerifying(true)}>
+              Vérifier…
+            </Button>
+          ) : null}
         </div>
-        <Button disabled={testCount === 0} onClick={() => setVerifying(true)}>
-          Tout vérifier
-        </Button>
-      </div>
-      <Text size="meta" tone="muted">
-        {[
-          plural(functions.length, "fonction"),
-          reads ? `${reads} en lecture` : null,
-          functions.length - reads ? `${functions.length - reads} en écriture` : null,
-          summaryOf(tests),
-        ]
-          .filter(Boolean)
-          .join(" · ")}
-      </Text>
-      <ul className="function-list">
-        {functions.map((fn) => (
-          <FunctionItem
-            key={fn.reference}
-            fn={fn}
-            readOnly={module.readOnly}
-            withTests
-            tests={testsOf(fn)}
-            onTry={() => setTrying(fn)}
-            onRemove={() => void remove(fn)}
-          />
-        ))}
-      </ul>
+        <ul className="function-list">
+          {functions.map((fn) => (
+            <FunctionItem
+              key={fn.reference}
+              fn={fn}
+              readOnly={module.readOnly}
+              tests={testsOf(fn)}
+              onTry={() => setTrying(fn)}
+              onRemove={() => void remove(fn)}
+            />
+          ))}
+        </ul>
+      </Disclosure>
       {verifying ? <VerifyDialog module={module} functions={functions} onClose={() => setVerifying(false)} /> : null}
       {trying ? <TryDialog key={trying.reference} fn={trying} onClose={() => setTrying(undefined)} /> : null}
       {confirmDialog}

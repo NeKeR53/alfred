@@ -147,3 +147,16 @@
     grid-row: auto;
   }
 }
+
+/* À quoi sert le service, sous son nom, sur sa propre ligne. */
+.service-block__purpose {
+  flex: 1 0 100%;
+  margin: 0 0 4px;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  line-height: 1.4;
+}
+/* Ce que le module fait avec le service : sous ses comptes, replié quand c’est long. */
+.service-block > .function-group {
+  margin-top: 4px;
+}

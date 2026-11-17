@@ -474,7 +474,37 @@ describe("ModulesSettings", () => {
     const state = desk();
     for (const index of [1, 2, 3, 4, 5]) state.modules.push(module({ id: `m${index}`, name: `Outil ${index}` }));
     state.modules.push(module({ id: "agenda", name: "Agenda", description: "Rendez-vous de l’équipe" }));
-    useShell.setState({ snapshot: { ...(useShell.getState().snapshot as Snapshot), modules: state.modules } });
+    const page = (id: string, title: string) => ({
+      reference: `suivi/${id}`,
+      module: "suivi",
+      id,
+      title,
+      icon: null,
+      description: "",
+      hidden: false,
+      readOnly: true,
+      missing: false,
+      errors: [],
+      uses: {},
+      panel: null,
+    });
+    useShell.setState({
+      snapshot: {
+        ...(useShell.getState().snapshot as Snapshot),
+        modules: state.modules,
+        sections: [
+          {
+            id: "suivi/principal",
+            module: "suivi",
+            label: "Suivi",
+            icon: null,
+            color: null,
+            hidden: false,
+            pages: [page("taches", "Tâches")],
+          },
+        ],
+      },
+    });
     render(<ModulesSettings />);
     expect(await screen.findByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
 
@@ -490,7 +520,12 @@ describe("ModulesSettings", () => {
     // La fiche s’ouvre sur sa propre vue, et le retour ramène à la liste.
     fireEvent.click(within(moduleList()).getByText("Suivi"));
     expect(screen.getByRole("heading", { name: "Suivi" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dans le menu" })).toBeInTheDocument();
+    // Une section d’une seule page tient sur une ligne, qui nomme la page.
+    expect(screen.getByText("Page « Tâches ».")).toBeInTheDocument();
+    // Rien de vide : ni services, ni autres fonctions pour un module qui n’en a pas.
+    expect(screen.queryByRole("heading", { name: "Services" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /fonctions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: /Modules de l.espace/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tous les modules" }));
     expect(moduleList()).toBeInTheDocument();

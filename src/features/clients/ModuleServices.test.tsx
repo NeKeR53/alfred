@@ -5,7 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("../../lib/native");
 
 import { invoke, onNativeEvent, openExternal } from "../../lib/native";
-import type { ModuleSummary, ResolvedSection, Snapshot } from "../../lib/types";
+import type { ModuleSummary, ResolvedFunction, ResolvedPage, ResolvedSection, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { ModulesSettings } from "../modules/ModulesSettings";
@@ -295,7 +295,7 @@ function summary(id: string, name: string): ModuleSummary {
 }
 
 /** Onglet Modules d’un espace dont les modules sont ceux des demandes ; `sections` y ajoute des pages. */
-function renderModules(sections: ResolvedSection[] = []) {
+function renderModules(sections: ResolvedSection[] = [], functions: ResolvedFunction[] = []) {
   const modules = [...new Map(needs.map((need) => [need.module, summary(need.module, need.moduleName)])).values()].map(
     (module) => ({
       ...module,
@@ -311,7 +311,7 @@ function renderModules(sections: ResolvedSection[] = []) {
     sections,
     settingsPages: [],
     modules,
-    functions: [],
+    functions,
     bindings: {},
     problems: [],
   };
@@ -637,10 +637,11 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
     },
   });
 
-  // La fiche montre les comptes du seul service du module, avec la page que chacun alimente.
+  // La fiche montre les comptes du seul service du module, avec l’entrée du menu que chacun alimente.
   const accounts = await screen.findByRole("group", { name: "Comptes Jira" });
-  expect(screen.getByRole("heading", { name: "Comptes" })).toBeInTheDocument();
-  expect(within(accounts).getByText("Page « Tickets — Acme » dans le menu")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Services" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Jira" })).toBeInTheDocument();
+  expect(within(accounts).getByText("Entrée « Tickets — Acme » dans le menu")).toBeInTheDocument();
 
   // Un deuxième compte, par l’autre façon de se connecter : identifiant et mot de passe.
   await user.click(screen.getByRole("button", { name: "Ajouter un compte à Jira" }));
@@ -730,4 +731,115 @@ it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs
   expect(
     within(screen.getByRole("group", { name: "Comptes Bitbucket" })).getByText("Votre compte"),
   ).toBeInTheDocument();
+});
+
+it("range la fiche par la hiérarchie : menu, puis chaque service avec ses comptes et ses fonctions, puis le reste", async () => {
+  const user = userEvent.setup();
+  vault = [entry("jeton-jira", "Jeton Jira", "token"), entry("jeton-bb", "Jeton Bitbucket", "token")];
+  stored = [
+    { id: "jira", label: "Jira", baseUrl: "https://jira.exemple.com", auth: { type: "bearer", secret: "jeton-jira" } },
+    {
+      id: "bitbucket",
+      label: "Bitbucket",
+      baseUrl: "https://bb.exemple.com",
+      auth: { type: "bearer", secret: "jeton-bb" },
+    },
+  ];
+  const need = (id: string, label: string): ClientNeedItem => ({
+    key: `dev/${id}`,
+    module: "dev",
+    moduleName: "Dev",
+    id,
+    label,
+    baseUrl: null,
+    auth: null,
+    binding: null,
+    client: id,
+  });
+  needs = [need("jira", "Jira"), need("bitbucket", "Bitbucket")];
+  const page = (id: string, title: string, clients: string[], panel: ResolvedPage | null = null): ResolvedPage => ({
+    reference: `dev/${id}`,
+    module: "dev",
+    id,
+    title,
+    icon: null,
+    description: "",
+    hidden: false,
+    readOnly: false,
+    missing: false,
+    errors: [],
+    uses: { clients },
+    panel,
+  });
+  const fn = (
+    id: string,
+    description: string,
+    clients?: string[],
+    effect: "read" | "write" = "read",
+  ): ResolvedFunction => ({
+    reference: `dev/${id}`,
+    module: "dev",
+    id,
+    description,
+    input: null,
+    output: null,
+    tool: true,
+    missing: false,
+    errors: [],
+    uses: clients ? { clients } : {},
+    runtime: "ts",
+    effect,
+  });
+  renderModules(
+    [
+      {
+        id: "dev/principal",
+        module: "dev",
+        label: "Développement",
+        icon: null,
+        color: null,
+        hidden: false,
+        pages: [
+          page("tickets", "Tickets", ["jira"], page("ticket", "Ticket", ["jira"])),
+          page("revues", "Revues", ["bitbucket"]),
+        ],
+      },
+    ],
+    [
+      fn("lister-tickets", "Tickets ouverts du projet.", ["jira"]),
+      fn("commenter", "Commente un ticket.", ["jira"], "write"),
+      fn("lister-revues", "Revues en attente.", ["bitbucket"]),
+      fn("resumer", "Résume un texte."),
+    ],
+  );
+  await openModule(user, "Dev");
+
+  // Dans le menu : la section, ses onglets, et le panneau de l’onglet qui en a un.
+  const menu = screen.getByRole("group", { name: "Pages du module" });
+  expect(within(menu).getByText("Développement")).toBeInTheDocument();
+  expect(within(menu).getByText("2 onglets")).toBeInTheDocument();
+  expect(within(menu).getByText("Avec le panneau « Ticket » à droite.")).toBeInTheDocument();
+
+  // Un bloc par service : à quoi il sert, ses comptes, puis ce que le module fait avec lui.
+  const jira = (await screen.findByRole("heading", { name: "Jira" })).closest(".service-block") as HTMLElement;
+  expect(within(jira).getByText("Sert aux pages « Tickets » et « Ticket ».")).toBeInTheDocument();
+  expect(within(jira).getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
+  expect(within(jira).getByText("Ce que le module fait avec Jira")).toBeInTheDocument();
+  expect(within(jira).getByText("lister-tickets")).toBeInTheDocument();
+  expect(within(jira).getByText("commenter")).toBeInTheDocument();
+  expect(within(jira).queryByText("lister-revues")).not.toBeInTheDocument();
+  const bitbucket = screen.getByRole("heading", { name: "Bitbucket" }).closest(".service-block") as HTMLElement;
+  expect(within(bitbucket).getByText("Sert à la page « Revues ».")).toBeInTheDocument();
+  expect(within(bitbucket).getByText("lister-revues")).toBeInTheDocument();
+
+  // La fonction qui ne passe par aucun service est rangée à part, repliée.
+  const others = document.querySelector('[data-part="other-functions"]') as HTMLElement;
+  expect(within(others).getByRole("heading", { name: "Autres fonctions" })).toBeInTheDocument();
+  expect(others.querySelector("details")).not.toHaveAttribute("open");
+  expect(within(others).getByText("resumer")).toBeInTheDocument();
+
+  // Les actions restent là, rangées sous leur service : tester un compte, agir sur une fonction.
+  expect(await menuItem(user, "Jira", "Tester")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(await menuItem(user, "la fonction commenter", "Essayer…")).toBeInTheDocument();
 });

@@ -25,9 +25,8 @@
 }
 .function-row__name {
   flex: none;
-  font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--font-size-body);
-  font-weight: 600;
+  font-weight: 500;
 }
 .function-row__description {
   flex: 1;
@@ -40,14 +39,6 @@
 }
 .function-row__description.is-empty {
   font-style: italic;
-}
-.function-row__tool {
-  flex: none;
-}
-.function-row__tool .switch-control {
-  min-height: 28px;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
 }
 
 /* Fiche d’un module : partie « Fonctions » ou « Connecteur ». */
@@ -101,4 +92,40 @@
 .function-check__target .text-input,
 .function-check__target input {
   max-width: 260px;
+}
+
+/* Groupe de fonctions de la fiche d’un module : titre et nombre, bilan et « Vérifier… », puis les lignes. */
+.function-group__count {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.function-group__label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+}
+.function-group__note,
+.function-group__alert {
+  font-size: var(--font-size-secondary);
+}
+.function-group__note::before,
+.function-group__alert::before {
+  content: "· ";
+  color: var(--color-muted);
+}
+.function-group__note {
+  color: var(--color-muted);
+}
+.function-group__alert {
+  color: var(--color-danger-ink);
+}
+.function-group__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-height: 32px;
+  margin-bottom: 4px;
 }

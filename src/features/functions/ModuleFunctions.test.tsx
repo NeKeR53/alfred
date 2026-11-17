@@ -18,7 +18,8 @@ vi.hoisted(() => {
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { useShell } from "../../shell/store";
-import { ModuleFunctions } from "./ModuleFunctions";
+import { FunctionGroup } from "./ModuleFunctions";
+import type { FunctionTests } from "./tests";
 
 HTMLDialogElement.prototype.showModal = function () {
   this.open = true;
@@ -113,16 +114,31 @@ beforeEach(() => {
   }) as typeof invoke);
 });
 
-it("montre le connecteur, puis vérifie les lectures d’office et les écritures avec accord", async () => {
-  const user = userEvent.setup();
-  render(<ModuleFunctions module={jira} clientLabels={["Jira"]} />);
+const statuses: FunctionTests[] = [
+  { function: "jira/lister", effect: "read", state: "passed", passed: 1, failed: 0, pending: 0, tests: [] },
+  { function: "jira/lire", effect: "read", state: "toVerify", passed: 0, failed: 0, pending: 1, tests: [] },
+  { function: "jira/commenter", effect: "write", state: "toVerify", passed: 0, failed: 0, pending: 1, tests: [] },
+];
 
-  expect(screen.getByRole("heading", { name: "Connecteur" })).toBeInTheDocument();
-  expect(screen.getByText(/3 fonctions · 2 en lecture · 1 en écriture/)).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByText("Vérifiée")).toBeInTheDocument());
+const functions = () => useShell.getState().snapshot?.functions ?? [];
+
+it("montre ce que le module fait avec un service, puis vérifie les lectures d’office et les écritures avec accord", async () => {
+  const user = userEvent.setup();
+  render(
+    <FunctionGroup module={jira} functions={functions()} tests={statuses} label="Ce que le module fait avec Jira" />,
+  );
+
+  // Un groupe court est ouvert : son titre porte le nombre de fonctions, son bilan les lectures, écritures et tests.
+  expect(screen.getByText("Ce que le module fait avec Jira")).toBeInTheDocument();
+  expect(screen.getByText("(3)")).toBeInTheDocument();
+  expect(screen.getByText("2 en lecture · 1 en écriture · 1 vérifiée, 2 à vérifier")).toBeInTheDocument();
+  // Pastilles discrètes : seulement l’écriture et ce qui reste à vérifier, jamais « Lecture » ni « Vérifiée ».
+  expect(screen.getAllByText("Écriture")).toHaveLength(1);
+  expect(screen.queryByText("Lecture")).not.toBeInTheDocument();
+  expect(screen.queryByText("Vérifiée")).not.toBeInTheDocument();
   expect(screen.getAllByText("À vérifier")).toHaveLength(2);
 
-  await user.click(screen.getByRole("button", { name: "Tout vérifier" }));
+  await user.click(screen.getByRole("button", { name: "Vérifier : Ce que le module fait avec Jira" }));
   const dialog = screen.getByRole("dialog");
   // Les deux lectures partent seules, l’une après l’autre ; l’écriture attend.
   await waitFor(() => expect(runs).toHaveLength(2));
@@ -141,4 +157,19 @@ it("montre le connecteur, puis vérifie les lectures d’office et les écriture
   await user.click(await screen.findByRole("button", { name: "Lancer" }));
   await waitFor(() => expect(runs).toHaveLength(3));
   expect(runs[2]).toEqual({ function: "jira/commenter", test: "Commente", approved: true, target: "TEST-1" });
+});
+
+it("replie un groupe long, et ne montre rien pour un groupe vide", () => {
+  const many = Array.from({ length: 6 }, (_, index) => ({
+    ...functions()[0],
+    reference: `jira/f${index}`,
+    id: `f${index}`,
+  }));
+  const { container, rerender } = render(
+    <FunctionGroup module={jira} functions={many} tests={[]} label="Ce que le module fait avec Jira" />,
+  );
+  expect(container.querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("(6)")).toBeInTheDocument();
+  rerender(<FunctionGroup module={jira} functions={[]} tests={[]} label="Autres fonctions" />);
+  expect(container).toBeEmptyDOMElement();
 });

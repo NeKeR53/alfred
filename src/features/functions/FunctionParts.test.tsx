@@ -18,7 +18,7 @@ import type { ModuleSummary, ResolvedFunction, Snapshot } from "../../lib/types"
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { skeleton } from "./FunctionParts";
-import { ModuleFunctions } from "./ModuleFunctions";
+import { FunctionGroup } from "./ModuleFunctions";
 
 HTMLDialogElement.prototype.showModal = function () {
   this.open = true;
@@ -133,10 +133,20 @@ it("tire un squelette d’entrée du schéma", () => {
   expect(skeleton(null)).toEqual({});
 });
 
-/** Fiche d’un module : sa partie « Fonctions », comme dans Réglages → Modules. */
-function renderModule(id: string) {
+/** Fiche d’un module : un groupe de ses fonctions, ouvert, comme dans Réglages → Modules. */
+function group(id: string) {
   const summary = snapshot.modules.find((candidate) => candidate.id === id) as ModuleSummary;
-  return render(<ModuleFunctions module={summary} clientLabels={[]} />);
+  const functions = useShell.getState().snapshot?.functions.filter((item) => item.module === id) ?? [];
+  return <FunctionGroup module={summary} functions={functions} tests={[]} label="Fonctions" open />;
+}
+function renderModule(id: string) {
+  return render(group(id));
+}
+
+/** Ouvre le menu « … » d’une fonction et rend l’entrée demandée. */
+async function menuItem(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
+  await user.click(screen.getByRole("button", { name: `Actions de la fonction ${name}` }));
+  return screen.findByRole("menuitem", { name: item });
 }
 
 it("montre l’état de chaque fonction du module, l’expose aux agents, l’essaie et la supprime", async () => {
@@ -148,18 +158,19 @@ it("montre l’état de chaque fonction du module, l’expose aux agents, l’es
   expect(screen.getByText("Pas encore écrite")).toBeInTheDocument();
   expect(screen.getByText("Ne compile pas")).toBeInTheDocument();
   expect(screen.getByText("Ligne 12, colonne 3 : Cannot find name 'rows'.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Essayer la fonction relance" })).toBeDisabled();
+  expect(await menuItem(user, "relance", "Essayer…")).toBeDisabled();
+  await user.keyboard("{Escape}");
 
-  // Exposer « total » aux agents.
-  const toolSwitch = screen.getByRole("switch", { name: "Proposer la fonction total aux agents comme outil" });
-  await user.click(toolSwitch);
+  // Proposer « total » à l’agent, depuis le menu de la ligne.
+  await user.click(await menuItem(user, "total", "Proposer à l’agent"));
   await waitFor(() => expect(lastCall("functions.setTool")).toEqual({ reference: "ventes/total", tool: true }));
   useShell.setState({ snapshot });
-  rerender(<ModuleFunctions module={snapshot.modules[0]} clientLabels={[]} />);
-  await waitFor(() => expect(toolSwitch).toBeChecked());
+  rerender(group("ventes"));
+  expect(await menuItem(user, "total", "Ne plus proposer à l’agent")).toBeEnabled();
+  await user.keyboard("{Escape}");
 
   // Essayer : entrée préremplie, JSON invalide refusé, sortie à chasse fixe.
-  await user.click(screen.getByRole("button", { name: "Essayer la fonction total" }));
+  await user.click(await menuItem(user, "total", "Essayer…"));
   const dialog = screen.getByRole("dialog", { name: "Essayer « total »" });
   const input = within(dialog).getByLabelText("Entrée (JSON)");
   expect(JSON.parse((input as HTMLTextAreaElement).value)).toEqual({ mois: "2026-11", net: false, max: 0 });
@@ -183,14 +194,16 @@ it("montre l’état de chaque fonction du module, l’expose aux agents, l’es
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
   // Supprimer : confirmé.
-  await user.click(screen.getByRole("button", { name: "Supprimer la fonction relance" }));
+  await user.click(await menuItem(user, "relance", "Supprimer la fonction…"));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("functions.remove")).toEqual({ reference: "ventes/relance" }));
 });
 
-it("dans un module en lecture seule, l’exposition aux agents suit sa version d’origine", () => {
+it("dans un module en lecture seule, l’exposition aux agents suit sa version d’origine", async () => {
+  const user = userEvent.setup();
   renderModule("meteo");
-  expect(screen.getByRole("switch", { name: "Proposer la fonction prevision aux agents comme outil" })).toBeDisabled();
+  expect(await menuItem(user, "prevision", "Ne plus proposer à l’agent")).toBeDisabled();
+  expect(screen.getByRole("menuitem", { name: "Supprimer la fonction…" })).toBeDisabled();
 });
 
 it("indique le langage d’un script et l’absence de son interpréteur", () => {
