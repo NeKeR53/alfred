@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alfred, votre majordome</title>
+<meta name="description" content="Alfred construit vos pages, branche vos outils et corrige ce qui vous gêne. Vous lui parlez, il s’en occupe.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b3a37'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='20' text-anchor='middle' fill='%23fbfaf6'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<link rel="stylesheet" href="demos/demos.css">
+<style>
+/* Couleurs reprises de l’application (src/ui/styles.css) : papier, encre, accent. */
+:root {
+  --sans: "Schibsted Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --bg: oklch(0.985 0.004 95);
+  --surface: oklch(0.965 0.005 90);
+  --surface-2: oklch(0.945 0.006 90);
+  --ink: oklch(0.235 0.004 80);
+  --muted: oklch(0.5 0.01 85);
+  --line: oklch(0.9 0.006 90);
+  --edge: oklch(0.7 0.008 90);
+  --accent: oklch(0.55 0.13 45);
+  --gutter: clamp(16px, 5vw, 56px);
+  --rhythm: clamp(72px, 11vw, 136px);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(0.225 0.003 90); --surface: oklch(0.255 0.003 90); --surface-2: oklch(0.285 0.004 90);
+    --ink: oklch(0.93 0.007 90); --muted: oklch(0.72 0.01 90); --line: oklch(0.33 0.005 90); --edge: oklch(0.5 0.006 90);
+    --accent: oklch(0.74 0.11 45);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(0.225 0.003 90); --surface: oklch(0.255 0.003 90); --surface-2: oklch(0.285 0.004 90);
+  --ink: oklch(0.93 0.007 90); --muted: oklch(0.72 0.01 90); --line: oklch(0.33 0.005 90); --edge: oklch(0.5 0.006 90);
+  --accent: oklch(0.74 0.11 45);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 18px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration-color: var(--accent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+a:hover { text-decoration-color: currentColor; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+p { margin: 0; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter); }
+
+/* Accueil : une lettre d’Alfred */
+.hello { padding: clamp(56px, 9vw, 120px) 0 clamp(64px, 8vw, 104px); }
+.hello h1 { margin: 0; font-weight: 600; font-size: clamp(46px, 9.4vw, 116px); line-height: .98; letter-spacing: -.035em; max-width: 11ch; }
+.hello .letter { margin-top: clamp(32px, 5vw, 56px); max-width: 33em; font-size: clamp(19px, 2.1vw, 23px); line-height: 1.55; display: grid; gap: .8em; }
+.hello .sign { margin-top: 28px; color: var(--muted); font-size: 18px; }
+.hello .sign b { display: block; color: var(--ink); font-weight: 600; font-size: 22px; }
+.hello .go { display: inline-block; margin-top: 40px; font-weight: 600; font-size: 18px; }
+
+/* Usages : texte et démo en alternance */
+.use { padding: var(--rhythm) 0; border-top: 1px solid var(--line); }
+.use .wrap { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.use:nth-of-type(even) .wrap { grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); }
+.use:nth-of-type(even) .txt { order: 2; }
+.use h2 { margin: 0 0 20px; font-weight: 600; font-size: clamp(30px, 3.6vw, 44px); line-height: 1.08; letter-spacing: -.022em; }
+.use .txt p { color: var(--ink); max-width: 30em; }
+.use .txt p + p { margin-top: .8em; color: var(--muted); }
+.use .dm { margin: 0; }
+.use .dm-caption { font-size: 15px; }
+
+/* Ce qu’il faut savoir encore */
+.more { padding: var(--rhythm) 0; background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.more h2, .start h2 { margin: 0 0 clamp(36px, 5vw, 56px); font-weight: 600; font-size: clamp(30px, 3.6vw, 44px); line-height: 1.08; letter-spacing: -.022em; max-width: 18ch; }
+.more dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: clamp(32px, 6vw, 96px); }
+.more dl > div { padding: 22px 0 26px; border-top: 1px solid var(--line); }
+.more dt { font-weight: 600; font-size: 20px; margin-bottom: 6px; }
+.more dd { margin: 0; color: var(--muted); max-width: 32em; }
+
+/* Pour commencer : une vraie suite d’étapes */
+.start { padding: var(--rhythm) 0; }
+.start ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; max-width: 820px; counter-reset: step; }
+.start li { counter-increment: step; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 20px; padding: 26px 0; border-top: 1px solid var(--line); }
+.start li::before { content: counter(step); grid-row: span 2; font-weight: 600; font-size: 44px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.start li b { font-weight: 600; font-size: 21px; line-height: 1.3; }
+.start li span { color: var(--muted); }
+.start .end { margin-top: 48px; font-size: clamp(19px, 2.1vw, 23px); max-width: 30em; }
+
+footer { border-top: 1px solid var(--line); padding: 36px 0 48px; color: var(--muted); font-size: 15px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }
+
+@media (max-width: 860px) {
+  .use .wrap, .use:nth-of-type(even) .wrap { grid-template-columns: minmax(0, 1fr); }
+  .use:nth-of-type(even) .txt { order: 0; }
+  .more dl { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  body { font-size: 17px; }
+  .start li { grid-template-columns: 44px minmax(0, 1fr); gap: 4px 14px; }
+  .start li::before { font-size: 34px; }
+  .use .dm-caption { font-size: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+
+<header class="hello">
+  <div class="wrap">
+    <h1>Bonjour, je suis Alfred.</h1>
+    <div class="letter">
+      <p>J’arrive chez vous les mains vides, et c’est voulu. Vous me dites ce dont vous avez besoin, avec vos mots, et je le mets en place : vos pages, vos listes, vos outils de tous les jours.</p>
+      <p>Vous n’écrivez pas une ligne de code. Si quelque chose ne vous plaît pas, vous me le montrez et je corrige.</p>
+    </div>
+    <p class="sign">À votre service,<b>Alfred</b></p>
+    <a class="go" href="#page">Me voir à l’œuvre</a>
+  </div>
+</header>
+
+<main>
+  <!-- Vidéos : renseignez data-video (et data-poster) quand le fichier existe dans docs/videos/. Voir docs/videos/README.md. -->
+  <section class="use" id="page" aria-labelledby="t-page">
+    <div class="wrap">
+      <div class="txt">
+        <h2 id="t-page">Vous demandez une page, je la construis.</h2>
+        <p>Ouvrez l’Agent, en bas du menu, et décrivez ce que vous voulez suivre : vos factures, vos clients, vos chantiers.</p>
+        <p>Je prépare la page, je vérifie qu’elle s’affiche bien, puis je vous dis où la trouver. Elle vous attend dans le menu.</p>
+      </div>
+      <div class="dm" data-demo="creer-page" data-video="" data-poster=""></div>
+    </div>
+  </section>
+
+  <section class="use" id="outils" aria-labelledby="t-outils">
+    <div class="wrap">
+      <div class="txt">
+        <h2 id="t-outils">Vous branchez vos outils, je vérifie qu’ils marchent.</h2>
+        <p>Votre équipe a préparé des modules, pour Jira, vos mails ou l’agenda. Vous en importez un et vous ajoutez votre compte.</p>
+        <p>Je teste la connexion moi-même. Quand je vous dis que c’est prêt, la page se remplit de vos données.</p>
+      </div>
+      <div class="dm" data-demo="brancher-module" data-video="" data-poster=""></div>
+    </div>
+  </section>
+
+  <section class="use" id="retrouver" aria-labelledby="t-retrouver">
+    <div class="wrap">
+      <div class="txt">
+        <h2 id="t-retrouver">Vous retrouvez tout, comme vous l’avez laissé.</h2>
+        <p>Tapez quelques lettres : je vous propose une ville, un état, un client, et la liste se resserre.</p>
+        <p>Partez sur une autre page, revenez : vos filtres et la fiche ouverte sont toujours là.</p>
+      </div>
+      <div class="dm" data-demo="rechercher" data-video="" data-poster=""></div>
+    </div>
+  </section>
+
+  <section class="use" id="corriger" aria-labelledby="t-corriger">
+    <div class="wrap">
+      <div class="txt">
+        <h2 id="t-corriger">Un détail vous gêne ? Montrez-le-moi.</h2>
+        <p>Prenez la cible, en haut de la fenêtre, encadrez ce qui ne va pas et dites ce que vous voulez.</p>
+        <p>Je corrige la page sous vos yeux, sans que vous ayez à chercher où.</p>
+      </div>
+      <div class="dm" data-demo="corriger" data-video="" data-poster=""></div>
+    </div>
+  </section>
+
+  <section class="more" aria-labelledby="t-more">
+    <div class="wrap">
+      <h2 id="t-more">Et ce qu’il est bon de savoir.</h2>
+      <dl>
+        <div><dt>Vos données restent chez vous</dt><dd>Tout est rangé dans un dossier de votre ordinateur. Vos mots de passe et vos jetons vont dans le trousseau du système, jamais dans une page.</dd></div>
+        <div><dt>Tout s’annule</dt><dd>Chaque changement que je fais s’annule d’un clic, depuis la conversation où je l’ai fait.</dd></div>
+        <div><dt>Je demande avant</dt><dd>La première fois qu’une page veut votre micro ou l’un de vos comptes, je vous pose la question. Votre réponse est retenue.</dd></div>
+        <div><dt>Vous travaillez en équipe</dt><dd>Les listes que vous choisissez de partager arrivent chez vos collègues, et les leurs chez vous.</dd></div>
+        <div><dt>Vous pouvez me parler</dt><dd>Dictez au lieu d’écrire, et je vous réponds à voix haute. La voix reste sur votre ordinateur.</dd></div>
+        <div><dt>Les modules se partagent</dt><dd>Un module qui vous rend service peut servir à toute l’équipe : vous le publiez, vos collègues l’importent. Ses mises à jour attendent votre accord.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="start" aria-labelledby="t-start">
+    <div class="wrap">
+      <h2 id="t-start">Pour commencer.</h2>
+      <ol>
+        <li><b>Ouvrez Alfred et choisissez un dossier.</b><span>C’est votre espace de travail : j’y range tout ce que nous créons ensemble.</span></li>
+        <li><b>Ouvrez l’Agent et dites ce dont vous avez besoin.</b><span>Commencez par ce qui vous sert le plus souvent : une liste, un suivi, un tableau.</span></li>
+        <li><b>Branchez vos outils.</b><span>Dans Réglages, ouvrez la Marketplace et importez les modules de votre équipe.</span></li>
+      </ol>
+      <p class="end">Je m’occupe du reste.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Les démos animées sont des reconstitutions de la fenêtre d’Alfred, avec des données fictives.</span>
+    <a href="architecture.html">Pour les curieux : comment Alfred est construit</a>
+  </div>
+</footer>
+
+<script src="demos/demos.js"></script>
+</body>
+</html>
