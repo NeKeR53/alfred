@@ -93,7 +93,7 @@ export function CollectionPage<Row>({
   onOpen?: (row: Row) => void;
   /** La page a un panneau de détail (`DetailPanel`) : un clic publie `{ id }` et ouvre le panneau. */
   panel?: boolean;
-  /** Message persistant au-dessus de la liste (`FeedbackBanner` d’un prérequis manquant). */
+  /** Erreur qui empêche d’agir sur la collection (`FeedbackBanner tone="danger"` et l’action qui la lève), au-dessus du tableau ; jamais pour un prérequis absent ni un état (un `EmptyState` ou un message court dans le bloc). */
   banner?: ReactNode;
 }) {
   const services = useFrameServices();

@@ -137,7 +137,7 @@ Barre (recherche, filtres, vues, Actualiser, actions), tableau dense trié au cl
 | `rowActions?: (row) => Action[]` | Actions d’une ligne. |
 | `panel?: boolean` | La page a un panneau `DetailPanel` : un clic sur une ligne la sélectionne, publie `{ id: rowKey(row) }` et ouvre le panneau. |
 | `onOpen?: (row) => void` | Autre façon d’ouvrir une ligne : `openSubpage(…)`, `openModal(…)` ou `shell.navigate(…)` ; remplace `panel`. |
-| `banner?: ReactNode` | Un `FeedbackBanner` qui dure (prérequis manquant, données dégradées). |
+| `banner?: ReactNode` | Une erreur qui empêche d’agir sur la collection : `FeedbackBanner tone="danger"` avec l’action qui la lève, posé au-dessus du tableau. Jamais pour un prérequis absent ni pour décrire un état (section 9). |
 
 `Column<Row>` : `{ key, header, type?, value?, statuses?, currency? }`. `key` est lu dans la ligne, sauf si `value(row)` est donné ; `header` est court (« Échéance ») ; `type` (section 4.5) fixe le format, l’alignement, la largeur et le tri. Pas de largeur, pas de rendu personnalisé : une donnée qui ne rentre dans aucun type se convertit en texte dans `value`.
 
@@ -314,7 +314,7 @@ const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, labe
 
 ## 5. Page composée
 
-Seulement quand aucun gabarit ne convient : lire un document, une synthèse de quelques blocs, un éditeur ou un graphique de librairie. La page reste une colonne de blocs, dans cet ordre : bandeau éventuel, objet principal, blocs de détail.
+Seulement quand aucun gabarit ne convient : lire un document, une synthèse de quelques blocs, un éditeur ou un graphique de librairie. La page reste une colonne de blocs, dans cet ordre : objet principal, blocs de détail ; aucun bandeau en tête de page.
 
 **Zones de la page.** `Page` se découpe en zones, toutes facultatives, de haut en bas :
 
@@ -411,7 +411,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 
 **Dire ce qui se passe** (section 9)
 
-`FeedbackBanner` (`tone`: `"danger" \| "warning" \| "info"`, `action?` : un état qui dure), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`), `ProgressBar` (opération longue mesurable), `shell.notify` (événement ponctuel).
+`FeedbackBanner` (`tone`: `"danger" \| "warning"`, `action?` : une erreur qui empêche d’agir, dans le bloc concerné), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`), `ProgressBar` (opération longue mesurable), `shell.notify` (événement ponctuel).
 
 **Réservé aux gabarits et à la coquille** — ne s’emploient pas dans une page (`check` signale la plupart) : `PageToolbar`, `ToolbarSeparator`, `SettingRow`, `SettingRows`, `Modal` (passer par `openModal`), `ConfirmDialog`, `useConfirm`, `FormActions`, `AnchoredPanel`, `ObjectHeader` (passer par `Page header`), `PageTopBar`, `PanelToggleButton`, `PanelHeader`, `Dialog`, `Menu`, la prop `toolbar` de `Page`, et des boutons en JSX passés à `actions`. `Button`, `IconButton`, `OverflowMenu` et `MenuButton` ne servent qu’au contenu d’un bloc (« Tester la connexion » sous une explication), jamais pour une action de page, d’objet ou de ligne.
 
@@ -473,7 +473,7 @@ Le sens passe toujours par une prop, accompagnée d’un texte :
 | État d’un objet | Valeur de type `status` avec son `StatusMap` (4.5) ; hors gabarit, `<StatusBadge tone="…">Libellé</StatusBadge>` |
 | Pastille devant un libellé d’état | `<StatusDot tone="success \| warning \| danger \| neutral \| pending" />` |
 | Texte secondaire ou d’état | `<Text tone="default \| muted \| success \| warning \| danger">` |
-| Message persistant | `<FeedbackBanner tone="danger \| warning \| info">` |
+| Erreur qui empêche d’agir | `<FeedbackBanner tone="danger \| warning">` dans le bloc concerné, avec l’action qui la lève |
 | Notification | `shell.notify({ tone: "info" \| "success" \| "warning" \| "error" })` |
 | Action principale, action destructrice | `Action` avec `primary` ; `Action` avec `danger` |
 
@@ -535,13 +535,14 @@ Les gabarits rendent chaque état ; une page composée applique le même tableau
 | Collection vide | `EmptyState` : `emptyTitle` nomme l’absence (« Aucune tâche »), `emptyDescription` dit à quoi sert la page, l’action `primary` est proposée ; ni barre d’outils, ni filtres, ni compteurs à zéro |
 | Aucun résultat après recherche ou filtre | « Aucun résultat » avec « Effacer les filtres » |
 | Rien de sélectionné, objet introuvable (panneau) | `EmptyState` compact : `emptyTitle`, `notFoundTitle` |
-| Échec de chargement | `FeedbackBanner tone="danger"` avec « Réessayer » |
-| Prérequis absent, données dégradées | `banner` de `CollectionPage`, ou `FeedbackBanner tone="warning"` ou `"info"` en tête d’une page composée, tant que l’état dure |
+| Échec de chargement | `FeedbackBanner tone="danger"` avec « Réessayer », à la place du bloc qui n’a pas pu se charger |
+| Prérequis absent, le bloc ne peut rien montrer | `EmptyState` (`size="compact"` dans un bloc) qui nomme ce qui manque, avec l’action qui le résout (« Choisir un dossier ») |
+| Prérequis absent, le bloc montre quand même quelque chose ; données dégradées | Un message court dans le bloc lui-même (`<Text size="meta" tone="muted">`), à côté de ce qu’il concerne |
 | Champ invalide | Message sous le champ, posé par `openForm` ou la ligne de réglage |
 | Résultat d’une action | Notification `success` d’une `Action` ou d’un `openForm` (`success`) |
 | Échec d’une action | Notification d’erreur posée par le gabarit, avec la cause |
 
-Une **notification** est transitoire : elle s’efface après 5 secondes (une erreur reste jusqu’à sa fermeture) et demeure consultable dans la cloche. Un **bandeau** est persistant : il décrit l’état de la page et disparaît avec lui. Pas de bandeau pour dire « enregistré », pas de notification pour un état qui dure. Un réglage appliqué réussit en silence.
+Une **notification** est transitoire : elle s’efface après 5 secondes (une erreur reste jusqu’à sa fermeture) et demeure consultable dans la cloche. **Aucune page n’a de bandeau en tête**, ni dans la coquille ni dans son code : un état qui dure se dit dans le bloc qu’il concerne (`EmptyState` ou message court), et l’état de toute la page (données d’exemple…) par un indicateur de la barre du haut, que pose la coquille. `FeedbackBanner` est réservé à une erreur qui empêche d’agir, dans le bloc concerné. Pas de notification pour un état qui dure, rien pour dire « enregistré ». Un réglage appliqué réussit en silence.
 
 ## 10. Icônes
 
