@@ -20,6 +20,7 @@ import { followLink } from "./files";
 import type { ApprovalRequest } from "./harness";
 import { activityImageOutput, loadConversationImage, referencedLocalImages } from "./lib/chatImages";
 import { referencedLocalFiles } from "./lib/conversationFileKinds";
+import { pageCaptures } from "./lib/pageCaptures";
 import type { AgentQuestion, Conversation, ConversationRuntime, Turn, TurnItem, UserMessage } from "./model";
 import { PlacementCard } from "./PlacementCard";
 import { useAgents } from "./store";
@@ -33,6 +34,7 @@ import { ConversationImages } from "./transcript/ConversationImages";
 import { ErrorBoundary } from "./transcript/ErrorBoundary";
 import { conversationFileActions } from "./transcript/fileActions";
 import { type Delivery, formatDateTimeShort, MessageActions } from "./transcript/MessageActions";
+import { PageCaptures } from "./transcript/PageCaptures";
 import { ReferencePills } from "./transcript/ReferencePills";
 import { type ConversationResources, ConversationResourcesContext } from "./transcript/resources";
 import "./transcript/transcript.css";
@@ -484,6 +486,7 @@ const TurnView = memo(function TurnView({
   const onFork = useMemo(() => (fork ? () => forkFrom("reply") : undefined), [fork, forkFrom]);
   const images = useMemo(() => (completed ? producedImages(turn) : []), [completed, turn]);
   const files = useMemo(() => (completed ? producedFiles(turn) : []), [completed, turn]);
+  const captures = useMemo(() => pageCaptures(turn), [turn]);
   const entryProps = { cwd, onQuote, onFork, onOpenFile };
   return (
     <>
@@ -495,6 +498,7 @@ const TurnView = memo(function TurnView({
             <ol className="agent-chat__work-entries">
               <Entries blocks={blocks} {...entryProps} />
             </ol>
+            <PageCaptures captures={captures} />
             {working && turn.status === "running" && turn.endedAt === undefined ? (
               <RunningWork startedAt={turn.startedAt} label={working} />
             ) : null}
@@ -515,6 +519,7 @@ const TurnView = memo(function TurnView({
             ) : (
               <div className="agent-chat__work-summary">{turnSummary(turn)}</div>
             )}
+            <PageCaptures captures={captures} />
             {final ? (
               <ol className="agent-chat__work-entries">
                 <Entries blocks={finalBlocks} timestamp={turn.endedAt} {...entryProps} />

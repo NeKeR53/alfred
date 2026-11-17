@@ -34,6 +34,29 @@ fn exchange_dir(state: &AppState, conversation: &str) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// Capture d’écran prise par l’agent (`page_screenshot`) : un fichier PNG par capture dans le dossier d’échange de
+/// la conversation, pour que le relevé la montre sans garder l’image en base. Supprimée avec la conversation.
+pub(crate) fn save_capture(state: &AppState, conversation: &str, encoded: &str) -> AppResult<PathBuf> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded.as_bytes())
+        .map_err(|_| AppError::new("Capture illisible."))?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(AppError::new("Cette capture dépasse 20 Mo."));
+    }
+    let dir = exchange_dir(state, conversation)?.join("captures");
+    std::fs::create_dir_all(&dir)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default();
+    let path = (0..)
+        .map(|index| dir.join(if index == 0 { format!("capture-{stamp}.png") } else { format!("capture-{stamp}-{index}.png") }))
+        .find(|candidate| !candidate.exists())
+        .unwrap_or_else(|| dir.join(format!("capture-{stamp}.png")));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
+}
+
 pub(crate) fn safe_name(name: &str) -> String {
     let cleaned: String = name
         .chars()

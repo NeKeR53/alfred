@@ -256,7 +256,8 @@ function activityFromItem(
       kind: "tool",
       title: `Outil · ${textValue(item.server) ?? "MCP"} / ${textValue(item.tool) ?? "appel"}`,
       detail: serialized(item.arguments),
-      content: completed ? serialized(item.error ?? item.result) : undefined,
+      // Sans le base64 d’une image renvoyée (capture d’écran) : la sortie reste lisible et légère.
+      content: completed ? serialized(item.error ?? found?.content ?? item.result) : undefined,
       ...(found?.files.length ? { files: found.files } : {}),
       status,
     };
