@@ -23,7 +23,7 @@ import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { DialogHeader } from "../../shell/DialogHeader";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { FunctionItem, stateOf, TryDialog } from "./FunctionsSettings";
+import { FunctionItem, stateOf, TryDialog } from "./FunctionParts";
 import { type FunctionTests, functionTestsApi, type TestResult, useFunctionTests } from "./tests";
 import "../vault/settings-dialog.css";
 import "./functions.css";

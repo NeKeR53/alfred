@@ -7,7 +7,7 @@ vi.mock("../../lib/native");
 import { invoke, onNativeEvent } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import { cadence, type ScheduleItem } from "./api";
-import { SchedulesSettings } from "./SchedulesSettings";
+import { ModuleSchedules } from "./ModuleSchedules";
 
 let items: ScheduleItem[];
 let fail: boolean;
@@ -88,16 +88,17 @@ it("écrit les rythmes en français", () => {
 
 it("liste les planifications, les met en pause et les exécute tout de suite", async () => {
   const user = userEvent.setup();
-  render(<SchedulesSettings />);
-  expect(await screen.findByText("Aucune planification")).toBeInTheDocument();
-  expect(screen.getByText(/demandez-le à l’agent/)).toBeInTheDocument();
+  const { container } = render(<ModuleSchedules module="factures" />);
+  // Sans planification, la fiche du module n’en parle pas.
+  await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalled());
+  expect(container).toBeEmptyDOMElement();
 
   items = [
     item({}),
     item({ id: "rapport", description: "Rapport du matin", everyMinutes: null, at: "08:00", functionExists: false }),
   ];
   listeners.get("space:changed")?.(null);
-  const table = await screen.findByRole("table", { name: "Planifications" });
+  const table = await screen.findByRole("table", { name: "Planifications du module" });
   expect(within(table).getByText("Toutes les 15 minutes")).toBeInTheDocument();
   expect(within(table).getByText("Chaque jour à 08:00")).toBeInTheDocument();
   expect(within(table).getAllByText("Jamais")).toHaveLength(2);

@@ -451,6 +451,12 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["target", "hidden"],
         ),
         tool(
+            "open_onboarding",
+            "Ouvre chez l’utilisateur le panneau de configuration (onboarding) d’un module : présentation, nom de ses entrées dans le menu, puis chaque service à connecter, en disant s’il accepte plusieurs comptes. À appeler à la fin, quand il ne reste que ce que seul l’utilisateur peut faire : un compte, un mot de passe ou une clé que tu n’as pas, une connexion OAuth. Ne lui demande pas ces valeurs dans la conversation : dis-lui en une phrase que le panneau est ouvert et ce qu’il y trouvera.",
+            json!({ "module": { "type": "string", "description": "Identifiant du module à configurer." } }),
+            &["module"],
+        ),
+        tool(
             "set_libraries",
             "Fixe la liste complète des librairies npm d’un module (elle remplace la précédente ; une liste vide les retire). Alfred télécharge chaque paquet et ses dépendances en modules ES dans `modules/<module>/vendor/` ; une page ou une fonction du module l’importe ensuite par son nom exact (`import { useEditor } from \"@tiptap/react\"`), sous-chemin compris s’il est déclaré (« @tiptap/pm/state »). React et React DOM restent ceux d’Alfred ; une librairie qui demande autre chose de React (react-dom/server…) est refusée. À réserver à ce que `@alfred/ui` ne fait pas (éditeur de texte riche, graphiques, calendrier…). Ne jamais écrire dans `vendor/` à la main. Version omise : celle déjà installée, sinon la dernière publiée ; donner la même version aux paquets d’une même famille (@tiptap/…). Puis `check`.",
             json!({
@@ -953,6 +959,18 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             }
             Ok(json!({ "target": target, "hidden": hidden, "changed": changed.is_some() }))
         }
+        "open_onboarding" => {
+            let module: String = arg(args, "module")?;
+            let manifest = space.module(&module)?;
+            state.emit("onboarding:open", json!({ "module": manifest.id }));
+            let services = manifest.clients.len();
+            Ok(json!({
+                "module": manifest.id,
+                "opened": true,
+                "services": services,
+                "next": "Dire à l’utilisateur, en une phrase, que le panneau de configuration est ouvert et ce qu’il doit y faire (connecter tel compte, nommer ses pages). Ne pas lui redemander ces valeurs dans la conversation.",
+            }))
+        }
         "set_libraries" => {
             let module: String = arg(args, "module")?;
             let wanted: Vec<crate::libraries::Wanted> = arg(args, "libraries")?;
@@ -1229,6 +1247,25 @@ mod tests {
             return Err(text);
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    }
+
+    /// L’agent ouvre l’onboarding d’un module : un événement part vers la fenêtre ; un module inconnu est refusé.
+    #[tokio::test]
+    async fn an_agent_opens_the_onboarding_of_a_module() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let placed = call(&state, "place_page", json!({ "title": "Tickets" })).await.unwrap();
+        let module = placed["page"].as_str().unwrap().split('/').next().unwrap().to_string();
+        let mut events = state.events.subscribe();
+        let opened = call(&state, "open_onboarding", json!({ "module": module })).await.unwrap();
+        assert_eq!(opened["opened"], json!(true));
+        let event = loop {
+            let event = events.recv().await.unwrap();
+            if event.name == "onboarding:open" {
+                break event;
+            }
+        };
+        assert_eq!(event.payload, json!({ "module": module }));
+        assert!(call(&state, "open_onboarding", json!({ "module": "inconnu" })).await.is_err());
     }
 
     async fn invoke(state: &Shared, command: &str, args: Value) -> Value {

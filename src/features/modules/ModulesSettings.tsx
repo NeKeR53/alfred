@@ -31,12 +31,12 @@ import { ServiceBlock, serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
 import { ModuleFunctions } from "../functions/ModuleFunctions";
-import { JobsSettings } from "../jobs/JobsSettings";
-import { SchedulesSettings } from "../schedules/SchedulesSettings";
+import { ModuleJobs } from "../jobs/ModuleJobs";
+import { ModuleSchedules } from "../schedules/ModuleSchedules";
 import { remainingSummary } from "../setup/api";
 import { openOnboarding } from "../setup/Onboarding";
 import { useModuleSetup } from "../setup/useModuleSetup";
-import { WebhooksSettings } from "../webhooks/WebhooksSettings";
+import { ModuleWebhooks } from "../webhooks/ModuleWebhooks";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
 import { ModulePages } from "./ModulePages";
@@ -584,9 +584,9 @@ export function ModulesSettings() {
             </div>
           )}
         </div>
-        <WebhooksSettings module={module.id} />
-        <SchedulesSettings module={module.id} />
-        <JobsSettings module={module.id} />
+        <ModuleWebhooks module={module.id} />
+        <ModuleSchedules module={module.id} />
+        <ModuleJobs module={module.id} />
         {module.requires.length > 0 || module.requiredBy.length > 0 ? (
           <ModulePart part="dependencies" title="Dépendances">
             <ul className="modules-facts">

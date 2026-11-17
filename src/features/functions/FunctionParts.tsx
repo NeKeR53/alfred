@@ -1,27 +1,20 @@
 import {
   Button,
   Dialog,
-  Disclosure,
-  EmptyState,
   FormField,
-  Heading,
   IconButton,
-  LoadingSkeleton,
   Markdown,
-  Page,
   Row,
-  SearchField,
   Stack,
   StatusBadge,
   SwitchControl,
   Text,
   TextArea,
-  useConfirm,
 } from "@alfred/ui";
 import { Play, Trash2 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { invoke } from "../../lib/native";
-import type { FunctionRuntime, ModuleSummary, ResolvedFunction } from "../../lib/types";
+import type { FunctionRuntime, ResolvedFunction } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { type FunctionTests, TEST_STATE_LABELS } from "./tests";
@@ -358,151 +351,5 @@ export function FunctionItem({
         </Text>
       ))}
     </li>
-  );
-}
-
-/** Au-delà, la page propose une recherche et replie les modules qui n’ont rien à signaler. */
-const MANY_FUNCTIONS = 8;
-
-/** Onglet « Fonctions » des Réglages : les fonctions de l’espace, leur état, leur exposition aux agents, un essai. */
-export function FunctionsSettings() {
-  const snapshot = useShell((state) => state.snapshot);
-  const setView = useShell((state) => state.setView);
-  const [trying, setTrying] = useState<ResolvedFunction>();
-  const [query, setQuery] = useState("");
-  const { confirm, confirmDialog } = useConfirm();
-
-  if (snapshot === undefined) {
-    return (
-      <Page width="text">
-        <LoadingSkeleton label="Chargement des fonctions…" />
-      </Page>
-    );
-  }
-  if (snapshot === null) {
-    return (
-      <Page width="text">
-        <EmptyState
-          title="Aucun espace de travail ouvert"
-          description="Ouvrez ou créez un espace de travail depuis l’accueil d’Alfred."
-        />
-      </Page>
-    );
-  }
-
-  const functions = snapshot.functions;
-  if (functions.length === 0) {
-    return (
-      <Page width="text">
-        <EmptyState
-          title="Aucune fonction"
-          description="Une fonction fait un traitement côté Alfred (calcul, appel d’un client, écriture en base) pour vos pages, webhooks et planifications. Elles se créent en le demandant à l’agent."
-        >
-          <Button variant="primary" onClick={() => setView({ kind: "agent" })}>
-            Ouvrir l’agent
-          </Button>
-        </EmptyState>
-      </Page>
-    );
-  }
-
-  const modules = new Map<string, ModuleSummary | undefined>();
-  for (const fn of functions) {
-    if (!modules.has(fn.module))
-      modules.set(
-        fn.module,
-        snapshot.modules.find((module) => module.id === fn.module),
-      );
-  }
-  const broken = functions.filter((fn) => stateOf(fn) === "broken").length;
-
-  const remove = async (fn: ResolvedFunction) => {
-    const confirmed = await confirm({
-      title: `Supprimer la fonction « ${fn.id} » ?`,
-      message:
-        "Son fichier et sa déclaration sont retirés du module ; les pages qui l’appellent échoueront. La suppression est enregistrée dans l’historique de l’espace de travail et peut y être annulée.",
-      confirmLabel: "Supprimer",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    try {
-      await invoke("functions.remove", { reference: fn.reference });
-      notify({ title: "Fonction supprimée", description: fn.reference, tone: "success" });
-      await useShell.getState().refresh();
-    } catch (failure) {
-      notify({ title: "La fonction n’a pas été supprimée", description: errorMessage(failure), tone: "error" });
-    }
-  };
-
-  const needle = query.trim().toLocaleLowerCase("fr");
-  const matches = (fn: ResolvedFunction) =>
-    !needle || `${fn.id} ${fn.description ?? ""} ${fn.module}`.toLocaleLowerCase("fr").includes(needle);
-  const many = functions.length > MANY_FUNCTIONS;
-
-  return (
-    <Page width="text">
-      {broken > 0 ? (
-        <Text tone="danger" weight="medium">
-          {broken === 1 ? "1 fonction ne compile pas." : `${broken} fonctions ne compilent pas.`} Demandez à l’agent de
-          corriger les erreurs indiquées.
-        </Text>
-      ) : null}
-      {many ? (
-        <SearchField
-          label="Rechercher une fonction"
-          placeholder="Rechercher une fonction"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onClear={() => setQuery("")}
-        />
-      ) : null}
-      {[...modules.entries()].map(([id, module]) => {
-        const items = functions.filter((fn) => fn.module === id && matches(fn));
-        if (items.length === 0) return null;
-        const total = functions.filter((fn) => fn.module === id).length;
-        const issues = items.filter((fn) => stateOf(fn) !== "ready").length;
-        return (
-          <section key={id} className="function-group">
-            <Disclosure
-              // Ouvert par défaut tant que la liste reste courte, ou s’il y a quelque chose à corriger.
-              open={Boolean(needle) || !many || issues > 0}
-              summaryClassName="function-group__summary"
-              label={
-                <span className="function-group__title">
-                  <Heading level={3}>{module?.name ?? id}</Heading>
-                  <span className="function-group__count">
-                    {total} fonction{total > 1 ? "s" : ""}
-                  </span>
-                  {issues > 0 ? (
-                    <StatusBadge tone="warning" size="compact">
-                      {issues} à corriger
-                    </StatusBadge>
-                  ) : null}
-                </span>
-              }
-            >
-              {module?.readOnly ? (
-                <Text size="meta" tone="muted">
-                  Module installé en lecture seule : ses fonctions suivent sa version d’origine.
-                </Text>
-              ) : null}
-              <ul className="function-list">
-                {items.map((fn) => (
-                  <FunctionItem
-                    key={fn.reference}
-                    fn={fn}
-                    readOnly={Boolean(module?.readOnly)}
-                    onTry={() => setTrying(fn)}
-                    onRemove={() => void remove(fn)}
-                  />
-                ))}
-              </ul>
-            </Disclosure>
-          </section>
-        );
-      })}
-      {trying ? <TryDialog key={trying.reference} fn={trying} onClose={() => setTrying(undefined)} /> : null}
-      {confirmDialog}
-    </Page>
   );
 }

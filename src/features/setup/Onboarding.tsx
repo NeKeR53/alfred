@@ -6,6 +6,7 @@
 import { Dialog } from "@alfred/ui";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
+import { onNativeEvent } from "../../lib/native";
 import { useShell } from "../../shell/store";
 import type { ServiceEditing } from "../clients/ServiceEditor";
 import { ServiceEditor } from "../clients/ServiceEditor";
@@ -34,6 +35,15 @@ export function closeOnboarding() {
 
 /** Panneau de l’onboarding, monté une fois dans l’app ; rien tant qu’aucun module n’est en configuration. */
 export function OnboardingHost() {
+  // L’agent ouvre l’onboarding d’un module quand il ne reste que ce que l’utilisateur seul peut faire.
+  useEffect(
+    () =>
+      onNativeEvent("onboarding:open", (payload) => {
+        const module = (payload as { module?: unknown } | null)?.module;
+        if (typeof module === "string" && module) openOnboarding(module, "intro");
+      }),
+    [],
+  );
   const module = useOnboarding((state) => state.module);
   const start = useOnboarding((state) => state.start);
   if (!module) return null;

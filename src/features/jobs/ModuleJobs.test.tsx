@@ -13,7 +13,7 @@ vi.hoisted(() => {
 });
 
 import { invoke, onNativeEvent } from "../../lib/native";
-import { advancement, type JobItem, JobsSettings } from "./JobsSettings";
+import { advancement, type JobItem, ModuleJobs } from "./ModuleJobs";
 
 const job = (patch: Partial<JobItem>): JobItem => ({
   id: "j1",
@@ -57,8 +57,8 @@ beforeEach(() => {
 
 it("montre la progression, annule une tâche en cours et reprend une tâche en échec", async () => {
   const user = userEvent.setup();
-  render(<JobsSettings />);
-  const table = await screen.findByRole("table", { name: "Tâches de fond" });
+  render(<ModuleJobs module="import" />);
+  const table = await screen.findByRole("table", { name: "Tâches de fond du module" });
   expect(within(table).getByText("Page 3 sur 7")).toBeInTheDocument();
   expect(within(table).getByText("45 % · 3 étapes")).toBeInTheDocument();
   expect(within(table).getByText("Service indisponible")).toBeInTheDocument();

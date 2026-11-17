@@ -46,8 +46,8 @@ let testOk: boolean;
 let calls: Array<{ command: string; args: Record<string, unknown> }>;
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
 
-function emit(name: string) {
-  for (const handler of listeners.get(name) ?? []) handler({});
+function emit(name: string, payload: unknown = {}) {
+  for (const handler of listeners.get(name) ?? []) handler(payload);
 }
 
 function describe(config: ClientConfig): ClientItem {
@@ -409,4 +409,13 @@ it("une page qui n’utilise que les services prêts s’affiche sans bandeau, m
   render(<SetupBanner module="boite" uses={{ clients: ["agenda"] }} />);
   expect(await screen.findByText(/Agenda n’est pas encore configuré/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Configurer" })).toBeTruthy();
+});
+
+it("l’agent ouvre l’onboarding d’un module : le panneau s’ouvre sur sa présentation", async () => {
+  modules = [summary("boite", "Boîte", { description: "Vos mails importants.", clients: [GMAIL] })];
+  renderModules();
+  act(() => emit("onboarding:open", { module: "boite" }));
+  expect(await screen.findByRole("heading", { name: "Configurer Boîte" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Bienvenue dans Boîte" })).toBeTruthy();
+  expect(useOnboarding.getState()).toEqual({ module: "boite", start: "intro" });
 });

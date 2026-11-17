@@ -7,7 +7,7 @@ vi.mock("../../lib/native");
 import { invoke, onNativeEvent } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import type { WebhookItem } from "./api";
-import { MASK, WebhooksSettings } from "./WebhooksSettings";
+import { MASK, ModuleWebhooks } from "./ModuleWebhooks";
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -59,12 +59,11 @@ it("liste les webhooks, copie l’adresse, affiche le secret masqué et le rég�
   writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined) as unknown as ReturnType<
     typeof vi.fn
   >;
-  render(<WebhooksSettings />);
+  const { container } = render(<ModuleWebhooks module="ventes" />);
 
-  // État vide : on crée un webhook en le demandant à l’agent.
-  expect(await screen.findByText("Aucun webhook")).toBeInTheDocument();
-  expect(screen.getByText(/demandez-le à l’agent/)).toBeInTheDocument();
-  expect(screen.getByText(/tunnel de votre choix/)).toBeInTheDocument();
+  // Sans webhook, la fiche du module n’en parle pas.
+  await waitFor(() => expect(calls.some((call) => call.command === "webhooks.list")).toBe(true));
+  expect(container).toBeEmptyDOMElement();
 
   // L’agent déclare deux webhooks : l’écran se relit sur space:changed.
   hooks = [
@@ -88,12 +87,13 @@ it("liste les webhooks, copie l’adresse, affiche le secret masqué et le rég�
     },
   ];
   listeners.get("space:changed")?.(null);
-  const table = await screen.findByRole("table", { name: "Webhooks" });
+  // Seuls ceux du module s’affichent, avec le rappel du tunnel.
+  const table = await screen.findByRole("table", { name: "Webhooks du module" });
   expect(within(table).getByText("Paiement reçu")).toBeInTheDocument();
+  expect(within(table).queryByText("Nouveau contact")).not.toBeInTheDocument();
   expect(within(table).getByText(URL_PAIEMENT)).toBeInTheDocument();
   expect(within(table).getByText("Jamais")).toBeInTheDocument();
-  expect(within(table).getByText("Fonction introuvable")).toBeInTheDocument();
-  expect(screen.getByText(/déclenche une fonction qui n’existe pas/)).toBeInTheDocument();
+  expect(screen.getByText(/tunnel de votre choix/)).toBeInTheDocument();
 
   // Copier l’adresse locale.
   await user.click(screen.getByRole("button", { name: "Copier l’adresse du webhook Paiement reçu" }));

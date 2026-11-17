@@ -13,11 +13,12 @@ vi.hoisted(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-import { invoke } from "../../lib/native";
+import { invoke, onNativeEvent } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { FunctionsSettings, skeleton } from "./FunctionsSettings";
+import { skeleton } from "./FunctionParts";
+import { ModuleFunctions } from "./ModuleFunctions";
 
 HTMLDialogElement.prototype.showModal = function () {
   this.open = true;
@@ -94,6 +95,7 @@ beforeEach(() => {
     problems: [],
   };
   useShell.setState({ snapshot });
+  vi.mocked(onNativeEvent).mockImplementation(() => () => undefined);
   vi.mocked(invoke).mockImplementation(async (command, args = {}) => {
     calls.push({ command, args });
     switch (command) {
@@ -113,6 +115,8 @@ beforeEach(() => {
         return callResult.output;
       case "space.snapshot":
         return snapshot;
+      case "functions.tests":
+        return { functions: [] };
       default:
         throw new Error(`Commande inattendue : ${command}`);
     }
@@ -129,29 +133,30 @@ it("tire un squelette d’entrée du schéma", () => {
   expect(skeleton(null)).toEqual({});
 });
 
-it("montre l’état de chaque fonction, l’expose aux agents, l’essaie et la supprime", async () => {
-  const user = userEvent.setup();
-  render(<FunctionsSettings />);
+/** Fiche d’un module : sa partie « Fonctions », comme dans Réglages → Modules. */
+function renderModule(id: string) {
+  const summary = snapshot.modules.find((candidate) => candidate.id === id) as ModuleSummary;
+  return render(<ModuleFunctions module={summary} clientLabels={[]} />);
+}
 
-  // Groupées par module, une ligne chacune ; l’état n’est écrit que s’il y a quelque chose à corriger.
-  const ventes = screen.getByRole("heading", { name: "Ventes" }).closest("section") ?? document.body;
-  expect(within(ventes).queryByText("Prête")).not.toBeInTheDocument();
-  expect(within(ventes).getByText("2 à corriger")).toBeInTheDocument();
-  expect(within(ventes).getByText("Pas encore écrite")).toBeInTheDocument();
-  expect(within(ventes).getByText("Ne compile pas")).toBeInTheDocument();
+it("montre l’état de chaque fonction du module, l’expose aux agents, l’essaie et la supprime", async () => {
+  const user = userEvent.setup();
+  const { rerender } = renderModule("ventes");
+
+  // Une ligne par fonction ; l’état n’est écrit que s’il y a quelque chose à corriger.
+  expect(screen.queryByText("Prête")).not.toBeInTheDocument();
+  expect(screen.getByText("Pas encore écrite")).toBeInTheDocument();
+  expect(screen.getByText("Ne compile pas")).toBeInTheDocument();
   expect(screen.getByText("Ligne 12, colonne 3 : Cannot find name 'rows'.")).toBeInTheDocument();
-  expect(screen.getByText(/1 fonction ne compile pas/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Essayer la fonction relance" })).toBeDisabled();
 
-  // Module en lecture seule : interrupteur désactivé, avec l’explication.
-  const switches = screen.getAllByRole("switch", { name: /^Proposer la fonction .* aux agents comme outil$/ });
-  expect(switches.at(-1)).toBeDisabled();
-  expect(screen.getByText(/Module installé en lecture seule/)).toBeInTheDocument();
-
   // Exposer « total » aux agents.
-  await user.click(switches[0]);
+  const toolSwitch = screen.getByRole("switch", { name: "Proposer la fonction total aux agents comme outil" });
+  await user.click(toolSwitch);
   await waitFor(() => expect(lastCall("functions.setTool")).toEqual({ reference: "ventes/total", tool: true }));
-  await waitFor(() => expect(switches[0]).toBeChecked());
+  useShell.setState({ snapshot });
+  rerender(<ModuleFunctions module={snapshot.modules[0]} clientLabels={[]} />);
+  await waitFor(() => expect(toolSwitch).toBeChecked());
 
   // Essayer : entrée préremplie, JSON invalide refusé, sortie à chasse fixe.
   await user.click(screen.getByRole("button", { name: "Essayer la fonction total" }));
@@ -180,19 +185,12 @@ it("montre l’état de chaque fonction, l’expose aux agents, l’essaie et la
   // Supprimer : confirmé.
   await user.click(screen.getByRole("button", { name: "Supprimer la fonction relance" }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
-  await waitFor(() => expect(screen.queryByText("relance")).not.toBeInTheDocument());
-  expect(lastCall("functions.remove")).toEqual({ reference: "ventes/relance" });
-  expect(useNotifications.getState().items.map((item) => item.title)).toContain("Fonction supprimée");
+  await waitFor(() => expect(lastCall("functions.remove")).toEqual({ reference: "ventes/relance" }));
 });
 
-it("explique comment créer une fonction quand il n’y en a aucune", async () => {
-  const user = userEvent.setup();
-  useShell.setState({ snapshot: { ...snapshot, functions: [] }, view: { kind: "settings" } });
-  render(<FunctionsSettings />);
-  expect(screen.getByText("Aucune fonction")).toBeInTheDocument();
-  expect(screen.getByText(/en le demandant à l’agent/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Ouvrir l’agent" }));
-  expect(useShell.getState().view).toEqual({ kind: "agent" });
+it("dans un module en lecture seule, l’exposition aux agents suit sa version d’origine", () => {
+  renderModule("meteo");
+  expect(screen.getByRole("switch", { name: "Proposer la fonction prevision aux agents comme outil" })).toBeDisabled();
 });
 
 it("indique le langage d’un script et l’absence de son interpréteur", () => {
@@ -207,30 +205,10 @@ it("indique le langage d’un script et l’absence de son interpréteur", () =>
     ],
   };
   useShell.setState({ snapshot });
-  render(<FunctionsSettings />);
+  renderModule("ventes");
   expect(screen.getByText("Python")).toBeInTheDocument();
   expect(screen.getByText("PowerShell")).toBeInTheDocument();
   expect(screen.getByText("Interpréteur absent")).toBeInTheDocument();
   expect(screen.getByText("Interpréteur PowerShell introuvable : installer PowerShell 7.")).toBeInTheDocument();
   expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
-});
-
-it("replie les modules sans problème et cherche parmi beaucoup de fonctions", async () => {
-  const user = userEvent.setup();
-  snapshot = {
-    ...snapshot,
-    functions: Array.from({ length: 12 }, (_, index) =>
-      fn(`ventes/fonction${index}`, { description: index === 7 ? "Calcule la marge" : "" }),
-    ),
-  };
-  useShell.setState({ snapshot });
-  render(<FunctionsSettings />);
-  const group = screen.getByRole("heading", { name: "Ventes" }).closest("details");
-  expect(group).not.toHaveAttribute("open");
-  expect(screen.getByText("12 fonctions")).toBeInTheDocument();
-
-  await user.type(screen.getByRole("searchbox", { name: "Rechercher une fonction" }), "marge");
-  expect(group).toHaveAttribute("open");
-  expect(screen.getByText("fonction7")).toBeInTheDocument();
-  expect(screen.queryByText("fonction3")).not.toBeInTheDocument();
 });

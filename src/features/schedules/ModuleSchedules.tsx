@@ -1,19 +1,4 @@
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  RefreshButton,
-  Row,
-  Section,
-  Stack,
-  StatusBadge,
-  SwitchControl,
-  Text,
-} from "@alfred/ui";
+import { Button, DataTable, type DataTableColumn, Row, Stack, StatusBadge, SwitchControl, Text } from "@alfred/ui";
 import { useCallback, useEffect, useState } from "react";
 import { onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
@@ -45,12 +30,12 @@ function summarize(output: unknown): string {
 }
 
 /**
- * Planifications : fonctions déclenchées à heure fixe ou à intervalle, Alfred ouvert. Avec `module`, la partie
- * « Planifications » de la fiche de ce module (rien quand il n’en a pas) ; sans, toutes celles de l’espace de travail.
+ * Partie « Planifications » de la fiche d’un module (Réglages → Modules) : ses fonctions déclenchées à heure fixe ou
+ * à intervalle, Alfred ouvert ; rien quand le module n’en a pas.
  */
-export function SchedulesSettings({ module }: { module?: string } = {}) {
+export function ModuleSchedules({ module }: { module: string }) {
   const [all, setItems] = useState<ScheduleItem[]>();
-  const items = module ? all?.filter((item) => item.module === module) : all;
+  const items = all?.filter((item) => item.module === module);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [runningNow, setRunningNow] = useState<string>();
@@ -117,36 +102,14 @@ export function SchedulesSettings({ module }: { module?: string } = {}) {
     }
   };
 
-  if (module && (items === undefined || items.length === 0)) return null;
-
   if (items === undefined) {
-    return (
-      <Page width="text">
-        {error ? (
-          <FeedbackBanner
-            tone="error"
-            appearance="contained"
-            action={<Button onClick={() => void load()}>Réessayer</Button>}
-          >
-            Les planifications n’ont pas pu être lues. {error}
-          </FeedbackBanner>
-        ) : (
-          <LoadingSkeleton rows={4} label="Chargement des planifications…" />
-        )}
-      </Page>
-    );
+    return error ? (
+      <Text size="meta" tone="danger">
+        Les planifications n’ont pas pu être lues. {error}
+      </Text>
+    ) : null;
   }
-
-  if (items.length === 0) {
-    return (
-      <Page width="text">
-        <EmptyState
-          title="Aucune planification"
-          description="Une planification déclenche une fonction d’un module à heure fixe ou à intervalle régulier, tant qu’Alfred est ouvert. Pour en créer une, demandez-le à l’agent : « relance les factures impayées chaque jour à 08:00 »."
-        />
-      </Page>
-    );
-  }
+  if (items.length === 0) return null;
 
   const columns: DataTableColumn<ScheduleItem>[] = [
     {
@@ -157,7 +120,7 @@ export function SchedulesSettings({ module }: { module?: string } = {}) {
         <Stack gap="none">
           <Text weight="medium">{item.description || item.id}</Text>
           <Text size="meta" tone="muted">
-            {module ? `Fonction ${item.function}` : `Module ${item.module} · fonction ${item.function}`}
+            Fonction {item.function}
           </Text>
           {item.functionExists ? null : (
             <Text size="meta" tone="danger">
@@ -252,42 +215,19 @@ export function SchedulesSettings({ module }: { module?: string } = {}) {
     },
   ];
 
-  if (module) {
-    return (
-      <ModulePart
-        part="schedules"
-        title="Planifications"
-        description="Fonctions du module lancées à heure fixe ou à intervalle, tant qu’Alfred est ouvert."
-      >
-        <DataTable
-          label="Planifications du module"
-          columns={columns}
-          rows={items}
-          rowKey={scheduleKey}
-          loading={loading}
-        />
-      </ModulePart>
-    );
-  }
-
   return (
-    <Page>
-      {error ? (
-        <FeedbackBanner
-          tone="error"
-          appearance="contained"
-          action={<Button onClick={() => void load()}>Réessayer</Button>}
-        >
-          Les planifications n’ont pas pu être relues. {error}
-        </FeedbackBanner>
-      ) : null}
-      <Section
-        title="Planifications"
-        description="Les fonctions partent à l’heure prévue tant qu’Alfred est ouvert ; une heure fixe manquée part dès sa réouverture, le jour même."
-        actions={<RefreshButton loading={loading} onClick={() => void load()} />}
-      >
-        <DataTable label="Planifications" columns={columns} rows={items} rowKey={scheduleKey} loading={loading} />
-      </Section>
-    </Page>
+    <ModulePart
+      part="schedules"
+      title="Planifications"
+      description="Fonctions du module lancées à heure fixe ou à intervalle, tant qu’Alfred est ouvert."
+    >
+      <DataTable
+        label="Planifications du module"
+        columns={columns}
+        rows={items}
+        rowKey={scheduleKey}
+        loading={loading}
+      />
+    </ModulePart>
   );
 }

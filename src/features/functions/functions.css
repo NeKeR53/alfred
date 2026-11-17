@@ -3,30 +3,7 @@
   width: min(640px, calc(100vw - 32px));
 }
 
-/* Liste compacte : un module par groupe repliable, une ligne par fonction. */
-.function-group + .function-group {
-  margin-top: 4px;
-}
-.function-group__summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-}
-.function-group__title {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-.function-group__title h3 {
-  margin: 0;
-}
-.function-group__count {
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
-}
+/* Liste compacte : une ligne par fonction. */
 .function-list {
   margin: 0;
   padding: 0;

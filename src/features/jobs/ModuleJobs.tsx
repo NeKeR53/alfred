@@ -1,22 +1,7 @@
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  RefreshButton,
-  Row,
-  Section,
-  Stack,
-  StatusBadge,
-  Text,
-} from "@alfred/ui";
+import { Button, DataTable, type DataTableColumn, Row, Stack, StatusBadge, Text } from "@alfred/ui";
 import { useCallback, useEffect, useState } from "react";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
-import { useShell } from "../../shell/store";
 import { ModulePart } from "../modules/ModulePart";
 
 export interface JobItem {
@@ -58,13 +43,12 @@ export function advancement(job: JobItem): string {
 }
 
 /**
- * Tâches de fond : travaux longs des modules, leur progression, annuler ou reprendre. Avec `module`, la partie
- * « Tâches de fond » de la fiche de ce module (rien quand il n’en a lancé aucune) ; sans, toutes celles de l’espace.
+ * Partie « Tâches de fond » de la fiche d’un module (Réglages → Modules) : ses travaux longs, leur progression,
+ * annuler ou reprendre ; rien quand le module n’en a lancé aucun.
  */
-export function JobsSettings({ module }: { module?: string } = {}) {
-  const snapshot = useShell((state) => state.snapshot);
+export function ModuleJobs({ module }: { module: string }) {
   const [all, setJobs] = useState<JobItem[]>();
-  const jobs = module ? all?.filter((job) => job.module === module) : all;
+  const jobs = all?.filter((job) => job.module === module);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string>();
@@ -106,8 +90,6 @@ export function JobsSettings({ module }: { module?: string } = {}) {
     }
   };
 
-  const moduleName = (id: string) => snapshot?.modules.find((module) => module.id === id)?.name ?? id;
-
   const columns: DataTableColumn<JobItem>[] = [
     {
       key: "title",
@@ -117,7 +99,7 @@ export function JobsSettings({ module }: { module?: string } = {}) {
         <Stack gap="none">
           <Text weight="medium">{job.title}</Text>
           <Text size="meta" tone="muted">
-            {module ? `Fonction ${job.function}` : `Module ${moduleName(job.module)} · fonction ${job.function}`}
+            Fonction {job.function}
           </Text>
           {job.status === "failed" && job.error ? (
             <Text size="meta" tone="danger">
@@ -194,55 +176,26 @@ export function JobsSettings({ module }: { module?: string } = {}) {
     },
   ];
 
-  if (module) {
-    if (!jobs || jobs.length === 0) return null;
-    return (
-      <ModulePart
-        part="jobs"
-        title="Tâches de fond"
-        description="Travaux longs lancés par le module ; ils reprennent où ils en étaient à la réouverture d’Alfred."
-      >
-        <DataTable
-          label="Tâches de fond du module"
-          columns={columns}
-          rows={jobs}
-          rowKey={(job) => job.id}
-          loading={loading}
-        />
-      </ModulePart>
-    );
+  if (!jobs || jobs.length === 0) {
+    return error ? (
+      <Text size="meta" tone="danger">
+        Les tâches n’ont pas pu être lues : {error}
+      </Text>
+    ) : null;
   }
-
   return (
-    <Page width="text">
-      <Section
-        title="Tâches de fond"
-        description="Travaux longs lancés par les modules (un import, un relevé complet). Ils avancent par étapes tant qu’Alfred est ouvert, et reprennent où ils en étaient à la réouverture."
-        actions={<RefreshButton label="Actualiser les tâches" loading={loading} onClick={() => void load()} />}
-      >
-        {error ? (
-          <FeedbackBanner
-            tone="error"
-            appearance="contained"
-            action={<Button onClick={() => void load()}>Réessayer</Button>}
-          >
-            Les tâches n’ont pas pu être lues : {error}
-          </FeedbackBanner>
-        ) : null}
-        {jobs === undefined ? (
-          error ? null : (
-            <LoadingSkeleton rows={3} label="Chargement des tâches…" />
-          )
-        ) : jobs.length === 0 ? (
-          <EmptyState
-            size="compact"
-            title="Aucune tâche de fond"
-            description="Quand un module lance un travail long, il apparaît ici avec sa progression."
-          />
-        ) : (
-          <DataTable label="Tâches de fond" columns={columns} rows={jobs} rowKey={(job) => job.id} loading={loading} />
-        )}
-      </Section>
-    </Page>
+    <ModulePart
+      part="jobs"
+      title="Tâches de fond"
+      description="Travaux longs lancés par le module ; ils reprennent où ils en étaient à la réouverture d’Alfred."
+    >
+      <DataTable
+        label="Tâches de fond du module"
+        columns={columns}
+        rows={jobs}
+        rowKey={(job) => job.id}
+        loading={loading}
+      />
+    </ModulePart>
   );
 }

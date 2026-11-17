@@ -2,13 +2,10 @@ import {
   Button,
   DataTable,
   type DataTableColumn,
-  EmptyState,
   FeedbackBanner,
   IconButton,
   KeyValueList,
   LoadingSkeleton,
-  Page,
-  RefreshButton,
   Row,
   Section,
   Stack,
@@ -131,12 +128,12 @@ function SecretSection({ hook, onClose }: { hook: WebhookItem; onClose: () => vo
 }
 
 /**
- * Webhooks : adresses locales qui déclenchent les fonctions des modules. Avec `module`, la partie « Webhooks » de la
- * fiche de ce module (rien quand il n’en a pas) ; sans, la liste de tous les webhooks de l’espace de travail.
+ * Partie « Webhooks » de la fiche d’un module (Réglages → Modules) : les adresses locales qui déclenchent ses
+ * fonctions, leur secret ; rien quand le module n’en a pas.
  */
-export function WebhooksSettings({ module }: { module?: string } = {}) {
+export function ModuleWebhooks({ module }: { module: string }) {
   const [all, setHooks] = useState<WebhookItem[]>();
-  const hooks = module ? all?.filter((hook) => hook.module === module) : all;
+  const hooks = all?.filter((hook) => hook.module === module);
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string>();
@@ -164,42 +161,17 @@ export function WebhooksSettings({ module }: { module?: string } = {}) {
     };
   }, [load]);
 
-  if (module && (hooks === undefined || hooks.length === 0)) return null;
-
   if (hooks === undefined) {
-    return (
-      <Page width="text">
-        {error ? (
-          <FeedbackBanner
-            tone="error"
-            appearance="contained"
-            action={<Button onClick={() => void load()}>Réessayer</Button>}
-          >
-            Les webhooks n’ont pas pu être lus. {error}
-          </FeedbackBanner>
-        ) : (
-          <LoadingSkeleton rows={4} label="Chargement des webhooks…" />
-        )}
-      </Page>
-    );
+    return error ? (
+      <Text size="meta" tone="danger">
+        Les webhooks n’ont pas pu être lus. {error}
+      </Text>
+    ) : null;
   }
+  if (hooks.length === 0) return null;
 
   const tunnel =
     "Alfred n’écoute que sur cet ordinateur (127.0.0.1) et seulement tant qu’il est ouvert : pour un service sur Internet, exposez l’adresse locale par le tunnel de votre choix (Cloudflare Tunnel, Tailscale Funnel, ngrok).";
-
-  if (hooks.length === 0) {
-    return (
-      <Page width="text">
-        <EmptyState
-          title="Aucun webhook"
-          description="Un webhook est une adresse qu’un service extérieur appelle pour déclencher une fonction d’un module. Pour en créer un, demandez-le à l’agent : « crée un webhook qui reçoit les paiements de Stripe »."
-        />
-        <Text size="meta" tone="muted">
-          {tunnel}
-        </Text>
-      </Page>
-    );
-  }
 
   const current = hooks.find((hook) => hookKey(hook) === selected);
 
@@ -211,11 +183,6 @@ export function WebhooksSettings({ module }: { module?: string } = {}) {
       render: (hook) => (
         <Stack gap="none">
           <Text weight="medium">{hook.description || hook.id}</Text>
-          {module ? null : (
-            <Text size="meta" tone="muted">
-              Module {hook.module}
-            </Text>
-          )}
         </Stack>
       ),
     },
@@ -281,49 +248,17 @@ export function WebhooksSettings({ module }: { module?: string } = {}) {
     },
   ];
 
-  if (module) {
-    return (
-      <ModulePart
-        part="webhooks"
-        title="Webhooks"
-        description="Adresses qu’un service extérieur appelle pour déclencher une fonction du module."
-      >
-        <DataTable label="Webhooks du module" columns={columns} rows={hooks} rowKey={hookKey} loading={loading} />
-        <Text size="meta" tone="muted">
-          {tunnel}
-        </Text>
-        {current ? (
-          <SecretSection key={hookKey(current)} hook={current} onClose={() => setSelected(undefined)} />
-        ) : null}
-      </ModulePart>
-    );
-  }
-
   return (
-    <Page>
-      {error ? (
-        <FeedbackBanner
-          tone="error"
-          appearance="contained"
-          action={<Button onClick={() => void load()}>Réessayer</Button>}
-        >
-          Les webhooks n’ont pas pu être relus. {error}
-        </FeedbackBanner>
-      ) : null}
-      {hooks.some((hook) => !hook.functionExists) ? (
-        <FeedbackBanner tone="warning" appearance="contained">
-          Un webhook déclenche une fonction qui n’existe pas : ses appels échoueront. Demandez à l’agent d’écrire la
-          fonction ou de corriger le webhook.
-        </FeedbackBanner>
-      ) : null}
-      <Section
-        title="Webhooks"
-        description={tunnel}
-        actions={<RefreshButton loading={loading} onClick={() => void load()} />}
-      >
-        <DataTable label="Webhooks" columns={columns} rows={hooks} rowKey={hookKey} loading={loading} />
-      </Section>
+    <ModulePart
+      part="webhooks"
+      title="Webhooks"
+      description="Adresses qu’un service extérieur appelle pour déclencher une fonction du module."
+    >
+      <DataTable label="Webhooks du module" columns={columns} rows={hooks} rowKey={hookKey} loading={loading} />
+      <Text size="meta" tone="muted">
+        {tunnel}
+      </Text>
       {current ? <SecretSection key={hookKey(current)} hook={current} onClose={() => setSelected(undefined)} /> : null}
-    </Page>
+    </ModulePart>
   );
 }
