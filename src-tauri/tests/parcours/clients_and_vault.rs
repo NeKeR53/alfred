@@ -25,7 +25,9 @@ async fn chaque_authentification_valide_accordee_sans_fuite() {
     let base = format!("{}/api", remote.origin);
     desk.invoke("space.placePage", json!({ "title": "Contacts", "target": { "kind": "menu", "label": "CRM" } })).await;
     desk.write("modules/crm/pages/contacts.tsx", PAGE);
-    let page = Frame::page(&desk, "crm/contacts");
+    // Les clients ne se joignent que par les fonctions du module : la page est refusée, même accordée.
+    let page = Frame::functions(&desk, "crm");
+    let contacts = Frame::page(&desk, "crm/contacts");
     let mut outputs: Vec<String> = Vec::new();
 
     // Coffre : les secrets partent dans le trousseau (ici en mémoire), la liste n’en dit que la présence.
@@ -69,6 +71,8 @@ async fn chaque_authentification_valide_accordee_sans_fuite() {
     // Premier usage par la page : l’utilisateur accorde chaque client une fois.
     desk.ui.answer_permissions(&[true; 8]);
     let call = |path: &str| json!({ "method": "POST", "path": path, "query": { "page": 2 }, "body": { "nom": "Durand" } });
+    let refused = contacts.request("public", call("/echo/contacts")).await.unwrap_err();
+    assert!(refused.contains("Une page n’appelle pas un client directement"), "{refused}");
     let response = page.request("public", call("/echo/contacts")).await.unwrap();
     assert_eq!((response["status"].as_u64(), response["body"]["path"].as_str()), (Some(200), Some("/api/echo/contacts")));
     let seen = remote.last();
@@ -95,7 +99,7 @@ async fn chaque_authentification_valide_accordee_sans_fuite() {
     assert_eq!(grants[0]["scope"], "lecture");
     let asked = desk.ui.asked_resources();
     assert_eq!(asked.len(), 6);
-    assert!(asked.iter().all(|asked| asked.starts_with("crm/contacts → client:")));
+    assert!(asked.iter().all(|asked| asked.starts_with("crm/* → client:")));
     assert!(desk.ui.asked.lock().unwrap()[1].label.contains("Porteur"));
     // Accord mémorisé : la même page ne redemande pas.
     page.request("porteur", json!({ "path": "/echo" })).await.unwrap();

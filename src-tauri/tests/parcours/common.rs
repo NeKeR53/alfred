@@ -103,6 +103,11 @@ impl Frame {
         }
     }
 
+    /// Les fonctions d’un module : seules à joindre ses clients.
+    pub fn functions(desk: &Desk, module: &str) -> Self {
+        Self::functions_of(&desk.state, &desk.ui, module)
+    }
+
     fn functions_of(state: &Arc<AppState>, ui: &Arc<Ui>, module: &str) -> Self {
         Self {
             state: state.clone(),

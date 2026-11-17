@@ -51,6 +51,9 @@ Choisir le gabarit d’après ce que la page montre, sans exception :
 | Des préférences du module | `SettingsPage` (4.3) | Onglet des Réglages (`{ "kind": "settings" }`) |
 | Une saisie (créer, modifier, renommer, inviter) | `openForm(…)` (4.4), appelé par une `Action` | Modale au-dessus de la page qui l’ouvre |
 | Une confirmation avant d’agir | `Action` avec `danger` et `confirm` (3), ou `confirmAction(…)` | Modale |
+| Un contenu à voir sans quitter la page : un aperçu, un choix dans une liste, un court détail | `openModal(…)` (4.6), appelé par une `Action` ou `onOpen` | Modale au-dessus de la page |
+| Un objet à lire ou traiter en entier depuis une liste (un document, une fiche longue), quand un panneau est trop étroit | `openSubpage(…)` (4.7), appelé par `onOpen` ou une `Action` | Sous-page par-dessus la page, avec « Retour » |
+| Une autre page de l’espace | `shell.navigate("module/page")` (SDK.md, section 8) ; `shell.openWindow` pour la fenêtre à part | L’onglet de cette page |
 | Autre chose : un texte à lire (note, courriel), une synthèse, un éditeur, un graphique | `Page` composée (section 5) | Onglet |
 
 Une page qui liste ET montre le détail est une `CollectionPage` avec `panel`, plus un `DetailPanel` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
@@ -120,7 +123,7 @@ Barre (recherche, filtres, vues, Actualiser, actions), tableau dense trié au cl
 | Prop | Rôle |
 |---|---|
 | `label: string` | Nom de la collection : « Tâches ». |
-| `load: () => Promise<Row[]>` | Charge toutes les lignes (`db.query`, `functions.call`, un client). Rappelé par Actualiser et après chaque écriture. |
+| `load: () => Promise<Row[]>` | Charge toutes les lignes (`db.query`, ou `functions.call` pour un service : jamais un client). Rappelé par Actualiser et après chaque écriture. |
 | `deps?: unknown[]` | Relance `load` quand ces valeurs changent. |
 | `rowKey: (row) => string \| number` | Identifiant stable ; c’est lui que le panneau reçoit. |
 | `columns: Column[]` | Colonnes, l’identité de l’objet en premier ; cinq au plus (voir ci-dessous). |
@@ -132,14 +135,14 @@ Barre (recherche, filtres, vues, Actualiser, actions), tableau dense trié au cl
 | `actions?: Action[]` | Actions sur toute la collection ; la `primary` revient dans l’état vide. |
 | `rowActions?: (row) => Action[]` | Actions d’une ligne. |
 | `panel?: boolean` | La page a un panneau `DetailPanel` : un clic sur une ligne la sélectionne, publie `{ id: rowKey(row) }` et ouvre le panneau. |
-| `onOpen?: (row) => void` | Autre façon d’ouvrir une ligne (`shell.navigate(…)`) ; remplace `panel`. |
+| `onOpen?: (row) => void` | Autre façon d’ouvrir une ligne : `openSubpage(…)`, `openModal(…)` ou `shell.navigate(…)` ; remplace `panel`. |
 | `banner?: ReactNode` | Un `FeedbackBanner` qui dure (prérequis manquant, données dégradées). |
 
 `Column<Row>` : `{ key, header, type?, value?, statuses?, currency? }`. `key` est lu dans la ligne, sauf si `value(row)` est donné ; `header` est court (« Échéance ») ; `type` (section 4.5) fixe le format, l’alignement, la largeur et le tri. Pas de largeur, pas de rendu personnalisé : une donnée qui ne rentre dans aucun type se convertit en texte dans `value`.
 
 ### 4.2 `DetailPanel` — le panneau de droite
 
-Il lit lui-même la sélection publiée par la `CollectionPage` de sa page, charge l’objet et couvre les quatre états (rien de sélectionné, chargement, erreur, introuvable). En tête, le nom, l’état et les actions en icônes ; dessous, la fiche, puis les blocs. Exemple complet en 12.2.
+Il lit lui-même la sélection publiée par la `CollectionPage` de sa page, charge l’objet et couvre les quatre états (rien de sélectionné, chargement, erreur, introuvable). En tête, fixe au-dessus de ce qui défile, le nom, l’état et les actions en icônes ; dessous, la fiche, puis les blocs. Un panneau composé à la main (`Page`) qui montre un objet prend le même en-tête avec `header` (section 5). Exemple complet en 12.2.
 
 | Prop | Rôle |
 |---|---|
@@ -222,6 +225,61 @@ const formulaireTache = (tache?: Tache): FormSpec => ({
 
 `confirmAction({ title, message?, confirmLabel, tone? })` pose une question hors d’une `Action` et rend `true` ou `false`.
 
+### 4.6 `openModal` — un contenu en modale
+
+`openModal(spec)` ouvre une modale de contenu : un aperçu, un choix dans une courte liste, un détail qui ne mérite pas de quitter la page. Il rend `true` quand une de ses actions a réussi (la liste qui l’a ouverte se recharge), `false` quand l’utilisateur la ferme. Rien à rendre dans la page. Une saisie reste un `openForm`, une question un `confirmAction`.
+
+| Champ de `spec` | Rôle |
+|---|---|
+| `title: string` | Ce que montre la modale : « Aperçu de la facture », « Choisir un modèle ». |
+| `description?: string` | Une phrase sous le titre. |
+| `size?` | `"small"` (360 px), `"default"` (480 px), `"wide"` (720 px : un tableau, un aperçu). |
+| `content` | Des blocs de `@alfred/ui` (`Stack`, `KeyValueList`, `List`, `DataTable`, `Markdown`…), ou `(close) => …` pour qu’un élément de liste choisisse puis ferme. |
+| `actions?: Action[]` | Pied de la modale, après « Fermer » (« Annuler » quand une action est `primary`) ; la `primary` en dernier. Une action réussie ferme la modale ; `danger` est confirmé par-dessus. |
+| `closeLabel?: string` | Libellé du bouton qui ferme. |
+
+```tsx
+{
+  label: "Aperçu",
+  icon: Eye,
+  onClick: () =>
+    openModal({
+      title: `Facture ${facture.numero}`,
+      size: "wide",
+      content: <KeyValueList items={lignesFacture(facture)} />,
+      actions: [{ label: "Envoyer au client", primary: true, success: "Facture envoyée", onClick: () => functions.call("envoyer-facture", { id: facture.id }) }],
+    }),
+}
+```
+
+### 4.7 `openSubpage` — une sous-page
+
+`openSubpage(spec)` ouvre un écran par-dessus la page, avec un en-tête fixe : « Retour », le nom, l’état et les actions de l’objet. La page reste dessous telle quelle (recherche, filtres, défilement) ; « Retour » ou Échap y revient. Une sous-page peut en ouvrir une autre. `closeSubpage()` ferme celle du dessus (après une suppression). La promesse se résout à la fermeture.
+
+| Champ de `spec` | Rôle |
+|---|---|
+| `title: string` | Le nom de l’objet : « Relancer le client ». |
+| `subtitle?: string` | Une ligne de contexte : « Créée le 3 mars par Léa ». |
+| `status?: { label, tone }` | État, en badge à côté du nom. |
+| `actions?: Action[]` | Actions de l’objet : trois icônes au plus, puis « ⋯ », la `primary` en texte. |
+| `content` | Les blocs de la sous-page (`Section`, `KeyValueList`, `DataTable`, `Markdown`…) : jamais un gabarit ni une `Page`. |
+| `width?` | `"text"` pour un document à lire (760 px), `"full"` par défaut. |
+
+```tsx
+<CollectionPage
+  label="Contrats"
+  onOpen={(contrat) =>
+    openSubpage({
+      title: contrat.nom,
+      status: { label: "Signé", tone: "success" },
+      width: "text",
+      content: <Markdown>{contrat.texte}</Markdown>,
+    })
+  }
+  …
+/>
+```
+
 ### 4.5 Types de valeurs
 
 Le même `type` sert aux colonnes, aux lignes de fiche et aux réglages `info`. Il fixe le format français, l’alignement, la largeur de colonne et le tri. Une valeur vide s’affiche « — ».
@@ -257,19 +315,19 @@ const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, labe
 
 Seulement quand aucun gabarit ne convient : lire un document, une synthèse de quelques blocs, un éditeur ou un graphique de librairie. La page reste une colonne de blocs, dans cet ordre : bandeau éventuel, objet principal, blocs de détail.
 
-**`Page`** — racine. Props : `actions?: Action[]` (barre du haut : icônes, « ⋯ », action principale, disposées comme en section 3), `search?: { label, value, onChange(value) }` (recherche à gauche de la barre), `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus), `children`. Marge, défilement et espacement des blocs (24 px) sont fixés.
+**`Page`** — racine. Props : `header?: { title, subtitle?, status?: { label, tone }, actions?: Action[] }` (en-tête fixe de l’objet que montre la page : un panneau de droite composé, la fiche d’un document ; jamais le titre de la section, que la coquille affiche), `actions?: Action[]` (barre du haut : icônes, « ⋯ », action principale, disposées comme en section 3), `search?: { label, value, onChange(value) }` (recherche à gauche de la barre), `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus), `fill?: boolean` (le contenu occupe la hauteur sans défiler : pour une page dont le bloc principal est un `DataTable fill` ou un éditeur), `children`. Marge, défilement et espacement des blocs (24 px) sont fixés ; l’en-tête et la barre restent fixes au-dessus de ce qui défile.
 
 **`Section`** — un bloc titré : `title`, `description?` (une phrase), `actions?: Action[]` (à droite du titre : deux icônes au plus, une action principale en texte s’il le faut, le reste dans « ⋯ »), `children`. Un bloc par sujet ; pas de titre de page au-dessus.
 
 **Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`) encadre un contenu autonome dans une page large ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres.
 
-**Montrer des données** — `KeyValueList` (`items: { label, value }[]`, fiche d’un objet), `List` et `ListItem` (`title`, `description?`, `leading?`, `trailing?`, `onClick?` : quelques éléments hétérogènes), `DataTable` (`columns`, `rows`, `rowKey`, `label` : un tableau secondaire dans un bloc ; une collection principale est une `CollectionPage`), `FormattedValue` (`value`, `options: { type, statuses, currency }` : une valeur formatée hors d’un gabarit), `StatusBadge` (`tone`, `size="compact"`), `StatusDot`.
+**Montrer des données** — `KeyValueList` (`items: { label, value }[]`, fiche d’un objet), `List` et `ListItem` (`title`, `description?`, `leading?`, `trailing?`, `onClick?` : quelques éléments hétérogènes), `DataTable` (`columns`, `rows`, `rowKey`, `label` : un tableau secondaire dans un bloc ; une collection principale est une `CollectionPage`. Son en-tête est hors de la zone qui défile ; avec `fill`, sous `Page fill`, il prend la hauteur restante et seules ses lignes défilent), `FormattedValue` (`value`, `options: { type, statuses, currency }` : une valeur formatée hors d’un gabarit), `StatusBadge` (`tone`, `size="compact"`), `StatusDot`.
 
 **Retour** — `FeedbackBanner` (`tone`: `"danger" \| "warning" \| "info"`, `action?` : un état qui dure), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`). Règles en section 9.
 
 **Saisie sur place** — `SearchField` (dans `Page search` de préférence), `InlineEdit` (une valeur isolée modifiable par un clic), `Tabs` (rubriques d’un même objet), `ChoiceGroup` et `ChoiceButton` (deux à quatre choix exclusifs visibles), `Disclosure` (contenu secondaire replié). Un formulaire passe par `openForm`.
 
-**Réservé aux gabarits et à la coquille** — ne s’emploient pas dans une page (`check` signale la plupart) : `PageToolbar`, `ToolbarSeparator`, `SettingRow`, `SettingRows`, `Modal`, `ConfirmDialog`, `useConfirm`, `FormActions`, `AnchoredPanel`, `ObjectHeader`, `PageTopBar`, `PanelToggleButton`, `PanelHeader`, `Dialog`, `Menu`, la prop `toolbar` de `Page`, et des boutons en JSX passés à `actions`. `Button`, `IconButton`, `OverflowMenu` et `MenuButton` ne servent qu’au contenu d’un bloc (« Tester la connexion » sous une explication), jamais pour une action de page, d’objet ou de ligne.
+**Réservé aux gabarits et à la coquille** — ne s’emploient pas dans une page (`check` signale la plupart) : `PageToolbar`, `ToolbarSeparator`, `SettingRow`, `SettingRows`, `Modal` (passer par `openModal`), `ConfirmDialog`, `useConfirm`, `FormActions`, `AnchoredPanel`, `ObjectHeader` (passer par `Page header`), `PageTopBar`, `PanelToggleButton`, `PanelHeader`, `Dialog`, `Menu`, la prop `toolbar` de `Page`, et des boutons en JSX passés à `actions`. `Button`, `IconButton`, `OverflowMenu` et `MenuButton` ne servent qu’au contenu d’un bloc (« Tester la connexion » sous une explication), jamais pour une action de page, d’objet ou de ligne.
 
 ### Texte et contenus venus des données
 
@@ -771,6 +829,7 @@ export default function SemainePage() {
 - [ ] `check` rend `"ok": true`, sans remarque `design`.
 - [ ] Toutes les actions sont des `Action` : une seule `primary` par endroit, une icône pour chaque action courante (section 3), `danger` avec `confirm` et `success` pour toute destruction ; `onClick` rend la promesse de l’écriture.
 - [ ] Les colonnes, fiches et réglages ont le bon `type` (section 4.5) ; les états ont un `StatusMap` partagé.
-- [ ] Les saisies passent par `openForm`, champs typés, facultatifs marqués `optional`.
+- [ ] Les saisies passent par `openForm`, champs typés, facultatifs marqués `optional` ; un contenu à voir sans quitter la page par `openModal`, un objet à traiter en entier par `openSubpage`.
+- [ ] Un panneau composé qui montre un objet a son `header` ; aucune page n’appelle un client (les données d’un service viennent de `functions.call`).
 - [ ] Textes : `emptyTitle` nomme l’absence, libellés à l’infinitif (section 8), typographie française.
 - [ ] `page_snapshot` et `page_screenshot` montrent la page attendue, en clair et en sombre, panneau ouvert et fermé.

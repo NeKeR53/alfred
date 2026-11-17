@@ -8,10 +8,10 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 
 | À ne pas faire | Pourquoi | À la place |
 |---|---|---|
-| `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | `client(id)` |
+| `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | une fonction du connecteur (`functions.call`) ; `client(id)` dans les fonctions seulement |
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
-| `alert`, `confirm`, `prompt` | bloqués | Une `Action` avec `danger` et `confirm`, `confirmAction` (une confirmation), `openForm` (une saisie) de `@alfred/ui` |
+| `alert`, `confirm`, `prompt` | bloqués | Une `Action` avec `danger` et `confirm`, `confirmAction` (une confirmation), `openForm` (une saisie), `openModal` (un contenu) de `@alfred/ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
 | `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, section 5) |
@@ -219,7 +219,7 @@ export async function compter() {
 
 ### Passer par le connecteur d’un service
 
-Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires`), jamais `client()` directement. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
+Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires` s’il en est un autre), jamais `client()` directement. **Une page ne peut pas appeler un client** : Alfred refuse la requête, même accordée, et `check` signale l’import de `client` dans une page. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
 
 ```tsx
 import { functions, useAsync } from "@alfred/sdk";
@@ -231,13 +231,13 @@ const tickets = useAsync(
 );
 ```
 
-Seules les fonctions du connecteur écrivent `client("jira")`. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect` et ses tests (AGENTS.md, « Tests d’une fonction »), puis la page l’appelle.
+Seules les fonctions du connecteur écrivent `client("jira")`. **Une fonction, une responsabilité** : chacune fait une seule opération du service (`lister-tickets`, `lire-ticket`, `commenter-ticket`), et son entrée en porte les données (`projet`, `ticket`, `texte`). Jamais de fonction relais qui reçoit un chemin, une méthode ou une adresse et transmet n’importe quel appel (`requete({ path, method })`) : `check` la signale. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect` et ses tests (AGENTS.md, « Tests d’une fonction »), puis la page l’appelle.
 
 Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }` (corps JSON décodé, sinon texte ; en-têtes d’authentification retirés). Sa valeur de retour part en JSON à l’émetteur si elle arrive en moins de 25 secondes ; sinon l’émetteur reçoit `202` et la fonction continue. Planifiée, elle reçoit le `input` de sa planification. Webhooks et planifications se déclarent avec les outils `declare_webhook` et `declare_schedule` (AGENTS.md).
 
 ## 6. Clients : `client(id)`
 
-`client()` s’écrit dans les fonctions du module connecteur du service (voir § 5) ; les autres modules passent par ces fonctions.
+`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, passent par ces fonctions.
 
 ```ts
 client(id: string, options?: { instance?: string }): {
@@ -269,22 +269,21 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
-Dans une section par instance (`perInstance` du module, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et `client(id)` l’appelle d’office ; `client(id, { instance })` en vise une autre. Le même fichier de page sert à toutes les instances.
+Dans une section par instance (`perInstance` du module, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et la passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Le même fichier de page sert à toutes les instances. Une page peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
 
 `client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
 
 ```tsx
-import { client, useAsync } from "@alfred/sdk";
+// functions/lister-tickets.ts : une opération, une fonction.
+import { client } from "@alfred/sdk";
 
-export function useTicketsOuverts(projet: string, instance?: string) {
-  return useAsync(async () => {
-    const reponse = await client("jira", { instance }).get<{ issues: { key: string }[] }>("/rest/api/3/search", {
-      jql: `project = ${projet} AND statusCategory != Done`,
-      maxResults: 50,
-    });
-    if (!reponse.ok) throw new Error(`Jira a répondu ${reponse.status}.`);
-    return reponse.body.issues;
-  }, [projet, instance]);
+export default async function listerTickets({ projet, instance }: { projet: string; instance?: string }) {
+  const reponse = await client("jira", { instance }).get<{ issues: { key: string }[] }>("/rest/api/3/search", {
+    jql: `project = ${projet} AND statusCategory != Done`,
+    maxResults: 50,
+  });
+  if (!reponse.ok) throw new Error(`Jira a répondu ${reponse.status}.`);
+  return { tickets: reponse.body.issues.map((issue) => ({ cle: issue.key })) };
 }
 ```
 

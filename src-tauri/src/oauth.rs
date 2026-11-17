@@ -525,7 +525,7 @@ mod tests {
         let remote = remote().await;
         let port = local_server(&state).await;
         let callback = format!("http://127.0.0.1:{port}/oauth/callback");
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let entry = oauth_client(&state, &remote, None).await;
         grant(&state, &subject, "portail");
         let mut outputs: Vec<String> = Vec::new();
@@ -697,7 +697,7 @@ mod tests {
         let remote = remote().await;
         remote.state.basic_only.store(true, std::sync::atomic::Ordering::SeqCst);
         let port = local_server(&state).await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let attempts = || -> Vec<(String, String)> {
             let requests = remote.state.token_requests.lock().unwrap();
             requests.iter().map(|form| (form["grant_type"].clone(), form["_auth"].clone())).collect()
@@ -770,7 +770,7 @@ mod tests {
         let (state, _dir) = test_state();
         let (remote, elsewhere) = (remote().await, remote().await);
         let port = local_server(&state).await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let entry = oauth_client(&state, &remote, Some(REMOTE_CLIENT_SECRET)).await;
         grant(&state, &subject, "portail");
         let path = state.space().unwrap().root.join("clients/portail.json");

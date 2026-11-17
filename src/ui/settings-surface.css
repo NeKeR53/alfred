@@ -14,18 +14,20 @@
 }
 /* Tableaux des Réglages (mots de passe, webhooks, tâches, journal…) : pas de cadre ni de fond d’en-tête, des
    traits fins entre les lignes, comme les listes de réglages. */
-[data-surface="settings"] .al-table-scroll {
+[data-surface="settings"] .al-table-frame {
   border: 0;
   border-radius: 0;
 }
-[data-surface="settings"] .al-table th {
+[data-surface="settings"] .al-table-head {
   background: var(--color-bg);
+}
+[data-surface="settings"] .al-table th {
   font-weight: 400;
 }
 [data-surface="settings"] .al-table :is(th, td):first-child {
   padding-left: 0;
 }
-[data-surface="settings"] .al-table th:first-child > button {
+[data-surface="settings"] .al-table th:first-child > :is(button, .al-table__header) {
   padding-left: 0;
 }
 [data-surface="settings"] .al-table :is(th, td):last-child {

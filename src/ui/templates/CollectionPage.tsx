@@ -227,7 +227,7 @@ export function CollectionPage<Row>({
   ) : undefined;
 
   return (
-    <Page toolbar={toolbar}>
+    <Page toolbar={toolbar} fill={hasData && !state.error}>
       {banner}
       {state.error ? (
         <FeedbackBanner tone="danger" action={<Button onClick={state.reload}>Réessayer</Button>}>
@@ -248,6 +248,7 @@ export function CollectionPage<Row>({
           selectedKey={selected}
           onRowClick={onOpen || panel ? open : undefined}
           loading={state.loading}
+          fill
           emptyTitle="Aucun résultat"
           emptyDescription="Aucun élément ne correspond à la recherche ou aux filtres."
           emptyAction={filtered ? <Button onClick={reset}>Effacer les filtres</Button> : undefined}

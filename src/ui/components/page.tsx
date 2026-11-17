@@ -1,6 +1,7 @@
 import { type CSSProperties, isValidElement, type ReactNode } from "react";
 import { type Action, ActionBar } from "../templates/actions";
-import { TemplateDialogHost } from "../templates/dialogs";
+import { TemplateDialogHost, useDialogOwner } from "../templates/dialogs";
+import { PageHeaderBar, type PageHeaderSpec, SubpageLayer, useSubpage } from "../templates/subpages";
 import { PageToolbar } from "./PageToolbar";
 import { PageScope } from "./pageScope";
 import { SearchField } from "./SearchField";
@@ -12,14 +13,17 @@ const gapClass = (gap: Gap) => `al-gap-${gap}`;
 
 /**
  * Racine d’une page ou d’un panneau créé dans l’espace : occupe tout le cadre, fait défiler son contenu et fixe
- * les marges. Une page n’écrit ni marge extérieure ni couleur de fond elle-même.
+ * les marges. Une page n’écrit ni marge extérieure ni couleur de fond elle-même. L’en-tête (`header`) et la barre
+ * restent fixes au-dessus de la zone qui défile. La première `Page` montée héberge les modales et les sous-pages.
  */
 export function Page({
   children,
   toolbar,
   actions,
   search,
+  header,
   width = "full",
+  fill = false,
 }: {
   children: ReactNode;
   /** Barre fixe au-dessus du contenu, réservée à la coquille et aux gabarits : une page passe `actions` et `search`. */
@@ -28,9 +32,22 @@ export function Page({
   actions?: ReadonlyArray<Action>;
   /** Recherche de la page, à gauche de la barre. */
   search?: { label: string; value: string; onChange: (value: string) => void };
+  /**
+   * En-tête fixe de l’objet que montre la page (un panneau de droite composé, la fiche d’un objet) : nom, état,
+   * ligne de contexte et actions en icônes. Jamais le titre de la section, que la coquille affiche déjà.
+   */
+  header?: PageHeaderSpec;
   /** `text` limite la largeur de lecture ; `full` sert aux tableaux et aux vues denses. */
   width?: "full" | "text";
+  /**
+   * Le contenu occupe la hauteur sans défiler : pour une page dont le bloc principal est un `DataTable fill` (ses
+   * lignes défilent seules, sous leur en-tête) ou un éditeur.
+   */
+  fill?: boolean;
 }) {
+  const host = useDialogOwner();
+  const subpage = useSubpage();
+  const covered = host && subpage !== undefined;
   const bar =
     toolbar ??
     (actions?.length || search ? (
@@ -49,12 +66,19 @@ export function Page({
         {actions ? <ActionBar actions={actions} place="toolbar" /> : null}
       </PageToolbar>
     ) : undefined);
+  const bodyClass = ["al-page__body", width === "text" ? "al-page__body--text" : "", fill ? "al-page__body--fill" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <PageScope.Provider value={true}>
       <div className="al-page">
-        <TemplateDialogHost />
-        {bar}
-        <div className={`al-page__body${width === "text" ? " al-page__body--text" : ""}`}>{children}</div>
+        {host ? <TemplateDialogHost /> : null}
+        <div className="al-page__main" inert={covered || undefined} aria-hidden={covered || undefined}>
+          {header ? <PageHeaderBar header={header} /> : null}
+          {bar}
+          <div className={bodyClass}>{children}</div>
+        </div>
+        {covered ? <SubpageLayer entry={subpage} /> : null}
       </div>
     </PageScope.Provider>
   );

@@ -3,7 +3,7 @@ import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
 import { FeedbackBanner } from "../components/FeedbackBanner";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
-import { KeyValueList, ObjectHeader, Page, Section, Text } from "../components/page";
+import { KeyValueList, Page, Section, Text } from "../components/page";
 import { type Action, ActionBar } from "./actions";
 import { FormattedValue, type StatusMap, type ValueOptions } from "./format";
 import { useFrameServices, useReloadOnPeerChange } from "./services";
@@ -117,21 +117,15 @@ export function DetailPanel<Item>({
     (field) => !(field.hideEmpty && (field.value == null || field.value === "")),
   );
   return (
-    <Page>
-      <ObjectHeader
-        title={name}
-        description={subtitle?.(item) ?? undefined}
-        badge={
-          statusValue ? (
-            <FormattedValue value={statusValue} options={{ type: "status", statuses: status?.statuses }} />
-          ) : undefined
-        }
-        actions={
-          actions ? (
-            <ActionBar actions={actions(item)} place="header" subject={name} onDone={state.reload} />
-          ) : undefined
-        }
-      />
+    <Page
+      header={{
+        title: name,
+        subtitle: subtitle?.(item) ?? undefined,
+        status: statusValue ? (status?.statuses[statusValue] ?? { label: statusValue, tone: "neutral" }) : undefined,
+        actions: actions?.(item),
+        onDone: state.reload,
+      }}
+    >
       {rows.length > 0 ? (
         <KeyValueList
           items={rows.map((field) => ({

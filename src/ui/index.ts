@@ -77,8 +77,16 @@ export {
   type FormSpec,
   type FormValue,
   type FormValues,
+  type ModalSpec,
   openForm,
+  openModal,
 } from "./templates/dialogs";
 export { FormattedValue, type StatusMap, type StatusTone, type ValueType } from "./templates/format";
 export { type Setting, SettingsPage, type SettingsSection } from "./templates/SettingsPage";
 export { type FrameServices, FrameServicesContext } from "./templates/services";
+export {
+  closeSubpage,
+  openSubpage,
+  type PageHeaderSpec,
+  type SubpageSpec,
+} from "./templates/subpages";

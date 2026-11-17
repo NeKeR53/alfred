@@ -42,11 +42,11 @@ const TEMPLATE_PARTS: [(&str, &str); 9] = [
     ("ToolbarSeparator", "les props `actions` de `Page`, ou `CollectionPage`"),
     ("SettingRow", "`SettingsPage` et ses réglages (`switch`, `select`, `text`, `action`, `info`)"),
     ("SettingRows", "`SettingsPage` et ses réglages (`switch`, `select`, `text`, `action`, `info`)"),
-    ("Modal", "`openForm({ title, fields, submitLabel, onSubmit })`"),
+    ("Modal", "`openModal({ title, content, actions })`, ou `openForm({ title, fields, submitLabel, onSubmit })` pour une saisie"),
     ("ConfirmDialog", "une `Action` avec `danger` et `confirm`, ou `confirmAction(…)`"),
     ("FormActions", "`openForm(…)`, qui pose ses boutons"),
     ("AnchoredPanel", "un filtre de `CollectionPage` ou une `Action` qui ouvre `openForm`"),
-    ("ObjectHeader", "`DetailPanel`, qui pose le nom, l’état et les actions de l’objet"),
+    ("ObjectHeader", "`DetailPanel`, ou la prop `header` de `Page` (`{ title, subtitle, status, actions }`)"),
 ];
 
 /// Où se trouve l’élément visité : élément parent, ou attribut d’un élément (`actions` de `Section`…).
@@ -289,6 +289,26 @@ pub fn lint(source: &str) -> Vec<Diagnostic> {
         !specifier.starts_with('.') && !crate::transpile::ALLOWED_IMPORTS.contains(&specifier)
     });
     let mut lint = Lint { source, uses_library, stack: Vec::new(), owners: Vec::new(), found: Vec::new() };
+    // Cloisonnement : une page n’appelle jamais un client, elle passe par les fonctions du connecteur.
+    for statement in &parsed.program.body {
+        let oxc::ast::ast::Statement::ImportDeclaration(import) = statement else { continue };
+        if import.source.value.as_str() != "@alfred/sdk" {
+            continue;
+        }
+        for specifier in import.specifiers.iter().flatten() {
+            if let oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(named) = specifier {
+                if named.imported.name().as_str() == "client" {
+                    lint.report(
+                        named.span.start,
+                        "Une page n’appelle pas un client : chaque appel au service est une fonction du connecteur \
+                         (`declare_function`, `effect`, `tests`), que la page appelle avec `functions.call(\"module/fonction\", …)`. \
+                         Le client refuse les requêtes des pages."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
     lint.visit_program(&parsed.program);
     lint.found
 }
@@ -299,6 +319,20 @@ mod tests {
 
     fn messages(source: &str) -> Vec<String> {
         lint(source).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+    }
+
+    #[test]
+    fn une_page_n_importe_pas_le_client() {
+        let page = r#"
+import { functions, client } from "@alfred/sdk";
+import { Page } from "@alfred/ui";
+export default function P() {
+  return <Page>{null}</Page>;
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("2: Une page n’appelle pas un client")), "{found:?}");
+        assert!(messages(&page.replace(", client", "")).is_empty());
     }
 
     #[test]

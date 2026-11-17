@@ -420,8 +420,10 @@ export interface ClientOptions {
 }
 
 /**
- * Client déclaré dans l’espace. Alfred exécute la requête et y ajoute l’authentification : la page ne voit jamais
- * le secret et ne peut joindre que l’adresse de base de l’instance appelée.
+ * Client déclaré dans l’espace, **pour les fonctions du connecteur seulement** : une requête venue d’une page ou d’un
+ * panneau est refusée (la page appelle la fonction avec `functions.call`). Alfred exécute la requête et y ajoute
+ * l’authentification : la fonction ne voit jamais le secret et ne peut joindre que l’adresse de base de l’instance
+ * appelée. `instances()` reste permis aux pages, pour proposer un choix de compte.
  */
 export function client(id: string, options: ClientOptions = {}) {
   const instance = options.instance;

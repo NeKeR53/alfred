@@ -1340,9 +1340,18 @@ fn object<'a>(args: &'a Value, name: &str) -> AppResult<Option<&'a Map<String, V
 async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let subject: Subject = arg(args, "subject")?;
     let name: String = arg(args, "client")?;
+    // Cloisonnement : un service ne se joint que par une fonction de son connecteur. Une page ou un panneau appelle
+    // la fonction (`functions.call`), jamais le client lui-même.
+    if subject.kind != "function" {
+        return Err(AppError::new(format!(
+            "Une page n’appelle pas un client directement : « {name} » se joint par une fonction du connecteur du \
+             module (`declare_function`), que la page appelle avec `functions.call(\"{}/<fonction>\", …)`.",
+            dependency_reference(&name).map(|(module, _)| module.to_string()).unwrap_or_else(|| subject.module.clone())
+        )));
+    }
     let space = state.space()?;
     let def = resolve(&space, &subject.module, &name)?;
-    // Une page d’une section par instance appelle son instance, sauf si elle en nomme une autre.
+    // Une fonction appelée depuis une section par instance appelle son instance, sauf si elle en nomme une autre.
     let instance = opt_arg::<String>(args, "instance")?.or_else(|| subject.instance.clone());
     let client = def.effective(instance.as_deref())?;
     let path: String = arg(args, "path")?;
@@ -2196,6 +2205,11 @@ pub mod testing {
         Subject { kind: "page".to_string(), module: module.to_string(), reference: format!("{module}/accueil"), instance: None }
     }
 
+    /// Les fonctions du module : seules à joindre ses clients.
+    pub fn function_subject(module: &str) -> Subject {
+        Subject { kind: "function".to_string(), module: module.to_string(), reference: format!("{module}/*"), instance: None }
+    }
+
     /// L’accord passe normalement par une question à l’interface ; les tests l’accordent d’avance.
     pub fn grant(state: &Arc<AppState>, subject: &Subject, client: &str) {
         let space = state.space().unwrap().root.to_string_lossy().to_string();
@@ -2471,6 +2485,28 @@ mod tests {
         }
     }
 
+    /// Cloisonnement : une page ou un panneau ne joint jamais un service par son client, même accordé ; seules les
+    /// fonctions du module le font, et la page reçoit la consigne de passer par elles.
+    #[tokio::test]
+    async fn a_page_reaches_a_service_only_through_a_function() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let client = json!({ "id": "public", "label": "Public", "baseUrl": format!("{}/api", remote.origin), "auth": { "type": "none" } });
+        assert_eq!(save_client(&state, client).await["status"], json!("ready"));
+        let page = page_subject("crm");
+        let mut panel = page_subject("crm");
+        panel.kind = "panel".to_string();
+        grant(&state, &page, "public");
+        for subject in [&page, &panel] {
+            let error = request(&state, subject, "public", json!({ "path": "/echo" })).await.unwrap_err();
+            assert!(error.message.contains("functions.call(\"crm/<fonction>\""), "{}", error.message);
+        }
+        assert!(remote.state.seen.lock().unwrap().is_empty(), "le service n’a pas été appelé");
+        let function = function_subject("crm");
+        grant(&state, &function, "public");
+        assert!(request(&state, &function, "public", json!({ "path": "/echo" })).await.is_ok());
+    }
+
     /// Une lecture demandée avec `cache` est servie par Alfred pendant sa durée, sans rappeler le service ; une
     /// écriture, une autre page de requête ou un autre module passent toujours par le service.
     #[tokio::test]
@@ -2478,8 +2514,8 @@ mod tests {
         let (state, _dir) = test_state();
         let remote = remote().await;
         let base = format!("{}/api", remote.origin);
-        let subject = page_subject("crm");
-        let other = page_subject("suivi");
+        let subject = function_subject("crm");
+        let other = function_subject("suivi");
         let client = json!({ "id": "public", "label": "Public", "baseUrl": base, "auth": { "type": "none" } });
         assert_eq!(save_client(&state, client).await["status"], json!("ready"));
         grant(&state, &subject, "public");
@@ -2510,7 +2546,7 @@ mod tests {
         let (state, _dir) = test_state();
         let remote = remote().await;
         let base = format!("{}/api", remote.origin);
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let mut outputs: Vec<Value> = Vec::new();
 
         let (token_id, key_id, basic_id, machine_id) =
@@ -2609,7 +2645,7 @@ mod tests {
         let line = journal.iter().find(|line| line["subject"] == json!("parametre")).unwrap();
         assert_eq!(line["summary"], json!("GET /echo → 200"));
         assert_eq!(line["status"], json!("ok"));
-        assert_eq!(line["detail"]["requester"], json!("crm/accueil"));
+        assert_eq!(line["detail"]["requester"], json!("crm/*"));
         assert!(journal.iter().any(|line| line["summary"] == json!("POST /echo/tickets → 200")));
         assert!(journal.iter().any(|line| line["detail"]["requester"] == json!("Réglages")));
 
@@ -2625,7 +2661,7 @@ mod tests {
     async fn a_page_cannot_leave_the_base_address_or_set_the_authentication() {
         let (state, _dir) = test_state();
         let remote = remote().await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let key_id = unique("cle");
         invoke(
             &state,
@@ -2717,7 +2753,7 @@ mod tests {
     async fn redirects_stay_on_the_origin_and_large_or_failed_responses_are_explicit() {
         let (state, _dir) = test_state();
         let remote = remote().await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let token_id = unique("jeton");
         invoke(
             &state,
@@ -2773,7 +2809,7 @@ mod tests {
     async fn a_rejected_application_token_is_renewed_once() {
         let (state, _dir) = test_state();
         let remote = remote().await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let machine_id = unique("machine");
         invoke(
             &state,
@@ -2823,7 +2859,7 @@ mod tests {
     async fn settings_save_list_bind_and_delete_clients() {
         let (state, _dir) = test_state();
         let space = state.space().unwrap();
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
 
         // Validation à l’enregistrement.
         let refusals = [
@@ -2953,13 +2989,13 @@ mod tests {
         invoke(&state, "clients.bind", json!({ "need": "crm/hubspot", "client": "hubspot-equipe" })).await.unwrap();
 
         // Aucun accord n’est enregistré pour « devis » : la requête passe quand même, par la liaison de « crm ».
-        let devis = page_subject("devis");
+        let devis = function_subject("devis");
         let response = request(&state, &devis, "crm/hubspot", json!({ "path": "/echo" })).await.unwrap();
         assert_eq!(response["status"], json!(200));
         assert_eq!(remote.last().path, "/api/echo");
 
         // Sans dépendance déclarée, ou vers un besoin que « crm » ne déclare pas : refus qui dit quoi faire.
-        let error = request(&state, &page_subject("autre"), "crm/hubspot", json!({ "path": "/echo" })).await.unwrap_err();
+        let error = request(&state, &function_subject("autre"), "crm/hubspot", json!({ "path": "/echo" })).await.unwrap_err();
         assert!(error.message.contains("requires"), "{}", error.message);
         let error = request(&state, &devis, "crm/jira", json!({ "path": "/echo" })).await.unwrap_err();
         assert!(error.message.contains("ne déclare pas"), "{}", error.message);
@@ -2996,7 +3032,7 @@ mod tests {
     async fn a_client_changed_outside_settings_sends_nothing_until_the_user_validates_it() {
         let (state, _dir) = test_state();
         let (remote, elsewhere) = (remote().await, remote().await);
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let (token_id, machine_id) = (unique("jeton"), unique("machine"));
         invoke(
             &state,
@@ -3141,7 +3177,7 @@ mod tests {
     async fn deleting_a_client_revokes_its_grants_and_refusals_are_journaled() {
         let (state, _dir) = test_state();
         let remote = remote().await;
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let space = state.space().unwrap().root.to_string_lossy().to_string();
         let token_id = unique("jeton");
         invoke(
@@ -3197,7 +3233,7 @@ mod tests {
             (line["kind"].clone(), line["status"].clone(), line["subject"].clone()),
             (json!("client"), json!("error"), json!("api"))
         );
-        assert_eq!(line["detail"]["requester"], json!("crm/accueil"));
+        assert_eq!(line["detail"]["requester"], json!("crm/*"));
     }
 
     /// Un client à plusieurs instances : chaque instance a son adresse, sa méthode et son secret ; l’agent ne peut en
@@ -3206,7 +3242,7 @@ mod tests {
     async fn a_client_with_several_instances_sends_each_secret_to_its_own_address() {
         let (state, _dir) = test_state();
         let (acme, autre) = (remote().await, remote().await);
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let (token_id, key_id, machine_id) = (unique("pat"), unique("cle"), unique("machine"));
         for (id, kind, extra) in [
             (&token_id, "token", json!({ "secrets": { "value": TOKEN } })),
@@ -3413,7 +3449,7 @@ mod tests {
         assert_eq!(shown, [("Jira — Autre", true), ("Acme", false)]);
 
         // La page d’une copie appelle son instance, sans la nommer ; l’accord vaut pour toutes les copies.
-        let mut subject = page_subject("jira");
+        let mut subject = function_subject("jira");
         subject.reference = "jira/tickets".into();
         grant(&state, &subject, "jira");
         subject.instance = Some("autre".into());
@@ -3435,7 +3471,7 @@ mod tests {
     async fn an_agent_declares_and_validates_the_instances_of_a_client() {
         let (state, _dir) = test_state();
         let (acme, autre) = (remote().await, remote().await);
-        let subject = page_subject("crm");
+        let subject = function_subject("crm");
         let (acme_id, autre_id) = (unique("acme"), unique("autre"));
         for (id, value) in [(&acme_id, TOKEN), (&autre_id, "j3ton-AUTRE")] {
             invoke(&state, "vault.save", json!({ "id": id, "label": id, "kind": "token", "secrets": { "value": value } }))

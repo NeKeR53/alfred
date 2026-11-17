@@ -676,6 +676,28 @@ fn module_files(space: &crate::space::Space, snapshot: &Snapshot, keep: &impl Fn
     problems
 }
 
+/// Champs d’entrée qui font d’une fonction un relais générique vers le service (un chemin, une méthode HTTP, une
+/// adresse) : une fonction de connecteur a une seule responsabilité, nommée, et son entrée en dit les données.
+const PASS_THROUGH_FIELDS: [&str; 5] = ["path", "method", "endpoint", "httpMethod", "verb"];
+
+/// Remarque sur une fonction dont l’entrée reçoit un chemin, une méthode ou une adresse : elle encapsule tous les
+/// appels au lieu d’en faire un.
+fn pass_through_problem(input: &Value) -> Option<String> {
+    let properties = input.get("properties")?.as_object()?;
+    let found: Vec<&str> =
+        PASS_THROUGH_FIELDS.iter().copied().filter(|field| properties.contains_key(*field)).collect();
+    if found.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "La fonction reçoit {} : c’est un relais qui encapsule tous les appels au service. Une fonction de connecteur \
+         fait une seule opération (`lister-tickets`, `commenter-ticket`) et son entrée en porte les données \
+         (`projet`, `ticket`, `texte`), jamais un chemin, une méthode ou une adresse. Remplace-la par une fonction par \
+         opération.",
+        found.iter().map(|field| format!("`{field}`")).collect::<Vec<_>>().join(", ")
+    ))
+}
+
 /// Webhooks et planifications dont la fonction est absente ou mal désignée, et planifications sans déclencheur
 /// valide.
 fn trigger_problems(snapshot: &Snapshot, keep: &impl Fn(&str) -> bool) -> (Vec<Value>, Vec<Value>) {
@@ -1035,12 +1057,20 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let functions: Vec<Value> = snapshot
                 .functions
                 .iter()
-                .filter(|function| keep(&function.module) && (function.missing || !function.errors.is_empty()))
-                .map(|function| {
+                .filter(|function| keep(&function.module))
+                .filter_map(|function| {
                     if function.missing {
-                        json!({ "function": function.reference, "problem": "Le fichier de la fonction n’est pas encore écrit." })
+                        Some(json!({ "function": function.reference, "problem": "Le fichier de la fonction n’est pas encore écrit." }))
+                    } else if !function.errors.is_empty() {
+                        Some(json!({ "function": function.reference, "errors": function.errors }))
                     } else {
-                        json!({ "function": function.reference, "errors": function.errors })
+                        // Seule une fonction qui joint un service peut en être le relais.
+                        let reaches_service = !function.uses.clients.is_empty()
+                            || space.module(&function.module).is_ok_and(|manifest| !manifest.clients.is_empty());
+                        reaches_service
+                            .then(|| pass_through_problem(&function.input))
+                            .flatten()
+                            .map(|problem| json!({ "function": function.reference, "problem": problem }))
                     }
                 })
                 .collect();
@@ -1208,6 +1238,17 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
 mod tests {
     use super::*;
     use crate::space::{ScheduleDecl, Space, WebhookDecl};
+
+    /// Une fonction de connecteur fait une opération : un relais qui reçoit chemin et méthode est signalé.
+    #[test]
+    fn a_pass_through_function_is_flagged() {
+        let relay = json!({ "type": "object", "properties": { "path": { "type": "string" }, "method": { "type": "string" } } });
+        let problem = pass_through_problem(&relay).unwrap();
+        assert!(problem.contains("`path`, `method`") && problem.contains("une seule opération"), "{problem}");
+        let operation = json!({ "type": "object", "properties": { "projet": { "type": "string" } } });
+        assert!(pass_through_problem(&operation).is_none());
+        assert!(pass_through_problem(&json!({})).is_none());
+    }
     use crate::state::ServerInfo;
 
     const CONVERSATION: &str = "conversation-test";

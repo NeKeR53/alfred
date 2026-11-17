@@ -1,9 +1,11 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { Button } from "../components/Button";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { CheckboxControl, FormField, SelectControl, TextArea, TextInput } from "../components/FormControls";
 import { Modal } from "../components/Modal";
 import { Form, Grid } from "../components/page";
+import { type Action, useRunAction } from "./actions";
+import { releases } from "./host";
 import { CHANGED, errorMessage, useFrameServices } from "./services";
 
 /** Une option de liste : la valeur enregistrée et son libellé. */
@@ -57,6 +59,28 @@ export interface FormSpec {
   success?: string;
 }
 
+/**
+ * Une modale de contenu : un aperçu, une liste à choisir, un détail à lire sans quitter la page. Le contenu est
+ * composé de blocs de `@alfred/ui` ; le pied porte « Fermer » et les actions, disposées par Alfred.
+ */
+export interface ModalSpec {
+  /** Ce que montre la modale : « Aperçu de la facture », « Choisir un modèle ». */
+  title: string;
+  /** Une phrase sous le titre, facultative. */
+  description?: string;
+  /** `small` : 360 px ; `default` : 480 px ; `wide` : 720 px, pour un tableau ou un aperçu. */
+  size?: "small" | "default" | "wide";
+  /** Le contenu ; sous forme de fonction, il reçoit `close` (un élément de liste qui choisit puis ferme). */
+  content: ReactNode | ((close: () => void) => ReactNode);
+  /**
+   * Actions du pied, après « Fermer » : l’action `primary` en dernier, en bouton plein. Une action réussie ferme la
+   * modale (confirmation, attente, notification et rechargement comme partout).
+   */
+  actions?: ReadonlyArray<Action>;
+  /** Libellé du bouton qui ferme : « Fermer » par défaut, « Annuler » quand une action principale est proposée. */
+  closeLabel?: string;
+}
+
 export interface ConfirmSpec {
   title: string;
   message?: string;
@@ -66,13 +90,17 @@ export interface ConfirmSpec {
 
 type Request =
   | { id: number; kind: "confirm"; spec: ConfirmSpec; resolve: (accepted: boolean) => void }
-  | { id: number; kind: "form"; spec: FormSpec; resolve: (saved: boolean) => void };
+  | { id: number; kind: "form"; spec: FormSpec; resolve: (saved: boolean) => void }
+  | { id: number; kind: "modal"; spec: ModalSpec; resolve: (acted: boolean) => void };
 
 let nextId = 0;
 /** Hôte qui affiche la file : le premier `Page` monté ; les autres ne rendent rien. */
 let owner: symbol | null = null;
 
-/** File des dialogues ouverts par les gabarits, `openForm` et `confirmAction` : `Page` en affiche un à la fois. */
+/**
+ * Pile des dialogues ouverts par les gabarits, `openForm`, `openModal` et `confirmAction` : `Page` les affiche
+ * tous, le dernier ouvert au-dessus (une confirmation demandée depuis une modale s’affiche sur elle).
+ */
 let queue: Request[] = [];
 const listeners = new Set<() => void>();
 const emit = () => {
@@ -82,7 +110,7 @@ const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => listeners.delete(listener);
 };
-const current = () => queue[0];
+const current = () => queue;
 const settle = (request: Request, value: boolean) => {
   queue = queue.filter((item) => item !== request);
   emit();
@@ -103,6 +131,20 @@ export function openForm(spec: FormSpec): Promise<boolean> {
   return promise;
 }
 
+/**
+ * Ouvre une modale de contenu (aperçu, choix, détail). Renvoie `true` quand une de ses actions a réussi, `false`
+ * quand l’utilisateur la ferme. Rendue par `Page` : la page n’a rien à poser.
+ */
+export function openModal(spec: ModalSpec): Promise<boolean> {
+  const promise = new Promise<boolean>((resolve) => {
+    nextId += 1;
+    queue = [...queue, { id: nextId, kind: "modal", spec, resolve }];
+    emit();
+  });
+  dialogPromises.add(promise);
+  return promise;
+}
+
 /** Demande une confirmation (question qui nomme l’objet, verbe de l’action). Renvoie `true` si elle est acceptée. */
 export function confirmAction(spec: ConfirmSpec): Promise<boolean> {
   return new Promise((resolve) => {
@@ -112,7 +154,7 @@ export function confirmAction(spec: ConfirmSpec): Promise<boolean> {
   });
 }
 
-/** Promesses rendues par `openForm` et `confirmAction` : une action qui en rend une n’affiche pas d’attente. */
+/** Promesses rendues par `openForm` et `openModal` : une action qui en rend une n’affiche pas d’attente. */
 const dialogPromises = new WeakSet<Promise<boolean>>();
 
 export function isDialogPromise(value: unknown): value is Promise<boolean> {
@@ -324,9 +366,11 @@ function FormDialog({ spec, onDone }: { spec: FormSpec; onDone: (saved: boolean)
   );
 }
 
-/** Affiche le dialogue en tête de file. Rendu par `Page` : une page n’a jamais à le poser. */
-export function TemplateDialogHost() {
-  const request = useSyncExternalStore(subscribe, current, current);
+/**
+ * La première `Page` montée héberge les dialogues et les sous-pages ; les autres (une page dans une sous-page, un
+ * gabarit dans un autre) ne rendent rien. Quand l’hôte disparaît, ce qui restait ouvert est abandonné.
+ */
+export function useDialogOwner(): boolean {
   const [me] = useState(() => Symbol("hôte"));
   const [active, setActive] = useState(false);
   useEffect(() => {
@@ -335,24 +379,76 @@ export function TemplateDialogHost() {
     setActive(true);
     return () => {
       owner = null;
-      // Un dialogue resté ouvert quand la page disparaît est abandonné.
       for (const pending of queue) pending.resolve(false);
       queue = [];
+      for (const release of releases) release();
     };
   }, [me]);
-  if (!active || !request) return null;
-  if (request.kind === "confirm") {
-    return (
-      <ConfirmDialog
-        open
-        title={request.spec.title}
-        message={request.spec.message}
-        confirmLabel={request.spec.confirmLabel}
-        tone={request.spec.tone}
-        onConfirm={() => settle(request, true)}
-        onCancel={() => settle(request, false)}
-      />
-    );
-  }
-  return <FormDialog key={request.id} spec={request.spec} onDone={(saved) => settle(request, saved)} />;
+  return active;
+}
+
+/** Affiche les dialogues ouverts, le dernier au-dessus. Rendu par `Page` : une page n’a jamais à le poser. */
+export function TemplateDialogHost() {
+  const requests = useSyncExternalStore(subscribe, current, current);
+  return (
+    <>
+      {requests.map((request) =>
+        request.kind === "confirm" ? (
+          <ConfirmDialog
+            key={request.id}
+            open
+            title={request.spec.title}
+            message={request.spec.message}
+            confirmLabel={request.spec.confirmLabel}
+            tone={request.spec.tone}
+            onConfirm={() => settle(request, true)}
+            onCancel={() => settle(request, false)}
+          />
+        ) : request.kind === "form" ? (
+          <FormDialog key={request.id} spec={request.spec} onDone={(saved) => settle(request, saved)} />
+        ) : (
+          <ContentDialog key={request.id} spec={request.spec} onDone={(acted) => settle(request, acted)} />
+        ),
+      )}
+    </>
+  );
+}
+
+/** Modale de contenu ouverte par `openModal`. */
+function ContentDialog({ spec, onDone }: { spec: ModalSpec; onDone: (acted: boolean) => void }) {
+  const { run, running } = useRunAction(() => onDone(true));
+  const actions = (spec.actions ?? []).filter((action) => !action.hidden);
+  const primary = actions.find((action) => action.primary && !action.danger);
+  const others = actions.filter((action) => action !== primary);
+  const close = () => onDone(false);
+  return (
+    <Modal
+      open
+      busy={running !== null}
+      size={spec.size ?? "default"}
+      title={spec.title}
+      description={spec.description}
+      onClose={close}
+      actions={
+        <>
+          <Button disabled={running !== null} onClick={close}>
+            {spec.closeLabel ?? (primary ? "Annuler" : "Fermer")}
+          </Button>
+          {[...others, ...(primary ? [primary] : [])].map((action) => (
+            <Button
+              key={action.label}
+              variant={action === primary ? "primary" : action.danger ? "danger" : "secondary"}
+              disabled={action.disabled || (running !== null && running !== action.label)}
+              loading={running === action.label}
+              onClick={() => void run(action)}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </>
+      }
+    >
+      {typeof spec.content === "function" ? spec.content(close) : spec.content}
+    </Modal>
+  );
 }
