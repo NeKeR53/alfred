@@ -14,7 +14,9 @@ export function useModuleSetup({ listen = true }: { listen?: boolean } = {}) {
     try {
       setModules(await getSetup());
     } catch {
-      // Pas d’espace ouvert ou backend indisponible : rien à signaler, les écrans gardent leur état.
+      // Pas d’espace ouvert ou backend indisponible : rien à signaler, les écrans gardent leur état (aucun module
+      // connu à la première lecture, pour que les pages s’affichent quand même).
+      setModules((current) => current ?? []);
     }
   }, []);
   useEffect(() => {

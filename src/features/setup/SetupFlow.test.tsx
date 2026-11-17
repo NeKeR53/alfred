@@ -13,8 +13,8 @@ import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
 import type { VaultEntry } from "../vault/api";
 import { type ModuleSetup, remainingSummary, type SetupStep } from "./api";
 import { OnboardingHost, openOnboarding, useOnboarding } from "./Onboarding";
-import { SetupBanner } from "./SetupBanner";
 import { resumeStep } from "./SetupFlow";
+import { SetupGate } from "./SetupGate";
 
 /**
  * Parcours de configuration d’un module, par l’écran réel des Réglages → Modules, contre un faux backend qui
@@ -282,7 +282,7 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
   await user.click(screen.getByRole("button", { name: "Terminer la configuration" }));
 
   // Reprise : directement à l’étape du service qui manque, avec l’aide du module.
-  expect(await screen.findByRole("heading", { name: "Gmail" })).toBeTruthy();
+  expect(await within(await screen.findByRole("dialog")).findByRole("heading", { name: "Gmail" })).toBeTruthy();
   expect(screen.getAllByText(GMAIL.help as string).length).toBeGreaterThan(0);
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Ajouter votre compte Gmail" }));
 
@@ -396,38 +396,89 @@ it("reprend à la première étape essentielle incomplète et résume ce qui res
   expect(remainingSummary(setup([step("a", "failed"), step("b", "missing", true)]))).toBe("Reste à configurer : A.");
 });
 
-it("le bandeau d’une page propose de vérifier un service seulement pas encore testé, puis disparaît", async () => {
+it("une page à qui il manque un service affiche la page d’attente, et son bouton ouvre l’onboarding du module", async () => {
   const user = userEvent.setup();
-  stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
   modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
-  render(<SetupBanner module="boite" />);
-  expect(await screen.findByText("La connexion à Gmail n’a pas encore été vérifiée.")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Vérifier" }));
-  await waitFor(() => expect(screen.queryByText(/pas encore été vérifiée/)).toBeNull());
-  expect(calls.filter((call) => call.command === "clients.test").map((call) => call.args)).toEqual([{ id: "gmail" }]);
-
-  // Un test raté : le bandeau renvoie vers le parcours.
-  testOk = false;
-  delete tests.gmail;
-  render(<SetupBanner module="boite" />);
-  await user.click(await screen.findByRole("button", { name: "Vérifier" }));
-  expect(await screen.findAllByText(/Gmail n’est pas encore configuré/)).not.toHaveLength(0);
+  render(
+    <SetupGate module="boite">
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Cette page attend Gmail")).toBeTruthy();
+  expect(screen.getByText("Gmail : à ajouter.")).toBeTruthy();
+  expect(screen.queryByText("Vraie page")).toBeNull();
+  expect(screen.getAllByRole("button")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Configurer" }));
+  expect(useOnboarding.getState()).toEqual({ module: "boite", start: "resume" });
 });
 
-it("une page qui n’utilise que les services prêts s’affiche sans bandeau, même si le module attend un autre service", async () => {
+it("la page d’attente cède la place à la vraie page dès que le service est prêt, sans recharger", async () => {
+  modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
+  render(
+    <SetupGate module="boite">
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Cette page attend Gmail")).toBeTruthy();
+  stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
+  tests.gmail = { ok: true, message: "Le service répond (200)." };
+  act(() => emit("clients:changed"));
+  expect(await screen.findByText("Vraie page")).toBeTruthy();
+  expect(screen.queryByText(/attend/)).toBeNull();
+});
+
+it("un service seulement pas encore testé est vérifié de lui-même ; un test raté laisse la page d’attente", async () => {
+  stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
+  modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
+  const { unmount } = render(
+    <SetupGate module="boite">
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Vraie page")).toBeTruthy();
+  expect(calls.filter((call) => call.command === "clients.test").map((call) => call.args)).toEqual([{ id: "gmail" }]);
+  unmount();
+
+  testOk = false;
+  delete tests.gmail;
+  render(
+    <SetupGate module="boite">
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Gmail : connexion en échec.")).toBeTruthy();
+  expect(screen.queryByText("Vraie page")).toBeNull();
+});
+
+it("une page qui n’utilise que les services prêts s’affiche, même si le module attend un autre service", async () => {
   stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
   tests.gmail = { ok: true, message: "Le service répond (200)." };
   modules = [summary("boite", "Boîte", { clients: [GMAIL, { id: "agenda", label: "Agenda" }] })];
-  const { unmount } = render(<SetupBanner module="boite" uses={{ clients: ["gmail"] }} />);
-  await waitFor(() => expect(calls.some((call) => call.command === "modules.setup")).toBe(true));
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(screen.queryByRole("status")).toBeNull();
-  expect(screen.queryByText(/configur/)).toBeNull();
+  const { unmount } = render(
+    <SetupGate module="boite" uses={{ clients: ["gmail"] }}>
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Vraie page")).toBeTruthy();
+  expect(screen.queryByText(/attend/)).toBeNull();
   unmount();
-  // La page qui a besoin de l’agenda, elle, le dit, sans alarmer : une partie du module marche déjà.
-  render(<SetupBanner module="boite" uses={{ clients: ["agenda"] }} />);
-  expect(await screen.findByText(/Agenda n’est pas encore configuré/)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Configurer" })).toBeTruthy();
+  render(
+    <SetupGate module="boite" uses={{ clients: ["agenda"] }}>
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Cette page attend Agenda")).toBeTruthy();
+  expect(screen.queryByText("Vraie page")).toBeNull();
+});
+
+it("un service facultatif qui manque ne retient pas la page", async () => {
+  modules = [summary("boite", "Boîte", { clients: [{ ...GMAIL, optional: true }] })];
+  render(
+    <SetupGate module="boite">
+      <p>Vraie page</p>
+    </SetupGate>,
+  );
+  expect(await screen.findByText("Vraie page")).toBeTruthy();
 });
 
 it("l’agent ouvre l’onboarding d’un module : le panneau s’ouvre sur sa présentation", async () => {

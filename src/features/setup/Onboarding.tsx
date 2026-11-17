@@ -1,6 +1,6 @@
 /**
  * Onboarding d’un module : un panneau à part, au-dessus de l’app, hors des Réglages. Il s’ouvre juste après l’import
- * d’un module, ou quand l’utilisateur lance la configuration d’un module (sa fiche, le bandeau d’une page). Il
+ * d’un module, ou quand l’utilisateur lance la configuration d’un module (sa fiche, la page d’attente d’une page). Il
  * présente le module, laisse nommer ses pages dans le menu, puis guide la connexion de chaque service.
  */
 import { Dialog } from "@alfred/ui";

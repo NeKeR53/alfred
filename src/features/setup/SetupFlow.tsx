@@ -413,8 +413,7 @@ export function SetupFlow({
             ))}
           </ul>
           <Text tone="muted" size="meta">
-            Vous pourrez les configurer plus tard depuis Réglages → Modules, ou depuis le bandeau des pages qui en ont
-            besoin.
+            Vous pourrez les configurer plus tard depuis Réglages → Modules.
           </Text>
         </>
       )}

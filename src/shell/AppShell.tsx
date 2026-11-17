@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { SetupBanner } from "../features/setup/SetupBanner";
+import { SetupGate } from "../features/setup/SetupGate";
 import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
@@ -68,7 +68,12 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
       />
     );
   }
-  return <PageFrame page={page} kind={kind} host={host} />;
+  // Tant qu’un service dont la page a besoin n’est pas prêt, la page d’attente remplace le cadre, qui n’est pas chargé.
+  return (
+    <SetupGate module={page.module} uses={page.uses} compact={kind === "panel"}>
+      <PageFrame page={page} kind={kind} host={host} />
+    </SetupGate>
+  );
 }
 
 /**
@@ -256,10 +261,7 @@ export function SectionView({
               </Button>
             </EmptyState>
           ) : page ? (
-            <>
-              <SetupBanner module={page.module} uses={page.uses} />
-              <SpacePage key={page.reference} page={page} kind="page" />
-            </>
+            <SpacePage key={page.reference} page={page} kind="page" />
           ) : (
             <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
           )}

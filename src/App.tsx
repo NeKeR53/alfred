@@ -8,7 +8,6 @@ import { useModuleUpdates } from "./features/modules/useModuleUpdates";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
 import { OnboardingHost } from "./features/setup/Onboarding";
-import { SetupTool } from "./features/setup/SetupBanner";
 import { AppShell } from "./shell/AppShell";
 import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
@@ -63,12 +62,7 @@ export function App() {
         agentAvailable={agentAvailable}
         settingsTabs={tabs}
         renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}
-        renderPageTools={(page, container) => (
-          <>
-            <SetupTool module={page.module} uses={page.uses} />
-            <UiFixTool key={page.reference} page={page} container={container} />
-          </>
-        )}
+        renderPageTools={(page, container) => <UiFixTool key={page.reference} page={page} container={container} />}
       />
       <ShellServices />
       <CommandPalette />

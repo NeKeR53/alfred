@@ -47,7 +47,7 @@ export interface ModuleSetup {
 export const getSetup = (module?: string) =>
   invoke<{ modules: ModuleSetup[] }>("modules.setup", module ? { module } : {}).then((result) => result.modules);
 
-/** Ce qu’il reste à faire, en mots simples, pour la ligne d’un module ou le bandeau d’une page. */
+/** Ce qu’il reste à faire, en mots simples, pour la fiche d’un module. */
 export function remainingSummary(setup: ModuleSetup): string {
   const left = setup.steps.filter((step) => !step.optional && step.state !== "ready");
   if (left.length === 0) return "Tout est prêt.";
