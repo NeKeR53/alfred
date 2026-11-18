@@ -144,7 +144,6 @@ pub fn resolve_token(source: &Source, setting_token: Option<String>, env_token: 
 }
 
 /// Adresse d’un fichier, comme `hf-hub` la demande (vérifiée par les tests).
-#[cfg(test)]
 fn file_url(endpoint: &str, repo: &str, revision: &str, file: &str) -> String {
     format!("{endpoint}/{repo}/resolve/{revision}/{file}")
 }
@@ -320,29 +319,27 @@ pub async fn fetch(
 
 /// Première étape de `snapshot_download`, comme la fait la bibliothèque Python : demander la liste des fichiers
 /// du modèle à sa révision (`GET <source>/api/models/<dépôt>/revision/<révision>`). Artifactory (dépôt
-/// `huggingfaceml`) résout un modèle par ce déroulé avant d’en servir les fichiers. La réponse doit porter la
-/// révision attendue et chacun des fichiers d’Alfred.
+/// `huggingfaceml`) résout un modèle par ce déroulé avant d’en servir les fichiers. La réponse doit porter
+/// chacun des fichiers d’Alfred ; elle renvoie la révision que le miroir annonce.
+///
+/// Artifactory ignore la révision demandée et annonce un identifiant à lui, qui n’existe pas sur huggingface.co :
+/// une révision différente n’est donc pas une erreur. Ce qui garantit le modèle, c’est l’empreinte SHA-256 figée
+/// de chaque fichier, contrôlée à la réception.
 async fn snapshot(
     repo: &hf_hub::api::tokio::ApiRepo,
     spec: &ModelSpec,
     source: &Source,
     error: &impl Fn(String) -> AppError,
-) -> AppResult<()> {
+) -> AppResult<String> {
     let label = format!("le modèle {}", spec.repo);
     let info = repo.info().await.map_err(|failure| error(explain(&failure, &label, source)))?;
     let host = host(&source.endpoint);
-    if info.sha != spec.revision {
-        return Err(error(format!(
-            "{host} annonce la révision {} du modèle {} au lieu de {}.",
-            info.sha, spec.repo, spec.revision
-        )));
-    }
     for (file, _) in spec.files {
         if !info.siblings.iter().any(|sibling| sibling.rfilename == *file) {
             return Err(error(format!("{file} est absent du modèle {} sur {host}.", spec.repo)));
         }
     }
-    Ok(())
+    Ok(info.sha)
 }
 
 /// Le téléchargement lui-même, vers le cache `cache`, comme `snapshot_download` de la bibliothèque Python : la liste
@@ -375,7 +372,7 @@ async fn download(
         .build()
         .map_err(|failure| error(request_failure(&failure, spec.repo, &host(&source.endpoint))))?;
     let mut before = 0u64;
-    let mut listed = false;
+    let mut announced: Option<String> = None;
     for (file, expected) in spec.files {
         let target = dir.join(file);
         if target.is_file() {
@@ -384,93 +381,135 @@ async fn download(
             }
             discard(&target);
         }
-        if !listed {
-            snapshot(&repo, spec, source, error).await?;
-            listed = true;
+        if announced.is_none() {
+            announced = Some(snapshot(&repo, spec, source, error).await?);
         }
-        let received = get_file(&http, &repo.url(file), token.as_deref(), &cache_repo, &target, file, expected, source, total_hint, before, &report)
-            .await
-            .map_err(error)?;
+        // La révision figée d’abord ; si le miroir ne la sert pas, celle qu’il annonce. L’empreinte figée tranche.
+        let mut revisions = vec![spec.revision];
+        if let Some(other) = announced.as_deref().filter(|other| *other != spec.revision) {
+            revisions.push(other);
+        }
+        let fetched = Fetched { http: &http, token: token.as_deref(), cache_repo: &cache_repo, target: &target, source };
+        let received = fetched.file(spec, &revisions, file, expected, total_hint, before, &report).await.map_err(error)?;
         before += received;
     }
     Ok(())
 }
 
-/// Télécharge un fichier dans le cache, au format de la bibliothèque Python : le contenu dans
-/// `blobs/<etag>`, et `snapshots/<révision>/<fichier>` qui le désigne. L’empreinte est vérifiée avant que le
-/// fichier prenne sa place ; un fichier différent est écarté. Renvoie le nombre d’octets reçus.
-#[allow(clippy::too_many_arguments)]
-async fn get_file(
-    http: &reqwest::Client,
-    url: &str,
-    token: Option<&str>,
-    cache_repo: &hf_hub::CacheRepo,
-    target: &Path,
-    file: &str,
-    expected: &str,
-    source: &Source,
-    total_hint: u64,
-    before: u64,
-    report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
-) -> Result<u64, String> {
-    use sha2::{Digest, Sha256};
-    use tokio::io::AsyncWriteExt;
-    let host = host(&source.endpoint);
-    let mut request = http.get(url);
-    if let Some(token) = token {
-        let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-            .map_err(|_| "le jeton contient des caractères interdits.".to_string())?;
-        request = request.header(reqwest::header::AUTHORIZATION, value);
-    }
-    let mut response = request.send().await.map_err(|failure| request_failure(&failure, file, &host))?;
-    if !response.status().is_success() {
-        return Err(status_failure(response.status(), file, &host));
-    }
-    let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
-    // Le nom du contenu, comme la bibliothèque Python : `X-Linked-Etag` (fichiers LFS), sinon `ETag`.
-    let etag = header("x-linked-etag")
-        .or_else(|| header("etag"))
-        .map(|etag| etag.trim_start_matches("W/").replace('"', ""))
-        .filter(|etag| !etag.is_empty() && !etag.contains(['/', '\\', '.']))
-        .unwrap_or_else(|| expected.to_string());
-    let size = header("x-linked-size").and_then(|size| size.parse().ok()).or(response.content_length()).unwrap_or(0);
-    let blob = cache_repo.blob_path(&etag);
-    let io = |failure: std::io::Error| format!("écriture impossible dans le cache des modèles ({failure}).");
-    tokio::fs::create_dir_all(blob.parent().unwrap_or(Path::new("."))).await.map_err(io)?;
-    let partial = blob.with_extension("incomplete");
-    let mut out = tokio::fs::File::create(&partial).await.map_err(io)?;
-    let mut hasher = Sha256::new();
-    let mut received = 0u64;
-    let total = (before + size).max(total_hint);
-    loop {
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(failure) => {
-                let _ = tokio::fs::remove_file(&partial).await;
-                return Err(request_failure(&failure, file, &host));
+/// Ce qu’il faut pour recevoir un fichier dans le cache.
+struct Fetched<'a> {
+    http: &'a reqwest::Client,
+    token: Option<&'a str>,
+    cache_repo: &'a hf_hub::CacheRepo,
+    /// `snapshots/<révision figée>/<fichier>` : le contenu y est rangé, puisqu’il a l’empreinte de cette révision.
+    target: &'a Path,
+    source: &'a Source,
+}
+
+impl Fetched<'_> {
+    /// Demande `file` à chaque révision de `revisions` dans l’ordre, jusqu’à ce que le miroir le serve. Un refus
+    /// du jeton (401, 403) arrête tout de suite : une autre révision n’y changerait rien.
+    #[allow(clippy::too_many_arguments)]
+    async fn file(
+        &self,
+        spec: &ModelSpec,
+        revisions: &[&str],
+        file: &str,
+        expected: &str,
+        total_hint: u64,
+        before: u64,
+        report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
+    ) -> Result<u64, String> {
+        let host = host(&self.source.endpoint);
+        let mut refused = None;
+        for revision in revisions {
+            let mut request = self.http.get(file_url(&self.source.endpoint, spec.repo, revision, file));
+            if let Some(token) = self.token {
+                let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                    .map_err(|_| "le jeton contient des caractères interdits.".to_string())?;
+                request = request.header(reqwest::header::AUTHORIZATION, value);
             }
-        };
-        hasher.update(&chunk);
-        out.write_all(&chunk).await.map_err(io)?;
-        received += chunk.len() as u64;
-        report(before + received, total.max(before + received));
+            let response = request.send().await.map_err(|failure| request_failure(&failure, file, &host))?;
+            let status = response.status();
+            if status.is_success() {
+                return self.store(response, spec, revision, file, expected, total_hint, before, report).await;
+            }
+            if matches!(status.as_u16(), 401 | 403) {
+                return Err(status_failure(status, file, &host));
+            }
+            refused.get_or_insert(status);
+        }
+        Err(status_failure(refused.unwrap_or(reqwest::StatusCode::NOT_FOUND), file, &host))
     }
-    out.flush().await.map_err(io)?;
-    drop(out);
-    let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-    if digest != expected {
-        let _ = tokio::fs::remove_file(&partial).await;
-        return Err(format!(
-            "{file} reçu de {host} n’a pas l’empreinte attendue : fichier écarté. Le miroir sert peut-être une autre version du modèle."
-        ));
+
+    /// Range la réponse dans le cache, au format de la bibliothèque Python : le contenu dans `blobs/<etag>`, et
+    /// `snapshots/<révision figée>/<fichier>` qui le désigne. L’empreinte est vérifiée avant que le fichier prenne
+    /// sa place ; un fichier différent est écarté. Renvoie le nombre d’octets reçus.
+    #[allow(clippy::too_many_arguments)]
+    async fn store(
+        &self,
+        mut response: reqwest::Response,
+        spec: &ModelSpec,
+        revision: &str,
+        file: &str,
+        expected: &str,
+        total_hint: u64,
+        before: u64,
+        report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
+    ) -> Result<u64, String> {
+        use sha2::{Digest, Sha256};
+        use tokio::io::AsyncWriteExt;
+        let (cache_repo, target) = (self.cache_repo, self.target);
+        let host = host(&self.source.endpoint);
+        let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
+        // Le nom du contenu, comme la bibliothèque Python : `X-Linked-Etag` (fichiers LFS), sinon `ETag`.
+        let etag = header("x-linked-etag")
+            .or_else(|| header("etag"))
+            .map(|etag| etag.trim_start_matches("W/").replace('"', ""))
+            .filter(|etag| !etag.is_empty() && !etag.contains(['/', '\\', '.']))
+            .unwrap_or_else(|| expected.to_string());
+        let size = header("x-linked-size").and_then(|size| size.parse().ok()).or(response.content_length()).unwrap_or(0);
+        let blob = cache_repo.blob_path(&etag);
+        let io = |failure: std::io::Error| format!("écriture impossible dans le cache des modèles ({failure}).");
+        tokio::fs::create_dir_all(blob.parent().unwrap_or(Path::new("."))).await.map_err(io)?;
+        let partial = blob.with_extension("incomplete");
+        let mut out = tokio::fs::File::create(&partial).await.map_err(io)?;
+        let mut hasher = Sha256::new();
+        let mut received = 0u64;
+        let total = (before + size).max(total_hint);
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(failure) => {
+                    let _ = tokio::fs::remove_file(&partial).await;
+                    return Err(request_failure(&failure, file, &host));
+                }
+            };
+            hasher.update(&chunk);
+            out.write_all(&chunk).await.map_err(io)?;
+            received += chunk.len() as u64;
+            report(before + received, total.max(before + received));
+        }
+        out.flush().await.map_err(io)?;
+        drop(out);
+        let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+        if digest != expected {
+            let _ = tokio::fs::remove_file(&partial).await;
+            let served = if revision == spec.revision { String::new() } else { format!(" (révision {revision} du miroir)") };
+            return Err(format!(
+                "le fichier {file} reçu de {host}{served} n’a pas l’empreinte attendue : fichier écarté. Le modèle {} a \
+                 changé depuis la version qu’Alfred connaît (révision {}) ; il faut mettre à jour Alfred.",
+                spec.repo, spec.revision
+            ));
+        }
+        tokio::fs::rename(&partial, &blob).await.map_err(io)?;
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(io)?;
+        }
+        link(&blob, target).map_err(io)?;
+        Ok(received)
     }
-    tokio::fs::rename(&partial, &blob).await.map_err(io)?;
-    if let Some(parent) = target.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(io)?;
-    }
-    link(&blob, target).map_err(io)?;
-    Ok(received)
 }
 
 /// `snapshots/<révision>/<fichier>` désigne `blobs/<etag>` par un lien relatif, comme la bibliothèque Python.
@@ -578,6 +617,8 @@ mod tests {
 
     const CONTENT: &[u8] = b"{\"hidden_size\": 384}";
     const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
+    /// Identifiant qu’un miroir Artifactory annonce à la place (absent de huggingface.co).
+    const OWN: &str = "9da7038f21430c6bc70956435f077c5485417055";
 
     fn content_sha() -> &'static str {
         use sha2::{Digest, Sha256};
@@ -593,6 +634,8 @@ mod tests {
         body: &'static [u8],
         /// Révision annoncée par l’API `revision` (celle attendue par défaut).
         sha: Option<&'static str>,
+        /// Comme Artifactory : `resolve` ne sert que la révision annoncée, pas celle demandée.
+        only_announced: bool,
         seen: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
@@ -616,7 +659,9 @@ mod tests {
             let sha = mirror.sha.unwrap_or(REVISION);
             return axum::Json(serde_json::json!({ "sha": sha, "siblings": [{ "rfilename": "config.json" }] })).into_response();
         }
-        if uri.path() != format!("/mirror/org/modele/resolve/{REVISION}/config.json") {
+        let announced = mirror.sha.unwrap_or(REVISION);
+        let served = if mirror.only_announced { vec![announced] } else { vec![REVISION, announced] };
+        if !served.iter().any(|revision| uri.path() == format!("/mirror/org/modele/resolve/{revision}/config.json")) {
             return StatusCode::NOT_FOUND.into_response();
         }
         // Comme Artifactory : la plage demandée est ignorée, le fichier entier part sans `Content-Range`.
@@ -662,7 +707,7 @@ mod tests {
     }
 
     fn mirror_with(token: Option<&'static str>, body: &'static [u8]) -> Mirror {
-        Mirror { token, body, sha: None, seen: Arc::new(std::sync::Mutex::new(Vec::new())) }
+        Mirror { token, body, sha: None, only_announced: false, seen: Arc::new(std::sync::Mutex::new(Vec::new())) }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -720,11 +765,34 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_mirror_announcing_another_revision_is_refused() {
-        let endpoint = serve(Mirror { sha: Some("autre-revision"), ..mirror_with(None, CONTENT) }).await;
+    async fn a_mirror_announcing_its_own_revision_serves_the_pinned_files() {
+        // Comme Artifactory : la révision demandée est ignorée, le miroir annonce un identifiant à lui.
+        for only_announced in [false, true] {
+            let state = Mirror { sha: Some(OWN), only_announced, ..mirror_with(None, CONTENT) };
+            let endpoint = serve(state.clone()).await;
+            let cache = tempfile::tempdir().unwrap();
+            run(&endpoint, None, cache.path()).await.unwrap();
+            // Rangé sous la révision figée, dont il a l’empreinte.
+            assert_eq!(std::fs::read(spec().snapshot_dir(cache.path()).join("config.json")).unwrap(), CONTENT);
+            let seen = state.seen.lock().unwrap().clone();
+            let resolved: Vec<&String> = seen.iter().filter(|line| line.contains("/resolve/")).collect();
+            assert!(resolved[0].contains(&format!("/resolve/{REVISION}/")), "{resolved:?}");
+            assert_eq!(resolved.len(), if only_announced { 2 } else { 1 }, "{resolved:?}");
+            if only_announced {
+                assert!(resolved[1].contains(&format!("/resolve/{OWN}/")), "{resolved:?}");
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_changed_model_on_the_announced_revision_is_named_and_discarded() {
+        let state = Mirror { sha: Some(OWN), only_announced: true, ..mirror_with(None, b"{\"hidden_size\": 768}") };
+        let endpoint = serve(state).await;
         let cache = tempfile::tempdir().unwrap();
         let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
-        assert!(message.contains("annonce la révision autre-revision"), "{message}");
+        assert!(message.contains("le fichier config.json"), "{message}");
+        assert!(message.contains(&format!("révision {OWN} du miroir")), "{message}");
+        assert!(message.contains("Le modèle org/modele a changé") && message.contains(REVISION), "{message}");
         assert!(!spec().snapshot_dir(cache.path()).join("config.json").exists());
     }
 
@@ -733,7 +801,7 @@ mod tests {
         let endpoint = serve(mirror_with(None, b"{\"hidden_size\": 999}")).await;
         let cache = tempfile::tempdir().unwrap();
         let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
-        assert!(message.contains("n’a pas l’empreinte attendue"), "{message}");
+        assert!(message.contains("le fichier config.json") && message.contains("n’a pas l’empreinte attendue"), "{message}");
         let file = spec().snapshot_dir(cache.path()).join("config.json");
         assert!(!file.exists());
         let blobs = cache.path().join("models--org--modele/blobs");

@@ -17,8 +17,14 @@ erreur qui le dit.
 Alfred suit le déroulé de `snapshot_download`, que la documentation d’Artifactory demande pour résoudre un modèle :
 
 1. la liste des fichiers du modèle à sa révision : `GET <source>/api/models/<dépôt>/revision/<révision>`. La réponse
-   doit porter la révision figée et chacun des fichiers attendus ;
-2. chaque fichier : `GET <source>/<dépôt>/resolve/<révision>/<fichier>`, un simple GET, sans demande de plage.
+   doit porter chacun des fichiers attendus. La révision qu’elle annonce peut différer de la révision figée :
+   Artifactory ignore la révision demandée et annonce un identifiant à lui, qui n’existe pas sur huggingface.co ;
+2. chaque fichier : `GET <source>/<dépôt>/resolve/<révision>/<fichier>`, un simple GET, sans demande de plage, à la
+   révision figée d’abord, puis, si le miroir ne la sert pas, à celle qu’il annonce.
+
+Ce qui garantit le modèle n’est pas la révision annoncée mais l’empreinte SHA-256 figée de chaque fichier : un fichier
+accepté a exactement le contenu de la révision figée, quelle que soit la révision par laquelle le miroir l’a servi. Il
+est rangé sous `snapshots/<révision figée>/`.
 
 La première étape, les adresses, le jeton et le cache passent par [`hf-hub`](https://crates.io/crates/hf-hub) 0.5.0,
 la bibliothèque Rust de Hugging Face (dépôt `huggingface/hf-hub`). Les fichiers, eux, ne passent pas par son
@@ -95,5 +101,4 @@ où `<clé du dépôt>` est le nom affiché dans « Set Up A Hugging Face Client
 | « … absent de … (404) » | le miroir n’a pas ce modèle, ce fichier ou cette révision |
 | « le certificat de … est refusé » | certificat de l’entreprise non installé sur le poste |
 | « … ne répond pas comme un dépôt Hugging Face » | l’adresse ne mène pas à l’API `huggingfaceml` |
-| « … annonce la révision … au lieu de … » | le miroir ne sert pas la révision figée par Alfred |
-| « … n’a pas l’empreinte attendue : fichier écarté » | le miroir sert une autre version du fichier |
+| « le fichier … n’a pas l’empreinte attendue : fichier écarté. Le modèle … a changé… » | le miroir sert une autre version de ce fichier : le modèle a changé depuis la révision figée, Alfred doit être mis à jour |
