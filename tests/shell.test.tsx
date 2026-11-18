@@ -30,8 +30,8 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
   expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
 
-  // Le bouton qui replie le menu est dans l’en-tête, hors du menu. Agent en tête du menu ; en bas, l’espace, qui ouvre
-  // le menu des espaces, puis Réglages, toute dernière entrée.
+  // Le bouton qui replie le menu est dans l’en-tête, hors du menu. En bas du menu, dans cet ordre : Agent, l’espace, qui
+  // ouvre le menu des espaces, puis Réglages, toute dernière entrée.
   const sidebar = screen.getByRole("complementary", { name: "Navigation principale" });
   const toggle = screen.getByRole("button", { name: "Replier la navigation" });
   expect(sidebar).not.toContainElement(toggle);

@@ -517,19 +517,6 @@ export function AppShell({
         </IconButton>
       </div>
       <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-        {/* Agent, première entrée du menu, au-dessus des sections. */}
-        {agentAvailable === true ? (
-          <NavButton
-            label={agentEntryLabel(agentSummary)}
-            active={!settingsOpen && sameView(effective, { kind: "agent" })}
-            onClick={() => setView({ kind: "agent" })}
-            className="sidebar-orchestrator"
-            badge={agentSummary}
-            glyph
-          >
-            <Bot size={16} aria-hidden="true" />
-          </NavButton>
-        ) : null}
         <nav aria-label="Sections de l’espace de travail">
           {drag.orderedItems.map(({ section }) => {
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
@@ -589,7 +576,19 @@ export function AppShell({
             );
           })}
         </nav>
-        {/* Bas du menu : l’espace ouvert, puis Réglages, toute dernière entrée. */}
+        {/* Bas du menu, dans cet ordre : Agent, l’espace ouvert, puis Réglages, toute dernière entrée. */}
+        {agentAvailable === true ? (
+          <NavButton
+            label={agentEntryLabel(agentSummary)}
+            active={!settingsOpen && sameView(effective, { kind: "agent" })}
+            onClick={() => setView({ kind: "agent" })}
+            className="sidebar-orchestrator"
+            badge={agentSummary}
+            glyph
+          >
+            <Bot size={16} aria-hidden="true" />
+          </NavButton>
+        ) : null}
         <SpaceSwitcher />
         <NavButton
           label="Réglages"

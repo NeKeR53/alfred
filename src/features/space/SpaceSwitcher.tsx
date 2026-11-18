@@ -14,7 +14,7 @@ export function isSwitchShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | 
 }
 
 /**
- * Entrée du bas du menu de gauche, au-dessus de Réglages : l’icône de l’espace ouvert, son nom et une petite flèche, qui ouvrent un menu pour
+ * Entrée du bas du menu de gauche, entre Agent et Réglages : l’icône de l’espace ouvert, son nom et une petite flèche, qui ouvrent un menu pour
  * passer à un espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni redémarrer. Menu
  * replié : seule l’icône reste, à la même place, et ouvre le même menu ; le nom passe dans l’infobulle.
  */

@@ -357,11 +357,10 @@
 .shell-body:has(> .shell-panel.is-maximized) > .shell-column {
   display: none;
 }
-/* Entrée du bas du menu, au-dessus de Réglages : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
+/* Entrée du bas du menu, entre Agent et Réglages : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
  * reste ; elle ouvre le même menu des espaces. */
 .sidebar .sidebar-space {
   flex: 0 0 30px;
-  margin-top: auto;
 }
 .sidebar-space__mark {
   width: 18px;
