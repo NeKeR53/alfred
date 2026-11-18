@@ -185,8 +185,13 @@ export const connectClient = (id: string, instance?: string) =>
   invoke<{ authorizationUrl: string }>("clients.connect", target(id, instance));
 export const disconnectClient = (id: string, instance?: string) =>
   invoke<null>("clients.disconnect", target(id, instance));
-export const saveInstance = (client: string, instance: ClientInstanceConfig, create: boolean) =>
-  invoke<ClientItem>("clients.saveInstance", { client, instance, create });
+/** `pages` : pages qui sont pour chaque compte de ce client (`module/page`), cochées ou non pour celui-ci. */
+export const saveInstance = (
+  client: string,
+  instance: ClientInstanceConfig,
+  create: boolean,
+  pages?: Record<string, boolean>,
+) => invoke<ClientItem>("clients.saveInstance", { client, instance, create, ...(pages ? { pages } : {}) });
 export const deleteInstance = (client: string, instance: string) =>
   invoke<ClientItem>("clients.deleteInstance", { client, instance });
 export const makeDefaultInstance = (client: string, instance: string) =>

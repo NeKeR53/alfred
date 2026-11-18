@@ -309,7 +309,9 @@ export function SetupFlow({
     const known = item.client ? clients.find((candidate) => candidate.id === item.client) : undefined;
     const template = templateOf(modules, item.module, item.need);
     const several = known ? !known.simple : Boolean(template?.methods?.length);
-    const pagePerAccount = sections.some((section) => section.perInstance === item.need || section.instance);
+    const pagePerAccount =
+      sections.some((section) => section.perInstance === item.need || section.instance) ||
+      Boolean(snapshot?.accountPages?.some((page) => page.module === item.module && page.need === item.need));
     if (!several) return "Un seul compte suffit pour ce service.";
     return pagePerAccount
       ? "Vous pouvez connecter plusieurs comptes : chacun aura sa propre page dans le menu."

@@ -11,6 +11,7 @@ import {
   CheckboxControl,
   Disclosure,
   FeedbackBanner,
+  Fieldset,
   FormActions,
   FormField,
   Page,
@@ -22,7 +23,9 @@ import {
   TextInput,
 } from "@alfred/ui";
 import { type FormEvent, useEffect, useId, useState } from "react";
+import type { AccountPage, Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
+import { useShell } from "../../shell/store";
 import { errorMessage, listVault, saveVaultEntry, type VaultEntry, type VaultKind } from "../vault/api";
 import {
   AUTH_TYPES,
@@ -142,6 +145,24 @@ const headersText = (headers: Record<string, string> | undefined) =>
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
 
+/**
+ * Pages qui sont pour chaque compte de ce client, et si elles sont cochées pour celui-ci : toutes pour un compte
+ * nouveau, sinon toutes sauf celles que l’utilisateur a décochées (`excluded` de `page:module/page@compte`).
+ */
+export function accountPagesOf(
+  snapshot: Snapshot | null | undefined,
+  client: string,
+  instance: string | undefined,
+): Array<AccountPage & { selected: boolean }> {
+  const overrides = snapshot?.layout?.overrides ?? {};
+  return (snapshot?.accountPages ?? [])
+    .filter((page) => page.client === client)
+    .map((page) => ({
+      ...page,
+      selected: instance === undefined || !overrides[`page:${page.reference}@${instance}`]?.excluded,
+    }));
+}
+
 type Errors = Partial<Record<"url" | "login" | "secret" | "headers", string>>;
 
 export function AccountEditor({
@@ -173,6 +194,12 @@ export function AccountEditor({
   const [entries, setEntries] = useState<VaultEntry[]>();
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
+  const snapshot = useShell((state) => state.snapshot);
+  // Le choix se lit une fois, à l’ouverture : la fiche le garde ensuite tel que l’utilisateur le règle.
+  const [pages, setPages] = useState(() =>
+    accountPagesOf(snapshot, client.id, editing ? editing.id : simple ? "default" : undefined),
+  );
+  const severalSections = new Set(pages.map((page) => `${page.module}/${page.section}`)).size > 1;
 
   const type: AuthType | undefined = simple
     ? client.auth?.type
@@ -237,7 +264,9 @@ export function AccountEditor({
       const extra = parseHeaders(headers).headers;
       if (Object.keys(extra).length > 0) instance.headers = extra;
       if (insecureTls) instance.insecureTls = true;
-      await saveInstance(client.id, instance, !simple && !initial);
+      const choice =
+        pages.length > 0 ? Object.fromEntries(pages.map((page) => [page.reference, page.selected])) : undefined;
+      await saveInstance(client.id, instance, !simple && !initial, choice);
       notify({ title: editing && (simple || initial) ? "Compte enregistré" : "Compte ajouté", tone: "success" });
       onSaved();
     } catch (failure) {
@@ -335,6 +364,26 @@ export function AccountEditor({
                 Adresse de retour à donner au service : {redirectUri}. Vous vous connecterez ensuite dans votre
                 navigateur.
               </FeedbackBanner>
+            ) : null}
+            {pages.length > 0 ? (
+              <Fieldset
+                legend="Pages de ce compte"
+                hint="Les pages du menu qui existent pour ce compte. Une page décochée quitte le menu ; ses données restent."
+              >
+                {pages.map((page) => (
+                  <CheckboxControl
+                    key={page.reference}
+                    label={severalSections ? `${page.title} · ${page.section}` : page.title}
+                    checked={page.selected}
+                    onChange={(event) => {
+                      const selected = event.target.checked;
+                      setPages((current) =>
+                        current.map((item) => (item.reference === page.reference ? { ...item, selected } : item)),
+                      );
+                    }}
+                  />
+                ))}
+              </Fieldset>
             ) : null}
             <Disclosure
               label="Options avancées"

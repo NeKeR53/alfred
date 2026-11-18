@@ -65,7 +65,7 @@ export function ModuleContents({
   );
   const hasPages = snapshot ? moduleGroups(snapshot, module.id).length > 0 : false;
   const perInstance = (need: string) =>
-    Boolean(snapshot?.sections.some((section) => section.module === module.id && section.perInstance === need));
+    Boolean(snapshot?.accountPages?.some((page) => page.module === module.id && page.need === need));
 
   /** À quoi sert le service : les pages qui l’utilisent, et les modules qui passent par ce module. */
   const purposeOf = (need: ClientNeedItem) => {
@@ -121,10 +121,12 @@ export function ModuleContents({
                   titled
                   purpose={purposeOf(need) || undefined}
                   describeInstance={(instance) => {
-                    const page = snapshot?.sections.find(
-                      (section) => section.module === module.id && section.instance === instance,
+                    const section = snapshot?.sections.find(
+                      (candidate) => candidate.module === module.id && candidate.instance === instance,
                     );
-                    return page ? `Entrée « ${page.label} » dans le menu` : undefined;
+                    if (section) return `Entrée « ${section.label} » dans le menu`;
+                    // Toutes ses pages sont décochées : le compte n’a pas d’entrée.
+                    return perInstance(need.id) ? "Aucune page dans le menu pour ce compte" : undefined;
                   }}
                 >
                   <FunctionGroup

@@ -1358,6 +1358,7 @@ mod tests {
             description: String::new(),
             placement,
             uses: Uses::default(),
+            per_instance: None,
         }
     }
 

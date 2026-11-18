@@ -53,7 +53,9 @@ export function moduleSections(sections: ResolvedSection[], module: string): Res
 export function ModuleNaming({ module }: { module: ModuleSummary }) {
   const snapshot = useShell((state) => state.snapshot);
   const sections = snapshot ? moduleSections(snapshot.sections, module.id) : [];
-  const perAccount = sections.some((section) => section.instance || section.perInstance);
+  const perAccount = sections.some(
+    (section) => section.instance || section.perInstance || section.pages.some((page) => page.perInstance),
+  );
 
   return (
     <div className="setup-flow__body">

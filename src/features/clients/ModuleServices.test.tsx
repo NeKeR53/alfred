@@ -295,7 +295,11 @@ function summary(id: string, name: string): ModuleSummary {
 }
 
 /** Onglet Modules d’un espace dont les modules sont ceux des demandes ; `sections` y ajoute des pages. */
-function renderModules(sections: ResolvedSection[] = [], functions: ResolvedFunction[] = []) {
+function renderModules(
+  sections: ResolvedSection[] = [],
+  functions: ResolvedFunction[] = [],
+  extra: Partial<Snapshot> = {},
+) {
   const modules = [...new Map(needs.map((need) => [need.module, summary(need.module, need.moduleName)])).values()].map(
     (module) => ({
       ...module,
@@ -314,6 +318,7 @@ function renderModules(sections: ResolvedSection[] = [], functions: ResolvedFunc
     functions,
     bindings: {},
     problems: [],
+    ...extra,
   };
   useShell.setState({ snapshot });
   return render(<ModulesSettings />);
@@ -697,6 +702,90 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "compte" }));
   expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
+});
+
+it("fait choisir, compte par compte, les pages du module qui existent pour lui", async () => {
+  const user = userEvent.setup();
+  stored = [
+    {
+      id: "jira",
+      label: "Jira",
+      baseUrl: "",
+      methods: [{ id: "pat", label: "PAT", type: "bearer" }],
+      instances: [],
+    },
+  ];
+  needs = [
+    {
+      key: "suivi/jira",
+      module: "suivi",
+      moduleName: "Suivi",
+      id: "jira",
+      label: "Jira",
+      baseUrl: null,
+      auth: null,
+      binding: null,
+      client: "jira",
+    },
+  ];
+  // Deux pages sont pour chaque compte Jira : Tickets (X) et Sprints (Y).
+  const accountPages = [
+    { reference: "suivi/tickets", module: "suivi", title: "Tickets", section: "Suivi", need: "jira", client: "jira" },
+    { reference: "suivi/sprints", module: "suivi", title: "Sprints", section: "Suivi", need: "jira", client: "jira" },
+  ];
+  renderModules([], [], { accountPages, layout: { sections: [] } });
+  await openModule(user, "Suivi");
+  expect(screen.getByText("Le module ajoute une entrée au menu par compte.", { exact: false })).toBeInTheDocument();
+
+  const addAccount = async (url: string, uncheck: string[]) => {
+    await user.click(await screen.findByRole("button", { name: "Ajouter un compte à Jira" }));
+    const pages = await screen.findByRole("group", { name: "Pages de ce compte" });
+    // À la création, toutes les pages sont cochées.
+    expect(within(pages).getByRole("checkbox", { name: "Tickets" })).toBeChecked();
+    expect(within(pages).getByRole("checkbox", { name: "Sprints" })).toBeChecked();
+    for (const title of uncheck) await user.click(within(pages).getByRole("checkbox", { name: title }));
+    await user.type(screen.getByLabelText("Adresse de votre compte"), url);
+    await user.type(screen.getByLabelText("Jeton d’accès"), "pat-123");
+    await user.click(screen.getByRole("button", { name: "Ajouter" }));
+    await screen.findByRole("group", { name: "Comptes Jira" });
+  };
+  // Le compte « Jira » reçoit X et Y ; le compte « Jira Desk », seulement X.
+  await addAccount("https://jira.acme.fr", []);
+  expect(lastCall("clients.saveInstance")).toMatchObject({
+    create: true,
+    instance: { id: "compte" },
+    pages: { "suivi/tickets": true, "suivi/sprints": true },
+  });
+  await addAccount("https://desk.acme.fr", ["Sprints"]);
+  expect(lastCall("clients.saveInstance")).toMatchObject({
+    create: true,
+    instance: { id: "compte-2" },
+    pages: { "suivi/tickets": true, "suivi/sprints": false },
+  });
+  // Ajouter le deuxième compte n’a rien écrit pour le premier.
+  const saved = calls.filter((call) => call.command === "clients.saveInstance");
+  expect(saved.map((call) => (call.args.instance as ClientInstanceConfig).id)).toEqual(["compte", "compte-2"]);
+
+  // Le choix enregistré se relit dans la fiche du compte, et reste modifiable.
+  useShell.setState((state) => ({
+    snapshot: state.snapshot && {
+      ...state.snapshot,
+      layout: { sections: [], overrides: { "page:suivi/sprints@compte-2": { excluded: true } } },
+    },
+  }));
+  await user.click(await menuItem(user, "Jira — desk.acme.fr", "Modifier le compte…"));
+  const pages = await screen.findByRole("group", { name: "Pages de ce compte" });
+  expect(within(pages).getByRole("checkbox", { name: "Tickets" })).toBeChecked();
+  expect(within(pages).getByRole("checkbox", { name: "Sprints" })).not.toBeChecked();
+  await user.click(within(pages).getByRole("checkbox", { name: "Sprints" }));
+  await user.click(within(pages).getByRole("checkbox", { name: "Tickets" }));
+  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
+  await screen.findByRole("group", { name: "Comptes Jira" });
+  expect(lastCall("clients.saveInstance")).toMatchObject({
+    create: false,
+    instance: { id: "compte-2" },
+    pages: { "suivi/tickets": false, "suivi/sprints": true },
+  });
 });
 
 it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs", async () => {

@@ -653,7 +653,7 @@ export interface PageContext {
   /** Pour un panneau : la sélection publiée par la page hôte (`shell.publish`). */
   selection: unknown;
   /**
-   * Dans une section par instance (`perInstance`) : l’instance du client que montre la page. `client()` l’appelle
+   * Dans une page pour chaque compte (`perInstance` de la page ou de sa section) : l’instance du client que montre la page. `client()` l’appelle
    * alors sans qu’on la nomme. `null` ailleurs.
    */
   instance: string | null;

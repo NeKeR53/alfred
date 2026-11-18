@@ -90,13 +90,16 @@ export function SectionView({
   renderPageTools,
   onPageMenu,
   variant = "section",
-  waiting,
+  waiting: sectionWaiting,
   detachable = true,
 }: {
   title: string;
   sectionId: string;
   pages: ResolvedPage[];
-  /** Section par instance qui attend encore une instance : ce qu’il faut faire, à la place des pages. */
+  /**
+   * Section par instance qui attend encore une instance : ce qu’il faut faire, à la place de ses pages par compte
+   * (une page commune de la section, `perInstance` nul, s’affiche).
+   */
   waiting?: string | null;
   /** Propose d’ouvrir la page affichée dans sa propre fenêtre (pas dans une fenêtre de page elle-même). */
   detachable?: boolean;
@@ -154,6 +157,7 @@ export function SectionView({
   const builtInTab = builtIn.find((tab) => tab.id === activeId);
   const page = visible.find((candidate) => candidate.reference === activeId);
   const panel = page?.panel && !page.panel.hidden ? page.panel : null;
+  const waiting = sectionWaiting && page?.perInstance !== null ? sectionWaiting : null;
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.
   const agentConversation = useShell((state) => (page ? state.agentPanel[page.reference] : undefined));
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);

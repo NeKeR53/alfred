@@ -271,7 +271,7 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
-Dans une section par instance (`perInstance` du module, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et la passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Le même fichier de page sert à toutes les instances. Une page peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
+Dans une page pour chaque compte (`perInstance` de la page ou de sa section, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et la passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Le même fichier de page sert à toutes les instances ; l’utilisateur choisit, compte par compte, les pages qui existent pour lui, et une page ne suppose donc pas qu’une autre page du module existe pour le même compte. Une page peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
 
 `client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
 
@@ -506,7 +506,7 @@ export default function Dicter() {
 
 ```ts
 shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
-shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@instance » dans une section par instance)
+shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@instance » pour la page d’un compte)
 shell.openWindow(reference?: string): Promise<void>;    // ouvre la page (sans argument : celle-ci) seule dans sa fenêtre
 shell.setPanelVisible(visible: boolean): Promise<void>; // panneau de droite de la page
 shell.publish(selection: unknown): Promise<void>;       // sélection transmise au panneau
@@ -523,7 +523,7 @@ interface PageContext {
   surface: "section" | "settings"; // « settings » : page placée dans les Réglages, qui prend leur style (DESIGN.md)
   theme: "light" | "dark"; // appliqué par Alfred, rien à faire
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
-  instance: string | null; // section par instance : l’instance du client que montre la page ; sinon null
+  instance: string | null; // page pour chaque compte (`perInstance`) : l’instance du client que montre la page ; sinon null
 }
 ```
 

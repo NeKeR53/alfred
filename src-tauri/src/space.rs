@@ -60,6 +60,10 @@ pub struct Override {
     pub hidden: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<Placement>,
+    /// Page d’un compte (`page:<module>/<page>@<instance>`) que l’utilisateur a décochée dans la fiche du compte :
+    /// elle n’existe pas pour ce compte. Seul l’utilisateur la règle ; ses données restent.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub excluded: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -316,6 +320,10 @@ pub struct PageDecl {
     pub placement: Placement,
     #[serde(default, skip_serializing_if = "Uses::is_empty")]
     pub uses: Uses,
+    /// Besoin client du module (`jira`, ou `dépendance/besoin`) dont la page est pour chaque compte : elle existe
+    /// une fois par instance du client, pour les comptes où l’utilisateur l’a cochée.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_instance: Option<String>,
 }
 
 /// Ce dont une page ou une fonction déclare avoir besoin. L’accès n’est accordé que par l’utilisateur.
@@ -512,6 +520,8 @@ pub struct Snapshot {
     /// Modules affichés avec leurs données d’exemple (réglage du poste, dans la base d’Alfred) ; rempli par la
     /// commande qui envoie la vue à l’interface.
     pub examples: Vec<String>,
+    /// Pages qui sont pour chaque compte d’un client, cochées ou non compte par compte.
+    pub account_pages: Vec<AccountPage>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -559,6 +569,24 @@ pub struct ResolvedPage {
     /// Instance du client que montre cette page, dans une section par instance ; sa référence est alors
     /// `module/page@instance`.
     pub instance: Option<String>,
+    /// Besoin client dont la page suit les instances : le sien (`perInstance` de la page), sinon celui de sa section.
+    pub per_instance: Option<String>,
+}
+
+/// Page qui est pour chaque compte d’un client : ce que la fiche d’un compte propose de cocher.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountPage {
+    /// `module/page` ; la page d’un compte est `module/page@instance`.
+    pub reference: String,
+    pub module: String,
+    pub title: String,
+    /// Nom de la section où elle se range.
+    pub section: String,
+    /// Besoin client qu’elle suit.
+    pub need: String,
+    /// Client de l’espace qui répond à ce besoin ; `None` s’il n’y en a pas encore.
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -932,6 +960,7 @@ impl Space {
             description: description.trim().to_string(),
             placement,
             uses: Uses::default(),
+            per_instance: None,
         });
         self.write_module(&module)?;
         Ok(PlacedPage {
@@ -1107,36 +1136,94 @@ impl Space {
         Ok((icon, label))
     }
 
-    /// Remplace chaque section par instance par une copie pour chaque instance du client qu’elle suit. Sans
+    /// Répète pour chaque instance d’un client les pages qui sont pour ses comptes : celles d’une section par
+    /// instance, ou qui le déclarent elles-mêmes. Chaque compte a sa copie de la section, avec les seules pages que
+    /// l’utilisateur a cochées pour lui ; les autres pages de la section restent dans la section d’origine. Sans
     /// instance (ou sans client), la section reste seule et dit quoi faire.
     fn expand_instances(
         &self,
         sections: Vec<ResolvedSection>,
         manifest: &SpaceManifest,
         problems: &mut Vec<Problem>,
-    ) -> Vec<ResolvedSection> {
+    ) -> (Vec<ResolvedSection>, Vec<AccountPage>) {
         let overrides = &manifest.layout.overrides;
         let mut expanded = Vec::new();
-        for section in sections {
-            let Some(need) = section.per_instance.clone() else {
+        let mut account_pages = Vec::new();
+        for mut section in sections {
+            // Une section par instance rend chacune de ses pages pour chaque compte.
+            if let Some(need) = &section.per_instance {
+                for page in &mut section.pages {
+                    page.per_instance.get_or_insert_with(|| need.clone());
+                }
+            }
+            let Some(need) = section
+                .per_instance
+                .clone()
+                .or_else(|| section.pages.iter().find_map(|page| page.per_instance.clone()))
+            else {
                 expanded.push(section);
                 continue;
             };
+            // Une section ne se répète que pour un seul client : une page qui en suit un autre y reste commune.
+            for page in &mut section.pages {
+                if page.per_instance.as_ref().is_some_and(|other| other != &need) {
+                    problems.push(Problem {
+                        module: page.module.clone(),
+                        message: format!(
+                            "La page « {} » est pour « {} », mais sa section « {} » se répète pour « {need} » : elle reste commune à tous les comptes. La ranger dans une autre section.",
+                            page.reference,
+                            page.per_instance.as_deref().unwrap_or_default(),
+                            section.id
+                        ),
+                    });
+                    page.per_instance = None;
+                }
+            }
             let declared = self
                 .module(&section.module)
                 .is_ok_and(|module| need.contains('/') || module.clients.iter().any(|client| client.id == need));
             if !declared {
+                let what = if section.per_instance.is_some() { "La section" } else { "Une page de la section" };
                 problems.push(Problem {
                     module: section.module.clone(),
                     message: format!(
-                        "La section « {} » suit les instances de « {need} », que le module ne déclare pas dans `clients`.",
+                        "{what} « {} » suit les instances de « {need} », que le module ne déclare pas dans `clients`.",
                         section.id
                     ),
                 });
             }
-            match crate::clients::client_for(self, &section.module, &need) {
+            let client = crate::clients::client_for(self, &section.module, &need);
+            for page in section.pages.iter().filter(|page| page.per_instance.is_some()) {
+                account_pages.push(AccountPage {
+                    reference: page.reference.clone(),
+                    module: page.module.clone(),
+                    title: page.title.clone(),
+                    section: section.label.clone(),
+                    need: need.clone(),
+                    client: client.as_ref().ok().map(|client| client.id.clone()),
+                });
+            }
+            match client {
                 Ok(client) if !client.instances.is_empty() => {
+                    let (own, shared): (Vec<ResolvedPage>, Vec<ResolvedPage>) =
+                        section.pages.iter().cloned().partition(|page| page.per_instance.is_some());
+                    // Les pages communes restent dans la section d’origine, qui ne suit plus d’instance.
+                    if !shared.is_empty() {
+                        expanded.push(ResolvedSection { pages: shared, per_instance: None, ..section.clone() });
+                    }
                     for instance in &client.instances {
+                        let excluded = |page: &ResolvedPage| {
+                            overrides.get(&format!("page:{}@{}", page.reference, instance.id)).is_some_and(|o| o.excluded)
+                        };
+                        let pages: Vec<ResolvedPage> = own
+                            .iter()
+                            .filter(|page| !excluded(page))
+                            .map(|page| page_for_instance(page, &instance.id, overrides))
+                            .collect();
+                        // Aucune page cochée pour ce compte : il n’a pas d’entrée dans cette section.
+                        if pages.is_empty() {
+                            continue;
+                        }
                         let id = format!("{}@{}", section.id, instance.id);
                         let own = overrides.get(&format!("section:{id}"));
                         let mut copy = section.clone();
@@ -1150,8 +1237,8 @@ impl Space {
                         }
                         copy.color = own.and_then(|o| o.color.clone()).or_else(|| section.color.clone());
                         copy.hidden = section.hidden || own.is_some_and(|o| o.hidden);
-                        copy.pages =
-                            section.pages.iter().map(|page| page_for_instance(page, &instance.id, overrides)).collect();
+                        copy.pages = pages;
+                        copy.per_instance = Some(need.clone());
                         copy.instance = Some(instance.id.clone());
                         copy.instance_of = Some(section.id.clone());
                         copy.id = id;
@@ -1160,7 +1247,7 @@ impl Space {
                 }
                 Ok(client) => expanded.push(ResolvedSection {
                     waiting: Some(format!(
-                        "Le service « {} » n’a encore aucun compte. En ajouter un dans Réglages → Modules, fiche du module : cette section apparaîtra pour chacun.",
+                        "Le service « {} » n’a encore aucun compte. En ajouter un dans Réglages → Modules, fiche du module : ces pages apparaîtront pour chaque compte.",
                         client.label
                     )),
                     ..section
@@ -1168,7 +1255,28 @@ impl Space {
                 Err(error) => expanded.push(ResolvedSection { waiting: Some(error.message), ..section }),
             }
         }
-        expanded
+        (expanded, account_pages)
+    }
+
+    /// Coche ou décoche, pour un compte, les pages qui sont pour les comptes de son client (`AccountPage`). Seules
+    /// les pages nommées changent : les autres comptes, et les autres pages de celui-ci, gardent leur choix.
+    pub fn set_account_pages(&self, instance: &str, choices: &[(String, bool)]) -> AppResult<()> {
+        if !valid_id(instance) {
+            return Err(AppError::new(format!("Compte invalide : « {instance} ».")));
+        }
+        let mut manifest = self.manifest()?;
+        for (reference, selected) in choices {
+            if reference.contains('@') || reference.split_once('/').is_none_or(|(module, page)| !valid_id(module) || !valid_id(page)) {
+                return Err(AppError::new(format!("Page attendue : « module/page », pas « {reference} ».")));
+            }
+            let key = format!("page:{reference}@{instance}");
+            let entry = manifest.layout.overrides.entry(key.clone()).or_default();
+            entry.excluded = !selected;
+            if *entry == Override::default() {
+                manifest.layout.overrides.remove(&key);
+            }
+        }
+        self.write_manifest(&manifest)
     }
 
     /// Calcule la navigation affichée et l’état de compilation de chaque page et fonction.
@@ -1220,6 +1328,7 @@ impl Space {
                     uses: page.uses.clone(),
                     panel: None,
                     instance: None,
+                    per_instance: page.per_instance.clone().filter(|need| !need.trim().is_empty()),
                     reference,
                 };
                 pages.push((resolved, placement));
@@ -1301,7 +1410,7 @@ impl Space {
             }
         }
 
-        let mut sections = self.expand_instances(sections, &manifest, &mut problems);
+        let (mut sections, account_pages) = self.expand_instances(sections, &manifest, &mut problems);
         // Une copie par instance prend la place de sa section tant que l’utilisateur ne l’a pas rangée elle-même.
         order_by_either(&mut sections, &manifest.layout.sections, |section| {
             (section.id.as_str(), section.instance_of.as_deref())
@@ -1388,6 +1497,7 @@ impl Space {
             problems,
             layout: manifest.layout,
             examples: Vec::new(),
+            account_pages,
         })
     }
 }

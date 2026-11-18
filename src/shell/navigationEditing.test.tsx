@@ -404,6 +404,25 @@ describe("sections par instance", () => {
     expect(useShell.getState().activeTab["réglages:module"]).toBe("mail");
   });
 
+  it("sans compte, montre les pages communes d’une section et fait attendre seulement ses pages par compte", () => {
+    const waiting = withInstances();
+    waiting.sections[3] = section(
+      "mail/principal",
+      "Mail",
+      [
+        page("mail", "accueil", "Accueil", { perInstance: null }),
+        page("mail", "boite", "Boîte", { perInstance: "mail" }),
+      ],
+      { waiting: "Le client « Mail » n’a encore aucune instance." },
+    );
+    useShell.setState({ snapshot: waiting });
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+    expect(screen.queryByText("En attente d’un compte")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Boîte" }));
+    expect(screen.getByText("En attente d’un compte")).toBeInTheDocument();
+  });
+
   it("ouvre la page déclarée dans la première copie, ou celle de l’instance nommée", () => {
     useShell.getState().openPage("jira/tickets");
     expect(useShell.getState().view).toEqual({ kind: "section", id: "jira/principal@acme" });

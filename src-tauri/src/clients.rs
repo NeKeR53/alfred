@@ -1921,6 +1921,10 @@ fn save_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     client.validate()?;
     check_entry_kind(state, &client)?;
     store(&space, &def)?;
+    // Les pages que l’utilisateur a cochées pour ce compte dans sa fiche (`module/page` → cochée).
+    if let Some(pages) = opt_arg::<BTreeMap<String, bool>>(args, "pages")? {
+        space.set_account_pages(&instance.id, &pages.into_iter().collect::<Vec<_>>())?;
+    }
     record_trust(state, &space, &client)?;
     git::commit_all(&space.root, &format!("Instance {} du client {}", instance.display_label(), def.label))?;
     state.emit("clients:changed", json!({ "client": def.id, "instance": instance.id }));
@@ -1943,7 +1947,18 @@ fn delete_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         .position(|instance| instance.id == id)
         .ok_or_else(|| AppError::new(format!("Le client « {} » n’a pas d’instance « {id} ».", def.label)))?;
     let removed = def.instances.remove(index);
+    // Ni des pages décochées pour ce compte : un compte recréé sous ce nom les reçoit toutes.
+    let pages: Vec<(String, bool)> = space
+        .snapshot()?
+        .account_pages
+        .into_iter()
+        .filter(|page| page.client.as_deref() == Some(def.id.as_str()))
+        .map(|page| (page.reference, true))
+        .collect();
     store(&space, &def)?;
+    if !pages.is_empty() {
+        space.set_account_pages(&id, &pages)?;
+    }
     // Une future instance du même identifiant ne doit pas hériter de cette validation.
     forget_trust(state, &space, &trust_key(&def.id, &id))?;
     git::commit_all(
@@ -3551,6 +3566,156 @@ mod tests {
         invoke(&state, "clients.deleteInstance", json!({ "client": "jira", "instance": "autre" })).await.unwrap();
         let ids: Vec<String> = sections(&space).into_iter().map(|section| section.id).collect();
         assert_eq!(ids, ["jira/principal@acme"]);
+    }
+
+    /// Une page qui est pour chaque compte : l’utilisateur la coche ou non dans la fiche de chaque compte. Un compte
+    /// ajouté reçoit toutes les pages sans toucher au choix des autres ; les pages communes de la section restent
+    /// dans la section d’origine ; une page décochée quitte le menu de ce compte seulement.
+    #[tokio::test]
+    async fn pages_declared_for_a_need_follow_the_choice_made_for_each_account() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        let menu = crate::space::PlaceTarget::Menu { label: "Jira".into(), icon: None, color: None };
+        space.place_page("Accueil", None, "", &menu, None).unwrap();
+        let tab = crate::space::PlaceTarget::Tab { section: "jira/principal".into() };
+        for title in ["Tickets", "Sprints"] {
+            space.place_page(title, None, "", &tab, Some("jira")).unwrap();
+        }
+        let mut module = space.module("jira").unwrap();
+        for page in module.pages.iter_mut().filter(|page| page.id != "accueil") {
+            page.per_instance = Some("jira".into());
+        }
+        module.clients.push(crate::space::ClientNeed { id: "jira".into(), label: "Jira".into(), ..Default::default() });
+        space.write_module(&module).unwrap();
+        let menu = |space: &Space| -> Vec<(String, Vec<String>)> {
+            space
+                .snapshot()
+                .unwrap()
+                .sections
+                .into_iter()
+                .map(|section| (section.id, section.pages.into_iter().map(|page| page.reference).collect()))
+                .collect()
+        };
+
+        // Sans compte : la section reste seule, avec toutes ses pages, et dit quoi faire pour les pages par compte.
+        let snapshot = space.snapshot().unwrap();
+        assert_eq!(snapshot.sections.len(), 1);
+        assert!(snapshot.sections[0].waiting.is_some());
+        assert_eq!(snapshot.sections[0].pages[0].per_instance, None, "la page commune ne suit aucun compte");
+        assert_eq!(snapshot.sections[0].pages[1].per_instance.as_deref(), Some("jira"));
+        let offered: Vec<(&str, Option<&str>)> =
+            snapshot.account_pages.iter().map(|page| (page.reference.as_str(), page.client.as_deref())).collect();
+        assert_eq!(offered, [("jira/tickets", None), ("jira/sprints", None)]);
+
+        save_client(
+            &state,
+            json!({ "id": "jira", "label": "Jira", "methods": [{ "id": "web", "label": "Web", "type": "none" }] }),
+        )
+        .await;
+        let add = |id: &str, label: &str, pages: Value| {
+            let state = state.clone();
+            let instance = json!({ "client": "jira", "create": true, "pages": pages,
+                "instance": { "id": id, "label": label, "url": "https://jira.example.com", "method": "web" } });
+            async move { invoke(&state, "clients.saveInstance", instance).await.unwrap() }
+        };
+        // Le compte « Jira » a X et Y ; le compte « Jira Desk » seulement X.
+        add("jira", "Jira", json!({ "jira/tickets": true, "jira/sprints": true })).await;
+        add("desk", "Jira Desk", json!({ "jira/tickets": true, "jira/sprints": false })).await;
+        let strings = |items: &[&str]| items.iter().map(|item| item.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            menu(&space),
+            [
+                ("jira/principal".to_string(), strings(&["jira/accueil"])),
+                ("jira/principal@jira".to_string(), strings(&["jira/tickets@jira", "jira/sprints@jira"])),
+                ("jira/principal@desk".to_string(), strings(&["jira/tickets@desk"])),
+            ]
+        );
+        let snapshot = space.snapshot().unwrap();
+        assert_eq!(snapshot.sections[1].label, "Jira — Jira");
+        assert_eq!(snapshot.sections[0].per_instance, None);
+        assert_eq!(snapshot.sections[2].per_instance.as_deref(), Some("jira"));
+        assert!(snapshot.account_pages.iter().all(|page| page.client.as_deref() == Some("jira")));
+        // Seules les pages décochées sont écrites dans l’espace.
+        let overrides = space.manifest().unwrap().layout.overrides;
+        let excluded: Vec<&String> = overrides.iter().filter(|(_, entry)| entry.excluded).map(|(key, _)| key).collect();
+        assert_eq!(excluded, ["page:jira/sprints@desk"]);
+
+        // Un compte ajouté sans choix reçoit toutes les pages ; les autres comptes gardent le leur.
+        invoke(
+            &state,
+            "clients.saveInstance",
+            json!({ "client": "jira", "create": true,
+                "instance": { "id": "autre", "label": "Autre", "url": "https://autre.example.com", "method": "web" } }),
+        )
+        .await
+        .unwrap();
+        let shown = menu(&space);
+        assert_eq!(shown[2], ("jira/principal@desk".to_string(), strings(&["jira/tickets@desk"])));
+        assert_eq!(shown[3], ("jira/principal@autre".to_string(), strings(&["jira/tickets@autre", "jira/sprints@autre"])));
+
+        // Le choix reste modifiable ; un compte sans aucune page cochée n’a plus d’entrée.
+        invoke(
+            &state,
+            "clients.saveInstance",
+            json!({ "client": "jira", "pages": { "jira/tickets": false, "jira/sprints": false },
+                "instance": { "id": "autre", "label": "Autre", "url": "https://autre.example.com", "method": "web" } }),
+        )
+        .await
+        .unwrap();
+        assert!(menu(&space).iter().all(|(id, _)| id != "jira/principal@autre"));
+
+        // Masquer, renommer et ranger une copie marche toujours.
+        space.set_visibility("page:jira/tickets@jira", true).unwrap();
+        let mut manifest = space.manifest().unwrap();
+        manifest.layout.overrides.entry("page:jira/sprints@jira".into()).or_default().label = Some("Mes sprints".into());
+        manifest.layout.tabs.insert("jira/principal@jira".into(), vec!["jira/sprints@jira".into()]);
+        space.write_manifest(&manifest).unwrap();
+        let snapshot = space.snapshot().unwrap();
+        let mine = snapshot.sections.iter().find(|section| section.id == "jira/principal@jira").unwrap();
+        let pages: Vec<(&str, &str, bool)> =
+            mine.pages.iter().map(|page| (page.reference.as_str(), page.title.as_str(), page.hidden)).collect();
+        assert_eq!(pages, [("jira/sprints@jira", "Mes sprints", false), ("jira/tickets@jira", "Tickets", true)]);
+
+        // Un compte supprimé emporte son choix : recréé sous le même nom, il reçoit toutes les pages.
+        invoke(&state, "clients.deleteInstance", json!({ "client": "jira", "instance": "desk" })).await.unwrap();
+        assert!(!space.manifest().unwrap().layout.overrides.contains_key("page:jira/sprints@desk"));
+    }
+
+    /// Une section `perInstance` vaut comme « toutes ses pages sont pour ce besoin » : chacune se coche par compte.
+    #[tokio::test]
+    async fn a_section_per_instance_offers_each_of_its_pages_to_each_account() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        let menu = crate::space::PlaceTarget::Menu { label: "Jira".into(), icon: None, color: None };
+        space.place_page("Tickets", None, "", &menu, None).unwrap();
+        let tab = crate::space::PlaceTarget::Tab { section: "jira/principal".into() };
+        space.place_page("Sprints", None, "", &tab, Some("jira")).unwrap();
+        let mut module = space.module("jira").unwrap();
+        module.sections[0].per_instance = Some("jira".into());
+        module.clients.push(crate::space::ClientNeed { id: "jira".into(), label: "Jira".into(), ..Default::default() });
+        space.write_module(&module).unwrap();
+        save_client(
+            &state,
+            json!({ "id": "jira", "label": "Jira", "methods": [{ "id": "web", "label": "Web", "type": "none" }] }),
+        )
+        .await;
+        for (id, pages) in [("acme", json!(null)), ("desk", json!({ "jira/sprints": false }))] {
+            invoke(
+                &state,
+                "clients.saveInstance",
+                json!({ "client": "jira", "create": true, "pages": pages,
+                    "instance": { "id": id, "label": id, "url": "https://jira.example.com", "method": "web" } }),
+            )
+            .await
+            .unwrap();
+        }
+        let snapshot = space.snapshot().unwrap();
+        let offered: Vec<&str> = snapshot.account_pages.iter().map(|page| page.reference.as_str()).collect();
+        assert_eq!(offered, ["jira/tickets", "jira/sprints"]);
+        let shown: Vec<(&str, usize)> =
+            snapshot.sections.iter().map(|section| (section.id.as_str(), section.pages.len())).collect();
+        assert_eq!(shown, [("jira/principal@acme", 2), ("jira/principal@desk", 1)], "pas de section d’origine vide");
+        assert!(snapshot.sections[1].pages.iter().all(|page| page.per_instance.as_deref() == Some("jira")));
     }
 
     /// L’agent autonome déclare lui-même les instances et leur entrée du coffre, puis les valide ; une redéclaration
