@@ -26,9 +26,15 @@ export function Menu({
   children: ReactNode;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  // Un menu ancré reste invisible jusqu’au calcul de sa position, et un navigateur refuse le focus à un élément
+  // invisible : la première entrée le prend dès que le menu s’affiche, une seule fois.
+  const positioning = style?.visibility === "hidden";
+  const focused = useRef(false);
   useEffect(() => {
+    if (positioning || focused.current) return;
+    focused.current = true;
     menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
-  }, []);
+  }, [positioning]);
   const moveFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     const items = Array.from(
