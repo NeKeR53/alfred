@@ -45,9 +45,18 @@ it("annonce la taille, puis télécharge le modèle à la demande", async () => 
   await waitFor(() => expect(screen.getByText("Téléchargement en cours : 10 Mo sur 470 Mo")).toBeInTheDocument());
 });
 
-it("ne propose plus rien quand le modèle est installé", async () => {
-  model = { ...model, status: "ready" };
+it("ne propose plus rien quand le modèle est installé, et en donne la version", async () => {
+  model = { ...model, status: "ready", revision: "614241f" };
   render(<SemanticSection />);
-  expect(await screen.findByText(/Installé/)).toBeInTheDocument();
+  expect(await screen.findByText(/Installé\..* Version 614241f\./)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Télécharger" })).not.toBeInTheDocument();
+});
+
+it("dit qu’une version du modèle n’est pas prise en charge, et propose de la retélécharger", async () => {
+  const unsupported =
+    "Modèle de recherche sémantique : la version 9da7038 du modèle intfloat/multilingual-e5-small n’est pas prise en charge par cette version d’Alfred (missing field `hidden_size`). Une mise à jour d’Alfred est nécessaire.";
+  model = { ...model, status: "damaged", damaged: unsupported };
+  render(<SemanticSection />);
+  expect(await screen.findByText(unsupported)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Télécharger à nouveau" })).toBeInTheDocument();
 });

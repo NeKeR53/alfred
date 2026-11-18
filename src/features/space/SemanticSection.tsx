@@ -6,10 +6,14 @@ import { formatSize } from "./BackupsSection";
 export interface SemanticModel {
   model: string;
   sizeMb: number;
-  status: "ready" | "missing" | "downloading";
+  status: "ready" | "missing" | "downloading" | "damaged";
   received: number | null;
   total: number | null;
   error: string | null;
+  /** Le modèle installé n’a pas pu être chargé (version au format non pris en charge). */
+  damaged?: string | null;
+  /** Révision installée, en court (`614241f`). */
+  revision?: string | null;
 }
 
 function errorMessage(error: unknown): string {
@@ -76,10 +80,12 @@ export function SemanticSection() {
           title="Modèle de langue local"
           description={
             model?.status === "ready"
-              ? "Installé. Les données des modules s’indexent en arrière-plan."
+              ? `Installé. Les données des modules s’indexent en arrière-plan.${model.revision ? ` Version ${model.revision}.` : ""}`
               : model?.status === "downloading"
                 ? `Téléchargement en cours${progress ? ` : ${progress}` : "…"}`
-                : `Environ ${model?.sizeMb ?? 470} Mo à télécharger une seule fois (${model?.model ?? "multilingual-e5-small"}, français compris).`
+                : model?.status === "damaged" && model.damaged
+                  ? model.damaged
+                  : `Environ ${model?.sizeMb ?? 470} Mo à télécharger une seule fois (${model?.model ?? "multilingual-e5-small"}, français compris).`
           }
         >
           {model?.status === "ready" ? null : (
@@ -90,7 +96,7 @@ export function SemanticSection() {
               loadingLabel="Téléchargement…"
               onClick={() => void download()}
             >
-              Télécharger
+              {model?.status === "damaged" ? "Télécharger à nouveau" : "Télécharger"}
             </Button>
           )}
         </SettingRow>

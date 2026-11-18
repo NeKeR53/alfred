@@ -65,10 +65,10 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 trash = "5"
 image = { version = "0.25", default-features = false, features = ["png", "webp", "ico"] }
 quick-xml = "0.42"
-# Modèles locaux (décisions, recherche par le sens) : téléchargés depuis Hugging Face ou un miroir (Artifactory),
-# dans le cache Hugging Face partagé avec Python. Sans TLS propre : le client reqwest d’Alfred (racines du système)
-# est celui qu’il emploie, si bien que les certificats d’entreprise installés sur le poste sont acceptés.
-hf-hub = { version = "=0.5.0", default-features = false, features = ["tokio"] }
+# Modèles locaux (décisions, recherche par le sens) : le cache Hugging Face partagé avec Python (`HF_HOME`, jeton de
+# `huggingface-cli login`). Le téléchargement passe par le client reqwest d’Alfred (racines du système), si bien
+# que les certificats d’entreprise installés sur le poste sont acceptés.
+hf-hub = { version = "=0.5.0", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

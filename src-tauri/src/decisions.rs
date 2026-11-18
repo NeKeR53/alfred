@@ -19,22 +19,18 @@ use candle_nn::{LayerNorm, Linear, Module};
 use serde_json::{json, Map, Value};
 
 use crate::error::{opt_arg, AppError, AppResult};
-use crate::model_files::{sha256_file, ModelSpec};
+use crate::model_files::{short_revision, unsupported, Installed, ModelSpec};
 use crate::state::AppState;
 
 const MODEL: &str = "convaiinnovations/laya-multilingual";
 const MODEL_DIR: &str = "laya-multilingual";
-/// Version figée du modèle, et empreinte SHA-256 de chaque fichier : un fichier différent est écarté.
+/// Le modèle, à la dernière révision annoncée par la source (voir `model_files`).
 const SPEC: ModelSpec = ModelSpec {
     repo: MODEL,
-    revision: "92d22143468d8af669dc1a5a0480a2b21b4fe56e",
     legacy_dir: MODEL_DIR,
-    files: &[
-        ("encoder/config.json", "83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4"),
-        ("rl_agent_config.json", "25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6"),
-        ("tokenizer/tokenizer.json", "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"),
-        ("model.safetensors", "9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204"),
-    ],
+    // Révision que figeaient les versions précédentes d’Alfred (celle du Laya déjà téléchargé dans l’ancien dossier).
+    legacy_revision: "92d22143468d8af669dc1a5a0480a2b21b4fe56e",
+    files: &["encoder/config.json", "rl_agent_config.json", "tokenizer/tokenizer.json", "model.safetensors"],
 };
 /// Taille annoncée à l’utilisateur avant le téléchargement, en Mo de 1 024 Ko comme le reste des Réglages
 /// (678 201 112 octets en tout).
@@ -739,7 +735,7 @@ struct ModelState {
     downloading: Option<(u64, u64)>,
     /// Échec du dernier téléchargement.
     error: Option<String>,
-    /// Fichiers présents mais abîmés (empreinte différente) ou illisibles.
+    /// Modèle installé qu’Alfred n’a pas pu charger (format non pris en charge, fichier illisible).
     damaged: Option<String>,
 }
 
@@ -752,8 +748,8 @@ fn lock() -> AppResult<std::sync::MutexGuard<'static, ModelState>> {
     model_state().lock().map_err(|_| model_error("indisponible"))
 }
 
-fn model_dir(state: &AppState) -> PathBuf {
-    SPEC.dir(&state.data_dir)
+fn installed(state: &AppState) -> Option<Installed> {
+    SPEC.installed(&state.data_dir)
 }
 
 /// Où calculer : la carte graphique sur macOS (Metal), sinon le processeur. Sur un Mac, le calcul sur Metal laisse
@@ -766,14 +762,13 @@ fn compute_device() -> Device {
     Device::Cpu
 }
 
-/// Charge le modèle une fois, après avoir vérifié l’empreinte de chaque fichier.
-fn load_verified(dir: &Path, device: Device) -> AppResult<Laya> {
-    for (file, expected) in SPEC.files {
-        if sha256_file(&dir.join(file))? != *expected {
-            return Err(model_error(format!("{file} est abîmé (empreinte inattendue). Téléchargez-le à nouveau dans Réglages → Général.")));
-        }
-    }
-    Laya::load(dir, device)
+/// Charge le modèle installé. Un échec veut dire que cette révision a changé de format (configuration, noms de
+/// tenseurs) : l’erreur le dit, avec ce qui manque. Les fichiers ont été vérifiés au téléchargement.
+fn load_installed(installed: &Installed, device: Device) -> AppResult<Laya> {
+    Laya::load(&installed.dir, device).map_err(|error| {
+        let detail = error.message.trim_start_matches("Modèle de décision : ").to_string();
+        model_error(unsupported(&SPEC, installed, &detail))
+    })
 }
 
 /// Le tour du modèle : un seul chargement et une seule décision à la fois. Les appels simultanés attendent leur tour,
@@ -793,11 +788,10 @@ fn model(state: &AppState) -> AppResult<Arc<Laya>> {
     if let Some(loaded) = lock()?.loaded.clone() {
         return Ok(loaded);
     }
-    let dir = model_dir(state);
-    if !SPEC.installed(&dir) {
+    let Some(installed) = installed(state) else {
         return Err(missing_model());
-    }
-    match load_verified(&dir, compute_device()) {
+    };
+    match load_installed(&installed, compute_device()) {
         Ok(model) => {
             let model = Arc::new(model);
             let mut current = lock()?;
@@ -842,7 +836,7 @@ pub fn warm_for_module(state: &Arc<AppState>, module_dir: PathBuf) {
     static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     use std::sync::atomic::Ordering;
     let ready = model_state().lock().is_ok_and(|current| current.loaded.is_some() || current.damaged.is_some() || current.downloading.is_some());
-    if ready || !SPEC.installed(&model_dir(state)) || WARMING.swap(true, Ordering::AcqRel) {
+    if ready || installed(state).is_none() || WARMING.swap(true, Ordering::AcqRel) {
         return;
     }
     let state = state.clone();
@@ -874,7 +868,7 @@ pub fn model_status(state: &AppState) -> Value {
         "ready"
     } else if damaged.is_some() {
         "damaged"
-    } else if SPEC.installed(&model_dir(state)) {
+    } else if installed(state).is_some() {
         "ready"
     } else {
         "missing"
@@ -887,10 +881,12 @@ pub fn model_status(state: &AppState) -> Value {
         "total": downloading.map(|(_, total)| total),
         "error": error,
         "damaged": damaged,
+        "revision": installed(state).map(|installed| short_revision(&installed.revision)),
     })
 }
 
-/// Télécharge le modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
+/// Télécharge la dernière révision du modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par
+/// fichier, en vérifiant chacun avec l’empreinte ou la taille que la source annonce.
 pub fn download(state: Arc<AppState>) -> AppResult<()> {
     {
         let mut current = lock()?;
@@ -917,7 +913,9 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
             current.downloading = None;
             current.error = result.as_ref().err().map(|error| error.message.clone());
             if result.is_ok() {
+                // La révision téléchargée sera chargée au prochain usage.
                 current.damaged = None;
+                current.loaded = None;
             }
         }
         state.emit("decisions:changed", Value::Null);
@@ -1014,6 +1012,23 @@ mod tests {
     }
 
     #[test]
+    fn a_model_in_a_format_alfred_does_not_know_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("encoder")).unwrap();
+        std::fs::create_dir_all(dir.path().join("tokenizer")).unwrap();
+        // Une révision plus récente dont la configuration a changé de forme.
+        std::fs::write(dir.path().join("encoder/config.json"), r#"{"architecture": "autre"}"#).unwrap();
+        for file in ["rl_agent_config.json", "tokenizer/tokenizer.json", "model.safetensors"] {
+            std::fs::write(dir.path().join(file), "{}").unwrap();
+        }
+        let installed = Installed { dir: dir.path().to_path_buf(), revision: "2fa0c067f72703cb90024d119bc7eff361b03d84".into() };
+        let Err(error) = load_installed(&installed, Device::Cpu) else { panic!("chargé") };
+        assert!(error.message.starts_with("Modèle de décision : la version 2fa0c06 du modèle convaiinnovations/laya-multilingual n’est pas prise en charge par cette version d’Alfred ("), "{}", error.message);
+        assert!(error.message.ends_with("Une mise à jour d’Alfred est nécessaire."), "{}", error.message);
+        assert!(!error.message.contains("Modèle de décision : la version 2fa0c06 du modèle convaiinnovations/laya-multilingual n’est pas prise en charge par cette version d’Alfred (Modèle"));
+    }
+
+    #[test]
     fn a_module_that_asks_for_decisions_is_recognized_by_its_code() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("pages")).unwrap();
@@ -1043,8 +1058,8 @@ mod tests {
 
     fn decides_like_the_python_package_on(dir: &Path, device: Device) {
         let started = std::time::Instant::now();
-        let model = load_verified(dir, device).unwrap();
-        eprintln!("chargement (empreintes comprises) : {:?}", started.elapsed());
+        let model = Laya::load(dir, device).unwrap();
+        eprintln!("chargement : {:?}", started.elapsed());
         let single = parse_request(&json!({
             "text": "Bonjour, pouvez-vous m’envoyer la facture de mars avant vendredi ? Merci, Claire",
             "question": "De quoi parle ce message ?",

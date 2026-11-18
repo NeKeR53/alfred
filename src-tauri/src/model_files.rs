@@ -1,78 +1,124 @@
-//! Modèles locaux téléchargés à la demande (recherche par le sens, décisions) : chaque fichier à une révision
-//! figée, son empreinte SHA-256 vérifiée avant usage. Rien de tout cela n’est dans le dépôt ni dans l’installeur.
+//! Modèles locaux téléchargés à la demande (recherche par le sens, décisions). Rien de tout cela n’est dans le
+//! dépôt ni dans l’installeur.
 //!
-//! Le téléchargement suit `snapshot_download` (le déroulé que demande Artifactory) : la liste des fichiers par
-//! `hf-hub` (bibliothèque de Hugging Face), puis chaque fichier par un simple GET. Les fichiers vont dans le cache
-//! Hugging Face standard, au format de Python et partagé avec lui (`$HF_HOME/hub`, sinon `~/.cache/huggingface/hub`).
+//! **Révision** : Alfred prend la dernière, celle que la source annonce pour `main` (huggingface.co, ou
+//! l’identifiant que renvoie un miroir Artifactory). Elle est notée dans le cache (`refs/main`, comme Python) et
+//! affichée dans Réglages. Une mise à jour ne se fait jamais toute seule : seulement quand l’utilisateur clique
+//! « Télécharger » ou « Réessayer ».
+//!
+//! **Intégrité** : chaque gros fichier (LFS) est vérifié avec l’empreinte SHA-256 que la source annonce elle-même
+//! (`lfs.sha256` dans la liste des fichiers, sinon l’en-tête `X-Linked-Etag`) ; un fichier sans empreinte
+//! annoncée est accepté sur sa taille. Cela couvre les téléchargements abîmés ou tronqués.
+//!
+//! Le téléchargement suit `snapshot_download` (le déroulé que demande Artifactory) : la liste des fichiers, puis
+//! chaque fichier par un simple GET. Les fichiers vont dans le cache Hugging Face standard, au format de Python et
+//! partagé avec lui (`$HF_HOME/hub`, sinon `~/.cache/huggingface/hub`, calculé par `hf-hub`).
 //!
 //! **Source** : le réglage d’Alfred (Réglages → Général, « Source des modèles »), sinon la variable `HF_ENDPOINT`,
 //! sinon huggingface.co. Une entreprise y met l’adresse de son miroir, par exemple un dépôt distant Hugging Face
 //! d’Artifactory (`https://…/artifactory/api/huggingfaceml/<dépôt>`).
 //!
 //! **Jeton** : celui du réglage d’Alfred (dans le trousseau, et seulement avec l’adresse de ce réglage), sinon
-//! `HF_TOKEN`, sinon le fichier de `huggingface-cli login` (`$HF_HOME/token`, lu par `hf-hub`). Le
-//! jeton n’apparaît jamais dans un journal ni un message d’erreur.
+//! `HF_TOKEN`, sinon le fichier de `huggingface-cli login` (`$HF_HOME/token`). Il ne part qu’à l’hôte de la
+//! source, jamais vers une redirection ailleurs, et n’apparaît jamais dans un journal ni un message d’erreur.
 //!
-//! **Ancien emplacement** : un modèle déjà complet dans `<données d’Alfred>/models/<modèle>` (téléchargé avant
-//! `hf-hub`) y reste et y est lu tel quel ; rien n’est téléchargé à nouveau ni déplacé.
+//! **Copies plus anciennes** : un modèle complet dans `<données d’Alfred>/models/<modèle>`, ou dans le cache à la
+//! révision que figeaient les versions précédentes d’Alfred, reste reconnu tel quel ; rien n’est retéléchargé.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use hf_hub::api::tokio::{ApiBuilder, ApiError};
-use hf_hub::{Cache, Repo, RepoType};
+use hf_hub::{Cache, Repo};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::{opt_arg, AppError, AppResult};
 use crate::state::AppState;
 
-/// Un modèle : le dépôt Hugging Face, sa révision figée, et chaque fichier avec son empreinte.
+/// Un modèle : son dépôt Hugging Face et les fichiers dont Alfred a besoin.
 pub struct ModelSpec {
     pub repo: &'static str,
-    pub revision: &'static str,
     /// Dossier de l’ancien emplacement, sous `<données d’Alfred>/models`.
     pub legacy_dir: &'static str,
-    /// Chemin dans le dépôt (et sous le dossier du modèle), empreinte SHA-256.
-    pub files: &'static [(&'static str, &'static str)],
+    /// Révision que figeaient les versions précédentes d’Alfred : celle d’une copie de l’ancien dossier, ou d’une
+    /// copie du cache sans `refs/main`.
+    pub legacy_revision: &'static str,
+    /// Chemins dans le dépôt (et sous le dossier du modèle).
+    pub files: &'static [&'static str],
+}
+
+/// Un modèle installé : où le lire, et à quelle révision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Installed {
+    pub dir: PathBuf,
+    pub revision: String,
 }
 
 impl ModelSpec {
-    /// Tous les fichiers sont là (leur empreinte n’est pas relue ici : c’est au chargement).
-    pub fn installed(&self, dir: &Path) -> bool {
-        self.files.iter().all(|(file, _)| dir.join(file).is_file())
+    fn complete(&self, dir: &Path) -> bool {
+        self.files.iter().all(|file| dir.join(file).is_file())
     }
 
-    fn hf_repo(&self) -> Repo {
-        Repo::with_revision(self.repo.to_string(), RepoType::Model, self.revision.to_string())
+    /// `models--<org>--<nom>` dans un cache Hugging Face.
+    fn model_cache(&self, hub_cache: &Path) -> PathBuf {
+        hub_cache.join(Repo::model(self.repo.to_string()).folder_name())
     }
 
-    /// Dossier du modèle dans un cache Hugging Face : `models--<org>--<nom>/snapshots/<révision>`.
-    pub fn snapshot_dir(&self, hub_cache: &Path) -> PathBuf {
-        hub_cache.join(self.hf_repo().folder_name()).join("snapshots").join(self.revision)
+    /// Dossier d’une révision dans un cache Hugging Face : `models--<org>--<nom>/snapshots/<révision>`.
+    pub fn snapshot_dir(&self, hub_cache: &Path, revision: &str) -> PathBuf {
+        self.model_cache(hub_cache).join("snapshots").join(revision)
     }
 
-    /// Où lire le modèle : l’ancien dossier s’il y est complet, sinon le cache Hugging Face.
-    pub fn dir(&self, data_dir: &Path) -> PathBuf {
-        let legacy = data_dir.join("models").join(self.legacy_dir);
-        if self.installed(&legacy) {
-            legacy
-        } else {
-            self.snapshot_dir(&hub_cache())
+    /// Le modèle installé, s’il est complet, dans cet ordre : la révision notée dans le cache (`refs/main`), la
+    /// copie du cache à l’ancienne révision figée, puis l’ancien dossier d’Alfred.
+    pub fn installed_in(&self, data_dir: &Path, hub_cache: &Path) -> Option<Installed> {
+        let noted = std::fs::read_to_string(self.model_cache(hub_cache).join("refs/main")).ok();
+        let candidates = noted
+            .map(|text| text.trim().to_string())
+            .filter(|revision| valid_revision(revision))
+            .into_iter()
+            .chain([self.legacy_revision.to_string()])
+            .map(|revision| (self.snapshot_dir(hub_cache, &revision), revision))
+            .chain([(data_dir.join("models").join(self.legacy_dir), self.legacy_revision.to_string())]);
+        for (dir, revision) in candidates {
+            if self.complete(&dir) {
+                return Some(Installed { dir, revision });
+            }
         }
+        None
     }
+
+    pub fn installed(&self, data_dir: &Path) -> Option<Installed> {
+        self.installed_in(data_dir, &hub_cache())
+    }
+}
+
+/// Une révision utilisable comme nom de dossier : lettres, chiffres, `-`, `_`, `.`, sans `..`.
+fn valid_revision(revision: &str) -> bool {
+    !revision.is_empty()
+        && revision.len() <= 128
+        && !revision.contains("..")
+        && revision.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Révision courte, pour l’affichage.
+pub fn short_revision(revision: &str) -> String {
+    revision.chars().take(7).collect()
+}
+
+/// Un modèle installé qu’Alfred ne sait pas charger (configuration, noms ou formes de tenseurs) : une version plus
+/// récente au format changé. `detail` dit ce qui manque.
+pub fn unsupported(spec: &ModelSpec, installed: &Installed, detail: &str) -> String {
+    format!(
+        "la version {} du modèle {} n’est pas prise en charge par cette version d’Alfred ({detail}). Une mise à jour d’Alfred est nécessaire.",
+        short_revision(&installed.revision),
+        spec.repo
+    )
 }
 
 /// Cache Hugging Face, comme `hf-hub` le calcule : `$HF_HOME/hub`, sinon `~/.cache/huggingface/hub`.
 pub fn hub_cache() -> PathBuf {
     Cache::from_env().path().clone()
-}
-
-pub fn sha256_file(path: &Path) -> AppResult<String> {
-    use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -136,14 +182,14 @@ pub fn resolve_source(setting: Option<&str>, env: Option<&str>) -> Source {
     Source { endpoint: DEFAULT_ENDPOINT.to_string(), origin: Origin::Default }
 }
 
-/// Jeton à passer explicitement à `hf-hub` : celui du réglage (seulement avec l’adresse du réglage, pour ne pas
-/// l’envoyer ailleurs), sinon `HF_TOKEN`. `None` : `hf-hub` se rabat sur le fichier de `huggingface-cli login`.
+/// Jeton envoyé à la source : celui du réglage (seulement avec l’adresse du réglage, pour ne pas l’envoyer
+/// ailleurs), sinon `HF_TOKEN`. `None` : le fichier de `huggingface-cli login`, s’il existe.
 pub fn resolve_token(source: &Source, setting_token: Option<String>, env_token: Option<String>) -> Option<String> {
     let clean = |token: Option<String>| token.map(|token| token.trim().to_string()).filter(|token| !token.is_empty());
     clean(setting_token).filter(|_| source.origin == Origin::Setting).or_else(|| clean(env_token))
 }
 
-/// Adresse d’un fichier, comme `hf-hub` la demande (vérifiée par les tests).
+/// Adresse d’un fichier, comme la bibliothèque de Hugging Face la demande.
 fn file_url(endpoint: &str, repo: &str, revision: &str, file: &str) -> String {
     format!("{endpoint}/{repo}/resolve/{revision}/{file}")
 }
@@ -233,7 +279,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
 fn status_failure(status: reqwest::StatusCode, what: &str, host: &str) -> String {
     match status.as_u16() {
         401 | 403 => format!("{host} refuse l’accès ({status}) : jeton manquant ou refusé. Renseignez le jeton dans Réglages → Général, Source des modèles."),
-        404 => format!("{what} ou sa révision est absent de {host} (404). Vérifiez l’adresse de la source et que le miroir donne accès à ce modèle."),
+        404 => format!("{what} est absent de {host} (404). Vérifiez l’adresse de la source et que le miroir donne accès à ce modèle."),
         _ => format!("{host} a répondu {status} pour {what}."),
     }
 }
@@ -255,22 +301,6 @@ fn request_failure(failure: &reqwest::Error, what: &str, host: &str) -> String {
     format!("{host} est injoignable. Vérifiez l’adresse de la source et la connexion au réseau.")
 }
 
-/// Une erreur de `hf-hub` en français, sans jeton ni adresse complète.
-pub fn explain(error: &ApiError, what: &str, source: &Source) -> String {
-    let host = host(&source.endpoint);
-    match error {
-        ApiError::TooManyRetries(inner) => explain(inner, what, source),
-        ApiError::RequestError(failure) => request_failure(failure, what, &host),
-        ApiError::MissingHeader(header) => format!(
-            "{host} ne répond pas comme un dépôt Hugging Face (en-tête « {header} » absent) : vérifiez l’adresse de la source."
-        ),
-        ApiError::InvalidHeader(header) => format!("{host} a envoyé un en-tête « {header} » illisible."),
-        ApiError::InvalidHeaderValue(_) => "le jeton contient des caractères interdits.".to_string(),
-        ApiError::IoError(failure) => format!("écriture impossible dans le cache des modèles ({failure})."),
-        _ => format!("{host} n’a pas répondu comme un dépôt Hugging Face pour {what}."),
-    }
-}
-
 fn certificate_refused(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(failure) = current {
@@ -283,71 +313,143 @@ fn certificate_refused(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// Retire un fichier du cache : le lien du dossier du modèle et le contenu qu’il désigne.
-fn discard(path: &Path) {
-    if let Ok(blob) = std::fs::canonicalize(path) {
-        if blob != path {
-            let _ = std::fs::remove_file(blob);
-        }
-    }
-    let _ = std::fs::remove_file(path);
+/// La liste des fichiers d’un modèle (`/api/models/<dépôt>/revision/main`), réduite à ce qu’Alfred lit.
+#[derive(Deserialize)]
+struct Listing {
+    sha: String,
+    #[serde(default)]
+    siblings: Vec<Sibling>,
 }
 
-async fn digest(path: &Path) -> AppResult<String> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || sha256_file(&path)).await.map_err(|_| AppError::new("Le calcul d’empreinte a échoué."))?
+#[derive(Deserialize)]
+struct Sibling {
+    rfilename: String,
+    size: Option<u64>,
+    lfs: Option<Lfs>,
 }
 
-/// Télécharge les fichiers manquants ou abîmés, l’un après l’autre, vers le cache Hugging Face. Un modèle complet
-/// dans l’ancien dossier n’est pas téléchargé. `progress(reçu, total)` suit l’ensemble ; `total_hint` est la
-/// taille annoncée, tant que les tailles réelles ne sont pas connues.
+#[derive(Deserialize)]
+struct Lfs {
+    sha256: Option<String>,
+    size: Option<u64>,
+}
+
+/// Ce que la source annonce d’un fichier : son empreinte SHA-256 (fichiers LFS) et sa taille.
+#[derive(Clone, Default)]
+struct Announced {
+    sha256: Option<String>,
+    size: Option<u64>,
+}
+
+fn sha256_like(text: &str) -> Option<String> {
+    let text = text.trim().trim_start_matches("W/").trim_matches('"').to_ascii_lowercase();
+    (text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit())).then_some(text)
+}
+
+/// Télécharge la dernière révision du modèle vers le cache Hugging Face et la note comme installée. Renvoie la
+/// révision. `progress(reçu, total)` suit l’ensemble ; `total_hint` sert tant que les tailles ne sont pas connues.
 pub async fn fetch(
     spec: &ModelSpec,
     state: &AppState,
     total_hint: u64,
     error: impl Fn(String) -> AppError,
     progress: impl Fn(u64, u64) + Send + Sync + 'static,
-) -> AppResult<()> {
-    if spec.dir(&state.data_dir) != spec.snapshot_dir(&hub_cache()) {
-        return Ok(());
-    }
+) -> AppResult<String> {
     let source = source(state)?;
-    // Ni réglage ni HF_TOKEN : le fichier de `huggingface-cli login`, que `hf-hub` lit (`$HF_HOME/token`).
+    // Ni réglage ni HF_TOKEN : le fichier de `huggingface-cli login` (`$HF_HOME/token`).
     let token = resolve_token(&source, setting_token().await?, env("HF_TOKEN")).or_else(|| Cache::from_env().token());
     download(spec, &source, token, &hub_cache(), total_hint, &error, Arc::new(progress)).await
 }
 
-/// Première étape de `snapshot_download`, comme la fait la bibliothèque Python : demander la liste des fichiers
-/// du modèle à sa révision (`GET <source>/api/models/<dépôt>/revision/<révision>`). Artifactory (dépôt
-/// `huggingfaceml`) résout un modèle par ce déroulé avant d’en servir les fichiers. La réponse doit porter
-/// chacun des fichiers d’Alfred ; elle renvoie la révision que le miroir annonce.
-///
-/// Artifactory ignore la révision demandée et annonce un identifiant à lui, qui n’existe pas sur huggingface.co :
-/// une révision différente n’est donc pas une erreur. Ce qui garantit le modèle, c’est l’empreinte SHA-256 figée
-/// de chaque fichier, contrôlée à la réception.
-async fn snapshot(
-    repo: &hf_hub::api::tokio::ApiRepo,
-    spec: &ModelSpec,
-    source: &Source,
-    error: &impl Fn(String) -> AppError,
-) -> AppResult<String> {
-    let label = format!("le modèle {}", spec.repo);
-    let info = repo.info().await.map_err(|failure| error(explain(&failure, &label, source)))?;
-    let host = host(&source.endpoint);
-    for (file, _) in spec.files {
-        if !info.siblings.iter().any(|sibling| sibling.rfilename == *file) {
-            return Err(error(format!("{file} est absent du modèle {} sur {host}.", spec.repo)));
-        }
+/// Le client HTTP d’un téléchargement : le jeton ne part qu’à l’hôte de la source.
+struct Client<'a> {
+    http: reqwest::Client,
+    token: Option<String>,
+    source: &'a Source,
+    host: String,
+}
+
+/// Réponse finale d’un fichier, et ce que la source en annonçait avant toute redirection.
+struct Fetched {
+    response: reqwest::Response,
+    linked_etag: Option<String>,
+    linked_size: Option<u64>,
+    etag: Option<String>,
+}
+
+impl Client<'_> {
+    fn new(source: &Source, token: Option<String>) -> Result<Client<'_>, String> {
+        let host = host(&source.endpoint);
+        // Les redirections sont suivies à la main : les en-têtes `X-Linked-*` sont sur la première réponse, et le
+        // jeton ne doit pas suivre vers un autre hôte.
+        let http = reqwest::Client::builder()
+            .user_agent(format!("alfred/{}; hf-hub/0.5.0", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|failure| request_failure(&failure, "le modèle", &host))?;
+        Ok(Client { http, token, source, host })
     }
-    Ok(info.sha)
+
+    async fn get(&self, url: &url::Url, what: &str) -> Result<reqwest::Response, String> {
+        let mut request = self.http.get(url.clone());
+        let same_host = url::Url::parse(&self.source.endpoint).is_ok_and(|base| base.host_str() == url.host_str() && base.port_or_known_default() == url.port_or_known_default());
+        if let Some(token) = self.token.as_deref().filter(|_| same_host) {
+            let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|_| "le jeton contient des caractères interdits.".to_string())?;
+            request = request.header(reqwest::header::AUTHORIZATION, value);
+        }
+        request.send().await.map_err(|failure| request_failure(&failure, what, &self.host))
+    }
+
+    /// GET en suivant au plus 10 redirections. `Ok(Err(statut))` : la source refuse.
+    async fn follow(&self, address: &str, what: &str) -> Result<Result<Fetched, reqwest::StatusCode>, String> {
+        let mut url = url::Url::parse(address).map_err(|_| format!("adresse illisible pour {what}."))?;
+        let (mut linked_etag, mut linked_size, mut etag) = (None, None, None);
+        for _ in 0..10 {
+            let response = self.get(&url, what).await?;
+            let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
+            linked_etag = linked_etag.or_else(|| header("x-linked-etag"));
+            linked_size = linked_size.or_else(|| header("x-linked-size").and_then(|size| size.parse().ok()));
+            etag = etag.or_else(|| header("etag"));
+            let status = response.status();
+            if status.is_redirection() {
+                let location = header("location").ok_or_else(|| format!("{} redirige {what} sans adresse.", self.host))?;
+                url = url.join(&location).map_err(|_| format!("{} redirige {what} vers une adresse illisible.", self.host))?;
+                continue;
+            }
+            if !status.is_success() {
+                return Ok(Err(status));
+            }
+            return Ok(Ok(Fetched { response, linked_etag, linked_size, etag }));
+        }
+        Err(format!("{} redirige {what} trop de fois.", self.host))
+    }
+
+    /// Première étape de `snapshot_download` : la liste des fichiers de la dernière révision. Avec `?blobs=true`
+    /// (empreintes des fichiers LFS), puis sans, pour un miroir qui ne le prend pas.
+    async fn listing(&self, spec: &ModelSpec) -> Result<Listing, String> {
+        let what = format!("le modèle {}", spec.repo);
+        let base = format!("{}/api/models/{}/revision/main", self.source.endpoint, spec.repo);
+        let mut refused = reqwest::StatusCode::NOT_FOUND;
+        for address in [format!("{base}?blobs=true"), base] {
+            match self.follow(&address, &what).await? {
+                Ok(fetched) => {
+                    let body = fetched.response.bytes().await.map_err(|failure| request_failure(&failure, &what, &self.host))?;
+                    return serde_json::from_slice(&body)
+                        .map_err(|_| format!("{} n’a pas répondu comme un dépôt Hugging Face pour {what} (liste des fichiers illisible).", self.host));
+                }
+                Err(status) if matches!(status.as_u16(), 401 | 403) => return Err(status_failure(status, &what, &self.host)),
+                Err(status) => refused = status,
+            }
+        }
+        Err(status_failure(refused, &what, &self.host))
+    }
 }
 
 /// Le téléchargement lui-même, vers le cache `cache`, comme `snapshot_download` de la bibliothèque Python : la liste
-/// des fichiers par `hf-hub` (première étape), puis chaque fichier par un simple GET sur `<source>/<dépôt>/resolve/…`.
-/// `hf-hub` 0.5 demande d’abord l’octet 0 de chaque fichier et exige un en-tête `Content-Range`, que les dépôts
-/// Hugging Face d’Artifactory ne renvoient pas : le GET simple ne dépend que du corps de la réponse. Sans délai
-/// d’attente : Artifactory peut mettre longtemps à répondre la première fois, le temps de récupérer le fichier
-/// (l’`etag_timeout=86400` de sa documentation). `token` est le jeton final (`None` : aucun).
+/// des fichiers à la dernière révision, puis chaque fichier par un simple GET sur `<source>/<dépôt>/resolve/…`, sans
+/// demande de plage (Artifactory ne renvoie pas `Content-Range`) ni délai d’attente (Artifactory peut mettre
+/// longtemps à répondre la première fois : l’`etag_timeout=86400` de sa documentation). `token` est le jeton final.
 async fn download(
     spec: &ModelSpec,
     source: &Source,
@@ -356,160 +458,141 @@ async fn download(
     total_hint: u64,
     error: &impl Fn(String) -> AppError,
     report: Arc<dyn Fn(u64, u64) + Send + Sync>,
-) -> AppResult<()> {
-    let api = ApiBuilder::from_env()
-        .with_cache_dir(cache.to_path_buf())
-        .with_endpoint(source.endpoint.clone())
-        .with_progress(false)
-        .with_user_agent("alfred", env!("CARGO_PKG_VERSION"))
-        .with_token(token.clone())
-        .build().map_err(|failure| error(explain(&failure, spec.repo, source)))?;
-    let repo = api.repo(spec.hf_repo());
-    let cache_repo = Cache::new(cache.to_path_buf()).repo(spec.hf_repo());
-    let dir = spec.snapshot_dir(cache);
-    let http = reqwest::Client::builder()
-        .user_agent(format!("alfred/{}; hf-hub/0.5.0", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|failure| error(request_failure(&failure, spec.repo, &host(&source.endpoint))))?;
+) -> AppResult<String> {
+    let client = Client::new(source, token).map_err(error)?;
+    let listing = client.listing(spec).await.map_err(error)?;
+    let revision = listing.sha.trim().to_string();
+    if !valid_revision(&revision) {
+        return Err(error(format!("{} annonce une révision illisible pour le modèle {}.", client.host, spec.repo)));
+    }
+    let mut announced = Vec::with_capacity(spec.files.len());
+    for file in spec.files {
+        let sibling = listing.siblings.iter().find(|sibling| sibling.rfilename == *file);
+        let Some(sibling) = sibling else {
+            return Err(error(format!(
+                "{file} est absent de la révision {} du modèle {} sur {} : cette version du modèle n’est pas prise en charge par Alfred.",
+                short_revision(&revision),
+                spec.repo,
+                client.host
+            )));
+        };
+        let lfs = sibling.lfs.as_ref();
+        announced.push(Announced {
+            sha256: lfs.and_then(|lfs| lfs.sha256.as_deref()).and_then(sha256_like),
+            size: lfs.and_then(|lfs| lfs.size).or(sibling.size),
+        });
+    }
+    let dir = spec.snapshot_dir(cache, &revision);
+    let blobs = spec.model_cache(cache).join("blobs");
+    let missing: Vec<usize> = (0..spec.files.len()).filter(|index| !dir.join(spec.files[*index]).is_file()).collect();
+    let sizes: Option<u64> = missing.iter().map(|index| announced[*index].size).sum();
+    let total = sizes.unwrap_or(total_hint);
     let mut before = 0u64;
-    let mut announced: Option<String> = None;
-    for (file, expected) in spec.files {
-        let target = dir.join(file);
-        if target.is_file() {
-            if digest(&target).await? == *expected {
-                continue;
-            }
-            discard(&target);
-        }
-        if announced.is_none() {
-            announced = Some(snapshot(&repo, spec, source, error).await?);
-        }
-        // La révision figée d’abord ; si le miroir ne la sert pas, celle qu’il annonce. L’empreinte figée tranche.
-        let mut revisions = vec![spec.revision];
-        if let Some(other) = announced.as_deref().filter(|other| *other != spec.revision) {
-            revisions.push(other);
-        }
-        let fetched = Fetched { http: &http, token: token.as_deref(), cache_repo: &cache_repo, target: &target, source };
-        let received = fetched.file(spec, &revisions, file, expected, total_hint, before, &report).await.map_err(error)?;
+    for index in missing {
+        let file = spec.files[index];
+        let received = fetch_file(&client, spec, &revision, file, &announced[index], &blobs, &dir.join(file), total, before, &report)
+            .await
+            .map_err(error)?;
         before += received;
     }
-    Ok(())
+    // Noté seulement une fois tous les fichiers en place : c’est la révision installée.
+    let refs = spec.model_cache(cache).join("refs");
+    let io = |failure: std::io::Error| error(format!("écriture impossible dans le cache des modèles ({failure})."));
+    std::fs::create_dir_all(&refs).map_err(io)?;
+    std::fs::write(refs.join("main.incomplete"), &revision).map_err(io)?;
+    std::fs::rename(refs.join("main.incomplete"), refs.join("main")).map_err(io)?;
+    Ok(revision)
 }
 
-/// Ce qu’il faut pour recevoir un fichier dans le cache.
-struct Fetched<'a> {
-    http: &'a reqwest::Client,
-    token: Option<&'a str>,
-    cache_repo: &'a hf_hub::CacheRepo,
-    /// `snapshots/<révision figée>/<fichier>` : le contenu y est rangé, puisqu’il a l’empreinte de cette révision.
-    target: &'a Path,
-    source: &'a Source,
-}
-
-impl Fetched<'_> {
-    /// Demande `file` à chaque révision de `revisions` dans l’ordre, jusqu’à ce que le miroir le serve. Un refus
-    /// du jeton (401, 403) arrête tout de suite : une autre révision n’y changerait rien.
-    #[allow(clippy::too_many_arguments)]
-    async fn file(
-        &self,
-        spec: &ModelSpec,
-        revisions: &[&str],
-        file: &str,
-        expected: &str,
-        total_hint: u64,
-        before: u64,
-        report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
-    ) -> Result<u64, String> {
-        let host = host(&self.source.endpoint);
-        let mut refused = None;
-        for revision in revisions {
-            let mut request = self.http.get(file_url(&self.source.endpoint, spec.repo, revision, file));
-            if let Some(token) = self.token {
-                let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-                    .map_err(|_| "le jeton contient des caractères interdits.".to_string())?;
-                request = request.header(reqwest::header::AUTHORIZATION, value);
-            }
-            let response = request.send().await.map_err(|failure| request_failure(&failure, file, &host))?;
-            let status = response.status();
-            if status.is_success() {
-                return self.store(response, spec, revision, file, expected, total_hint, before, report).await;
-            }
-            if matches!(status.as_u16(), 401 | 403) {
-                return Err(status_failure(status, file, &host));
-            }
-            refused.get_or_insert(status);
-        }
-        Err(status_failure(refused.unwrap_or(reqwest::StatusCode::NOT_FOUND), file, &host))
+/// Télécharge un fichier dans le cache, au format de la bibliothèque Python : le contenu dans `blobs/<etag>`, et
+/// `snapshots/<révision>/<fichier>` qui le désigne. Demandé à la révision annoncée, puis à `main` si le miroir ne
+/// sert pas la première ; un refus du jeton (401, 403) arrête tout de suite. Vérifié avant de prendre sa place :
+/// empreinte annoncée, sinon taille ; un fichier différent est écarté. Renvoie le nombre d’octets reçus.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_file(
+    client: &Client<'_>,
+    spec: &ModelSpec,
+    revision: &str,
+    file: &str,
+    announced: &Announced,
+    blobs: &Path,
+    target: &Path,
+    total: u64,
+    before: u64,
+    report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
+) -> Result<u64, String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncWriteExt;
+    let host = &client.host;
+    let mut refused = reqwest::StatusCode::NOT_FOUND;
+    let mut fetched = None;
+    let mut attempts = vec![revision];
+    if revision != "main" {
+        attempts.push("main");
     }
-
-    /// Range la réponse dans le cache, au format de la bibliothèque Python : le contenu dans `blobs/<etag>`, et
-    /// `snapshots/<révision figée>/<fichier>` qui le désigne. L’empreinte est vérifiée avant que le fichier prenne
-    /// sa place ; un fichier différent est écarté. Renvoie le nombre d’octets reçus.
-    #[allow(clippy::too_many_arguments)]
-    async fn store(
-        &self,
-        mut response: reqwest::Response,
-        spec: &ModelSpec,
-        revision: &str,
-        file: &str,
-        expected: &str,
-        total_hint: u64,
-        before: u64,
-        report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
-    ) -> Result<u64, String> {
-        use sha2::{Digest, Sha256};
-        use tokio::io::AsyncWriteExt;
-        let (cache_repo, target) = (self.cache_repo, self.target);
-        let host = host(&self.source.endpoint);
-        let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
-        // Le nom du contenu, comme la bibliothèque Python : `X-Linked-Etag` (fichiers LFS), sinon `ETag`.
-        let etag = header("x-linked-etag")
-            .or_else(|| header("etag"))
-            .map(|etag| etag.trim_start_matches("W/").replace('"', ""))
-            .filter(|etag| !etag.is_empty() && !etag.contains(['/', '\\', '.']))
-            .unwrap_or_else(|| expected.to_string());
-        let size = header("x-linked-size").and_then(|size| size.parse().ok()).or(response.content_length()).unwrap_or(0);
-        let blob = cache_repo.blob_path(&etag);
-        let io = |failure: std::io::Error| format!("écriture impossible dans le cache des modèles ({failure}).");
-        tokio::fs::create_dir_all(blob.parent().unwrap_or(Path::new("."))).await.map_err(io)?;
-        let partial = blob.with_extension("incomplete");
-        let mut out = tokio::fs::File::create(&partial).await.map_err(io)?;
-        let mut hasher = Sha256::new();
-        let mut received = 0u64;
-        let total = (before + size).max(total_hint);
-        loop {
-            let chunk = match response.chunk().await {
-                Ok(Some(chunk)) => chunk,
-                Ok(None) => break,
-                Err(failure) => {
-                    let _ = tokio::fs::remove_file(&partial).await;
-                    return Err(request_failure(&failure, file, &host));
-                }
-            };
-            hasher.update(&chunk);
-            out.write_all(&chunk).await.map_err(io)?;
-            received += chunk.len() as u64;
-            report(before + received, total.max(before + received));
+    for attempt in attempts {
+        match client.follow(&file_url(&client.source.endpoint, spec.repo, attempt, file), file).await? {
+            Ok(found) => {
+                fetched = Some(found);
+                break;
+            }
+            Err(status) if matches!(status.as_u16(), 401 | 403) => return Err(status_failure(status, file, host)),
+            Err(status) => refused = status,
         }
-        out.flush().await.map_err(io)?;
-        drop(out);
-        let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-        if digest != expected {
+    }
+    let Some(Fetched { mut response, linked_etag, linked_size, etag }) = fetched else {
+        return Err(status_failure(refused, file, host));
+    };
+    let expected_sha = announced.sha256.clone().or_else(|| linked_etag.as_deref().and_then(sha256_like));
+    let expected_size = announced.size.or(linked_size).or(response.content_length());
+    let io = |failure: std::io::Error| format!("écriture impossible dans le cache des modèles ({failure}).");
+    tokio::fs::create_dir_all(blobs).await.map_err(io)?;
+    let partial = blobs.join(format!("{}.incomplete", file.replace(['/', '\\'], "_")));
+    let mut out = tokio::fs::File::create(&partial).await.map_err(io)?;
+    let mut hasher = Sha256::new();
+    let mut received = 0u64;
+    let total = total.max(before + expected_size.unwrap_or(0));
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(failure) => {
+                let _ = tokio::fs::remove_file(&partial).await;
+                return Err(request_failure(&failure, file, host));
+            }
+        };
+        hasher.update(&chunk);
+        out.write_all(&chunk).await.map_err(io)?;
+        received += chunk.len() as u64;
+        report(before + received, total.max(before + received));
+    }
+    out.flush().await.map_err(io)?;
+    drop(out);
+    let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    if let Some(expected) = &expected_sha {
+        if digest != *expected {
             let _ = tokio::fs::remove_file(&partial).await;
-            let served = if revision == spec.revision { String::new() } else { format!(" (révision {revision} du miroir)") };
             return Err(format!(
-                "le fichier {file} reçu de {host}{served} n’a pas l’empreinte attendue : fichier écarté. Le modèle {} a \
-                 changé depuis la version qu’Alfred connaît (révision {}) ; il faut mettre à jour Alfred.",
-                spec.repo, spec.revision
+                "le fichier {file} reçu de {host} n’a pas l’empreinte que la source annonce : fichier écarté (téléchargement abîmé). Réessayez."
             ));
         }
-        tokio::fs::rename(&partial, &blob).await.map_err(io)?;
-        if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(io)?;
-        }
-        link(&blob, target).map_err(io)?;
-        Ok(received)
+    } else if let Some(size) = expected_size.filter(|size| *size != received) {
+        let _ = tokio::fs::remove_file(&partial).await;
+        return Err(format!("le fichier {file} reçu de {host} est incomplet ({received} octets sur {size}) : fichier écarté. Réessayez."));
     }
+    // Le nom du contenu, comme la bibliothèque Python : `X-Linked-Etag` (fichiers LFS), sinon `ETag`, sinon l’empreinte.
+    let name = linked_etag
+        .or(etag)
+        .map(|etag| etag.trim_start_matches("W/").replace('"', ""))
+        .filter(|etag| !etag.is_empty() && !etag.contains(['/', '\\', '.']))
+        .unwrap_or(digest);
+    let blob = blobs.join(name);
+    tokio::fs::rename(&partial, &blob).await.map_err(io)?;
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(io)?;
+    }
+    link(&blob, target).map_err(io)?;
+    Ok(received)
 }
 
 /// `snapshots/<révision>/<fichier>` désigne `blobs/<etag>` par un lien relatif, comme la bibliothèque Python.
@@ -575,15 +658,16 @@ mod tests {
             file_url(base, "intfloat/multilingual-e5-small", "614241f", "config.json"),
             "https://jfrog.exemple.fr/artifactory/api/huggingfaceml/hf-remote/intfloat/multilingual-e5-small/resolve/614241f/config.json"
         );
-        let spec = ModelSpec { repo: "intfloat/multilingual-e5-small", revision: "614241f", legacy_dir: "e5", files: &[] };
-        let api = ApiBuilder::new().with_endpoint(base.to_string()).with_progress(false).build().unwrap();
-        assert_eq!(api.repo(spec.hf_repo()).url("config.json"), file_url(base, spec.repo, spec.revision, "config.json"));
+        let spec = ModelSpec { repo: "intfloat/multilingual-e5-small", legacy_dir: "e5", legacy_revision: "614241f", files: &[] };
         assert_eq!(
-            spec.snapshot_dir(Path::new("/cache")),
+            spec.snapshot_dir(Path::new("/cache"), "614241f"),
             Path::new("/cache/models--intfloat--multilingual-e5-small/snapshots/614241f")
         );
         assert_eq!(host(base), "jfrog.exemple.fr");
         assert_eq!(host("http://127.0.0.1:8080/hf"), "127.0.0.1:8080");
+        assert!(valid_revision("9da7038f21430c6bc70956435f077c5485417055") && valid_revision("main"));
+        assert!(!valid_revision("../x") && !valid_revision("a/b") && !valid_revision(""));
+        assert_eq!(short_revision("9da7038f21430c6"), "9da7038");
     }
 
     #[test]
@@ -596,47 +680,86 @@ mod tests {
         // Le jeton du réglage va avec l’adresse du réglage : jamais envoyé à une autre source.
         assert_eq!(resolve_token(&env, Some("alfred".into()), None), None);
         assert_eq!(resolve_token(&default, Some("alfred".into()), Some(" env ".into())).as_deref(), Some("env"));
-        // Ni réglage ni HF_TOKEN : hf-hub lit le fichier de `huggingface-cli login`.
+        // Ni réglage ni HF_TOKEN : le fichier de `huggingface-cli login`.
         assert_eq!(resolve_token(&default, None, None), None);
     }
 
     #[test]
-    fn local_spec_dir_prefers_a_complete_legacy_copy() {
+    fn older_copies_stay_recognized_and_the_noted_revision_comes_first() {
         let data = tempfile::tempdir().unwrap();
-        let spec = ModelSpec { repo: "org/modele", revision: "abc", legacy_dir: "modele", files: &[("a.json", "x")] };
-        assert_ne!(spec.dir(data.path()), data.path().join("models/modele"));
-        std::fs::create_dir_all(data.path().join("models/modele")).unwrap();
-        std::fs::write(data.path().join("models/modele/a.json"), "{}").unwrap();
-        assert_eq!(spec.dir(data.path()), data.path().join("models/modele"));
+        let hub = tempfile::tempdir().unwrap();
+        let spec = ModelSpec { repo: "org/modele", legacy_dir: "modele", legacy_revision: "ancienne", files: &["a.json"] };
+        assert_eq!(spec.installed_in(data.path(), hub.path()), None);
+        let put = |dir: PathBuf| {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("a.json"), "{}").unwrap();
+            dir
+        };
+        // L’ancien dossier d’Alfred (le Laya déjà téléchargé), à la révision que figeait Alfred.
+        let legacy = put(data.path().join("models/modele"));
+        assert_eq!(spec.installed_in(data.path(), hub.path()), Some(Installed { dir: legacy, revision: "ancienne".into() }));
+        // Le cache à l’ancienne révision figée, sans `refs/main` (téléchargé par la version précédente).
+        let cached = put(spec.snapshot_dir(hub.path(), "ancienne"));
+        assert_eq!(spec.installed_in(data.path(), hub.path()).unwrap().dir, cached);
+        // La révision notée l’emporte, si elle est complète.
+        let refs = spec.model_cache(hub.path()).join("refs");
+        std::fs::create_dir_all(&refs).unwrap();
+        std::fs::write(refs.join("main"), "nouvelle").unwrap();
+        assert_eq!(spec.installed_in(data.path(), hub.path()).unwrap().revision, "ancienne");
+        let latest = put(spec.snapshot_dir(hub.path(), "nouvelle"));
+        assert_eq!(spec.installed_in(data.path(), hub.path()), Some(Installed { dir: latest, revision: "nouvelle".into() }));
+        // Une révision notée qui sortirait du cache est ignorée.
+        std::fs::write(refs.join("main"), "../../x").unwrap();
+        assert_eq!(spec.installed_in(data.path(), hub.path()).unwrap().revision, "ancienne");
     }
 
     // -----------------------------------------------------------------------------------------------------------
-    // Faux miroir : répond comme huggingface.co ou Artifactory (`resolve`, en-têtes `ETag` et `X-Repo-Commit`,
-    // requêtes par plages).
+    // Faux miroir : répond comme huggingface.co ou Artifactory (liste des fichiers, `resolve`, en-têtes `ETag` et
+    // `X-Linked-Etag`, jamais de `Content-Range`).
     // -----------------------------------------------------------------------------------------------------------
 
     const CONTENT: &[u8] = b"{\"hidden_size\": 384}";
-    const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
-    /// Identifiant qu’un miroir Artifactory annonce à la place (absent de huggingface.co).
+    /// Identifiant qu’un miroir Artifactory annonce comme révision (absent de huggingface.co).
     const OWN: &str = "9da7038f21430c6bc70956435f077c5485417055";
 
-    fn content_sha() -> &'static str {
+    fn sha(bytes: &[u8]) -> String {
         use sha2::{Digest, Sha256};
-        static SHA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        SHA.get_or_init(|| Sha256::digest(CONTENT).iter().map(|byte| format!("{byte:02x}")).collect())
+        Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     #[derive(Clone)]
     struct Mirror {
         /// Jeton exigé (401 sans, 403 si faux).
         token: Option<&'static str>,
-        /// Contenu servi (un autre que `CONTENT` pour éprouver l’empreinte).
+        /// Contenu servi.
         body: &'static [u8],
-        /// Révision annoncée par l’API `revision` (celle attendue par défaut).
-        sha: Option<&'static str>,
-        /// Comme Artifactory : `resolve` ne sert que la révision annoncée, pas celle demandée.
-        only_announced: bool,
+        /// Empreinte annoncée dans la liste (`lfs.sha256`).
+        listed_sha: Option<String>,
+        /// Taille annoncée dans la liste.
+        listed_size: Option<u64>,
+        /// En-tête `X-Linked-Etag` de la réponse.
+        linked_etag: Option<String>,
+        /// Refuse `?blobs=true` (400), comme un miroir qui ne le connaît pas.
+        no_blobs: bool,
+        /// `resolve` ne sert que `main`, pas la révision annoncée.
+        only_main: bool,
+        /// Le fichier passe par une redirection vers une autre adresse, comme le CDN de huggingface.co.
+        redirect_to: Option<String>,
         seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    fn mirror_with(token: Option<&'static str>, body: &'static [u8]) -> Mirror {
+        Mirror {
+            token,
+            body,
+            listed_sha: Some(sha(CONTENT)),
+            listed_size: Some(CONTENT.len() as u64),
+            linked_etag: None,
+            no_blobs: false,
+            only_main: false,
+            redirect_to: None,
+            seen: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
     }
 
     async fn mirror(
@@ -647,7 +770,11 @@ mod tests {
         use axum::http::{header, StatusCode};
         use axum::response::IntoResponse;
         let auth = headers.get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()).map(str::to_string);
-        mirror.seen.lock().unwrap().push(format!("{} {}", uri.path(), auth.as_deref().unwrap_or("-")));
+        let path_and_query = uri.path_and_query().map(|value| value.as_str().to_string()).unwrap_or_default();
+        mirror.seen.lock().unwrap().push(format!("{path_and_query} {}", auth.as_deref().unwrap_or("-")));
+        if uri.path().starts_with("/cdn/") {
+            return (StatusCode::OK, mirror.body.to_vec()).into_response();
+        }
         if let Some(expected) = mirror.token {
             match auth {
                 None => return StatusCode::UNAUTHORIZED.into_response(),
@@ -655,22 +782,33 @@ mod tests {
                 _ => {}
             }
         }
-        if uri.path() == format!("/mirror/api/models/org/modele/revision/{REVISION}") {
-            let sha = mirror.sha.unwrap_or(REVISION);
-            return axum::Json(serde_json::json!({ "sha": sha, "siblings": [{ "rfilename": "config.json" }] })).into_response();
+        if uri.path() == "/mirror/api/models/org/modele/revision/main" {
+            let blobs = uri.query().is_some_and(|query| query.contains("blobs=true"));
+            if blobs && mirror.no_blobs {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            let mut sibling = serde_json::json!({ "rfilename": "config.json" });
+            if blobs {
+                sibling["size"] = serde_json::json!(mirror.listed_size);
+                if let Some(listed) = &mirror.listed_sha {
+                    sibling["lfs"] = serde_json::json!({ "sha256": listed, "size": mirror.listed_size });
+                }
+            }
+            return axum::Json(serde_json::json!({ "sha": OWN, "siblings": [sibling] })).into_response();
         }
-        let announced = mirror.sha.unwrap_or(REVISION);
-        let served = if mirror.only_announced { vec![announced] } else { vec![REVISION, announced] };
-        if !served.iter().any(|revision| uri.path() == format!("/mirror/org/modele/resolve/{revision}/config.json")) {
+        let served = if mirror.only_main { "main" } else { OWN };
+        if uri.path() != format!("/mirror/org/modele/resolve/{served}/config.json") {
             return StatusCode::NOT_FOUND.into_response();
         }
-        // Comme Artifactory : la plage demandée est ignorée, le fichier entier part sans `Content-Range`.
-        (
-            StatusCode::OK,
-            [(header::ETAG, format!("\"{}\"", content_sha())), (header::HeaderName::from_static("x-repo-commit"), REVISION.to_string())],
-            mirror.body.to_vec(),
-        )
-            .into_response()
+        let mut response = if let Some(target) = &mirror.redirect_to {
+            (StatusCode::FOUND, [(header::LOCATION, target.clone())]).into_response()
+        } else {
+            (StatusCode::OK, [(header::ETAG, "\"git-oid\"".to_string())], mirror.body.to_vec()).into_response()
+        };
+        if let Some(linked) = &mirror.linked_etag {
+            response.headers_mut().insert("x-linked-etag", format!("\"{linked}\"").parse().unwrap());
+        }
+        response
     }
 
     async fn serve(mirror_state: Mirror) -> String {
@@ -681,55 +819,114 @@ mod tests {
         format!("http://{address}/mirror")
     }
 
-    const SPEC: ModelSpec = ModelSpec {
-        repo: "org/modele",
-        revision: REVISION,
-        legacy_dir: "modele",
-        files: &[("config.json", "")],
-    };
+    const SPEC: ModelSpec = ModelSpec { repo: "org/modele", legacy_dir: "modele", legacy_revision: "ancienne", files: &["config.json"] };
 
-    fn spec() -> ModelSpec {
-        // L’empreinte est calculée : la constante n’en garde que la forme.
-        let files: &'static [(&'static str, &'static str)] = Box::leak(Box::new([("config.json", content_sha())]));
-        ModelSpec { files, ..SPEC }
-    }
-
-    async fn run(endpoint: &str, token: Option<&str>, cache: &Path) -> AppResult<Vec<(u64, u64)>> {
+    async fn run(endpoint: &str, token: Option<&str>, cache: &Path) -> AppResult<(String, Vec<(u64, u64)>)> {
         let source = resolve_source(Some(endpoint), None);
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let log = seen.clone();
-        download(&spec(), &source, token.map(str::to_string), cache, 0, &AppError::new, Arc::new(move |received, total| {
+        let revision = download(&SPEC, &source, token.map(str::to_string), cache, 0, &AppError::new, Arc::new(move |received, total| {
             log.lock().unwrap().push((received, total));
         }))
         .await?;
         let progress = seen.lock().unwrap().clone();
-        Ok(progress)
+        Ok((revision, progress))
     }
 
-    fn mirror_with(token: Option<&'static str>, body: &'static [u8]) -> Mirror {
-        Mirror { token, body, sha: None, only_announced: false, seen: Arc::new(std::sync::Mutex::new(Vec::new())) }
+    fn installed(cache: &Path) -> Option<Installed> {
+        SPEC.installed_in(Path::new("/nulle-part"), cache)
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn downloads_from_a_mirror_into_the_hub_cache() {
+    async fn downloads_the_announced_revision_and_notes_it() {
         let state = mirror_with(Some("jeton-secret"), CONTENT);
         let endpoint = serve(state.clone()).await;
         let cache = tempfile::tempdir().unwrap();
-        let progress = run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
-        let file = spec().snapshot_dir(cache.path()).join("config.json");
+        let (revision, progress) = run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
+        assert_eq!(revision, OWN);
+        let installed = installed(cache.path()).unwrap();
+        assert_eq!(installed, Installed { dir: SPEC.snapshot_dir(cache.path(), OWN), revision: OWN.into() });
+        let file = installed.dir.join("config.json");
         assert_eq!(std::fs::read(&file).unwrap(), CONTENT);
         #[cfg(unix)]
-        assert_eq!(std::fs::read_link(&file).unwrap(), Path::new(&format!("../../blobs/{}", content_sha())));
+        assert_eq!(std::fs::read_link(&file).unwrap(), Path::new("../../blobs/git-oid"));
         assert_eq!(progress.last(), Some(&(CONTENT.len() as u64, CONTENT.len() as u64)));
         let seen = state.seen.lock().unwrap().clone();
         assert!(seen.iter().all(|line| line.ends_with("Bearer jeton-secret")));
-        // Déroulé de `snapshot_download` : la liste des fichiers d’abord, puis les fichiers.
-        assert_eq!(seen[0], format!("/mirror/api/models/org/modele/revision/{REVISION} Bearer jeton-secret"));
-        assert!(seen[1..].iter().all(|line| line.contains("/resolve/")));
-        // Déjà là et intact : rien n’est redemandé.
-        let before = state.seen.lock().unwrap().len();
+        // Déroulé de `snapshot_download` : la liste des fichiers d’abord, puis le fichier à la révision annoncée.
+        assert_eq!(seen[0], "/mirror/api/models/org/modele/revision/main?blobs=true Bearer jeton-secret");
+        assert_eq!(seen[1], format!("/mirror/org/modele/resolve/{OWN}/config.json Bearer jeton-secret"));
+        // Déjà là : seule la liste est redemandée.
         run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
-        assert_eq!(state.seen.lock().unwrap().len(), before);
+        assert_eq!(state.seen.lock().unwrap().len(), seen.len() + 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_mirror_without_blobs_or_serving_only_main_still_works() {
+        // Sans `?blobs=true` ni empreinte dans la liste : `X-Linked-Etag` fait foi.
+        let state = Mirror { no_blobs: true, only_main: true, linked_etag: Some(sha(CONTENT)), ..mirror_with(None, CONTENT) };
+        let endpoint = serve(state.clone()).await;
+        let cache = tempfile::tempdir().unwrap();
+        run(&endpoint, None, cache.path()).await.unwrap();
+        assert_eq!(installed(cache.path()).unwrap().revision, OWN);
+        let seen = state.seen.lock().unwrap().clone();
+        assert!(seen.iter().any(|line| line.starts_with("/mirror/api/models/org/modele/revision/main ")), "{seen:?}");
+        assert!(seen.iter().any(|line| line.contains("/resolve/main/config.json")), "{seen:?}");
+        // Le contenu est rangé sous l’empreinte (l’etag LFS), comme Python.
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::read_link(SPEC.snapshot_dir(cache.path(), OWN).join("config.json")).unwrap(),
+            Path::new(&format!("../../blobs/{}", sha(CONTENT)))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_damaged_file_is_named_and_discarded() {
+        // L’empreinte de la liste.
+        let endpoint = serve(mirror_with(None, b"{\"hidden_size\": 999}")).await;
+        let cache = tempfile::tempdir().unwrap();
+        let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
+        assert!(message.contains("le fichier config.json") && message.contains("n’a pas l’empreinte que la source annonce"), "{message}");
+        // L’empreinte de l’en-tête.
+        let state = Mirror { listed_sha: None, linked_etag: Some(sha(CONTENT)), ..mirror_with(None, b"{\"hidden_size\": 999}") };
+        let endpoint = serve(state).await;
+        let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
+        assert!(message.contains("n’a pas l’empreinte que la source annonce"), "{message}");
+        assert_eq!(installed(cache.path()), None);
+        let blobs = SPEC.model_cache(cache.path()).join("blobs");
+        assert!(std::fs::read_dir(blobs).unwrap().next().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn without_an_announced_digest_the_size_decides() {
+        let cache = tempfile::tempdir().unwrap();
+        let truncated = Mirror { listed_sha: None, listed_size: Some(CONTENT.len() as u64 + 10), ..mirror_with(None, CONTENT) };
+        let message = run(&serve(truncated).await, None, cache.path()).await.unwrap_err().message;
+        assert!(message.contains("le fichier config.json") && message.contains("est incomplet"), "{message}");
+        assert_eq!(installed(cache.path()), None);
+        let whole = Mirror { listed_sha: None, ..mirror_with(None, CONTENT) };
+        run(&serve(whole).await, None, cache.path()).await.unwrap();
+        assert_eq!(installed(cache.path()).unwrap().revision, OWN);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_token_never_follows_a_redirect_to_another_host() {
+        // Un « CDN » sur un autre port : une autre origine que la source.
+        let cdn = mirror_with(None, CONTENT);
+        let app = axum::Router::new().route("/{*path}", axum::routing::get(mirror)).with_state(cdn.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = Mirror {
+            redirect_to: Some(format!("http://{address}/cdn/blob")),
+            linked_etag: Some(sha(CONTENT)),
+            ..mirror_with(Some("jeton-secret"), CONTENT)
+        };
+        let endpoint = serve(state.clone()).await;
+        let cache = tempfile::tempdir().unwrap();
+        run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
+        assert_eq!(cdn.seen.lock().unwrap().clone(), vec!["/cdn/blob -".to_string()]);
+        assert!(state.seen.lock().unwrap().iter().all(|line| line.ends_with("Bearer jeton-secret")));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -764,50 +961,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&pointer).unwrap(), "contenu");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_mirror_announcing_its_own_revision_serves_the_pinned_files() {
-        // Comme Artifactory : la révision demandée est ignorée, le miroir annonce un identifiant à lui.
-        for only_announced in [false, true] {
-            let state = Mirror { sha: Some(OWN), only_announced, ..mirror_with(None, CONTENT) };
-            let endpoint = serve(state.clone()).await;
-            let cache = tempfile::tempdir().unwrap();
-            run(&endpoint, None, cache.path()).await.unwrap();
-            // Rangé sous la révision figée, dont il a l’empreinte.
-            assert_eq!(std::fs::read(spec().snapshot_dir(cache.path()).join("config.json")).unwrap(), CONTENT);
-            let seen = state.seen.lock().unwrap().clone();
-            let resolved: Vec<&String> = seen.iter().filter(|line| line.contains("/resolve/")).collect();
-            assert!(resolved[0].contains(&format!("/resolve/{REVISION}/")), "{resolved:?}");
-            assert_eq!(resolved.len(), if only_announced { 2 } else { 1 }, "{resolved:?}");
-            if only_announced {
-                assert!(resolved[1].contains(&format!("/resolve/{OWN}/")), "{resolved:?}");
-            }
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_changed_model_on_the_announced_revision_is_named_and_discarded() {
-        let state = Mirror { sha: Some(OWN), only_announced: true, ..mirror_with(None, b"{\"hidden_size\": 768}") };
-        let endpoint = serve(state).await;
-        let cache = tempfile::tempdir().unwrap();
-        let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
-        assert!(message.contains("le fichier config.json"), "{message}");
-        assert!(message.contains(&format!("révision {OWN} du miroir")), "{message}");
-        assert!(message.contains("Le modèle org/modele a changé") && message.contains(REVISION), "{message}");
-        assert!(!spec().snapshot_dir(cache.path()).join("config.json").exists());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_file_with_the_wrong_digest_is_discarded() {
-        let endpoint = serve(mirror_with(None, b"{\"hidden_size\": 999}")).await;
-        let cache = tempfile::tempdir().unwrap();
-        let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
-        assert!(message.contains("le fichier config.json") && message.contains("n’a pas l’empreinte attendue"), "{message}");
-        let file = spec().snapshot_dir(cache.path()).join("config.json");
-        assert!(!file.exists());
-        let blobs = cache.path().join("models--org--modele/blobs");
-        assert!(std::fs::read_dir(blobs).unwrap().flatten().all(|entry| entry.path().extension().is_some()));
-    }
-
     /// Certificat signé par une autorité inconnue du système (réseau) : `cargo test -- --ignored certificate`.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
@@ -816,30 +969,29 @@ mod tests {
         assert!(message.contains("le certificat de self-signed.badssl.com est refusé"), "{message}");
     }
 
-    /// Vrai téléchargement d’e5 depuis huggingface.co (470 Mo) : `cargo test -- --ignored real_e5`.
+    /// Vrai téléchargement d’e5 depuis huggingface.co (470 Mo) : `cargo test -- --ignored real_e5`. Le dossier
+    /// est gardé si `ALFRED_REAL_HUB` le nomme, pour charger le modèle ensuite.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn real_e5_download_from_hugging_face() {
-        let cache = tempfile::tempdir().unwrap();
+        let temporary = tempfile::tempdir().unwrap();
+        let cache = std::env::var("ALFRED_REAL_HUB").map(PathBuf::from).unwrap_or_else(|_| temporary.path().to_path_buf());
         let source = resolve_source(None, None);
         let spec = ModelSpec {
             repo: "intfloat/multilingual-e5-small",
-            revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
             legacy_dir: "multilingual-e5-small",
-            files: &[
-                ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
-                ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
-                ("model.safetensors", "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"),
-            ],
+            legacy_revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+            files: &["config.json", "tokenizer.json", "model.safetensors"],
         };
         let last = Arc::new(AtomicU64::new(0));
         let seen = last.clone();
-        download(&spec, &source, None, cache.path(), 470 * 1024 * 1024, &AppError::new, Arc::new(move |received, _| {
+        let revision = download(&spec, &source, None, &cache, 470 * 1024 * 1024, &AppError::new, Arc::new(move |received, _| {
             seen.store(received, Ordering::Relaxed);
         }))
         .await
         .unwrap();
-        assert!(spec.installed(&spec.snapshot_dir(cache.path())));
-        eprintln!("reçu {} octets dans {}", last.load(Ordering::Relaxed), cache.path().display());
+        let installed = spec.installed_in(Path::new("/nulle-part"), &cache).unwrap();
+        assert_eq!(installed.revision, revision);
+        eprintln!("révision {revision}, reçu {} octets dans {}", last.load(Ordering::Relaxed), installed.dir.display());
     }
 }

@@ -6,7 +6,7 @@
 //! Le modèle (environ 470 Mo) se télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général. Des
 //! déclencheurs d’Alfred mettent chaque ligne écrite en file ; une boucle de fond calcule les vecteurs en attente.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -21,17 +21,13 @@ use crate::state::AppState;
 
 const MODEL: &str = "intfloat/multilingual-e5-small";
 const MODEL_DIR: &str = "multilingual-e5-small";
-/// Version figée du modèle, et empreinte SHA-256 de chaque fichier : un fichier différent est écarté.
-const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
+/// Le modèle, à la dernière révision annoncée par la source (voir `model_files`).
 const SPEC: crate::model_files::ModelSpec = crate::model_files::ModelSpec {
     repo: MODEL,
-    revision: REVISION,
     legacy_dir: MODEL_DIR,
-    files: &[
-        ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
-        ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
-        ("model.safetensors", "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"),
-    ],
+    // Révision que figeaient les versions précédentes d’Alfred.
+    legacy_revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    files: &["config.json", "tokenizer.json", "model.safetensors"],
 };
 /// Taille annoncée à l’utilisateur avant le téléchargement.
 pub const MODEL_SIZE_MB: u64 = 470;
@@ -118,6 +114,8 @@ struct ModelState {
     loaded: Option<Arc<dyn Embedder>>,
     downloading: Option<(u64, u64)>,
     error: Option<String>,
+    /// Modèle installé qu’Alfred n’a pas pu charger (format non pris en charge, fichier illisible).
+    damaged: Option<String>,
 }
 
 fn model_state() -> &'static Mutex<ModelState> {
@@ -125,12 +123,8 @@ fn model_state() -> &'static Mutex<ModelState> {
     STATE.get_or_init(|| Mutex::new(ModelState::default()))
 }
 
-fn model_dir(state: &AppState) -> PathBuf {
-    SPEC.dir(&state.data_dir)
-}
-
-fn installed(state: &AppState) -> bool {
-    SPEC.installed(&model_dir(state))
+fn installed(state: &AppState) -> Option<crate::model_files::Installed> {
+    SPEC.installed(&state.data_dir)
 }
 
 /// Remplace le modèle (tests).
@@ -139,15 +133,31 @@ fn use_embedder(embedder: Arc<dyn Embedder>) {
     model_state().lock().unwrap().loaded = Some(embedder);
 }
 
-/// Le modèle chargé, s’il est installé ; `None` sinon.
+/// Le modèle chargé, s’il est installé ; `None` sinon. Un modèle qu’Alfred n’a pas su charger (une révision au
+/// format changé) n’est pas rechargé à chaque passage : l’erreur reste jusqu’au prochain téléchargement.
 fn embedder(state: &AppState) -> AppResult<Option<Arc<dyn Embedder>>> {
-    if let Some(loaded) = model_state().lock().map_err(|_| model_error("indisponible"))?.loaded.clone() {
-        return Ok(Some(loaded));
+    {
+        let current = model_state().lock().map_err(|_| model_error("indisponible"))?;
+        if let Some(loaded) = current.loaded.clone() {
+            return Ok(Some(loaded));
+        }
+        if let Some(damaged) = current.damaged.clone() {
+            return Err(AppError::new(damaged));
+        }
     }
-    if !installed(state) {
+    let Some(installed) = installed(state) else {
         return Ok(None);
-    }
-    let loaded: Arc<dyn Embedder> = Arc::new(E5::load(&model_dir(state))?);
+    };
+    let loaded: Arc<dyn Embedder> = match E5::load(&installed.dir) {
+        Ok(model) => Arc::new(model),
+        Err(error) => {
+            let detail = error.message.trim_start_matches("Modèle de recherche sémantique : ").to_string();
+            let error = model_error(crate::model_files::unsupported(&SPEC, &installed, &detail));
+            model_state().lock().map_err(|_| model_error("indisponible"))?.damaged = Some(error.message.clone());
+            state.emit("semantic:changed", Value::Null);
+            return Err(error);
+        }
+    };
     model_state().lock().map_err(|_| model_error("indisponible"))?.loaded = Some(loaded.clone());
     Ok(Some(loaded))
 }
@@ -156,18 +166,34 @@ pub fn model_status(state: &AppState) -> Value {
     let current = model_state().lock().ok();
     let downloading = current.as_ref().and_then(|current| current.downloading);
     let error = current.as_ref().and_then(|current| current.error.clone());
-    let ready = current.as_ref().is_some_and(|current| current.loaded.is_some()) || installed(state);
+    let damaged = current.as_ref().and_then(|current| current.damaged.clone());
+    let loaded = current.as_ref().is_some_and(|current| current.loaded.is_some());
+    let installed = installed(state);
+    let status = if downloading.is_some() {
+        "downloading"
+    } else if loaded {
+        "ready"
+    } else if damaged.is_some() {
+        "damaged"
+    } else if installed.is_some() {
+        "ready"
+    } else {
+        "missing"
+    };
     json!({
         "model": MODEL,
         "sizeMb": MODEL_SIZE_MB,
-        "status": if downloading.is_some() { "downloading" } else if ready { "ready" } else { "missing" },
+        "status": status,
         "received": downloading.map(|(received, _)| received),
         "total": downloading.map(|(_, total)| total),
         "error": error,
+        "damaged": damaged,
+        "revision": installed.map(|installed| crate::model_files::short_revision(&installed.revision)),
     })
 }
 
-/// Télécharge le modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
+/// Télécharge la dernière révision du modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par
+/// fichier, en vérifiant chacun avec l’empreinte ou la taille que la source annonce.
 pub fn download(state: Arc<AppState>) -> AppResult<()> {
     {
         let mut current = model_state().lock().map_err(|_| model_error("indisponible"))?;
@@ -182,6 +208,11 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
         if let Ok(mut current) = model_state().lock() {
             current.downloading = None;
             current.error = result.as_ref().err().map(|error| error.message.clone());
+            if result.is_ok() {
+                // La révision téléchargée sera chargée au prochain passage.
+                current.damaged = None;
+                current.loaded = None;
+            }
         }
         state.emit("semantic:changed", Value::Null);
         if result.is_ok() {
@@ -191,7 +222,7 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
     Ok(())
 }
 
-async fn fetch_all(state: &Arc<AppState>) -> AppResult<()> {
+async fn fetch_all(state: &Arc<AppState>) -> AppResult<String> {
     let notified = std::sync::atomic::AtomicU64::new(0);
     let notifier = state.clone();
     crate::model_files::fetch(&SPEC, state, MODEL_SIZE_MB * 1024 * 1024, model_error, move |received, total| {

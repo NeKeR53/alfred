@@ -8,28 +8,52 @@ Réglages → Général :
 | Recherche par le sens | `intfloat/multilingual-e5-small` | 470 Mo |
 | Décisions locales (`ai.decide`) | `convaiinnovations/laya-multilingual` | 647 Mo |
 
-Chaque fichier est demandé à une révision figée, et son empreinte SHA-256 est comparée à celle inscrite dans Alfred
-(`src-tauri/src/decisions.rs`, `src-tauri/src/module_semantic.rs`) : un fichier différent est écarté, avec une
-erreur qui le dit.
+## Révision
+
+Alfred prend la **dernière révision**, celle que la source annonce pour `main` : la dernière version publiée sur
+huggingface.co, ou l’identifiant que renvoie un miroir (Artifactory ignore la révision demandée et annonce un
+identifiant à lui, qui n’existe pas sur huggingface.co). Une fois tous les fichiers en place, la révision est notée
+dans le cache (`refs/main`, comme Python) : c’est la révision installée, affichée discrètement dans Réglages → Général
+(« Version 614241f »).
+
+Une mise à jour ne se fait **jamais toute seule** : seulement quand l’utilisateur clique « Télécharger »,
+« Télécharger à nouveau » ou « Réessayer ». Le modèle en mémoire est alors remplacé au prochain usage.
+
+Si une révision plus récente change de format (configuration, noms de tenseurs) et qu’Alfred ne sait plus la
+charger, la rubrique le dit : « la version … du modèle … n’est pas prise en charge par cette version d’Alfred (…).
+Une mise à jour d’Alfred est nécessaire. » Il en va de même si la liste des fichiers n’a plus un fichier qu’Alfred lit.
+
+## Intégrité
+
+Alfred ne compare plus les fichiers à des empreintes inscrites dans son code. Chaque fichier est vérifié avec ce que
+la source annonce elle-même :
+
+1. l’empreinte SHA-256 des gros fichiers (LFS), dans la liste des fichiers (`lfs.sha256`, demandée par
+   `?blobs=true`) ;
+2. sinon l’en-tête `X-Linked-Etag` de la réponse du fichier ;
+3. sans empreinte annoncée (petits fichiers, ou miroir qui n’en donne pas), sa taille (`size` de la liste,
+   `X-Linked-Size` ou `Content-Length`).
+
+Cela couvre un téléchargement abîmé ou tronqué : le fichier est écarté, avec une erreur qui le nomme. Un fichier ne
+prend sa place dans le cache qu’une fois vérifié.
 
 ## Téléchargement
 
 Alfred suit le déroulé de `snapshot_download`, que la documentation d’Artifactory demande pour résoudre un modèle :
 
-1. la liste des fichiers du modèle à sa révision : `GET <source>/api/models/<dépôt>/revision/<révision>`. La réponse
-   doit porter chacun des fichiers attendus. La révision qu’elle annonce peut différer de la révision figée :
-   Artifactory ignore la révision demandée et annonce un identifiant à lui, qui n’existe pas sur huggingface.co ;
-2. chaque fichier : `GET <source>/<dépôt>/resolve/<révision>/<fichier>`, un simple GET, sans demande de plage, à la
-   révision figée d’abord, puis, si le miroir ne la sert pas, à celle qu’il annonce.
+1. la liste des fichiers : `GET <source>/api/models/<dépôt>/revision/main?blobs=true`, puis sans `?blobs=true` si
+   le miroir le refuse. Elle doit porter chacun des fichiers qu’Alfred lit ;
+2. chaque fichier : `GET <source>/<dépôt>/resolve/<révision annoncée>/<fichier>`, puis `…/resolve/main/…` si le
+   miroir ne sert pas la première ; un simple GET, sans demande de plage. Les fichiers sont rangés sous
+   `snapshots/<révision annoncée>/`.
 
-Ce qui garantit le modèle n’est pas la révision annoncée mais l’empreinte SHA-256 figée de chaque fichier : un fichier
-accepté a exactement le contenu de la révision figée, quelle que soit la révision par laquelle le miroir l’a servi. Il
-est rangé sous `snapshots/<révision figée>/`.
+Les redirections (le CDN de huggingface.co) sont suivies par Alfred lui-même : les en-têtes `X-Linked-*` sont lus
+sur la première réponse, et le jeton n’est jamais envoyé à un autre hôte que celui de la source.
 
-La première étape, les adresses, le jeton et le cache passent par [`hf-hub`](https://crates.io/crates/hf-hub) 0.5.0,
-la bibliothèque Rust de Hugging Face (dépôt `huggingface/hf-hub`). Les fichiers, eux, ne passent pas par son
-téléchargement : il demande d’abord l’octet 0 de chaque fichier et exige un en-tête `Content-Range`, qu’Artifactory
-ne renvoie pas (« en-tête content-range absent »). Le GET simple est celui de la bibliothèque Python.
+[`hf-hub`](https://crates.io/crates/hf-hub) 0.5.0, la bibliothèque Rust de Hugging Face (dépôt
+`huggingface/hf-hub`), sert à l’emplacement du cache et au jeton de `huggingface-cli login`. Son téléchargement n’est
+pas employé : il demande d’abord l’octet 0 de chaque fichier et exige un en-tête `Content-Range`, qu’Artifactory ne
+renvoie pas (« en-tête content-range absent »). Le GET simple est celui de la bibliothèque Python.
 
 Pas de délai d’attente : la première fois, Artifactory peut mettre longtemps à répondre, le temps de récupérer le
 fichier chez Hugging Face. C’est ce que sa documentation obtient en Python avec `etag_timeout=86400` ou
@@ -38,7 +62,7 @@ fichier chez Hugging Face. C’est ce que sa documentation obtient en Python ave
 La 1.0 de `hf-hub` n’est pas retenue : elle télécharge par Xet, un protocole à part qu’un miroir ne relaie pas
 forcément et qu’on ne peut pas couper, et ajoute près de 300 dépendances.
 
-TLS : `hf-hub` emploie le client HTTP d’Alfred (reqwest, rustls) avec les **certificats racines du système** —
+TLS : le téléchargement emploie le client HTTP d’Alfred (reqwest, rustls) avec les **certificats racines du système** —
 Trousseau d’accès sur Mac, magasin de certificats sur Windows. Un certificat d’entreprise installé sur le poste est
 donc accepté. Le proxy du système est suivi, ainsi que `HTTPS_PROXY`.
 
@@ -67,11 +91,12 @@ Il part dans l’en-tête `Authorization: Bearer …`. Il n’apparaît dans auc
 Le cache Hugging Face standard, partagé avec Python : `$HF_HOME/hub`, sinon `~/.cache/huggingface/hub` (sous
 Windows, `%USERPROFILE%\.cache\huggingface\hub`). Comme en Python, le contenu est dans
 `models--<org>--<nom>/blobs/<etag>` et `models--<org>--<nom>/snapshots/<révision>/<fichier>` le désigne par un lien
-(sous Windows, sans droit de créer un lien, le fichier y est déplacé). Un modèle déjà téléchargé par Python à la même révision n’est pas
-téléchargé à nouveau.
+(sous Windows, sans droit de créer un lien, le fichier y est déplacé). Un fichier déjà dans le dossier de la révision
+annoncée (téléchargé par Python, ou avant une coupure) n’est pas téléchargé à nouveau.
 
-Un modèle téléchargé avant cette version, complet dans `<données d’Alfred>/models/<modèle>`, reste là : Alfred continue
-de l’y lire et ne le télécharge pas à nouveau.
+Alfred lit le modèle installé dans cet ordre : la révision notée dans `refs/main`, si elle est complète ; la copie du
+cache à la révision que figeaient les versions précédentes d’Alfred ; puis l’ancien dossier
+`<données d’Alfred>/models/<modèle>` (le Laya déjà téléchargé y reste lu tel quel, sans nouveau téléchargement).
 
 ## Pointer Alfred vers un Artifactory
 
@@ -98,7 +123,9 @@ où `<clé du dépôt>` est le nom affiché dans « Set Up A Hugging Face Client
 | --- | --- |
 | « … est injoignable » | adresse fausse, réseau, proxy |
 | « … refuse l’accès (401 / 403) : jeton manquant ou refusé » | jeton absent, expiré ou sans droit sur le dépôt |
-| « … absent de … (404) » | le miroir n’a pas ce modèle, ce fichier ou cette révision |
+| « … absent de … (404) » | le miroir n’a pas ce modèle ou ce fichier |
 | « le certificat de … est refusé » | certificat de l’entreprise non installé sur le poste |
-| « … ne répond pas comme un dépôt Hugging Face » | l’adresse ne mène pas à l’API `huggingfaceml` |
-| « le fichier … n’a pas l’empreinte attendue : fichier écarté. Le modèle … a changé… » | le miroir sert une autre version de ce fichier : le modèle a changé depuis la révision figée, Alfred doit être mis à jour |
+| « … n’a pas répondu comme un dépôt Hugging Face » | l’adresse ne mène pas à l’API `huggingfaceml` |
+| « le fichier … n’a pas l’empreinte que la source annonce : fichier écarté » | téléchargement abîmé : réessayer |
+| « le fichier … est incomplet (… octets sur …) : fichier écarté » | téléchargement tronqué : réessayer |
+| « la version … du modèle … n’est pas prise en charge par cette version d’Alfred » | la dernière révision a changé de format : mettre à jour Alfred |

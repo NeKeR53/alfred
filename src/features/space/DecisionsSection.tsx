@@ -11,6 +11,8 @@ export interface DecisionsModel {
   total: number | null;
   error: string | null;
   damaged: string | null;
+  /** Révision installée, en court (`92d2214`). */
+  revision?: string | null;
 }
 
 function errorMessage(error: unknown): string {
@@ -58,11 +60,11 @@ export function DecisionsSection() {
   const size = `${model?.sizeMb ?? 647} Mo`;
   const description =
     model?.status === "ready"
-      ? "Prêt. Les pages et les fonctions qui le prévoient trient et décident sur cet ordinateur."
+      ? `Prêt. Les pages et les fonctions qui le prévoient trient et décident sur cet ordinateur.${model.revision ? ` Version ${model.revision}.` : ""}`
       : model?.status === "downloading"
         ? `Téléchargement en cours${progress ? ` : ${progress}` : "…"}`
         : model?.status === "damaged"
-          ? `Le modèle est abîmé : téléchargez-le à nouveau (environ ${size}).`
+          ? (model.damaged ?? `Le modèle est abîmé : téléchargez-le à nouveau (environ ${size}).`)
           : `Environ ${size} à télécharger une seule fois (${model?.model ?? "convaiinnovations/laya-multilingual"}, français compris).`;
 
   return (
