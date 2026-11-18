@@ -1162,8 +1162,6 @@ html select:not([multiple], [data-slot="native-select"]) {
 }
 .sidebar-settings {
   flex: 0 0 auto;
-}
-.sidebar-orchestrator {
   margin-top: auto;
 }
 .sortable-row {

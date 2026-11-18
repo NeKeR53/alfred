@@ -329,7 +329,7 @@
   display: flex;
   flex-direction: column;
 }
-/* Première entrée du menu : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
+/* Entrée du bas du menu, entre Réglages et Agent : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
  * reste ; elle ouvre le même menu des espaces. */
 .sidebar .sidebar-space {
   flex: 0 0 30px;

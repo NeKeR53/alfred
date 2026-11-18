@@ -30,13 +30,17 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
   expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
 
-  // Le bouton qui replie le menu est dans la barre du haut, hors du menu ; la première entrée du menu est l’espace,
-  // qui ouvre le menu des espaces.
+  // Le bouton qui replie le menu est dans la barre du haut, hors du menu. En bas du menu, dans cet ordre : Réglages,
+  // l’espace, qui ouvre le menu des espaces, puis Agent.
   const sidebar = screen.getByRole("complementary", { name: "Navigation principale" });
   const toggle = screen.getByRole("button", { name: "Replier la navigation" });
   expect(sidebar).not.toContainElement(toggle);
-  const [switcher] = within(sidebar).getAllByRole("button");
-  expect(switcher).toHaveAccessibleName(/^Espace de travail : Maison/);
+  const switcher = within(sidebar).getByRole("button", { name: /^Espace de travail : Maison/ });
+  expect(
+    within(sidebar)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label")?.split(/[.·]/)[0]?.trim()),
+  ).toEqual(["Réglages", "Espace de travail : Maison", "Agent"]);
   expect(switcher).toHaveAttribute("aria-haspopup", "menu");
   // Pas de champ de recherche dans le menu : ⌘K ouvre la palette.
   expect(within(sidebar).queryByRole("searchbox")).not.toBeInTheDocument();

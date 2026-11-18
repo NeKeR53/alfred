@@ -512,7 +512,6 @@ export function AppShell({
         </IconButton>
       </div>
       <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-        <SpaceSwitcher />
         <nav aria-label="Sections de l’espace de travail">
           {drag.orderedItems.map(({ section }) => {
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
@@ -572,6 +571,16 @@ export function AppShell({
             );
           })}
         </nav>
+        {/* Bas du menu, dans cet ordre : Réglages, l’espace ouvert, Agent. */}
+        <NavButton
+          label="Réglages"
+          active={settingsOpen}
+          onClick={() => setView({ kind: "settings" })}
+          className="sidebar-settings"
+        >
+          <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
+        </NavButton>
+        <SpaceSwitcher />
         {agentAvailable === true ? (
           <NavButton
             label={agentEntryLabel(agentSummary)}
@@ -584,14 +593,6 @@ export function AppShell({
             <Bot size={16} aria-hidden="true" />
           </NavButton>
         ) : null}
-        <NavButton
-          label="Réglages"
-          active={settingsOpen}
-          onClick={() => setView({ kind: "settings" })}
-          className="sidebar-settings"
-        >
-          <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
-        </NavButton>
       </aside>
       <main className="workspace" inert={settingsOpen}>
         {effective.kind === "agent" && agentAvailable !== null ? (
