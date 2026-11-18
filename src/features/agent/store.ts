@@ -160,6 +160,8 @@ interface AgentState {
   answerQuestion: (id: string, requestId: string, result: unknown, error?: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
   undoTurn: (id: string, turnId: string) => Promise<void>;
+  /** Annule une suite de tours enchaînés : leurs commits sont défaits du plus récent au plus ancien. */
+  undoTurns: (id: string, turnIds: readonly string[]) => Promise<void>;
 }
 
 type Live = { session: HarnessSession; signature: string };
@@ -1429,21 +1431,40 @@ export const useAgents = create<AgentState>((set, get) => {
       });
     },
 
-    async undoTurn(id, turnId) {
-      const turn = current(id)?.turns.find((candidate) => candidate.id === turnId);
-      if (!turn?.commit) return;
-      await invoke("space.undo", { commit: turn.commit });
-      patchConversation(id, (conversation) => ({
-        ...conversation,
-        turns: conversation.turns.map((candidate) =>
-          candidate.id === turnId
-            ? { ...candidate, commit: undefined, changedFiles: undefined, changedLines: undefined }
-            : candidate,
-        ),
-      }));
+    undoTurn(id, turnId) {
+      return get().undoTurns(id, [turnId]);
+    },
+
+    async undoTurns(id, turnIds) {
+      const wanted = new Set(turnIds);
+      // Du plus récent au plus ancien : chaque commit se défait sur l’état que le suivant a laissé.
+      const commits = (current(id)?.turns ?? []).filter((turn) => wanted.has(turn.id) && turn.commit).reverse();
+      if (!commits.length) return;
+      const undone = new Set<string>();
+      const forget = () =>
+        patchConversation(id, (conversation) => ({
+          ...conversation,
+          turns: conversation.turns.map((candidate) =>
+            undone.has(candidate.id)
+              ? { ...candidate, commit: undefined, changedFiles: undefined, changedLines: undefined }
+              : candidate,
+          ),
+        }));
+      try {
+        for (const turn of commits) {
+          await invoke("space.undo", { commit: turn.commit });
+          undone.add(turn.id);
+        }
+      } finally {
+        // Un échec en cours de route garde annulés les tours déjà défaits ; les autres restent annulables.
+        if (undone.size) forget();
+      }
       notify({
         title: "Modification annulée",
-        description: "L’espace de travail est revenu à son état d’avant ce tour.",
+        description:
+          commits.length > 1
+            ? "L’espace de travail est revenu à son état d’avant ces messages."
+            : "L’espace de travail est revenu à son état d’avant ce tour.",
         tone: "success",
       });
     },

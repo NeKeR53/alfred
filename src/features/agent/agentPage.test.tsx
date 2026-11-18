@@ -148,6 +148,95 @@ describe("page Agent", () => {
     expect(native.invoke).toHaveBeenCalledWith("agentWorkspace.gitSummary", { path: "/espace" });
   });
 
+  it("une conversation rouverte montre le bilan à la fin de chaque suite de messages, jamais entre deux", async () => {
+    const at = 1_000_000;
+    const done = (id: string, startedAt: number, endedAt: number, files?: string[]) => ({
+      id,
+      user: { text: `Demande ${id}`, attachments: [], contexts: [] },
+      items: [{ kind: "message" as const, id: `${id}-m`, content: `Réponse ${id}` }],
+      status: "done" as const,
+      startedAt,
+      endedAt,
+      ...(files ? { commit: `commit-${id}`, changedFiles: files } : {}),
+    });
+    database = {
+      c1: stored("c1", "Factures", at, {
+        turns: [
+          done("t1", at, at + 4_000, ["a.md"]),
+          // Envoyé pendant la réponse : parti de la file aussitôt après.
+          done("t2", at + 4_010, at + 9_000, ["b.md"]),
+          // Le lendemain : une autre suite.
+          done("t3", at + 86_400_000, at + 86_410_000, ["c.md"]),
+        ],
+      }),
+    };
+    render(<AgentPage />);
+    await screen.findByText("Réponse t3");
+    const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
+    expect(summaries.map((summary) => within(summary).getByRole("strong").textContent)).toEqual([
+      "2 fichiers de l’espace de travail modifiés",
+      "1 fichier de l’espace de travail modifié",
+    ]);
+    // Le premier bilan suit la réponse du deuxième message, pas celle du premier.
+    expect(screen.getByText("Réponse t2").compareDocumentPosition(summaries[0])).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("pendant une réponse, ni bilan ni pastille Git ne marquent une fin", async () => {
+    git = {
+      root: "/espace",
+      files: [{ path: "a.txt", state: "modifié" }],
+      additions: 1,
+      deletions: 0,
+      truncated: false,
+    };
+    database = {
+      c1: stored("c1", "Factures", 2_000, {
+        turns: [
+          {
+            id: "t1",
+            user: { text: "Ajoute", attachments: [], contexts: [] },
+            items: [{ kind: "message", id: "m1", content: "Fait." }],
+            status: "done",
+            startedAt: 2_000,
+            endedAt: 3_000,
+            commit: "c-1",
+            changedFiles: ["a.txt"],
+          },
+        ],
+      }),
+    };
+    render(<AgentPage />);
+    expect(await screen.findByRole("region", { name: "Bilan des modifications" })).toBeInTheDocument();
+    expect(await screen.findByText("1 fichier modifié")).toBeInTheDocument();
+    // Un deuxième message part juste après : l’agent répond.
+    act(() =>
+      useAgents.setState((state) => {
+        const current = state.loaded.c1;
+        return {
+          loaded: {
+            ...state.loaded,
+            c1: {
+              ...current,
+              turns: [
+                ...current.turns,
+                {
+                  id: "t2",
+                  user: { text: "Et ceci", attachments: [], contexts: [] },
+                  items: [],
+                  status: "running",
+                  startedAt: 3_500,
+                },
+              ],
+            },
+          },
+          runtime: { ...state.runtime, c1: { status: "responding", approvals: [], questions: [], queued: [] } },
+        };
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Bilan des modifications" })).toBeNull());
+    expect(screen.queryByText("1 fichier modifié")).toBeNull();
+  });
+
   it("signale un dépôt illisible, sans pastille", async () => {
     git = new Error("Ce dossier n’est pas un dépôt Git.");
     render(<AgentPage />);

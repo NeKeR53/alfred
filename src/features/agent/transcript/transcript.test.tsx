@@ -23,6 +23,7 @@ import { referencedLocalImages } from "../lib/chatImages";
 import type { Conversation, ConversationRuntime, Turn } from "../model";
 import { useAgents } from "../store";
 import {
+  CHAINED_TURN_GAP,
   ConversationQuestion,
   changedFilesOf,
   conversationModelLabel,
@@ -35,6 +36,7 @@ import {
   RECENT_TURNS,
   Transcript,
   turnDelivery,
+  turnSequences,
 } from "../Transcript";
 import { agentQuestion, withoutAgentQuestion } from "./agentQuestions";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -136,6 +138,24 @@ describe("présentation d’un tour", () => {
     });
     expect(producedImages(produced)).toEqual(["/tmp/a.png"]);
     expect(producedFiles(produced)).toEqual(["/tmp/r.pdf"]);
+  });
+
+  it("découpe les tours en suites enchaînées et cumule leurs fichiers", () => {
+    const sequences = turnSequences([
+      turn("a", { startedAt: 0, endedAt: 10 }),
+      turn("b", { startedAt: 10 + CHAINED_TURN_GAP, endedAt: 200_000 }),
+      turn("c", { startedAt: 200_001 + CHAINED_TURN_GAP }),
+    ]);
+    expect(sequences.map((sequence) => sequence.map((item) => item.id))).toEqual([["a", "b"], ["c"]]);
+    expect(
+      changedFilesOf([
+        turn("a", { changedFiles: ["x.md", "y.png"], changedLines: { "x.md": { added: 1, removed: 2 } } }),
+        turn("b", { changedFiles: ["x.md", "y.png"], changedLines: { "x.md": { added: 3, removed: 0 } } }),
+      ]),
+    ).toEqual([
+      { path: "x.md", added: 4, removed: 2 },
+      { path: "y.png", added: null, removed: null },
+    ]);
   });
 
   it("donne les lignes de chaque fichier modifié, ou rien quand elles sont inconnues", () => {
@@ -407,6 +427,94 @@ describe("relevé", () => {
     expect(within(summary).getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
     fireEvent.click(within(summary).getByRole("button", { name: "Afficher 1 fichier de plus" }));
     expect(within(summary).getByRole("button", { name: "d.md" })).toBeInTheDocument();
+  });
+
+  it("deux tours enchaînés : un seul bilan, à la fin, qui regroupe leurs fichiers et les annule ensemble", async () => {
+    const undoTurns = vi.fn(async () => undefined);
+    useAgents.setState({ undoTurns } as never);
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t1", {
+            startedAt: 1_000,
+            endedAt: 5_000,
+            commit: "c1",
+            changedFiles: ["a.md", "b.md"],
+            changedLines: { "a.md": { added: 2, removed: 1 }, "b.md": { added: 1, removed: 0 } },
+          }),
+          // Parti de la file dès la fin du précédent.
+          turn("t2", {
+            startedAt: 5_010,
+            endedAt: 9_000,
+            commit: "c2",
+            changedFiles: ["a.md", "c.md"],
+            changedLines: { "a.md": { added: 3, removed: 0 }, "c.md": { added: 4, removed: 4 } },
+          }),
+        ])}
+        runtime={idle}
+      />,
+    );
+    const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
+    expect(summaries).toHaveLength(1);
+    const [summary] = summaries;
+    // Sous la réponse du second tour, pas entre les deux messages.
+    expect(
+      screen.getByText("Réponse t2").compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(summary).getByText("3 fichiers de l’espace de travail modifiés")).toBeInTheDocument();
+    expect(within(summary).getByText("+10")).toBeInTheDocument();
+    expect(within(summary).getByText("−5")).toBeInTheDocument();
+    fireEvent.click(within(summary).getByRole("button", { name: "Annuler cette modification" }));
+    expect(await screen.findByText(/revient à son état d’avant ces messages/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Annuler la modification" }));
+    await waitFor(() => expect(undoTurns).toHaveBeenCalledWith("c1", ["t1", "t2"]));
+  });
+
+  it("pas de bilan tant que l’agent répond ou qu’un message attend, même pour le tour déjà fini de la suite", () => {
+    const first = turn("t1", { startedAt: 1_000, endedAt: 5_000, commit: "c1", changedFiles: ["a.md"] });
+    const view = render(
+      <Transcript
+        conversation={conversation([
+          first,
+          turn("t2", { startedAt: 5_010, endedAt: undefined, status: "running", items: [] }),
+        ])}
+        runtime={{ ...idle, status: "responding" }}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Bilan des modifications" })).toBeNull();
+    // Le second tour est fini, mais un troisième message attend dans la file.
+    view.rerender(
+      <Transcript
+        conversation={conversation([first, turn("t2", { startedAt: 5_010, endedAt: 9_000 })])}
+        runtime={{ ...idle, queued: [{ id: "q", message: { text: "Puis", attachments: [], contexts: [] } }] }}
+      />,
+    );
+    expect(screen.queryByRole("region", { name: "Bilan des modifications" })).toBeNull();
+    expect(screen.queryByText("Exécution arrêtée · Travail non terminé")).toBeNull();
+  });
+
+  it("une conversation rouverte montre un bilan à la fin de chaque suite", () => {
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t1", { startedAt: 1_000, endedAt: 5_000, commit: "c1", changedFiles: ["a.md"] }),
+          turn("t2", { startedAt: 6_000, endedAt: 9_000 }),
+          // Une heure plus tard : une autre suite.
+          turn("t3", { startedAt: 3_609_000, endedAt: 3_620_000, commit: "c3", changedFiles: ["b.md", "c.md"] }),
+          turn("t4", { startedAt: 3_621_000, endedAt: 3_630_000, commit: "c4", changedFiles: ["c.md"] }),
+        ])}
+        runtime={idle}
+      />,
+    );
+    const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
+    expect(summaries.map((summary) => within(summary).getByRole("strong").textContent)).toEqual([
+      "1 fichier de l’espace de travail modifié",
+      "2 fichiers de l’espace de travail modifiés",
+    ]);
+    const follows = (text: string, node: Element) =>
+      Boolean(screen.getByText(text).compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(follows("Réponse t2", summaries[0]) && !follows("Demande t3", summaries[0])).toBe(true);
+    expect(follows("Réponse t4", summaries[1])).toBe(true);
   });
 });
 

@@ -198,7 +198,10 @@ export function Composer({
   responding: boolean;
   /** Panneau de droite : la saisie seule, sans les réglages de la conversation. */
   compact?: boolean;
-  /** État affiché à gauche, sur la ligne du choix du modèle (résumé des fichiers modifiés), comme dans OneApp. */
+  /**
+   * État affiché à gauche, sur la ligne du choix du modèle (résumé des fichiers modifiés), comme dans OneApp ; masqué
+   * pendant une réponse et tant qu’un message attend dans la file.
+   */
   status?: ReactNode;
   /** Fichiers survolés : la page couvre sa zone de dépôt, comme celle de OneApp. */
   onDraggingChange?: (dragging: boolean) => void;
@@ -215,6 +218,9 @@ export function Composer({
   const agentsReady = useAgents((state) => state.ready);
   const lastStatus = useAgents((state) => state.loaded[conversation.id]?.turns.at(-1)?.status);
   const queued = useAgents((state) => state.runtime[conversation.id]?.queued) ?? [];
+  // Le résumé des fichiers modifiés est un état de fin : il attend que l’agent ait fini et que la file soit vide, pour
+  // que rien ne marque une fin entre deux messages qui s’enchaînent.
+  const shownStatus = responding || lastStatus === "running" || queued.length ? undefined : status;
   const conversationId = conversation.id;
   const draft = useComposerDrafts((state) => state.drafts[conversationId] ?? blankDraft);
   const draftsReady = useComposerDrafts((state) => state.ready);
@@ -680,11 +686,11 @@ export function Composer({
         </div>
       </form>
       {compact ? (
-        status ? (
-          <div className="agent-composer__options">{status}</div>
+        shownStatus ? (
+          <div className="agent-composer__options">{shownStatus}</div>
         ) : null
       ) : (
-        <ConversationOptions conversation={conversation} locked={locked} responding={responding} status={status} />
+        <ConversationOptions conversation={conversation} locked={locked} responding={responding} status={shownStatus} />
       )}
     </div>
   );

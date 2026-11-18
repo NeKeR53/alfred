@@ -458,7 +458,8 @@ describe("file d’attente", () => {
     render(<Composer conversation={conversation("a")} responding status={<span>3 fichiers modifiés</span>} />);
     expect(screen.getByRole("button", { name: "Arrêter l’agent" })).toBeInTheDocument();
     expect(screen.queryByText(/pour envoyer, .* pour mettre en file/)).toBeNull();
-    expect(screen.getByText("3 fichiers modifiés").closest(".agent-composer__options")).not.toBeNull();
+    // Le résumé des fichiers modifiés attend la fin : pendant la réponse, il ne laisse pas croire qu’elle est finie.
+    expect(screen.queryByText("3 fichiers modifiés")).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: /^Modèle de l’agent/ })).toBeEnabled());
     expect(screen.getByRole("textbox", { name: "Message à Nouvelle conversation" })).toBeInTheDocument();
   });
@@ -481,5 +482,53 @@ describe("collages et presse-papiers", () => {
     expect(clipboardImages({ items: [] as unknown as DataTransferItemList, files: [image, text] as never })).toEqual([
       image,
     ]);
+  });
+});
+
+describe("résumé des fichiers modifiés sous la saisie", () => {
+  const pill = <span>2 fichiers modifiés</span>;
+
+  it("ne paraît qu’une fois l’agent arrêté et la file vide", () => {
+    const view = render(<Composer conversation={conversation("a")} responding={false} status={pill} />);
+    expect(screen.getByText("2 fichiers modifiés").closest(".agent-composer__options")).not.toBeNull();
+
+    // Un message attend encore dans la file : la suite n’est pas finie.
+    act(() =>
+      useAgents.setState((state) => ({
+        runtime: {
+          ...state.runtime,
+          a: {
+            status: "idle",
+            approvals: [],
+            questions: [],
+            queued: [{ id: "q1", message: { text: "Et ensuite", attachments: [], contexts: [] } }],
+          },
+        },
+      })),
+    );
+    expect(screen.queryByText("2 fichiers modifiés")).toBeNull();
+
+    // Le dernier tour tourne encore, même si l’agent n’a pas encore répondu.
+    act(() =>
+      useAgents.setState((state) => ({
+        runtime: { ...state.runtime, a: { status: "idle", approvals: [], questions: [], queued: [] } },
+        loaded: {
+          ...state.loaded,
+          a: conversation("a", {
+            turns: [
+              {
+                id: "t1",
+                user: { text: "Bonjour", attachments: [], contexts: [] },
+                items: [],
+                status: "running",
+                startedAt: 1,
+              },
+            ],
+          }),
+        },
+      })),
+    );
+    expect(screen.queryByText("2 fichiers modifiés")).toBeNull();
+    view.unmount();
   });
 });

@@ -42,8 +42,9 @@ import "./transcript/transcript.css";
 /*
  * Relevé d’une conversation, repris de `ChatTranscript` de OneApp : le message de l’utilisateur en bulle à droite,
  * puis le travail de l’agent replié derrière son résumé (« A travaillé pendant 12 s · 3 outils appelés ») et sa
- * réponse finale en clair, les images et fichiers du tour, enfin le bilan des fichiers modifiés avec « Annuler cette
- * modification ». La question de l’agent ou l’autorisation attendue se pose dans une carte au-dessus de la saisie.
+ * réponse finale en clair, les images et fichiers du tour. Le bilan des fichiers modifiés, avec « Annuler cette
+ * modification », ne vient qu’à la fin d’une suite de messages enchaînés et couvre toute la suite. La question de
+ * l’agent ou l’autorisation attendue se pose dans une carte au-dessus de la saisie.
  */
 
 /** Événement qui demande à la saisie d’une conversation d’ajouter une citation (« Citer dans la réponse »). */
@@ -274,25 +275,96 @@ export function runningLabel(turn: Turn, runtime: ConversationRuntime): string {
 
 type ChangedFile = { path: string; added: number | null; removed: number | null };
 
-/** Fichiers modifiés par un tour, avec leurs lignes ajoutées et retirées quand elles sont connues. */
-export function changedFilesOf(turn: Turn): ChangedFile[] {
-  return (turn.changedFiles ?? []).map((path) => {
-    const lines = turn.changedLines?.[path];
-    return { path, added: lines?.added ?? null, removed: lines?.removed ?? null };
-  });
+/**
+ * Délai au-delà duquel un message ne continue plus le précédent. Un message mis en file ou glissé dans la réponse
+ * part dès la fin du tour d’avant ; un message envoyé juste après sa fin continue aussi la suite.
+ */
+export const CHAINED_TURN_GAP = 2 * 60_000;
+
+/** Suites de tours enchaînés : chaque tour parti moins de `CHAINED_TURN_GAP` après la fin du précédent le continue. */
+export function turnSequences(turns: readonly Turn[]): Turn[][] {
+  const sequences: Turn[][] = [];
+  for (const turn of turns) {
+    const sequence = sequences.at(-1);
+    const previous = sequence?.at(-1);
+    const chained =
+      previous !== undefined &&
+      (previous.endedAt === undefined || turn.startedAt - previous.endedAt <= CHAINED_TURN_GAP);
+    if (sequence && chained) sequence.push(turn);
+    else sequences.push([turn]);
+  }
+  return sequences;
+}
+
+/** La conversation en a fini : l’agent ne répond plus, aucun tour ne tourne, aucun message n’attend dans la file. */
+export function conversationSettled(conversation: Conversation, runtime: ConversationRuntime): boolean {
+  return runtime.status === "idle" && !runtime.queued.length && conversation.turns.at(-1)?.status !== "running";
 }
 
 /**
- * Bilan des fichiers de l’espace modifiés par un tour, repris de `ChangeSummary` de OneApp : nombre de fichiers,
- * total « +a −r », trois fichiers puis « Afficher N de plus », chemins cliquables, « — » si inconnu ; avec
- * l’annulation propre à Alfred.
+ * Bilans des modifications, rangés sous le dernier tour de chaque suite : une suite qui continue n’en a pas encore,
+ * pour que rien ne marque une fin entre deux messages qui s’enchaînent. Seuls les tours qui ont un commit y figurent.
  */
-function ChangeSummary({ conversationId, turn }: { conversationId: string; turn: Turn }) {
-  const undoTurn = useAgents((state) => state.undoTurn);
+export function changeSummaries(turns: readonly Turn[], settled: boolean): Map<string, Turn[]> {
+  const summaries = new Map<string, Turn[]>();
+  const sequences = turnSequences(turns);
+  sequences.forEach((sequence, index) => {
+    if (index === sequences.length - 1 && !settled) return;
+    const changed = sequence.filter((turn) => turn.commit);
+    const last = sequence.at(-1);
+    if (changed.length && last) summaries.set(last.id, changed);
+  });
+  return summaries;
+}
+
+/**
+ * Fichiers modifiés par un ou plusieurs tours, dans l’ordre où ils l’ont été, avec leurs lignes ajoutées et retirées
+ * cumulées quand elles sont connues pour chaque tour qui les a touchés.
+ */
+export function changedFilesOf(turns: Turn | readonly Turn[]): ChangedFile[] {
+  const files = new Map<string, ChangedFile>();
+  for (const turn of Array.isArray(turns) ? turns : [turns as Turn]) {
+    for (const path of turn.changedFiles ?? []) {
+      const lines = turn.changedLines?.[path];
+      const known = files.get(path);
+      if (!known) files.set(path, { path, added: lines?.added ?? null, removed: lines?.removed ?? null });
+      else
+        files.set(path, {
+          path,
+          added: known.added === null || !lines ? null : known.added + lines.added,
+          removed: known.removed === null || !lines ? null : known.removed + lines.removed,
+        });
+    }
+  }
+  return [...files.values()];
+}
+
+/** Garde le même tableau tant que la suite garde les mêmes tours : les tours terminés ne sont pas redessinés. */
+function useStableSummaries(summaries: Map<string, Turn[]>): Map<string, Turn[]> {
+  const previous = useRef(new Map<string, Turn[]>());
+  const stable = new Map<string, Turn[]>();
+  for (const [id, turns] of summaries) {
+    const known = previous.current.get(id);
+    stable.set(
+      id,
+      known && known.length === turns.length && known.every((turn, index) => turn === turns[index]) ? known : turns,
+    );
+  }
+  previous.current = stable;
+  return stable;
+}
+
+/**
+ * Bilan des fichiers de l’espace modifiés par une suite de tours, repris de `ChangeSummary` de OneApp : nombre de
+ * fichiers, total « +a −r », trois fichiers puis « Afficher N de plus », chemins cliquables, « — » si inconnu ; avec
+ * l’annulation propre à Alfred, qui défait toute la suite.
+ */
+function ChangeSummary({ conversationId, turns }: { conversationId: string; turns: Turn[] }) {
+  const undoTurns = useAgents((state) => state.undoTurns);
   const spacePath = useShell((state) => state.snapshot?.path);
   const { confirm, confirmDialog } = useConfirm();
   const [expanded, setExpanded] = useState(false);
-  const files = changedFilesOf(turn);
+  const files = useMemo(() => changedFilesOf(turns), [turns]);
   const visible = expanded ? files : files.slice(0, 3);
   const complete = files.length > 0 && files.every((file) => file.added !== null && file.removed !== null);
   const added = files.reduce((sum, file) => sum + (file.added ?? 0), 0);
@@ -324,13 +396,15 @@ function ChangeSummary({ conversationId, turn }: { conversationId: string; turn:
           onClick={async () => {
             const accepted = await confirm({
               title: "Annuler cette modification ?",
-              message:
-                "L’espace de travail revient à son état d’avant ce tour. L’annulation est elle-même enregistrée et peut être défaite.",
+              message: `L’espace de travail revient à son état d’avant ${turns.length > 1 ? "ces messages" : "ce tour"}. L’annulation est elle-même enregistrée et peut être défaite.`,
               confirmLabel: "Annuler la modification",
             });
             if (!accepted) return;
             try {
-              await undoTurn(conversationId, turn.id);
+              await undoTurns(
+                conversationId,
+                turns.map((turn) => turn.id),
+              );
             } catch (error) {
               notify({
                 title: "Annulation impossible",
@@ -442,11 +516,14 @@ const TurnView = memo(function TurnView({
   onRetry,
   resend,
   fork,
+  changes,
 }: {
   conversationId: string;
   cwd: string;
   turn: Turn;
   last: boolean;
+  /** Tours de la suite qui finit ici et qui ont modifié l’espace : leur bilan se montre sous ce tour. */
+  changes?: Turn[];
   /** État du travail en cours, pour le dernier tour pendant une réponse. */
   working?: string;
   onQuote: (text: string) => void;
@@ -540,7 +617,7 @@ const TurnView = memo(function TurnView({
             <Button onClick={onRetry}>Réessayer le message</Button>
           </div>
         ) : null}
-        {turn.commit ? <ChangeSummary conversationId={conversationId} turn={turn} /> : null}
+        {changes ? <ChangeSummary conversationId={conversationId} turns={changes} /> : null}
       </li>
     </>
   );
@@ -686,6 +763,10 @@ export function Transcript({
   );
   const working =
     lastTurn?.status === "running" && runtime.status !== "idle" ? runningLabel(lastTurn, runtime) : undefined;
+  // Le bilan ne vient qu’à la fin d’une suite de messages : tant que l’agent répond ou qu’un message attend, rien ne
+  // marque de fin.
+  const settled = conversationSettled(conversation, runtime);
+  const summaries = useStableSummaries(useMemo(() => changeSummaries(turns, settled), [turns, settled]));
 
   return (
     <section
@@ -721,6 +802,7 @@ export function Transcript({
                     onRetry={onRetry}
                     resend={resend}
                     fork={fork}
+                    changes={summaries.get(turn.id)}
                   />
                 );
               })}

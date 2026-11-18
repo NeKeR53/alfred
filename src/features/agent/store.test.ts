@@ -365,6 +365,41 @@ describe("conversation d’agent · accords et erreurs", () => {
     expect(lastTurn(id)).toMatchObject({ commit: undefined, changedFiles: undefined });
   });
 
+  it("annuler une suite de tours défait leurs commits du plus récent au plus ancien", async () => {
+    const id = start();
+    nextCommit = "aaa1";
+    await answeredTurn(id, "Ajoute une page", "Fait.");
+    nextCommit = "bbb2";
+    await answeredTurn(id, "Et une autre", "Fait aussi.");
+    const turns = conversation(id).turns;
+    await useAgents.getState().undoTurns(
+      id,
+      turns.map((turn) => turn.id),
+    );
+    expect(called("space.undo")).toEqual([{ commit: "bbb2" }, { commit: "aaa1" }]);
+    expect(conversation(id).turns.every((turn) => turn.commit === undefined)).toBe(true);
+  });
+
+  it("un échec en cours d’annulation garde annulables les tours qui n’ont pas été défaits", async () => {
+    const id = start();
+    nextCommit = "aaa1";
+    await answeredTurn(id, "Ajoute une page", "Fait.");
+    nextCommit = "bbb2";
+    await answeredTurn(id, "Et une autre", "Fait aussi.");
+    const base = native.invoke.getMockImplementation();
+    native.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "space.undo" && args?.commit === "aaa1") throw new Error("Conflit");
+      return base?.(command, args);
+    });
+    await expect(
+      useAgents.getState().undoTurns(
+        id,
+        conversation(id).turns.map((turn) => turn.id),
+      ),
+    ).rejects.toThrow("Conflit");
+    expect(conversation(id).turns.map((turn) => turn.commit)).toEqual(["aaa1", undefined]);
+  });
+
   it("transmet l’interruption au harnais", async () => {
     const id = start();
     await useAgents.getState().send(id, message("Long travail"));

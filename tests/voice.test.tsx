@@ -10,13 +10,14 @@ import { App } from "../src/App";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 
-async function finishTurn(user: ReturnType<typeof userEvent.setup>, turns = 1) {
+async function finishTurn(user: ReturnType<typeof userEvent.setup>) {
   const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
   await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
   const card = await screen.findByRole("form", { name: "Emplacement de la nouvelle page" });
   await user.click(within(card).getByRole("radio", { name: "Nouvelle entrée du menu de gauche" }));
   await user.click(within(card).getByRole("button", { name: "Placer la page" }));
-  await waitFor(() => expect(screen.getAllByRole("region", { name: "Bilan des modifications" })).toHaveLength(turns));
+  // Des messages qui s’enchaînent n’ont qu’un bilan, à la fin de la suite.
+  await waitFor(() => expect(screen.getAllByRole("region", { name: "Bilan des modifications" })).toHaveLength(1));
 }
 
 it("dicter une demande l’envoie, et la réponse de l’agent est lue", async () => {
@@ -47,6 +48,6 @@ it("dicter une demande l’envoie, et la réponse de l’agent est lue", async (
   await user.type(screen.getByRole("textbox", { name: /^Message à / }), "Et une page pour les courses");
   await user.click(screen.getByRole("button", { name: "Envoyer" }));
   await waitFor(() => expect(backend.agent.written.filter((message) => message.type === "user")).toHaveLength(2));
-  await finishTurn(user, 2);
+  await finishTurn(user);
   expect(backend.voice.spoken).toHaveLength(1);
 });
