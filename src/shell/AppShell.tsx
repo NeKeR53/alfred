@@ -1,4 +1,4 @@
-import { Button, EmptyState, IconButton, PageTopBar, PageTopBarSlot, Tabs } from "@alfred/ui";
+import { Button, EmptyState, IconButton, PageTopBar, Tabs } from "@alfred/ui";
 import {
   AppWindow,
   Bot,
@@ -17,7 +17,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
 } from "react";
 import { SetupGate } from "../features/setup/SetupGate";
 import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
@@ -163,89 +162,90 @@ export function SectionView({
   const main = useRef<HTMLDivElement>(null);
 
   return (
-    <>
-      <PageTopBar
-        title={title}
-        panelToggle={
-          hasPanel && page
-            ? {
-                hidden: !panelVisible,
-                onToggle: () => togglePanel(page.reference),
-                subject: agentConversation ? "la conversation avec l’agent" : `le panneau « ${panel?.title ?? ""} »`,
-              }
-            : undefined
-        }
-      >
-        {tabs.length > 1 && activeId ? (
-          // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
-          <div
-            className="shell-tabs"
-            onPointerDown={(event) => {
-              const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-              const tab = target?.element.closest<HTMLElement>('[role="tab"]');
-              if (target && tab && sortable.some((item) => item.id === target.id))
-                drag.startDrag(event, target.id, tab);
-            }}
-            onContextMenu={(event) => {
-              const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-              if (!target || !onPageMenu) return;
-              event.preventDefault();
-              onPageMenu(target.id, { x: event.clientX, y: event.clientY }, target.element.closest("button"));
-            }}
-            onKeyDownCapture={(event) => {
-              const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-              if (!target) return;
-              const tab = target.element.closest<HTMLElement>('[role="tab"]');
-              if (isMenuKey(event) && onPageMenu && tab) {
+    <div
+      className="workspace-body shell-body"
+      data-surface={variant === "settings" && builtInTab ? "settings" : undefined}
+    >
+      {/* Colonne de la page : sa barre du haut, puis la page. Le panneau de droite est à côté, sur toute la hauteur. */}
+      <div className="shell-column">
+        <PageTopBar
+          title={title}
+          panelToggle={
+            hasPanel && page
+              ? {
+                  hidden: !panelVisible,
+                  onToggle: () => togglePanel(page.reference),
+                  subject: agentConversation ? "la conversation avec l’agent" : `le panneau « ${panel?.title ?? ""} »`,
+                }
+              : undefined
+          }
+        >
+          {tabs.length > 1 && activeId ? (
+            // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
+            <div
+              className="shell-tabs"
+              onPointerDown={(event) => {
+                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                const tab = target?.element.closest<HTMLElement>('[role="tab"]');
+                if (target && tab && sortable.some((item) => item.id === target.id))
+                  drag.startDrag(event, target.id, tab);
+              }}
+              onContextMenu={(event) => {
+                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                if (!target || !onPageMenu) return;
                 event.preventDefault();
-                event.stopPropagation();
-                onPageMenu(target.id, anchorOf(tab), tab);
-                return;
+                onPageMenu(target.id, { x: event.clientX, y: event.clientY }, target.element.closest("button"));
+              }}
+              onKeyDownCapture={(event) => {
+                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                if (!target) return;
+                const tab = target.element.closest<HTMLElement>('[role="tab"]');
+                if (isMenuKey(event) && onPageMenu && tab) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onPageMenu(target.id, anchorOf(tab), tab);
+                  return;
+                }
+                if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!drag.moveItem(target.id, event.key === "ArrowLeft" ? -1 : 1))
+                    announceEdge(event.key === "ArrowLeft" ? "premier" : "dernier");
+                  refocus(`[data-tab-ref="${CSS.escape(target.id)}"]`, (element) => element.closest("button"));
+                }
+              }}
+            >
+              <Tabs
+                label={`Onglets de ${title}`}
+                className="shell-tabs__list choice-segmented"
+                tabClassName="shell-tabs__tab"
+                items={tabs}
+                activeId={activeId}
+                onChange={(id) => setActiveTab(sectionId, id)}
+              />
+            </div>
+          ) : null}
+          {actions}
+          {detachable && inTauri && page && !builtInTab && !waiting ? (
+            <IconButton
+              label="Ouvrir dans une nouvelle fenêtre"
+              onClick={() =>
+                void openPageWindow(page.reference).catch((error: unknown) =>
+                  notify({
+                    title: "La fenêtre n’a pas pu s’ouvrir",
+                    description: error instanceof Error ? error.message : String(error),
+                    tone: "error",
+                  }),
+                )
               }
-              if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!drag.moveItem(target.id, event.key === "ArrowLeft" ? -1 : 1))
-                  announceEdge(event.key === "ArrowLeft" ? "premier" : "dernier");
-                refocus(`[data-tab-ref="${CSS.escape(target.id)}"]`, (element) => element.closest("button"));
-              }
-            }}
-          >
-            <Tabs
-              label={`Onglets de ${title}`}
-              className="shell-tabs__list choice-segmented"
-              tabClassName="shell-tabs__tab"
-              items={tabs}
-              activeId={activeId}
-              onChange={(id) => setActiveTab(sectionId, id)}
-            />
-          </div>
-        ) : null}
-        {actions}
-        {detachable && inTauri && page && !builtInTab && !waiting ? (
-          <IconButton
-            label="Ouvrir dans une nouvelle fenêtre"
-            onClick={() =>
-              void openPageWindow(page.reference).catch((error: unknown) =>
-                notify({
-                  title: "La fenêtre n’a pas pu s’ouvrir",
-                  description: error instanceof Error ? error.message : String(error),
-                  tone: "error",
-                }),
-              )
-            }
-          >
-            <AppWindow size={16} aria-hidden="true" />
-          </IconButton>
-        ) : null}
-        {page && !builtInTab && !waiting ? <ExampleIndicator module={page.module} /> : null}
-        {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
-        <NotificationBell />
-      </PageTopBar>
-      <div
-        className="workspace-body shell-body"
-        data-surface={variant === "settings" && builtInTab ? "settings" : undefined}
-      >
+            >
+              <AppWindow size={16} aria-hidden="true" />
+            </IconButton>
+          ) : null}
+          {page && !builtInTab && !waiting ? <ExampleIndicator module={page.module} /> : null}
+          {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
+          <NotificationBell />
+        </PageTopBar>
         <div ref={main} className="shell-body__main">
           {builtInTab ? (
             builtInTab.render()
@@ -269,17 +269,17 @@ export function SectionView({
             <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
           )}
         </div>
-        {waiting ? null : page && panelVisible && agentConversation && renderAgentPanel ? (
-          <ResizablePanel storageKey="shell.panelWidth" label="Conversation avec l’agent">
-            {renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))}
-          </ResizablePanel>
-        ) : panel && page && panelVisible ? (
-          <ResizablePanel storageKey="shell.panelWidth" label={panel.title}>
-            <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
-          </ResizablePanel>
-        ) : null}
       </div>
-    </>
+      {waiting ? null : page && panelVisible && agentConversation && renderAgentPanel ? (
+        <ResizablePanel storageKey="shell.panelWidth" label="Conversation avec l’agent">
+          {renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))}
+        </ResizablePanel>
+      ) : panel && page && panelVisible ? (
+        <ResizablePanel storageKey="shell.panelWidth" label={panel.title}>
+          <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
+        </ResizablePanel>
+      ) : null}
+    </div>
   );
 }
 
@@ -466,8 +466,6 @@ export function AppShell({
   const toggleSidebar = useShell((state) => state.toggleSidebar);
   const editor = useNavigationEditor();
   const counts = useBadges((state) => state.counts);
-  // Emplacement, dans la barre du haut de la fenêtre, où se place la barre de la page affichée.
-  const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null);
   useEffect(() => startBadges(), []);
   const sections = useMemo(
     () =>
@@ -499,147 +497,138 @@ export function AppShell({
 
   return (
     <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
-      {/* Barre du haut de toute la fenêtre : le bouton qui replie le menu, à place fixe au-dessus de lui, puis la barre
-          de la page affichée, au-dessus de la page. */}
+      {/* Début de la barre du haut, au-dessus du menu : le bouton qui le replie, à place fixe. La barre de la page
+          affichée la prolonge jusqu’au panneau de droite, qui monte, lui, jusqu’en haut de la fenêtre. */}
       <div className="app-topbar" inert={settingsOpen}>
-        <div className="app-topbar__start">
-          <IconButton
-            appearance="navigation"
-            className="app-topbar__toggle"
-            label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
-            tooltipPlacement="right"
-            aria-expanded={!collapsed}
-            onClick={toggleSidebar}
-          >
-            {collapsed ? (
-              <PanelLeftOpen size={16} aria-hidden="true" />
-            ) : (
-              <PanelLeftClose size={16} aria-hidden="true" />
-            )}
-          </IconButton>
-        </div>
-        <div ref={setTopBarSlot} className="app-topbar__page" />
+        <IconButton
+          appearance="navigation"
+          className="app-topbar__toggle"
+          label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
+          tooltipPlacement="right"
+          aria-expanded={!collapsed}
+          onClick={toggleSidebar}
+        >
+          {collapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
+        </IconButton>
       </div>
-      <PageTopBarSlot.Provider value={topBarSlot}>
-        <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-          <SpaceSwitcher />
-          <nav aria-label="Sections de l’espace de travail">
-            {drag.orderedItems.map(({ section }) => {
-              const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
-              const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
-              return (
-                <div
-                  className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
-                  key={section.id}
-                  data-sortable-scope={drag.scopeId}
-                  data-sortable-id={section.id}
-                >
-                  <NavButton
-                    label={section.label}
-                    count={sectionCount(counts, section.pages)}
-                    active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
-                    onClick={() => setView({ kind: "section", id: section.id })}
-                    className={`product-nav product-color--${section.color ?? "steel"}`}
-                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
-                    onPointerDown={(event) => {
-                      const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
-                      if (row) drag.startDrag(event, section.id, row);
-                    }}
-                    onContextMenu={(event) => {
+      <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
+        <SpaceSwitcher />
+        <nav aria-label="Sections de l’espace de travail">
+          {drag.orderedItems.map(({ section }) => {
+            const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
+            const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
+            return (
+              <div
+                className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
+                key={section.id}
+                data-sortable-scope={drag.scopeId}
+                data-sortable-id={section.id}
+              >
+                <NavButton
+                  label={section.label}
+                  count={sectionCount(counts, section.pages)}
+                  active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
+                  onClick={() => setView({ kind: "section", id: section.id })}
+                  className={`product-nav product-color--${section.color ?? "steel"}`}
+                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
+                  onPointerDown={(event) => {
+                    const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
+                    if (row) drag.startDrag(event, section.id, row);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
+                  }}
+                  onKeyDown={(event) => {
+                    if (isMenuKey(event)) {
                       event.preventDefault();
-                      editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
-                    }}
-                    onKeyDown={(event) => {
-                      if (isMenuKey(event)) {
-                        event.preventDefault();
-                        editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
-                      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                        event.preventDefault();
-                        if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
-                          announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
-                        refocus(selector, (element) => element.querySelector("button"));
-                      }
-                    }}
-                  >
-                    <SectionIcon section={section} />
-                  </NavButton>
-                  <div className="sidebar-product__actions">
-                    <IconButton
-                      size="small"
-                      label={`Actions de la section ${section.label}`}
-                      tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
-                      aria-haspopup="menu"
-                      aria-expanded={editor.menuOpenFor === section.id}
-                      onClick={(event) => {
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
-                      }}
-                    >
-                      <MoreHorizontal size={16} aria-hidden="true" />
-                    </IconButton>
-                  </div>
-                </div>
-              );
-            })}
-          </nav>
-          {agentAvailable === true ? (
-            <NavButton
-              label={agentEntryLabel(agentSummary)}
-              active={!settingsOpen && sameView(effective, { kind: "agent" })}
-              onClick={() => setView({ kind: "agent" })}
-              className="sidebar-orchestrator"
-              badge={agentSummary}
-              glyph
-            >
-              <Bot size={16} aria-hidden="true" />
-            </NavButton>
-          ) : null}
-          <NavButton
-            label="Réglages"
-            active={settingsOpen}
-            onClick={() => setView({ kind: "settings" })}
-            className="sidebar-settings"
-          >
-            <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
-          </NavButton>
-        </aside>
-        <main className="workspace" inert={settingsOpen}>
-          {effective.kind === "agent" && agentAvailable !== null ? (
-            agentAvailable ? (
-              agent
-            ) : (
-              <div className="workspace__empty">
-                <EmptyState
-                  title="Aucun agent installé"
-                  description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
+                      editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
+                    } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                      event.preventDefault();
+                      if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
+                        announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
+                      refocus(selector, (element) => element.querySelector("button"));
+                    }
+                  }}
                 >
-                  <Button
-                    onClick={() => {
-                      const shell = useShell.getState();
-                      shell.setView({ kind: "settings" });
-                      shell.setActiveTab(SETTINGS_SECTION, "agents");
+                  <SectionIcon section={section} />
+                </NavButton>
+                <div className="sidebar-product__actions">
+                  <IconButton
+                    size="small"
+                    label={`Actions de la section ${section.label}`}
+                    tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
+                    aria-haspopup="menu"
+                    aria-expanded={editor.menuOpenFor === section.id}
+                    onClick={(event) => {
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
                     }}
                   >
-                    Vérifier dans les Réglages
-                  </Button>
-                </EmptyState>
+                    <MoreHorizontal size={16} aria-hidden="true" />
+                  </IconButton>
+                </div>
               </div>
-            )
-          ) : null}
-          {effective.kind === "section" && shownSection ? (
-            <SectionView
-              key={shownSection.id}
-              title={shownSection.label}
-              sectionId={shownSection.id}
-              pages={shownSection.pages}
-              waiting={shownSection.waiting}
-              renderAgentPanel={renderAgentPanel}
-              renderPageTools={renderPageTools}
-              onPageMenu={editor.openPageMenu}
-            />
-          ) : null}
-        </main>
-      </PageTopBarSlot.Provider>
+            );
+          })}
+        </nav>
+        {agentAvailable === true ? (
+          <NavButton
+            label={agentEntryLabel(agentSummary)}
+            active={!settingsOpen && sameView(effective, { kind: "agent" })}
+            onClick={() => setView({ kind: "agent" })}
+            className="sidebar-orchestrator"
+            badge={agentSummary}
+            glyph
+          >
+            <Bot size={16} aria-hidden="true" />
+          </NavButton>
+        ) : null}
+        <NavButton
+          label="Réglages"
+          active={settingsOpen}
+          onClick={() => setView({ kind: "settings" })}
+          className="sidebar-settings"
+        >
+          <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
+        </NavButton>
+      </aside>
+      <main className="workspace" inert={settingsOpen}>
+        {effective.kind === "agent" && agentAvailable !== null ? (
+          agentAvailable ? (
+            agent
+          ) : (
+            <div className="workspace__empty">
+              <EmptyState
+                title="Aucun agent installé"
+                description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
+              >
+                <Button
+                  onClick={() => {
+                    const shell = useShell.getState();
+                    shell.setView({ kind: "settings" });
+                    shell.setActiveTab(SETTINGS_SECTION, "agents");
+                  }}
+                >
+                  Vérifier dans les Réglages
+                </Button>
+              </EmptyState>
+            </div>
+          )
+        ) : null}
+        {effective.kind === "section" && shownSection ? (
+          <SectionView
+            key={shownSection.id}
+            title={shownSection.label}
+            sectionId={shownSection.id}
+            pages={shownSection.pages}
+            waiting={shownSection.waiting}
+            renderAgentPanel={renderAgentPanel}
+            renderPageTools={renderPageTools}
+            onPageMenu={editor.openPageMenu}
+          />
+        ) : null}
+      </main>
       {settingsOpen ? (
         <SettingsModal
           tabs={settingsTabs}

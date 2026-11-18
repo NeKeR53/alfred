@@ -293,25 +293,20 @@
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
-/* Barre du haut de la fenêtre principale, de bord à bord : le bouton qui replie le menu, puis, au-dessus de la page, la
- * barre de la page affichée. Le bouton reste à la même place, menu replié ou déplié : son icône est alignée sur celles
- * du menu (8 px de marge du menu, 9 px dans l’entrée). La fenêtre garde la barre de titre du système : pas de feux à
- * contourner. */
+/* Barre du haut de la fenêtre principale : au-dessus du menu, le bouton qui le replie, toujours à la même place (son
+ * icône est alignée sur celles du menu : 8 px de marge du menu, 9 px dans l’entrée) ; la barre de la page la prolonge
+ * jusqu’au panneau de droite, qui monte jusqu’en haut de la fenêtre. Ouvrir ou fermer le panneau raccourcit ou allonge
+ * la barre. La fenêtre garde la barre de titre du système : pas de feux à contourner. */
 .app-topbar {
-  grid-column: 1 / -1;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   height: 44px;
   display: flex;
-  align-items: stretch;
-  border-bottom: 1px solid var(--line);
-  background: var(--color-surface);
-}
-.app-topbar__start {
-  width: var(--sidebar-width);
-  flex: 0 0 auto;
-  display: flex;
   align-items: center;
   padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
 }
 .app-topbar .nav-icon.app-topbar__toggle {
   width: 33px;
@@ -323,16 +318,16 @@
   padding: 0 9px;
   color: var(--color-muted);
 }
-.app-topbar__page {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
+.app-shell:not(.app-shell--page-window) .page-topbar {
+  background: var(--color-surface);
 }
-.app-topbar__page > .page-topbar {
+/* Colonne de la page : sa barre du haut, puis la page ; le panneau de droite est à côté, sur toute la hauteur. */
+.shell-column {
   min-width: 0;
-  flex: 1 1 auto;
-  height: 43px;
-  border-bottom: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 /* Première entrée du menu : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
  * reste ; elle ouvre le même menu des espaces. */

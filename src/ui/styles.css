@@ -902,7 +902,7 @@ html select:not([multiple], [data-slot="native-select"]) {
   --sidebar-width: 240px;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: 44px minmax(0, 1fr);
   height: 100vh;
   border-top: 1px solid var(--line);
   background: var(--color-bg);
@@ -917,6 +917,8 @@ html select:not([multiple], [data-slot="native-select"]) {
   grid-template-rows: minmax(0, 1fr);
 }
 .sidebar {
+  grid-column: 1;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1243,7 +1245,10 @@ html select:not([multiple], [data-slot="native-select"]) {
   outline-offset: 2px;
 }
 
+/* La page occupe toute la hauteur à droite du menu : sa barre du haut prolonge celle du menu, son panneau monte en haut. */
 .workspace {
+  grid-column: -2;
+  grid-row: 1 / -1;
   min-width: 0;
   min-height: 0;
   display: flex;

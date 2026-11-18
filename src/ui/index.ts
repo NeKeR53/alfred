@@ -45,7 +45,7 @@ export { MenuButton } from "./components/MenuButton";
 export { Modal } from "./components/Modal";
 export { OverflowMenu } from "./components/OverflowMenu";
 export { PageToolbar, ToolbarSeparator } from "./components/PageToolbar";
-export { PageTopBar, PageTopBarSlot, PanelToggleButton } from "./components/PageTopBar";
+export { PageTopBar, PanelToggleButton } from "./components/PageTopBar";
 export { PanelHeader } from "./components/PanelHeader";
 export {
   Form,

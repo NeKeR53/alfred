@@ -25,19 +25,19 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 ## 2. La coquille et le choix du gabarit
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ ▯ │ Titre de la section    [Onglet 1|Onglet 2] cloche          ▯ │ barre du haut : 44 px, toute la largeur
-├───────────┬───────────────────────────────────┬──────────────────┤
-│ Espace ˅  │ [recherche][filtre]   ⟳ ✎ ⋯ [Nouveau] │ Nom    [État] ✎ ⋯│ barre de la page / en-tête de l’objet
-│ Section A ├───────────────────────────────────┤ Fiche            │
-│ Section B │  tableau                          │ Blocs            │
-│ …         │                                   │ panneau de droite│
+┌───────────────────────────────────────────────┬──────────────────┐
+│ ▯ │ Titre de la section  [Onglet 1|Onglet 2] cloche ▯ │ Nom    [État] ✎ ⋯│ barre du haut : 44 px, jusqu’au panneau
+├───────────┬───────────────────────────────────┤ Fiche            │
+│ Espace ˅  │ [recherche][filtre]  ⟳ ✎ ⋯ [Nouveau] │ Blocs            │ barre de la page
+│ Section A ├───────────────────────────────────┤                  │
+│ Section B │  tableau                          │ panneau de droite│
+│ …         │                                   │ toute la hauteur │
 │ Agent     │                                   │ 280 à 900 px     │
 │ Réglages  │                                   │                  │
 └───────────┴───────────────────────────────────┴──────────────────┘
 ```
 
-- La barre du haut couvre toute la fenêtre : à gauche, le bouton qui replie le menu, toujours à la même place ; au-dessus de la page, son titre, ses onglets et ses actions. La première entrée du menu est l’espace ouvert, qui ouvre le menu des espaces. Replier le menu ne change que sa largeur : aucune icône ni aucun texte ne bouge.
+- La barre du haut va du bord gauche de la fenêtre au panneau de droite, qui monte jusqu’en haut : à gauche, le bouton qui replie le menu, toujours à la même place ; au-dessus de la page, son titre, ses onglets et ses actions. Ouvrir ou fermer le panneau raccourcit ou allonge la barre, sans rien déplacer d’autre. La première entrée du menu est l’espace ouvert, qui ouvre le menu des espaces. Replier le menu ne change que sa largeur : aucune icône ni aucun texte ne bouge.
 - Une entrée du menu de gauche ouvre une **section**, dont les pages sont les **onglets** de la barre du haut.
 - Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche, masque et redimensionne (280 à 900 px).
 - Une page peut s’ajouter aux onglets des **Réglages**.
