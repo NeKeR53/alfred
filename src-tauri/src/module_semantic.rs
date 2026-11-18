@@ -26,6 +26,7 @@ const REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
 const SPEC: crate::model_files::ModelSpec = crate::model_files::ModelSpec {
     repo: MODEL,
     revision: REVISION,
+    legacy_dir: MODEL_DIR,
     files: &[
         ("config.json", "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959"),
         ("tokenizer.json", "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
@@ -125,7 +126,7 @@ fn model_state() -> &'static Mutex<ModelState> {
 }
 
 fn model_dir(state: &AppState) -> PathBuf {
-    state.data_dir.join("models").join(MODEL_DIR)
+    SPEC.dir(&state.data_dir)
 }
 
 fn installed(state: &AppState) -> bool {
@@ -166,7 +167,7 @@ pub fn model_status(state: &AppState) -> Value {
     })
 }
 
-/// Télécharge le modèle depuis Hugging Face, fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
+/// Télécharge le modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
 pub fn download(state: Arc<AppState>) -> AppResult<()> {
     {
         let mut current = model_state().lock().map_err(|_| model_error("indisponible"))?;
@@ -192,13 +193,14 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
 
 async fn fetch_all(state: &Arc<AppState>) -> AppResult<()> {
     let notified = std::sync::atomic::AtomicU64::new(0);
-    crate::model_files::fetch(&SPEC, &model_dir(state), MODEL_SIZE_MB * 1024 * 1024, model_error, |received, total| {
+    let notifier = state.clone();
+    crate::model_files::fetch(&SPEC, state, MODEL_SIZE_MB * 1024 * 1024, model_error, move |received, total| {
         if let Ok(mut current) = model_state().lock() {
             current.downloading = Some((received, total));
         }
         if received >= notified.load(std::sync::atomic::Ordering::Relaxed) + 8 * 1024 * 1024 {
             notified.store(received, std::sync::atomic::Ordering::Relaxed);
-            state.emit("semantic:changed", Value::Null);
+            notifier.emit("semantic:changed", Value::Null);
         }
     })
     .await

@@ -28,6 +28,7 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { BackupsSection } from "./BackupsSection";
 import { DecisionsSection } from "./DecisionsSection";
+import { ModelSourceSection } from "./ModelSourceSection";
 import { SemanticSection } from "./SemanticSection";
 import { spaceList, useSpaceActions } from "./spaceActions";
 
@@ -626,6 +627,7 @@ export function SpaceSettings() {
       <BackupsSection snapshot={snapshot} confirm={confirm} />
       <SemanticSection />
       <DecisionsSection />
+      <ModelSourceSection />
       <GrantsSection snapshot={snapshot} confirm={confirm} />
       {confirmDialog}
     </Page>

@@ -560,6 +560,17 @@ export class FakeBackend {
       error: null,
       damaged: null,
     }),
+    "models.source": () => ({
+      endpoint: "https://huggingface.co",
+      host: "huggingface.co",
+      origin: "default",
+      custom: null,
+      hasToken: false,
+      envEndpoint: false,
+      envToken: false,
+      loginToken: false,
+      cacheDir: "/home/test/.cache/huggingface/hub",
+    }),
     "backups.settings": () => ({ keep: 14 }),
     "grants.revoke": (args) => {
       this.grants = this.grants.filter(

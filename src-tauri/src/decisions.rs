@@ -4,7 +4,8 @@
 //! Python. Les pages et les fonctions l’appellent par `ai.decide`.
 //!
 //! Le modèle (`convaiinnovations/laya-multilingual`, encodeur mmBERT-base et tête de décision, 647 Mo) se
-//! télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général, dans le dossier de données d’Alfred.
+//! télécharge une fois, quand l’utilisateur l’accepte dans Réglages → Général, dans le cache Hugging Face (voir
+//! `model_files`).
 //! Il tourne en Rust par candle et reproduit le paquet Python `laya` 0.4.35 : même gabarit d’entrée
 //! (`[CLS] <type> question: … [SEP] [MASK] option … [SEP] texte [SEP]`), mêmes budgets de jetons, même décodage
 //! (température, probabilités, confiance). `decisions_golden.json` garde ses réponses sur douze cas.
@@ -27,6 +28,7 @@ const MODEL_DIR: &str = "laya-multilingual";
 const SPEC: ModelSpec = ModelSpec {
     repo: MODEL,
     revision: "92d22143468d8af669dc1a5a0480a2b21b4fe56e",
+    legacy_dir: MODEL_DIR,
     files: &[
         ("encoder/config.json", "83f6916d13ef0f556ac461f28308dc2bffa7ebeadee8ec9e2db5812020ea5bb4"),
         ("rl_agent_config.json", "25061739243b617ad88d1219ba6f8a9c86c5881ca28df024fa2d9b3b2fcc30c6"),
@@ -751,7 +753,7 @@ fn lock() -> AppResult<std::sync::MutexGuard<'static, ModelState>> {
 }
 
 fn model_dir(state: &AppState) -> PathBuf {
-    state.data_dir.join("models").join(MODEL_DIR)
+    SPEC.dir(&state.data_dir)
 }
 
 /// Où calculer : la carte graphique sur macOS (Metal), sinon le processeur. Sur un Mac, le calcul sur Metal laisse
@@ -888,7 +890,7 @@ pub fn model_status(state: &AppState) -> Value {
     })
 }
 
-/// Télécharge le modèle depuis Hugging Face, fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
+/// Télécharge le modèle depuis la source des modèles (Hugging Face ou un miroir), fichier par fichier, à sa version figée et en vérifiant chaque empreinte.
 pub fn download(state: Arc<AppState>) -> AppResult<()> {
     {
         let mut current = lock()?;
@@ -900,13 +902,14 @@ pub fn download(state: Arc<AppState>) -> AppResult<()> {
     }
     tokio::spawn(async move {
         let notified = std::sync::atomic::AtomicU64::new(0);
-        let result = crate::model_files::fetch(&SPEC, &model_dir(&state), MODEL_BYTES, model_error, |received, total| {
+        let notifier = state.clone();
+        let result = crate::model_files::fetch(&SPEC, &state, MODEL_BYTES, model_error, move |received, total| {
             if let Ok(mut current) = model_state().lock() {
                 current.downloading = Some((received, total));
             }
             if received >= notified.load(std::sync::atomic::Ordering::Relaxed) + 8 * 1024 * 1024 {
                 notified.store(received, std::sync::atomic::Ordering::Relaxed);
-                state.emit("decisions:changed", Value::Null);
+                notifier.emit("decisions:changed", Value::Null);
             }
         })
         .await;

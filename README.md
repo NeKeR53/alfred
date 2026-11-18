@@ -39,3 +39,4 @@ La signature et la notarisation sont décrites dans [docs/publication.md](docs/p
 - [docs/espace/AGENTS.md](docs/espace/AGENTS.md) : guide de l’agent, recopié dans chaque espace.
 - [docs/espace/SDK.md](docs/espace/SDK.md) : SDK des pages et des fonctions (`@alfred/sdk`).
 - [docs/publication.md](docs/publication.md) : livrer une version signée.
+- [docs/modeles.md](docs/modeles.md) : modèles locaux, cache Hugging Face, passage par un Artifactory.
