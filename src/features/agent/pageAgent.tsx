@@ -4,12 +4,13 @@
  * le résultat structuré que l’agent a rendu.
  */
 
-import { IconButton, PanelHeader } from "@alfred/ui";
-import { ExternalLink, X } from "lucide-react";
+import { IconButton } from "@alfred/ui";
+import { ExternalLink } from "lucide-react";
 import { useEffect } from "react";
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
 import { declaredReference, type FrameIdentity, frameServices } from "../../shell/frameBridge";
+import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import type { Provider } from "./harness";
@@ -160,25 +161,20 @@ export function AgentPanel({ conversationId, onClose }: { conversationId: string
   if (!conversation) return null;
   return (
     <div className="agent-panel">
-      <PanelHeader
-        compact
-        level={2}
+      <PanelBar
         title={conversation.title}
-        trailing={
-          <>
-            <IconButton
-              label="Ouvrir dans la page Agent"
-              onClick={() => {
-                void open(conversationId);
-                setView({ kind: "agent" });
-              }}
-            >
-              <ExternalLink size={15} aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Fermer la conversation" onClick={onClose}>
-              <X size={16} aria-hidden="true" />
-            </IconButton>
-          </>
+        closeLabel="Fermer la conversation"
+        onClose={onClose}
+        actions={
+          <IconButton
+            label="Ouvrir dans la page Agent"
+            onClick={() => {
+              void open(conversationId);
+              setView({ kind: "agent" });
+            }}
+          >
+            <ExternalLink size={15} aria-hidden="true" />
+          </IconButton>
         }
       />
       <Transcript conversation={conversation} runtime={runtime} />

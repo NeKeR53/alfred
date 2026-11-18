@@ -83,6 +83,17 @@
   border-left: 1px solid var(--line);
   background: var(--color-bg);
 }
+/* En-tête du panneau : la barre du haut de la page, prolongée au-delà du trait vertical qui les sépare. */
+.shell-panel__header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .shell-panel__content {
   flex: 1;
   min-width: 0;
@@ -293,10 +304,11 @@
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
-/* Barre du haut de la fenêtre principale : au-dessus du menu, le bouton qui le replie, toujours à la même place (son
- * icône est alignée sur celles du menu : 8 px de marge du menu, 9 px dans l’entrée) ; la barre de la page la prolonge
- * jusqu’au panneau de droite, qui monte jusqu’en haut de la fenêtre. Ouvrir ou fermer le panneau raccourcit ou allonge
- * la barre. La fenêtre garde la barre de titre du système : pas de feux à contourner. */
+/* En-tête du menu, comme dans Claude Desktop : une rangée de 44 px alignée sur la barre du haut de la page, avec le
+ * bouton qui replie le menu. Déplié, elle appartient au menu (même fond, même trait à droite) ; replié, elle prend le
+ * fond et le trait de la barre de la page, qui semble partir du bord gauche. Le bouton ne bouge pas : son icône est
+ * alignée sur celles du menu (8 px de marge du menu, 9 px dans l’entrée). La fenêtre garde la barre de titre du
+ * système : pas de feux à contourner. */
 .app-topbar {
   grid-column: 1;
   grid-row: 1;
@@ -305,8 +317,15 @@
   display: flex;
   align-items: center;
   padding: 0 8px;
-  border-bottom: 1px solid var(--line);
+  /* Les deux traits existent toujours, transparents selon l’état : la case garde ses dimensions et le bouton sa place. */
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid transparent;
   background: var(--color-surface);
+}
+.app-shell--sidebar-collapsed .app-topbar {
+  border-right-color: transparent;
+  border-bottom-color: var(--line);
+  background: var(--color-bg);
 }
 .app-topbar .nav-icon.app-topbar__toggle {
   width: 33px;
@@ -318,9 +337,6 @@
   padding: 0 9px;
   color: var(--color-muted);
 }
-.app-shell:not(.app-shell--page-window) .page-topbar {
-  background: var(--color-surface);
-}
 /* Colonne de la page : sa barre du haut, puis la page ; le panneau de droite est à côté, sur toute la hauteur. */
 .shell-column {
   min-width: 0;
@@ -329,10 +345,23 @@
   display: flex;
   flex-direction: column;
 }
-/* Entrée du bas du menu, entre Réglages et Agent : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
+/* Agrandi, le panneau prend toute la largeur de la page, à la place de sa colonne. */
+.shell-panel.is-maximized {
+  flex: 1 1 auto;
+  max-width: none;
+  border-left: 0;
+}
+.shell-panel.is-maximized > .shell-panel__resizer {
+  display: none;
+}
+.shell-body:has(> .shell-panel.is-maximized) > .shell-column {
+  display: none;
+}
+/* Entrée du bas du menu, au-dessus de Réglages : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
  * reste ; elle ouvre le même menu des espaces. */
 .sidebar .sidebar-space {
   flex: 0 0 30px;
+  margin-top: auto;
 }
 .sidebar-space__mark {
   width: 18px;

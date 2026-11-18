@@ -275,7 +275,12 @@ export function SectionView({
           {renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))}
         </ResizablePanel>
       ) : panel && page && panelVisible ? (
-        <ResizablePanel storageKey="shell.panelWidth" label={panel.title}>
+        <ResizablePanel
+          storageKey="shell.panelWidth"
+          label={panel.title}
+          title={panel.title}
+          onClose={() => togglePanel(page.reference)}
+        >
           <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
         </ResizablePanel>
       ) : null}
@@ -512,6 +517,19 @@ export function AppShell({
         </IconButton>
       </div>
       <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
+        {/* Agent, première entrée du menu, au-dessus des sections. */}
+        {agentAvailable === true ? (
+          <NavButton
+            label={agentEntryLabel(agentSummary)}
+            active={!settingsOpen && sameView(effective, { kind: "agent" })}
+            onClick={() => setView({ kind: "agent" })}
+            className="sidebar-orchestrator"
+            badge={agentSummary}
+            glyph
+          >
+            <Bot size={16} aria-hidden="true" />
+          </NavButton>
+        ) : null}
         <nav aria-label="Sections de l’espace de travail">
           {drag.orderedItems.map(({ section }) => {
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
@@ -571,7 +589,8 @@ export function AppShell({
             );
           })}
         </nav>
-        {/* Bas du menu, dans cet ordre : Réglages, l’espace ouvert, Agent. */}
+        {/* Bas du menu : l’espace ouvert, puis Réglages, toute dernière entrée. */}
+        <SpaceSwitcher />
         <NavButton
           label="Réglages"
           active={settingsOpen}
@@ -580,19 +599,6 @@ export function AppShell({
         >
           <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
         </NavButton>
-        <SpaceSwitcher />
-        {agentAvailable === true ? (
-          <NavButton
-            label={agentEntryLabel(agentSummary)}
-            active={!settingsOpen && sameView(effective, { kind: "agent" })}
-            onClick={() => setView({ kind: "agent" })}
-            className="sidebar-orchestrator"
-            badge={agentSummary}
-            glyph
-          >
-            <Bot size={16} aria-hidden="true" />
-          </NavButton>
-        ) : null}
       </aside>
       <main className="workspace" inert={settingsOpen}>
         {effective.kind === "agent" && agentAvailable !== null ? (

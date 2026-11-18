@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "../../lib/native";
 import { NotificationBell } from "../../shell/NotificationCenter";
 import { notify } from "../../shell/notifications";
+import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
@@ -318,14 +319,22 @@ export function AgentPage() {
           </section>
         </div>
         {panel.layout.hidden ? null : (
-          <ConversationList
-            conversations={visible}
-            activeId={activeId}
-            active={conversation}
-            panel={panel}
-            git={git}
-            onArchive={(header) => archiveConversation(header.id, header.title)}
-          />
+          // Liste des conversations : sur toute la hauteur, avec son en-tête aligné sur la barre du haut.
+          <div className="agents-page__side">
+            <PanelBar
+              title="Suivi des conversations"
+              closeLabel="Masquer le suivi des conversations"
+              onClose={() => panel.setHidden(true)}
+            />
+            <ConversationList
+              conversations={visible}
+              activeId={activeId}
+              active={conversation}
+              panel={panel}
+              git={git}
+              onArchive={(header) => archiveConversation(header.id, header.title)}
+            />
+          </div>
         )}
       </div>
     </section>

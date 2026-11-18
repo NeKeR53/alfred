@@ -25,19 +25,19 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 ## 2. La coquille et le choix du gabarit
 
 ```
-┌───────────────────────────────────────────────┬──────────────────┐
-│ ▯ │ Titre de la section  [Onglet 1|Onglet 2] cloche ▯ │ Nom    [État] ✎ ⋯│ barre du haut : 44 px, jusqu’au panneau
-├───────────┬───────────────────────────────────┤ Fiche            │
-│ Section A │ [recherche][filtre]  ⟳ ✎ ⋯ [Nouveau] │ Blocs            │ barre de la page
-│ Section B ├───────────────────────────────────┤                  │
-│ …         │  tableau                          │ panneau de droite│
-│ Réglages  │                                   │ toute la hauteur │
+┌───────────┬───────────────────────────────────┬──────────────────┐
+│ ▯         │ Titre   [Onglet 1|Onglet 2] cloche ▯ │ Panneau      ⤢ ✕ │ en-têtes : 44 px, alignés
+├───────────┼───────────────────────────────────┼──────────────────┤
+│ Agent     │ [recherche][filtre]  ⟳ ✎ ⋯ [Nouveau] │ Fiche            │ barre de la page
+│ Section A ├───────────────────────────────────┤ Blocs            │
+│ Section B │  tableau                          │ panneau de droite│
+│ …         │                                   │ toute la hauteur │
 │ Espace ˅  │                                   │ 280 à 900 px     │
-│ Agent     │                                   │                  │
+│ Réglages  │                                   │                  │
 └───────────┴───────────────────────────────────┴──────────────────┘
 ```
 
-- La barre du haut va du bord gauche de la fenêtre au panneau de droite, qui monte jusqu’en haut : à gauche, le bouton qui replie le menu, toujours à la même place ; au-dessus de la page, son titre, ses onglets et ses actions. Ouvrir ou fermer le panneau raccourcit ou allonge la barre, sans rien déplacer d’autre. Le haut du menu porte les sections ; le bas, dans cet ordre, Réglages, l’espace ouvert (qui ouvre le menu des espaces) et Agent. Replier le menu ne change que sa largeur : aucune icône ni aucun texte ne bouge.
+- Comme dans Claude Desktop, le menu, la page et le panneau de droite prennent chacun toute la hauteur et ont chacun leur en-tête de 44 px, alignés en une seule rangée séparée par de fins traits verticaux. L’en-tête du menu porte le bouton qui le replie ; replié, il prend le fond de la barre de la page, qui semble partir du bord gauche, et le bouton ne bouge pas. L’en-tête du panneau dit ce qu’il montre, à gauche, et porte ses actions, Agrandir et Fermer, à droite. Le menu : Agent en tête, puis les sections ; en bas, l’espace ouvert (qui ouvre le menu des espaces) puis Réglages. Replier le menu ne change que sa largeur : aucune icône ni aucun texte ne bouge.
 - Une entrée du menu de gauche ouvre une **section**, dont les pages sont les **onglets** de la barre du haut.
 - Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche, masque et redimensionne (280 à 900 px).
 - Une page peut s’ajouter aux onglets des **Réglages**.

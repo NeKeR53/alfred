@@ -629,8 +629,20 @@ button.agent-chat__change-file:hover {
 }
 
 /* Propre à Alfred */
-.agents-page__body > .info-panel {
+/* Suivi des conversations : à droite, sur toute la hauteur, avec son en-tête aligné sur la barre du haut. */
+.agents-page__side {
+  width: 300px;
+  min-height: 0;
   flex: none;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--color-bg);
+}
+.agents-page__side > .info-panel {
+  width: auto;
+  flex: 1;
+  border-left: 0;
 }
 .agent-changes__lines {
   flex: none;
