@@ -296,6 +296,8 @@ pub struct QwenSettings {
     pub reference_text: String,
     /// Langue au sens de Qwen : « French », « English »…
     pub language: String,
+    /// `HF_ENDPOINT`, `HF_TOKEN`, `HF_HOME` : le modèle se télécharge par la source des modèles d'Alfred.
+    pub hub_env: crate::model_files::PythonHubEnv,
 }
 
 impl QwenSpeaker {
@@ -377,6 +379,7 @@ impl QwenProcess {
             // Pas de télémétrie ni de vérification de version à chaque lancement.
             .env("HF_HUB_DISABLE_TELEMETRY", "1")
             .env("TOKENIZERS_PARALLELISM", "false")
+            .envs(settings.hub_env.0.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -888,6 +891,7 @@ pub(crate) mod tests {
         let script = format!(
             r#"#!/bin/sh
 [ "$1 $2" = "-X utf8" ] || exit 1
+echo "HF_ENDPOINT=$HF_ENDPOINT HF_TOKEN=$HF_TOKEN HF_HOME=$HF_HOME" > {log}.env
 echo '{{"ready": true}}'
 held=""
 while read -r line; do
@@ -911,6 +915,7 @@ done
             reference: dir.join("voix.wav"),
             reference_text: "Bonsoir.".into(),
             language: "French".into(),
+            hub_env: Default::default(),
         };
         (settings, log)
     }
@@ -961,6 +966,27 @@ done
                 "stop",
                 "say Après.",
             ]
+        );
+    }
+
+    /// Le modèle de la voix d'Alfred se télécharge par la source des modèles : le processus Python reçoit
+    /// l'adresse du miroir, le jeton et le cache d'Alfred.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn qwen_is_started_with_the_model_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, log) = fake_qwen(dir.path());
+        settings.hub_env = crate::model_files::PythonHubEnv(vec![
+            ("HF_ENDPOINT".into(), "http://127.0.0.1:9/miroir".into()),
+            ("HF_TOKEN".into(), "jeton-secret".into()),
+            ("HF_HOME".into(), "/cache/huggingface".into()),
+        ]);
+        let speaker = QwenSpeaker::new(settings);
+        speaker.speak("Bonjour.".into()).await.unwrap();
+        let env = std::fs::read_to_string(log.with_extension("env")).unwrap();
+        assert_eq!(
+            env.trim(),
+            "HF_ENDPOINT=http://127.0.0.1:9/miroir HF_TOKEN=jeton-secret HF_HOME=/cache/huggingface"
         );
     }
 

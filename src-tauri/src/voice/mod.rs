@@ -15,6 +15,7 @@ mod sentences;
 mod stt;
 mod tts;
 mod whisper;
+mod whisper_models;
 
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
@@ -113,6 +114,16 @@ fn effective_config(state: &AppState) -> AppResult<VoiceConfig> {
         || config.qwen_model == config::MLX_LARGE_QWEN_MODEL
     {
         config.qwen_model = config::DEFAULT_QWEN_MODEL.into();
+    }
+    // Niveau de Whisper choisi : son fichier dans le cache, ou ce qui manque.
+    if let Some(level) = config.whisper_level.clone() {
+        match whisper_models::find(&level).and_then(whisper_models::Level::path) {
+            Some(path) => config.whisper_model = path,
+            None => {
+                config.whisper_model = std::path::PathBuf::new();
+                config.whisper_missing = Some(level);
+            }
+        }
     }
     if config.qwen_python.is_none() {
         config.qwen_python = Some(qwen_python(state));
@@ -228,6 +239,11 @@ async fn engine(state: &Arc<AppState>) -> AppResult<Arc<VoiceEngine>> {
     let mut slot = voice().engine.lock().await;
     if let Some(engine) = slot.as_ref() {
         return Ok(engine.clone());
+    }
+    // Le modèle de la voix d’Alfred se télécharge par la source des modèles (Hugging Face ou le miroir de
+    // l’entreprise), même quand Alfred est ouvert depuis le Dock ou le menu Démarrer, sans les variables du terminal.
+    if config.tts_backend == config::TTS_QWEN {
+        config.hub_env = crate::model_files::python_env(state).await?;
     }
     // Voix d’Alfred pas encore installée : la voix du système parle en attendant.
     if config.tts_backend == config::TTS_QWEN && config.check_speech().is_err() {
@@ -493,7 +509,11 @@ async fn stop_speaking() -> AppResult<Value> {
 /// État pour les Réglages et le bouton micro : la dictée est-elle réglée, le serveur est-il trouvé ?
 fn status(state: &AppState) -> AppResult<Value> {
     let config = effective_config(state)?;
-    let listen = config.check().err().map(|error| voice_error(error).message);
+    let listen = config
+        .check()
+        .and_then(|_| whisper::find_server(&config).map(|_| ()))
+        .err()
+        .map(|error| voice_error(error).message);
     let speak = config
         .check_speech()
         .err()
@@ -510,6 +530,43 @@ fn status(state: &AppState) -> AppResult<Value> {
         "pauseSendMs": config.pause_send_ms,
         "qwenInstalled": qwen_python(state).is_file(),
     }))
+}
+
+/// Les niveaux de Whisper, pour Réglages.
+fn whisper_levels(state: &AppState) -> AppResult<Value> {
+    let config = load_config(state)?;
+    Ok(whisper_models::status(
+        config.whisper_level.as_deref(),
+        &config.whisper_model,
+    ))
+}
+
+/// Choisit un niveau déjà téléchargé : la dictée s’en sert tout de suite (le moteur est refait).
+async fn use_whisper_level(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
+    let level = whisper_models::find(id)
+        .ok_or_else(|| AppError::new(format!("Niveau de Whisper inconnu : {id}.")))?;
+    if level.path().is_none() {
+        return Err(AppError::new(format!(
+            "Le modèle Whisper {id} n’est pas téléchargé."
+        )));
+    }
+    let mut config = load_config(state)?;
+    config.whisper_level = Some(level.id.to_string());
+    app_db::set_setting(&*lock_db(state)?, SETTING, &serde_json::to_value(config)?)?;
+    reset().await;
+    preload(state.clone());
+    state.emit(whisper_models::EVENT, Value::Null);
+    whisper_levels(state)
+}
+
+/// Télécharge un niveau par la source des modèles ; une fois là, la dictée s’en sert.
+fn download_whisper_level(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
+    whisper_models::download(state.clone(), id, |state, level| async move {
+        if let Err(error) = use_whisper_level(&state, level).await {
+            eprintln!("[voix] niveau {level} téléchargé mais pas choisi : {}", error.message);
+        }
+    })?;
+    whisper_levels(state)
 }
 
 /// Réglages repris d’Argos : la section `[voice]` de `~/.argos/config.toml` (sous Windows,
@@ -645,6 +702,15 @@ pub async fn handle(
         "voice.status" => status(state),
         "voice.importArgos" => import_argos(),
         "voice.qwen.install" => install_qwen(state).await,
+        "voice.whisper.levels" => whisper_levels(state),
+        "voice.whisper.use" => match arg::<String>(args, "level") {
+            Ok(level) => use_whisper_level(state, &level).await,
+            Err(error) => Err(error),
+        },
+        "voice.whisper.download" => match arg::<String>(args, "level") {
+            Ok(level) => download_whisper_level(state, &level),
+            Err(error) => Err(error),
+        },
         "voice.voices" => system_voices().await,
         "voice.listen.start" => listen_start(state, AGENT_OWNER).await,
         "voice.listen.stop" => listen_stop(state, AGENT_OWNER).await,
@@ -856,6 +922,47 @@ mod tests {
         .unwrap()
         .unwrap_err();
         assert!(error.message.contains("seule une page"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn whisper_levels_are_listed_with_their_size_and_the_advice() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let levels = handle(&state, "voice.whisper.levels", &json!({}))
+            .await
+            .unwrap()
+            .unwrap();
+        let ids: Vec<&str> = levels["levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]);
+        assert_eq!(levels["levels"][4]["file"], "ggml-large-v3-turbo.bin");
+        assert!(levels["levels"][4]["bytes"].as_u64().unwrap() > 1_000_000_000);
+        assert!(["small", "large-v3-turbo"].contains(&levels["recommended"].as_str().unwrap()));
+        assert_eq!(levels["current"], Value::Null);
+        assert_eq!(levels["custom"], Value::Null);
+        let error = handle(&state, "voice.whisper.download", &json!({ "level": "large-v2" }))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.message, "Niveau de Whisper inconnu : large-v2.");
+        // Un fichier ggml indiqué à la main reste possible, sans niveau.
+        let config = VoiceConfig {
+            whisper_model: "/m/ggml.bin".into(),
+            ..VoiceConfig::default()
+        };
+        handle(&state, "voice.settings.set", &json!({ "config": config }))
+            .await
+            .unwrap()
+            .unwrap();
+        let levels = handle(&state, "voice.whisper.levels", &json!({}))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(levels["custom"], "/m/ggml.bin");
+        assert_eq!(levels["current"], Value::Null);
     }
 
     #[tokio::test(flavor = "multi_thread")]

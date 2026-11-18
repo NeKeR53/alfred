@@ -91,6 +91,37 @@ impl ModelSpec {
     pub fn installed(&self, data_dir: &Path) -> Option<Installed> {
         self.installed_in(data_dir, &hub_cache())
     }
+
+    /// Le modèle complet dans une révision quelconque du cache : celle de `refs/main` d’abord, puis la plus
+    /// récente. Pour un dépôt qui range plusieurs modèles indépendants (les niveaux de Whisper) : télécharger un
+    /// niveau avance `refs/main`, et ceux déjà téléchargés restent dans leur révision.
+    pub fn installed_in_any_snapshot(&self, hub_cache: &Path) -> Option<Installed> {
+        let model = self.model_cache(hub_cache);
+        let noted = std::fs::read_to_string(model.join("refs/main"))
+            .ok()
+            .map(|text| text.trim().to_string())
+            .filter(|revision| valid_revision(revision));
+        if let Some(revision) = noted {
+            let dir = self.snapshot_dir(hub_cache, &revision);
+            if self.complete(&dir) {
+                return Some(Installed { dir, revision });
+            }
+        }
+        let mut found: Vec<(std::time::SystemTime, Installed)> = std::fs::read_dir(model.join("snapshots"))
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let revision = entry.file_name().to_str()?.to_string();
+                let dir = entry.path();
+                (valid_revision(&revision) && self.complete(&dir)).then(|| {
+                    let modified = entry.metadata().and_then(|meta| meta.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                    (modified, Installed { dir, revision })
+                })
+            })
+            .collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.into_iter().next().map(|(_, installed)| installed)
+    }
 }
 
 /// Une révision utilisable comme nom de dossier : lettres, chiffres, `-`, `_`, `.`, sans `..`.
@@ -490,6 +521,24 @@ async fn download(
     let mut before = 0u64;
     for index in missing {
         let file = spec.files[index];
+        // Contenu déjà dans le cache sous son empreinte (une autre révision, ou Python) : un lien suffit, comme le
+        // fait la bibliothèque Python.
+        if let Some(sha) = &announced[index].sha256 {
+            let blob = blobs.join(sha);
+            // Le nom du contenu est son empreinte : comme Python, la taille suffit à l’accepter.
+            let same_size = std::fs::metadata(&blob).is_ok_and(|meta| meta.is_file() && announced[index].size.is_none_or(|size| size == meta.len()));
+            if same_size {
+                let target = dir.join(file);
+                let io = |failure: std::io::Error| error(format!("écriture impossible dans le cache des modèles ({failure})."));
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).map_err(io)?;
+                }
+                link_or_copy(&blob, &target).map_err(io)?;
+                before += announced[index].size.unwrap_or(0);
+                report(before, total.max(before));
+                continue;
+            }
+        }
         let received = fetch_file(&client, spec, &revision, file, &announced[index], &blobs, &dir.join(file), total, before, &report)
             .await
             .map_err(error)?;
@@ -595,11 +644,9 @@ async fn fetch_file(
     Ok(received)
 }
 
-/// `snapshots/<révision>/<fichier>` désigne `blobs/<etag>` par un lien relatif, comme la bibliothèque Python.
-/// Sous Windows, où un lien demande souvent des droits, le contenu est déplacé à la place.
-fn link(blob: &Path, pointer: &Path) -> std::io::Result<()> {
-    let _ = std::fs::remove_file(pointer);
-    // Remonter du dossier du lien jusqu’au dossier du modèle (`snapshots/<révision>/…`), puis descendre dans `blobs`.
+/// Chemin de `blobs/<etag>` vu du dossier de `snapshots/<révision>/<fichier>` : remonter jusqu’au dossier du
+/// modèle, puis descendre dans `blobs`.
+fn relative_blob(blob: &Path, pointer: &Path) -> PathBuf {
     let model = blob.parent().and_then(Path::parent).unwrap_or(Path::new("."));
     let depth = pointer.parent().and_then(|parent| parent.strip_prefix(model).ok()).map_or(0, |rest| rest.components().count());
     let mut relative = PathBuf::new();
@@ -608,6 +655,14 @@ fn link(blob: &Path, pointer: &Path) -> std::io::Result<()> {
     }
     relative.push("blobs");
     relative.push(blob.file_name().unwrap_or_default());
+    relative
+}
+
+/// `snapshots/<révision>/<fichier>` désigne `blobs/<etag>` par un lien relatif, comme la bibliothèque Python.
+/// Sous Windows, où un lien demande souvent des droits, le contenu est déplacé à la place.
+fn link(blob: &Path, pointer: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(pointer);
+    let relative = relative_blob(blob, pointer);
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&relative, pointer)
@@ -619,6 +674,73 @@ fn link(blob: &Path, pointer: &Path) -> std::io::Result<()> {
         }
         std::fs::rename(blob, pointer)
     }
+}
+
+/// Un deuxième lien vers un contenu que d’autres révisions désignent déjà : il ne doit pas être déplacé. Sous
+/// Windows sans droit de créer un lien symbolique, un lien physique, sinon une copie.
+fn link_or_copy(blob: &Path, pointer: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        link(blob, pointer)
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::fs::remove_file(pointer);
+        let relative = relative_blob(blob, pointer);
+        if std::os::windows::fs::symlink_file(&relative, pointer).is_ok() || std::fs::hard_link(blob, pointer).is_ok() {
+            return Ok(());
+        }
+        std::fs::copy(blob, pointer).map(|_| ())
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Programmes Python (la voix d’Alfred)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Variables qui mènent la bibliothèque Python de Hugging Face (`from_pretrained`, `snapshot_download`) à la même
+/// source, au même jeton et au même cache qu’Alfred. Le jeton n’apparaît pas dans `Debug`.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct PythonHubEnv(pub Vec<(String, String)>);
+
+impl std::fmt::Debug for PythonHubEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shown: Vec<String> = self
+            .0
+            .iter()
+            .map(|(name, value)| if name == "HF_TOKEN" { format!("{name}=…") } else { format!("{name}={value}") })
+            .collect();
+        f.debug_tuple("PythonHubEnv").field(&shown).finish()
+    }
+}
+
+/// Calcule ces variables. `HF_ENDPOINT` : la source, si ce n’est pas huggingface.co par défaut. `HF_TOKEN` : le
+/// jeton qu’Alfred enverrait lui-même (sans lui, Python lit le fichier de `huggingface-cli login`). `HF_HOME` : le
+/// dossier du cache d’Alfred, sauf si `HF_HUB_CACHE` le fixe déjà. Avec un miroir, de longs délais : Artifactory
+/// peut mettre longtemps à répondre la première fois (`HF_HUB_ETAG_TIMEOUT` de sa documentation).
+pub fn python_hub_env(source: &Source, token: Option<String>, hub_cache: &Path, hub_cache_env: bool) -> PythonHubEnv {
+    let mut env = Vec::new();
+    if source.origin != Origin::Default {
+        env.push(("HF_ENDPOINT".to_string(), source.endpoint.clone()));
+        env.push(("HF_HUB_ETAG_TIMEOUT".to_string(), "86400".to_string()));
+        env.push(("HF_HUB_DOWNLOAD_TIMEOUT".to_string(), "86400".to_string()));
+    }
+    if let Some(token) = token {
+        env.push(("HF_TOKEN".to_string(), token));
+    }
+    if !hub_cache_env {
+        if let Some(home) = hub_cache.parent().filter(|_| hub_cache.file_name().is_some_and(|name| name == "hub")) {
+            env.push(("HF_HOME".to_string(), home.to_string_lossy().into_owned()));
+        }
+    }
+    PythonHubEnv(env)
+}
+
+/// Les variables pour un programme Python lancé par Alfred, d’après la source des modèles du moment.
+pub async fn python_env(state: &AppState) -> AppResult<PythonHubEnv> {
+    let source = source(state)?;
+    let token = resolve_token(&source, setting_token().await?, env("HF_TOKEN"));
+    Ok(python_hub_env(&source, token, &hub_cache(), env("HF_HUB_CACHE").is_some()))
 }
 
 #[cfg(test)]
@@ -745,6 +867,10 @@ mod tests {
         only_main: bool,
         /// Le fichier passe par une redirection vers une autre adresse, comme le CDN de huggingface.co.
         redirect_to: Option<String>,
+        /// Dépôt, fichier et révision servis.
+        repo: &'static str,
+        file: &'static str,
+        own: &'static str,
         seen: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
@@ -758,6 +884,9 @@ mod tests {
             no_blobs: false,
             only_main: false,
             redirect_to: None,
+            repo: "org/modele",
+            file: "config.json",
+            own: OWN,
             seen: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -782,22 +911,22 @@ mod tests {
                 _ => {}
             }
         }
-        if uri.path() == "/mirror/api/models/org/modele/revision/main" {
+        if uri.path() == format!("/mirror/api/models/{}/revision/main", mirror.repo) {
             let blobs = uri.query().is_some_and(|query| query.contains("blobs=true"));
             if blobs && mirror.no_blobs {
                 return StatusCode::BAD_REQUEST.into_response();
             }
-            let mut sibling = serde_json::json!({ "rfilename": "config.json" });
+            let mut sibling = serde_json::json!({ "rfilename": mirror.file });
             if blobs {
                 sibling["size"] = serde_json::json!(mirror.listed_size);
                 if let Some(listed) = &mirror.listed_sha {
                     sibling["lfs"] = serde_json::json!({ "sha256": listed, "size": mirror.listed_size });
                 }
             }
-            return axum::Json(serde_json::json!({ "sha": OWN, "siblings": [sibling] })).into_response();
+            return axum::Json(serde_json::json!({ "sha": mirror.own, "siblings": [sibling] })).into_response();
         }
-        let served = if mirror.only_main { "main" } else { OWN };
-        if uri.path() != format!("/mirror/org/modele/resolve/{served}/config.json") {
+        let served = if mirror.only_main { "main" } else { mirror.own };
+        if uri.path() != format!("/mirror/{}/resolve/{served}/{}", mirror.repo, mirror.file) {
             return StatusCode::NOT_FOUND.into_response();
         }
         let mut response = if let Some(target) = &mirror.redirect_to {
@@ -947,6 +1076,70 @@ mod tests {
         assert!(unreachable.contains("127.0.0.1:9 est injoignable"), "{unreachable}");
     }
 
+    /// Un niveau de Whisper (un fichier du dépôt de whisper.cpp) passe par le miroir comme les autres modèles ; un
+    /// deuxième niveau, à une révision plus récente, laisse le premier reconnu dans la sienne.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn whisper_levels_come_through_the_mirror_each_in_its_revision() {
+        const TINY: ModelSpec = ModelSpec { repo: "ggerganov/whisper.cpp", legacy_dir: "", legacy_revision: "", files: &["ggml-tiny.bin"] };
+        const SMALL: ModelSpec = ModelSpec { repo: "ggerganov/whisper.cpp", legacy_dir: "", legacy_revision: "", files: &["ggml-small.bin"] };
+        let cache = tempfile::tempdir().unwrap();
+        let tiny = Mirror { repo: TINY.repo, file: "ggml-tiny.bin", ..mirror_with(Some("jeton-secret"), CONTENT) };
+        let endpoint = serve(tiny.clone()).await;
+        let source = resolve_source(Some(&endpoint), None);
+        let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(|_, _| {});
+        let revision = download(&TINY, &source, Some("jeton-secret".into()), cache.path(), 0, &AppError::new, report.clone()).await.unwrap();
+        assert_eq!(revision, OWN);
+        assert_eq!(
+            tiny.seen.lock().unwrap().clone(),
+            vec![
+                "/mirror/api/models/ggerganov/whisper.cpp/revision/main?blobs=true Bearer jeton-secret".to_string(),
+                format!("/mirror/ggerganov/whisper.cpp/resolve/{OWN}/ggml-tiny.bin Bearer jeton-secret"),
+            ]
+        );
+        let newer = "1111111111111111111111111111111111111111";
+        let small = Mirror { repo: SMALL.repo, file: "ggml-small.bin", own: newer, ..mirror_with(None, CONTENT) };
+        let source = resolve_source(Some(&serve(small).await), None);
+        download(&SMALL, &source, None, cache.path(), 0, &AppError::new, report).await.unwrap();
+        assert_eq!(SMALL.installed_in_any_snapshot(cache.path()).unwrap().revision, newer);
+        let found = TINY.installed_in_any_snapshot(cache.path()).unwrap();
+        assert_eq!(found.revision, OWN);
+        assert_eq!(std::fs::read(found.dir.join("ggml-tiny.bin")).unwrap(), CONTENT);
+    }
+
+    /// Un contenu déjà dans le cache sous son empreinte n’est pas téléchargé à nouveau pour une autre révision.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_blob_already_in_the_cache_is_linked_not_downloaded() {
+        let cache = tempfile::tempdir().unwrap();
+        let first = Mirror { linked_etag: Some(sha(CONTENT)), ..mirror_with(None, CONTENT) };
+        run(&serve(first).await, None, cache.path()).await.unwrap();
+        let newer = "2222222222222222222222222222222222222222";
+        let second = Mirror { own: newer, ..mirror_with(None, CONTENT) };
+        let (revision, progress) = run(&serve(second.clone()).await, None, cache.path()).await.unwrap();
+        assert_eq!(revision, newer);
+        assert_eq!(second.seen.lock().unwrap().len(), 1, "seule la liste est demandée");
+        assert_eq!(std::fs::read(SPEC.snapshot_dir(cache.path(), newer).join("config.json")).unwrap(), CONTENT);
+        assert_eq!(progress.last(), Some(&(CONTENT.len() as u64, CONTENT.len() as u64)));
+        // La révision précédente garde son fichier.
+        assert_eq!(std::fs::read(SPEC.snapshot_dir(cache.path(), OWN).join("config.json")).unwrap(), CONTENT);
+    }
+
+    #[test]
+    fn python_follows_the_source_the_token_and_the_cache() {
+        let mirror = source("https://hf.exemple.fr/api/huggingfaceml/hf", Origin::Setting);
+        let env = python_hub_env(&mirror, Some("jeton-secret".into()), Path::new("/donnees/huggingface/hub"), false);
+        let get = |name: &str| env.0.iter().find(|(key, _)| key == name).map(|(_, value)| value.as_str());
+        assert_eq!(get("HF_ENDPOINT"), Some("https://hf.exemple.fr/api/huggingfaceml/hf"));
+        assert_eq!(get("HF_TOKEN"), Some("jeton-secret"));
+        assert_eq!(get("HF_HOME"), Some("/donnees/huggingface"));
+        assert_eq!(get("HF_HUB_ETAG_TIMEOUT"), Some("86400"));
+        // Le jeton n’apparaît jamais dans un journal.
+        let shown = format!("{env:?}");
+        assert!(!shown.contains("jeton-secret") && shown.contains("HF_TOKEN=…"), "{shown}");
+        // huggingface.co par défaut, sans jeton : Python garde ses propres réglages (fichier de connexion).
+        let default = python_hub_env(&source(DEFAULT_ENDPOINT, Origin::Default), None, Path::new("/donnees/huggingface/hub"), true);
+        assert!(default.0.is_empty(), "{default:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn snapshot_entries_point_to_their_blob_like_python() {
@@ -967,6 +1160,23 @@ mod tests {
     async fn a_refused_certificate_is_named() {
         let message = run("https://self-signed.badssl.com", None, tempfile::tempdir().unwrap().path()).await.unwrap_err().message;
         assert!(message.contains("le certificat de self-signed.badssl.com est refusé"), "{message}");
+    }
+
+    /// Vrai téléchargement du plus petit niveau de Whisper (78 Mo) : `cargo test -- --ignored real_whisper`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn real_whisper_tiny_download_from_hugging_face() {
+        let temporary = tempfile::tempdir().unwrap();
+        let cache = std::env::var("ALFRED_REAL_HUB").map(PathBuf::from).unwrap_or_else(|_| temporary.path().to_path_buf());
+        let spec = ModelSpec { repo: "ggerganov/whisper.cpp", legacy_dir: "", legacy_revision: "", files: &["ggml-tiny.bin"] };
+        let revision = download(&spec, &resolve_source(None, None), None, &cache, 77_691_713, &AppError::new, Arc::new(|_, _| {}))
+            .await
+            .unwrap();
+        let installed = spec.installed_in_any_snapshot(&cache).unwrap();
+        assert_eq!(installed.revision, revision);
+        let file = installed.dir.join("ggml-tiny.bin");
+        assert_eq!(std::fs::metadata(&file).unwrap().len(), 77_691_713);
+        eprintln!("révision {revision}, {}", file.display());
     }
 
     /// Vrai téléchargement d’e5 depuis huggingface.co (470 Mo) : `cargo test -- --ignored real_e5`. Le dossier

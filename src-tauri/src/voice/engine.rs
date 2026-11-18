@@ -231,6 +231,7 @@ fn speaker(config: &VoiceConfig) -> Result<Arc<dyn Speaker>, VoiceError> {
             reference: required(&config.qwen_reference, "échantillon de voix")?,
             reference_text: config.qwen_reference_text.clone(),
             language: qwen_language(&config.language).into(),
+            hub_env: config.hub_env.clone(),
         });
         // Le modèle se charge tout de suite : la première phrase n'attend pas son chargement.
         speaker.warm_up();

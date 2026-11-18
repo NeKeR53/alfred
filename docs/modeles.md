@@ -1,12 +1,15 @@
 # Modèles locaux : source, cache et Artifactory
 
-Deux fonctions d’Alfred calculent sur l’ordinateur avec un modèle téléchargé une seule fois, à la demande, depuis
-Réglages → Général :
+Plusieurs fonctions d’Alfred calculent sur l’ordinateur avec un modèle téléchargé une seule fois, à la demande :
 
-| Rubrique | Modèle | Taille |
-| --- | --- | --- |
-| Recherche par le sens | `intfloat/multilingual-e5-small` | 470 Mo |
-| Décisions locales (`ai.decide`) | `convaiinnovations/laya-multilingual` | 647 Mo |
+| Rubrique | Modèle | Taille | Téléchargé par |
+| --- | --- | --- | --- |
+| Recherche par le sens (Réglages → Général) | `intfloat/multilingual-e5-small` | 470 Mo | Alfred |
+| Décisions locales, `ai.decide` (Réglages → Général) | `convaiinnovations/laya-multilingual` | 647 Mo | Alfred |
+| Dictée (Réglages → Voix) | `ggerganov/whisper.cpp`, un fichier par niveau | 74 Mo à 2,9 Go | Alfred |
+| Voix d’Alfred (Réglages → Voix) | Qwen3-TTS (`mlx-community/…` sur Mac, `Qwen/…` ailleurs) | ≈ 1 à 4 Go | Python |
+
+Tous passent par la même **source des modèles** (ci-dessous) : Hugging Face, ou le miroir de l’entreprise.
 
 ## Révision
 
@@ -117,6 +120,69 @@ où `<clé du dépôt>` est le nom affiché dans « Set Up A Hugging Face Client
   lancé depuis ce terminal, d’où le réglage. Sous Windows, une variable d’utilisateur (Paramètres → Variables
   d’environnement) s’applique à Alfred au prochain lancement.
 
+## Voix
+
+### Dictée : Whisper
+
+Réglages → Voix → Dictée propose les niveaux de Whisper, chacun avec sa taille et ce qu’il apporte. Ce sont les
+modèles ggml de whisper.cpp, dans le dépôt Hugging Face `ggerganov/whisper.cpp`. Tous sont multilingues : le français
+est pris en charge par chacun.
+
+| Niveau | Fichier | Taille | En une ligne |
+| --- | --- | --- | --- |
+| tiny | `ggml-tiny.bin` | 74 Mo | le plus rapide, beaucoup de fautes : pour essayer |
+| base | `ggml-base.bin` | 141 Mo | très rapide, fautes fréquentes en français |
+| small | `ggml-small.bin` | 465 Mo | rapide et correct en français : ordinateur modeste |
+| medium | `ggml-medium.bin` | 1,4 Go | précis, lent sans carte graphique |
+| large-v3-turbo | `ggml-large-v3-turbo.bin` | 1,5 Go | presque aussi précis que large-v3, plusieurs fois plus rapide |
+| large-v3 | `ggml-large-v3.bin` | 2,9 Go | le plus précis, lent et gourmand |
+
+« Télécharger » passe par le même code que e5 et Laya (`model_files.rs`) : liste des fichiers, GET simple, empreinte
+annoncée, progression, mêmes erreurs. Le niveau téléchargé sert aussitôt ; un niveau déjà là se choisit d’un clic
+(« Utiliser »). Le dépôt range tous les niveaux : télécharger un niveau avance `refs/main`, et ceux déjà téléchargés
+restent reconnus dans leur révision. Un contenu déjà présent dans `blobs/` sous son empreinte n’est pas retéléchargé.
+
+**Niveau conseillé** : large-v3-turbo dès 16 Go de mémoire, small en dessous. large-v3-turbo transcrit presque comme
+large-v3 pour une fraction du temps (30 s d’audio en ≈ 1 s sur Mac Apple Silicon) ; il occupe environ 2 Go de mémoire
+en plus de la voix d’Alfred, qui en garde déjà plusieurs. Sur 8 Go, small (moins d’1 Go) laisse la machine respirer.
+Le choix reste à l’utilisateur : le niveau conseillé porte l’étiquette « Conseillé », rien ne se télécharge seul.
+
+**Fichier existant** : la dernière ligne garde le réglage d’avant, un fichier ggml indiqué à la main (ou repris
+d’Argos). L’indiquer remplace le niveau.
+
+**whisper-server** (le programme de whisper.cpp qui garde le modèle chargé) n’est pas fourni avec Alfred. Il est
+cherché tel quel s’il a un dossier, sinon dans le `PATH` du terminal et les dossiers usuels (Homebrew…), même quand
+Alfred est ouvert depuis le Dock. Absent, la dictée dit quoi installer :
+
+- Mac : `brew install whisper-cpp` ;
+- Windows : `whisper-bin-x64.zip` dans les Releases de `github.com/ggml-org/whisper.cpp`, décompressé, puis
+  `whisper-server.exe` indiqué dans Réglages → Voix → Serveur whisper.cpp.
+
+### Voix d’Alfred : Qwen3-TTS
+
+Le modèle est téléchargé par le programme Python de la voix (`voice/qwen_worker.py`), avec la bibliothèque Python de
+Hugging Face (`load` de mlx-audio sur Mac Apple Silicon, `from_pretrained` de qwen-tts ailleurs), au premier
+chargement. Alfred le lance avec les variables déduites de la source des modèles, même ouvert depuis le Dock ou le
+menu Démarrer :
+
+| Variable | Valeur |
+| --- | --- |
+| `HF_ENDPOINT` | l’adresse du réglage ou de `HF_ENDPOINT` ; absente pour huggingface.co par défaut |
+| `HF_TOKEN` | le jeton qu’Alfred enverrait (réglage, puis `HF_TOKEN`) ; sinon Python lit le fichier de `huggingface-cli login` |
+| `HF_HOME` | le dossier du cache d’Alfred (sauf si `HF_HUB_CACHE` est déjà fixé) : un seul cache pour tous |
+| `HF_HUB_ETAG_TIMEOUT`, `HF_HUB_DOWNLOAD_TIMEOUT` | 86400 avec un miroir, qui peut mettre longtemps à répondre la première fois |
+
+Le jeton n’apparaît dans aucun journal : la sortie d’erreur du programme est ignorée et la structure qui le porte le
+masque à l’affichage.
+
+Un miroir qui annonce sa propre révision est géré par la bibliothèque Python : elle demande la liste des fichiers à
+cette révision puis chaque fichier à `resolve/<révision annoncée>/…`, et range le tout sous
+`snapshots/<révision annoncée>`. Vérifié sur un faux miroir avec la bibliothèque de mlx-audio (`huggingface_hub`
+2.4). Attention : depuis la version 1.0, cette bibliothèque liste les fichiers par
+`GET <source>/api/models/<dépôt>/tree/<révision>?recursive=true`, et non plus par la liste de `revision/main` qu’emploie
+Alfred. Un miroir qui ne sert pas `/tree/` fait échouer le premier chargement de la voix (« Cannot find an appropriate
+cached snapshot folder ») ; un modèle déjà dans le cache reste lu.
+
 ## Erreurs
 
 | Message | Cause |
@@ -129,3 +195,5 @@ où `<clé du dépôt>` est le nom affiché dans « Set Up A Hugging Face Client
 | « le fichier … n’a pas l’empreinte que la source annonce : fichier écarté » | téléchargement abîmé : réessayer |
 | « le fichier … est incomplet (… octets sur …) : fichier écarté » | téléchargement tronqué : réessayer |
 | « la version … du modèle … n’est pas prise en charge par cette version d’Alfred » | la dernière révision a changé de format : mettre à jour Alfred |
+| « le modèle Whisper … n’est pas téléchargé » | niveau choisi absent du cache : Réglages → Voix, Télécharger |
+| « whisper-server (whisper.cpp) est introuvable : … » | whisper.cpp pas installé : la suite du message dit quoi installer |

@@ -6,6 +6,9 @@ import { invoke, onNativeEvent } from "../../lib/native";
 export type TtsBackend = "qwen" | "system" | "kokoro";
 
 export interface VoiceConfig {
+  /** Niveau de Whisper téléchargé par Alfred ; `null` : le fichier `whisperModel` indiqué à la main. */
+  whisperLevel: string | null;
+  /** Fichier ggml de Whisper indiqué à la main, pour qui l’a déjà. */
   whisperModel: string;
   whisperServer: string;
   language: string;
@@ -79,6 +82,40 @@ export const listSystemVoices = () => invoke<SystemVoice[]>("voice.voices");
 
 /** Installe la voix d’Alfred (quelques minutes) ; rend le nouvel état. */
 export const installAlfredVoice = () => invoke<VoiceStatus>("voice.qwen.install");
+
+export interface WhisperLevel {
+  /** `tiny`, `base`, `small`, `medium`, `large-v3-turbo`, `large-v3`. */
+  id: string;
+  /** Fichier ggml du dépôt ggerganov/whisper.cpp. */
+  file: string;
+  bytes: number;
+  /** Ce qu’il apporte, en une ligne. */
+  summary: string;
+  installed: boolean;
+  /** Révision téléchargée, en court. */
+  revision: string | null;
+}
+
+export interface WhisperLevels {
+  repo: string;
+  levels: WhisperLevel[];
+  /** Niveau choisi ; `null` : un fichier indiqué à la main (`custom`), ou rien. */
+  current: string | null;
+  custom: string | null;
+  recommended: string;
+  recommendedReason: string;
+  downloading: { level: string; received: number; total: number } | null;
+  error: { level: string; message: string } | null;
+}
+
+export const getWhisperLevels = () => invoke<WhisperLevels>("voice.whisper.levels");
+/** Télécharge un niveau par la source des modèles ; une fois là, la dictée s’en sert. */
+export const downloadWhisperLevel = (level: string) => invoke<WhisperLevels>("voice.whisper.download", { level });
+/** Choisit un niveau déjà téléchargé. */
+export const chooseWhisperLevel = (level: string) => invoke<WhisperLevels>("voice.whisper.use", { level });
+export function onWhisperLevels(handler: () => void): () => void {
+  return onNativeEvent("voice:whisper", () => handler());
+}
 
 /** Active ou coupe la voix ; rend le nouvel état. */
 export const setVoiceEnabled = (enabled: boolean) => invoke<VoiceStatus>("voice.enabled.set", { enabled });

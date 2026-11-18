@@ -15,6 +15,8 @@ pub enum VoiceError {
         #[source]
         source: io::Error,
     },
+    #[error("{0}")]
+    ServerMissing(String),
     #[error("whisper-server n'a pas démarré : {0}")]
     ServerStart(String),
     #[error("transcription impossible : {0}")]

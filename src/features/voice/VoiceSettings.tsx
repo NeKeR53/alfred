@@ -12,8 +12,7 @@ import {
   SwitchControl,
   TextInput,
 } from "@alfred/ui";
-import { useEffect, useMemo, useState } from "react";
-import { inTauri, pickFile } from "../../lib/native";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { notify } from "../../shell/notifications";
 import {
   getVoiceSettings,
@@ -25,7 +24,9 @@ import {
   type VoiceConfig,
   type VoiceStatus,
 } from "./api";
+import { PathField } from "./PathField";
 import { useVoice } from "./store";
+import { WhisperLevelRows } from "./WhisperLevelRows";
 import "./voice.css";
 
 const LANGUAGES = [
@@ -47,47 +48,6 @@ const PAUSES = [
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** Champ de chemin : saisie libre, enregistrée en quittant le champ, et sélecteur de fichier dans l’application. */
-function PathField({
-  label,
-  value,
-  placeholder,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onCommit: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  return (
-    <div className="voice-settings__path">
-      <TextInput
-        aria-label={label}
-        value={draft}
-        placeholder={placeholder}
-        spellCheck={false}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          if (draft.trim() !== value) onCommit(draft.trim());
-        }}
-      />
-      {inTauri ? (
-        <Button
-          variant="secondary"
-          onClick={async () => {
-            const picked = await pickFile(label);
-            if (picked) onCommit(picked);
-          }}
-        >
-          Choisir…
-        </Button>
-      ) : null}
-    </div>
-  );
 }
 
 /** Texte de l’enregistrement à cloner, enregistré en quittant le champ. */
@@ -126,6 +86,12 @@ export function VoiceSettings() {
     listSystemVoices()
       .then(setVoices)
       .catch(() => setVoices([]));
+  }, []);
+
+  // Le niveau de Whisper a changé côté Alfred (choisi, ou téléchargé puis choisi) : réglages et état relus.
+  const reloadAfterWhisper = useCallback(() => {
+    void getVoiceSettings().then(setConfig);
+    void useVoice.getState().refresh().then(setStatus);
   }, []);
 
   const save = async (next: VoiceConfig) => {
@@ -252,7 +218,7 @@ export function VoiceSettings() {
 
       <Section
         title="Dictée"
-        description="La transcription tourne sur cet ordinateur avec whisper.cpp : rien ne part sur le réseau. Le modèle se charge à la première dictée."
+        description="La transcription tourne sur cet ordinateur avec whisper.cpp : rien ne part sur le réseau. Tous les niveaux comprennent le français ; plus gros, ils sont plus précis et plus lents. Le modèle se charge à la première dictée."
         actions={
           <Button variant="secondary" onClick={() => void takeOverArgos()}>
             Reprendre les réglages d’Argos
@@ -279,18 +245,16 @@ export function VoiceSettings() {
         ) : status ? (
           <FeedbackBanner tone="info">La dictée est prête : bouton micro dans la page Agent.</FeedbackBanner>
         ) : null}
+        <SettingRows label="Niveau de Whisper">
+          <WhisperLevelRows
+            onChanged={reloadAfterWhisper}
+            onCustom={(whisperModel) => save({ ...config, whisperLevel: null, whisperModel })}
+          />
+        </SettingRows>
         <SettingRows>
-          <SettingRow title="Modèle Whisper" description="Fichier ggml, par exemple ggml-large-v3-turbo.bin.">
-            <PathField
-              label="Modèle Whisper"
-              value={config.whisperModel}
-              placeholder="~/models/ggml-large-v3-turbo.bin"
-              onCommit={(whisperModel) => void save({ ...config, whisperModel })}
-            />
-          </SettingRow>
           <SettingRow
             title="Serveur whisper.cpp"
-            description="Le programme whisper-server (brew install whisper-cpp), cherché dans le PATH sans dossier."
+            description="Le programme whisper-server, cherché dans le PATH sans dossier. Sur Mac : brew install whisper-cpp. Sous Windows : whisper-bin-x64.zip des Releases de github.com/ggml-org/whisper.cpp."
           >
             <PathField
               label="Serveur whisper.cpp"

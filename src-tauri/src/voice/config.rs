@@ -37,8 +37,14 @@ pub const ALFRED_REFERENCE_TEXT: &str = "Bonsoir, Monsieur. J'ai rangé vos rend
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VoiceConfig {
-    /// Modèle ggml de Whisper ; vide tant que la voix n'est pas configurée. `~/` est développé.
+    /// Niveau de Whisper téléchargé par Alfred (`small`, `large-v3-turbo`…). Absent : le fichier `whisper_model`.
+    pub whisper_level: Option<String>,
+    /// Modèle ggml de Whisper indiqué à la main, pour qui l'a déjà ; vide tant que la voix n'est pas configurée.
+    /// `~/` est développé. Avec un niveau choisi, c'est le fichier du niveau (calculé, jamais enregistré).
     pub whisper_model: PathBuf,
+    /// Le niveau choisi n'est pas téléchargé (calculé, jamais enregistré).
+    #[serde(skip)]
+    pub whisper_missing: Option<String>,
     /// Binaire `whisper-server` (whisper.cpp), cherché dans le PATH s'il n'a pas de dossier.
     pub whisper_server: PathBuf,
     pub language: String,
@@ -72,12 +78,18 @@ pub struct VoiceConfig {
     /// Dictée dans la page Agent : un silence de cette durée après avoir parlé termine la dictée et envoie
     /// le message, comme un clic sur le bouton. 0 : jamais, la dictée se termine au clic.
     pub pause_send_ms: u64,
+    /// Source, jeton et cache de Hugging Face pour le programme Python de la voix d'Alfred (calculés au lancement,
+    /// jamais enregistrés).
+    #[serde(skip)]
+    pub hub_env: crate::model_files::PythonHubEnv,
 }
 
 impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
+            whisper_level: None,
             whisper_model: PathBuf::new(),
+            whisper_missing: None,
             whisper_server: PathBuf::from("whisper-server"),
             language: "fr".into(),
             voice: default_voice().into(),
@@ -97,6 +109,7 @@ impl Default for VoiceConfig {
             dictation: true,
             read_notifications: false,
             pause_send_ms: 2000,
+            hub_env: Default::default(),
         }
     }
 }
@@ -143,7 +156,9 @@ impl VoiceConfig {
             .ok_or_else(|| VoiceError::Config("section [voice] absente".into()))?;
         let defaults = Self::default();
         Ok(Self {
+            whisper_level: None,
             whisper_model: argos.whisper_model.unwrap_or_default(),
+            whisper_missing: None,
             whisper_server: argos.whisper_server.unwrap_or(defaults.whisper_server),
             language: argos.language.unwrap_or(defaults.language),
             voice: defaults.voice,
@@ -165,6 +180,7 @@ impl VoiceConfig {
             dictation: true,
             read_notifications: false,
             pause_send_ms: defaults.pause_send_ms,
+            hub_env: Default::default(),
         }
         .expanded())
     }
@@ -189,9 +205,14 @@ impl VoiceConfig {
     /// Vérifie la dictée sans rien lancer : le modèle existe, la cadence est
     /// raisonnable. Le binaire, lui, n'est vérifié qu'au lancement.
     pub fn check(&self) -> Result<(), VoiceError> {
+        if let Some(level) = &self.whisper_missing {
+            return Err(VoiceError::Config(format!(
+                "le modèle Whisper {level} n'est pas téléchargé (Réglages, onglet Voix : Télécharger)"
+            )));
+        }
         if !self.configured() {
             return Err(VoiceError::Config(
-                "aucun modèle Whisper n'est indiqué (Réglages, onglet Voix)".into(),
+                "aucun modèle Whisper n'est choisi (Réglages, onglet Voix : téléchargez un niveau)".into(),
             ));
         }
         if !self.whisper_model.is_file() {
@@ -350,6 +371,23 @@ mod tests {
         config.tts_backend = TTS_SYSTEM.into();
         config.partial_interval_ms = 10;
         assert!(matches!(config.check(), Err(VoiceError::Config(_))));
+    }
+
+    #[test]
+    fn a_chosen_level_not_yet_downloaded_is_named() {
+        let config = VoiceConfig {
+            whisper_level: Some("small".into()),
+            whisper_missing: Some("small".into()),
+            ..VoiceConfig::default()
+        };
+        let message = config.check().unwrap_err().to_string();
+        assert!(message.contains("Whisper small n'est pas téléchargé"), "{message}");
+        // Le niveau est enregistré, pas ce qui est calculé au lancement.
+        let stored = serde_json::to_value(&config).unwrap();
+        assert_eq!(stored["whisperLevel"], "small");
+        assert!(stored.get("whisperMissing").is_none() && stored.get("hubEnv").is_none());
+        let back: VoiceConfig = serde_json::from_value(stored).unwrap();
+        assert_eq!(back.whisper_missing, None);
     }
 
     #[test]

@@ -44,10 +44,7 @@ impl WhisperServer {
         let port = free_port()?;
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
         // La garde démarre toujours : un binaire absent se signale donc ici.
-        let program = locate(&config.whisper_server).map_err(|source| VoiceError::Spawn {
-            program: config.whisper_server.display().to_string(),
-            source,
-        })?;
+        let program = find_server(config)?;
         let mut command = watched(std::process::id(), program.as_os_str());
         command
             .arg("--model")
@@ -164,7 +161,35 @@ fn signal_group(child: &Child, signal: i32) {
     }
 }
 
-/// Chemin du binaire : tel quel s'il contient un `/`, sinon cherché dans le `PATH`.
+/// Ce qu'il faut installer quand `whisper-server` est introuvable.
+pub const SERVER_INSTALL: &str = if cfg!(target_os = "macos") {
+    "installez whisper.cpp avec « brew install whisper-cpp » dans le Terminal, puis réessayez"
+} else if cfg!(windows) {
+    "téléchargez whisper-bin-x64.zip sur github.com/ggml-org/whisper.cpp (Releases), décompressez-le et indiquez son whisper-server.exe dans Réglages, onglet Voix, Serveur whisper.cpp"
+} else {
+    "installez whisper.cpp (programme whisper-server) avec le gestionnaire de paquets, ou indiquez son chemin dans Réglages, onglet Voix"
+};
+
+/// Le programme `whisper-server` des réglages : tel quel s'il a un dossier, sinon cherché dans le `PATH` du
+/// terminal et les dossiers usuels (Homebrew…), qu'une application ouverte depuis le Dock ou le menu Démarrer
+/// n'hérite pas.
+pub fn find_server(config: &VoiceConfig) -> Result<std::path::PathBuf, VoiceError> {
+    locate(&config.whisper_server).map_err(|_| {
+        let program = &config.whisper_server;
+        let named = if program.components().count() > 1 {
+            format!("{} est introuvable", program.display())
+        } else {
+            format!("{} (whisper.cpp) est introuvable", program.display())
+        };
+        VoiceError::ServerMissing(format!("{named} : {SERVER_INSTALL}"))
+    })
+}
+
+fn search_dirs() -> Vec<std::path::PathBuf> {
+    std::env::split_paths(crate::agents::search_path()).collect()
+}
+
+/// Chemin du binaire : tel quel s'il contient un `/`, sinon cherché dans le chemin de recherche.
 #[cfg(unix)]
 fn locate(program: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -175,11 +200,10 @@ fn locate(program: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let found = if program.components().count() > 1 {
         runnable(program).then(|| program.to_path_buf())
     } else {
-        std::env::var_os("PATH").and_then(|path| {
-            std::env::split_paths(&path)
-                .map(|dir| dir.join(program))
-                .find(|candidate| runnable(candidate))
-        })
+        search_dirs()
+            .into_iter()
+            .map(|dir| dir.join(program))
+            .find(|candidate| runnable(candidate))
     };
     found.ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
 }
@@ -196,9 +220,8 @@ fn locate(program: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let paths: Vec<_> = if program.components().count() > 1 {
         candidates(program.to_path_buf())
     } else {
-        std::env::var_os("PATH")
+        search_dirs()
             .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
             .flat_map(|dir| candidates(dir.join(program)))
             .collect()
     };
@@ -487,10 +510,17 @@ mod tests {
             ..VoiceConfig::default()
         };
         config.whisper_server = dir.path().join("pas-de-serveur");
-        assert!(matches!(
-            WhisperServer::start(&config).await,
-            Err(VoiceError::Spawn { .. })
-        ));
+        match WhisperServer::start(&config).await {
+            Err(VoiceError::ServerMissing(message)) => {
+                assert!(message.contains("pas-de-serveur est introuvable"), "{message}");
+                assert!(message.contains(SERVER_INSTALL), "{message}");
+            }
+            Err(other) => panic!("erreur inattendue : {other}"),
+            Ok(_) => panic!("aucun serveur ne devrait démarrer"),
+        }
+        config.whisper_server = "whisper-server-absent".into();
+        let message = find_server(&config).unwrap_err().to_string();
+        assert!(message.starts_with("whisper-server-absent (whisper.cpp) est introuvable : "), "{message}");
     }
 
     #[cfg(unix)]
