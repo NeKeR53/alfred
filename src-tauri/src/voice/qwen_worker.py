@@ -32,6 +32,22 @@ protocol = os.fdopen(os.dup(1), "w", encoding="utf-8")
 os.dup2(2, 1)
 sys.stdout = sys.stderr
 
+# Certificats : ceux du système (Trousseau, magasin de Windows), où se trouve l'autorité d'une entreprise
+# derrière un miroir des modèles. Sans cela, Python ne connaît que les autorités publiques de certifi.
+# truststore (installé avec la voix) les vérifie par le système lui-même, avant toute connexion ; il remplace
+# alors le fichier des racines du système qu'Alfred indique (ALFRED_CA_BUNDLE), qui reste le recours d'une
+# installation sans truststore. La vérification n'est jamais désactivée.
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+    alfred_bundle = os.environ.pop("ALFRED_CA_BUNDLE", None)
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        if alfred_bundle and os.environ.get(name) == alfred_bundle:
+            del os.environ[name]
+except ImportError:
+    pass
+
 import numpy as np
 import sounddevice as sd
 
@@ -162,6 +178,26 @@ class Output:
             pass
 
 
+def describe(error):
+    """Le message d'une erreur, sur une ligne. Un certificat refusé est souvent caché sous une erreur plus vague
+    (« cannot find the requested files… » de huggingface_hub) : la cause TLS de la chaîne passe alors devant,
+    avec l'hôte."""
+    chain, seen = [], error
+    while seen is not None and all(seen is not known for known in chain) and len(chain) < 12:
+        chain.append(seen)
+        seen = seen.__cause__ or seen.__context__
+    for cause in chain:
+        text = str(cause)
+        if "certificate" in text.lower() or "SSLCert" in type(cause).__name__:
+            if "host=" not in text:
+                try:
+                    text += f" (host='{cause.request.url.host}')"
+                except Exception:
+                    pass
+            return f"certificate refused: {text}".replace("\n", " ")
+    return str(error).replace("\n", " ")
+
+
 class Sentence:
     """L'audio d'une phrase, rempli morceau par morceau par le fil de calcul."""
 
@@ -230,7 +266,7 @@ try:
     failure = None
 except Exception as error:  # chaque phrase dira l'erreur de chargement
     generate = None
-    failure = str(error).replace("\n", " ")
+    failure = describe(error)
 
 to_generate = queue.Queue()
 prepared = {}
@@ -302,7 +338,7 @@ def speaker():
                 # Périphérique perdu (casque débranché…) : la phrase suivante en rouvre un.
                 output.close()
                 output = None
-            reply({"id": ident, "error": str(error).replace("\n", " ")})
+            reply({"id": ident, "error": describe(error)})
         finally:
             with live_lock:
                 live.discard(sentence)

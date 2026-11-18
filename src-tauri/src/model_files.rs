@@ -787,11 +787,81 @@ pub fn python_hub_env(source: &Source, token: Option<String>, hub_cache: &Path, 
     PythonHubEnv(env)
 }
 
-/// Les variables pour un programme Python lancé par Alfred, d’après la source des modèles du moment.
+/// Les variables pour un programme Python lancé par Alfred, d’après la source des modèles du moment, avec les
+/// certificats du système.
 pub async fn python_env(state: &AppState) -> AppResult<PythonHubEnv> {
     let source = source(state)?;
     let token = resolve_token(&source, setting_token().await?, env("HF_TOKEN"));
-    Ok(python_hub_env(&source, token, &hub_cache(), env("HF_HUB_CACHE").is_some()))
+    let mut hub = python_hub_env(&source, token, &hub_cache(), env("HF_HUB_CACHE").is_some());
+    let bundle = state.data_dir.join("certificats").join("racines-du-systeme.pem");
+    let exported = tokio::task::spawn_blocking({
+        let bundle = bundle.clone();
+        move || write_system_roots(&bundle)
+    })
+    .await
+    .map_err(|error| AppError::new(format!("Export des certificats interrompu : {error}")))?;
+    match exported {
+        Ok(_) => hub.0.extend(python_tls_env(&bundle, |name| env(name).is_some())),
+        // Sans le fichier, Python garde ses propres certificats (et truststore, s’il est installé).
+        Err(error) => log::warn!("certificats du système non exportés pour Python : {error}"),
+    }
+    Ok(hub)
+}
+
+/// Variables qui pointent les bibliothèques Python (requests, urllib3, httpx, curl) sur `bundle`, sauf celles que
+/// l’environnement fixe déjà. `ALFRED_CA_BUNDLE` le nomme : le programme qui sait utiliser truststore (le magasin
+/// du système, directement) retire les variables qui désignent ce fichier.
+pub fn python_tls_env(bundle: &Path, already_set: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    let path = bundle.to_string_lossy().into_owned();
+    let mut vars: Vec<(String, String)> = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"]
+        .into_iter()
+        .filter(|name| !already_set(name))
+        .map(|name| (name.to_string(), path.clone()))
+        .collect();
+    if !vars.is_empty() {
+        vars.push(("ALFRED_CA_BUNDLE".to_string(), path));
+    }
+    vars
+}
+
+/// Les certificats racines reconnus par le système (Trousseau sur Mac, magasin de certificats sous Windows, y
+/// compris l’autorité installée par une entreprise), écrits en PEM dans `path`. Rend leur nombre.
+pub fn write_system_roots(path: &Path) -> std::io::Result<usize> {
+    let found = rustls_native_certs::load_native_certs();
+    for error in &found.errors {
+        log::warn!("certificat du système illisible : {error}");
+    }
+    if found.certs.is_empty() {
+        return Err(std::io::Error::other("aucun certificat racine trouvé dans le système"));
+    }
+    write_pem(path, found.certs.iter().map(|cert| cert.as_ref()))
+}
+
+/// Écrit des certificats DER en PEM, d’un bloc : le fichier n’est jamais lu à moitié écrit.
+pub fn write_pem<'a>(path: &Path, certs: impl Iterator<Item = &'a [u8]>) -> std::io::Result<usize> {
+    use base64::Engine;
+    let mut pem = String::new();
+    let mut count = 0;
+    for der in certs {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(der);
+        pem.push_str("-----BEGIN CERTIFICATE-----\n");
+        for line in encoded.as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(line).expect("base64 est ASCII"));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        count += 1;
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if std::fs::read_to_string(path).is_ok_and(|current| current == pem) {
+        return Ok(count);
+    }
+    let partial = path.with_extension("pem.partiel");
+    std::fs::write(&partial, pem)?;
+    std::fs::rename(&partial, path)?;
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -801,6 +871,101 @@ mod tests {
 
     fn source(endpoint: &str, origin: Origin) -> Source {
         Source { endpoint: endpoint.to_string(), origin }
+    }
+
+    #[test]
+    fn python_is_pointed_at_the_system_roots_unless_already_set() {
+        let bundle = Path::new("/donnees/certificats/racines-du-systeme.pem");
+        let all = python_tls_env(bundle, |_| false);
+        let names: Vec<&str> = all.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "ALFRED_CA_BUNDLE"]);
+        assert!(all.iter().all(|(_, value)| value == "/donnees/certificats/racines-du-systeme.pem"));
+        // Un fichier déjà choisi par l'utilisateur ou l'entreprise est gardé.
+        let kept = python_tls_env(bundle, |name| name == "REQUESTS_CA_BUNDLE");
+        assert!(!kept.iter().any(|(name, _)| name == "REQUESTS_CA_BUNDLE"));
+        assert!(python_tls_env(bundle, |_| true).is_empty());
+    }
+
+    #[test]
+    fn the_system_roots_are_written_as_pem() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("certificats").join("racines.pem");
+        let count = write_system_roots(&path).unwrap();
+        assert!(count > 10, "{count} racines");
+        let pem = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(pem.matches("-----BEGIN CERTIFICATE-----").count(), count);
+        assert!(pem.lines().all(|line| line.len() <= 64));
+    }
+
+    /// Un serveur HTTPS dont le certificat est signé par une autorité privée (celle d'une entreprise) : Python le
+    /// refuse avec ses propres certificats, et l'accepte avec les variables d'Alfred quand l'autorité est dans les
+    /// racines du système. Demande openssl et python3.
+    #[cfg(unix)]
+    #[test]
+    fn python_trusts_a_private_authority_through_the_exported_roots() {
+        use std::process::{Command, Stdio};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let openssl = |args: &[&str]| {
+            let status = Command::new("openssl").args(args).current_dir(d).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            status.is_ok_and(|status| status.success())
+        };
+        std::fs::write(d.join("ext.cnf"), "subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n").unwrap();
+        let made = openssl(&["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2", "-subj", "/CN=Autorite privee de test", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"])
+            && openssl(&["req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr", "-subj", "/CN=127.0.0.1"])
+            && openssl(&["x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "server.pem", "-days", "2", "-extfile", "ext.cnf"])
+            && openssl(&["x509", "-in", "ca.pem", "-outform", "DER", "-out", "ca.der"]);
+        if !made {
+            eprintln!("openssl indisponible : test sauté");
+            return;
+        }
+        let server_script = r#"
+import http.server, ssl, sys
+httpd = http.server.HTTPServer(("127.0.0.1", 0), type("H", (http.server.BaseHTTPRequestHandler,), {
+    "do_GET": lambda self: (self.send_response(200), self.end_headers(), self.wfile.write(b"ok")),
+    "log_message": lambda self, *a: None}))
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("server.pem", "server.key")
+httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+print(httpd.server_address[1], flush=True)
+httpd.serve_forever()
+"#;
+        let Ok(mut server) = Command::new("python3").args(["-c", server_script]).current_dir(d).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+            eprintln!("python3 indisponible : test sauté");
+            return;
+        };
+        let mut port = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(server.stdout.take().unwrap()), &mut port).unwrap();
+        let url = format!("https://127.0.0.1:{}/", port.trim());
+        // Client : le contexte par défaut de Python, qui lit SSL_CERT_FILE (urllib, httpx), et requests si présent
+        // (REQUESTS_CA_BUNDLE).
+        let client = r#"
+import os, ssl, sys, urllib.request
+try:
+    print(urllib.request.urlopen(sys.argv[1], context=ssl.create_default_context()).read().decode())
+except Exception as error:
+    print(error)
+"#;
+        let fetch = |env: &[(String, String)]| {
+            let output = Command::new("python3")
+                .args(["-c", client, &url])
+                .env_remove("SSL_CERT_FILE")
+                .env_remove("SSL_CERT_DIR")
+                .envs(env.iter().map(|(name, value)| (name, value)))
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        let refused = fetch(&[]);
+        assert!(refused.contains("CERTIFICATE_VERIFY_FAILED"), "{refused}");
+        // Les racines « du système » : celles de cet ordinateur et l'autorité privée, comme sur un poste d'entreprise.
+        let mut roots: Vec<Vec<u8>> = rustls_native_certs::load_native_certs().certs.into_iter().map(|cert| cert.to_vec()).collect();
+        roots.push(std::fs::read(d.join("ca.der")).unwrap());
+        let bundle = d.join("racines.pem");
+        write_pem(&bundle, roots.iter().map(Vec::as_slice)).unwrap();
+        let accepted = fetch(&python_tls_env(&bundle, |_| false));
+        let _ = server.kill();
+        assert_eq!(accepted, "ok");
     }
 
     #[test]

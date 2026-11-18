@@ -114,6 +114,23 @@ impl WhisperServer {
         }
     }
 
+    /// Le serveur est-il sorti ? Attend jusqu'à `within` (la garde `sh` remarque la sortie au plus une seconde
+    /// après). Rend le statut et les dernières lignes de son journal.
+    async fn exited(&mut self, within: Duration) -> Option<String> {
+        let deadline = Instant::now() + within;
+        loop {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                sleep(Duration::from_millis(50)).await;
+                let tail = self.stderr_tail();
+                return Some(if tail.is_empty() { status.to_string() } else { format!("{status} : {tail}") });
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     fn stderr_tail(&self) -> String {
         let tail = self.stderr.lock().expect("verrou stderr empoisonné");
         tail.iter()
@@ -342,7 +359,15 @@ impl WhisperClient {
     }
 
     async fn post(&self, samples: Vec<f32>) -> Result<String, VoiceError> {
-        let wav = audio::encode_wav(&audio::pad_for_whisper(&samples));
+        self.send(&samples)
+            .await?
+            .map_err(|error| VoiceError::Transcription(error.to_string()))
+    }
+
+    /// Envoie l'audio. L'erreur intérieure est celle de la connexion (serveur tombé, connexion coupée) : elle
+    /// laisse le temps de relancer le serveur et de réessayer.
+    async fn send(&self, samples: &[f32]) -> Result<std::io::Result<String>, VoiceError> {
+        let wav = audio::encode_wav(&audio::pad_for_whisper(samples));
         let (content_type, body) = inference_body(&self.language, self.prompt.as_deref(), &wav);
         let response = timeout(
             REQUEST_TIMEOUT,
@@ -356,9 +381,11 @@ impl WhisperClient {
         .await
         .map_err(|_| {
             VoiceError::Transcription(format!("pas de réponse en {} s", REQUEST_TIMEOUT.as_secs()))
-        })?
-        .map_err(|error| VoiceError::Transcription(error.to_string()))?;
-        parse_inference(response.status, &response.body)
+        })?;
+        match response {
+            Ok(response) => parse_inference(response.status, &response.body).map(Ok),
+            Err(error) => Ok(Err(error)),
+        }
     }
 }
 
@@ -368,26 +395,44 @@ impl Transcriber for WhisperClient {
     }
 }
 
-/// `whisper-server` lancé à la première transcription, puis gardé : le modèle reste chargé.
+/// `whisper-server` lancé à la première transcription, puis gardé : le modèle reste chargé. Un serveur tombé
+/// (plantage, mémoire épuisée, processus tué) est relancé : avant chaque envoi, et quand la connexion est coupée en
+/// pleine transcription, qui est alors refaite une fois.
 pub struct LazyWhisper {
     config: VoiceConfig,
     server: tokio::sync::Mutex<Option<(WhisperServer, WhisperClient)>>,
+    /// Arrêté pour de bon (changement de réglages) : plus aucune relance.
+    closed: std::sync::atomic::AtomicBool,
 }
+
+/// Ce qu'il faut faire quand `whisper-server` tombe pendant la transcription.
+const SERVER_CRASH_ADVICE: &str = "Alfred le relance à la prochaine dictée ; si cela se reproduit, choisissez un \
+niveau de Whisper plus léger dans Réglages, onglet Voix, ou téléchargez à nouveau le modèle";
 
 impl LazyWhisper {
     pub fn new(config: VoiceConfig) -> Self {
         Self {
             config,
             server: tokio::sync::Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    /// Le client du serveur, lancé s'il ne tourne pas encore. Deux appels simultanés
+    /// Le client du serveur, lancé s'il ne tourne pas encore ou s'il est tombé. Deux appels simultanés
     /// attendent le même démarrage.
     pub async fn ready(&self) -> Result<WhisperClient, VoiceError> {
         let mut server = self.server.lock().await;
-        if let Some((_, client)) = server.as_ref() {
-            return Ok(client.clone());
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(VoiceError::Closed);
+        }
+        if let Some((running, client)) = server.as_mut() {
+            match running.exited(Duration::ZERO).await {
+                None => return Ok(client.clone()),
+                Some(reason) => {
+                    log::warn!("whisper-server s'est arrêté ({reason}) : il est relancé");
+                    *server = None;
+                }
+            }
         }
         let started = WhisperServer::start(&self.config).await?;
         // Le nom à reconnaître, soufflé à Whisper pour qu'il l'écrive juste.
@@ -396,7 +441,48 @@ impl LazyWhisper {
         Ok(client)
     }
 
+    /// Connexion coupée par le serveur de `client` : s'il est sorti, il est oublié (le prochain envoi le
+    /// relance) et la raison est rendue. Sinon, `None`.
+    async fn forget_if_dead(&self, client: &WhisperClient) -> Option<String> {
+        let mut server = self.server.lock().await;
+        let (running, current) = server.as_mut()?;
+        if current.addr != client.addr {
+            // Déjà remplacé par un autre envoi.
+            return Some("relancé entre-temps".into());
+        }
+        let reason = running.exited(Duration::from_millis(1500)).await?;
+        log::warn!("whisper-server s'est arrêté pendant une transcription ({reason})");
+        *server = None;
+        Some(reason)
+    }
+
+    async fn transcribe_samples(&self, samples: Vec<f32>) -> Result<String, VoiceError> {
+        // Connexion coupée : le serveur est relancé s'il est tombé, et la transcription refaite une fois.
+        let client = self.ready().await?;
+        if let Ok(text) = client.send(&samples).await? {
+            return Ok(text);
+        }
+        self.forget_if_dead(&client).await;
+        let client = self.ready().await?;
+        let error = match client.send(&samples).await? {
+            Ok(text) => return Ok(text),
+            Err(error) => error,
+        };
+        // Encore coupé : la prochaine dictée repart d'un serveur neuf.
+        let message = match self.forget_if_dead(&client).await {
+            Some(reason) => format!("whisper-server s'est arrêté pendant la transcription ({reason}). {SERVER_CRASH_ADVICE}"),
+            None => {
+                if let Some((running, _)) = self.server.lock().await.take() {
+                    running.shutdown().await;
+                }
+                format!("whisper-server a coupé la connexion ({error}). {SERVER_CRASH_ADVICE}")
+            }
+        };
+        Err(VoiceError::Transcription(message))
+    }
+
     pub async fn shutdown(&self) {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some((server, _)) = self.server.lock().await.take() {
             server.shutdown().await;
         }
@@ -405,7 +491,7 @@ impl LazyWhisper {
 
 impl Transcriber for LazyWhisper {
     fn transcribe(&self, samples: Vec<f32>) -> BoxFuture<'_, Result<String, VoiceError>> {
-        Box::pin(async move { self.ready().await?.post(samples).await })
+        Box::pin(self.transcribe_samples(samples))
     }
 }
 
@@ -521,6 +607,103 @@ mod tests {
         config.whisper_server = "whisper-server-absent".into();
         let message = find_server(&config).unwrap_err().to_string();
         assert!(message.starts_with("whisper-server-absent (whisper.cpp) est introuvable : "), "{message}");
+    }
+
+    /// Faux `whisper-server` en Python : `/health` répond, et `/inference` fait tomber le serveur (sortie brutale en
+    /// pleine requête, comme un plantage) tant que le fichier `crashes` contient un nombre positif.
+    #[cfg(unix)]
+    fn fake_server(dir: &std::path::Path, crashes: u32) -> VoiceConfig {
+        let model = dir.join("model.bin");
+        std::fs::write(&model, b"ggml").unwrap();
+        std::fs::write(dir.join("crashes"), crashes.to_string()).unwrap();
+        let script = dir.join("faux-serveur");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/usr/bin/env python3
+import http.server, os, sys
+port = int(sys.argv[sys.argv.index("--port") + 1])
+counter = {counter:?}
+with open(counter + ".starts", "a") as f:
+    f.write("x")
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"{{}}")
+    def do_POST(self):
+        left = int(open(counter).read())
+        if left > 0:
+            open(counter, "w").write(str(left - 1))
+            sys.stderr.write("GGML_ASSERT: plantage simulé\n"); sys.stderr.flush()
+            os._exit(134)
+        self.rfile.read(int(self.headers["Content-Length"]))
+        body = b'{{"text": " Bonjour."}}'
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
+http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#,
+                counter = dir.join("crashes").display().to_string()
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+        VoiceConfig {
+            whisper_model: model,
+            whisper_server: script,
+            ..VoiceConfig::default()
+        }
+    }
+
+    /// Un serveur tombé en pleine transcription est relancé, et la transcription refaite.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_server_that_dies_during_a_transcription_is_restarted() {
+        let dir = tempfile::tempdir().unwrap();
+        let whisper = LazyWhisper::new(fake_server(dir.path(), 1));
+        let text = whisper.transcribe(vec![0.0; 1600]).await.unwrap();
+        assert_eq!(text, "Bonjour.");
+        assert_eq!(std::fs::read_to_string(dir.path().join("crashes.starts")).unwrap(), "xx");
+        // Le serveur relancé sert la suite, sans nouveau démarrage.
+        assert_eq!(whisper.transcribe(vec![0.0; 1600]).await.unwrap(), "Bonjour.");
+        assert_eq!(std::fs::read_to_string(dir.path().join("crashes.starts")).unwrap(), "xx");
+        whisper.shutdown().await;
+        assert!(matches!(whisper.ready().await, Err(VoiceError::Closed)));
+    }
+
+    /// Un serveur qui retombe : le message dit pourquoi (son journal) et quoi faire ; la dictée suivante repart
+    /// d'un serveur neuf.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_server_that_keeps_dying_is_explained() {
+        let dir = tempfile::tempdir().unwrap();
+        let whisper = LazyWhisper::new(fake_server(dir.path(), 2));
+        let message = whisper.transcribe(vec![0.0; 1600]).await.unwrap_err().to_string();
+        assert!(message.starts_with("transcription impossible : whisper-server s'est arrêté pendant la transcription"), "{message}");
+        assert!(message.contains("GGML_ASSERT: plantage simulé"), "{message}");
+        assert!(message.contains("niveau de Whisper plus léger"), "{message}");
+        assert_eq!(whisper.transcribe(vec![0.0; 1600]).await.unwrap(), "Bonjour.");
+        assert_eq!(std::fs::read_to_string(dir.path().join("crashes.starts")).unwrap(), "xxx");
+        whisper.shutdown().await;
+    }
+
+    /// Un serveur tombé entre deux dictées est relancé avant l'envoi.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_server_that_died_between_dictations_is_restarted_before_sending() {
+        let dir = tempfile::tempdir().unwrap();
+        let whisper = LazyWhisper::new(fake_server(dir.path(), 0));
+        whisper.ready().await.unwrap();
+        {
+            let guard = whisper.server.lock().await;
+            signal_group(&guard.as_ref().unwrap().0.child, libc::SIGKILL);
+        }
+        sleep(Duration::from_millis(300)).await;
+        assert_eq!(whisper.transcribe(vec![0.0; 1600]).await.unwrap(), "Bonjour.");
+        assert_eq!(std::fs::read_to_string(dir.path().join("crashes.starts")).unwrap(), "xx");
+        whisper.shutdown().await;
     }
 
     #[cfg(unix)]

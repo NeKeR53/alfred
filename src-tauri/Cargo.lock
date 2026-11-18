@@ -78,6 +78,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
  "rust_xlsxwriter",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sha2",

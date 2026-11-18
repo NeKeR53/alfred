@@ -77,10 +77,12 @@ fn voice_error(error: VoiceError) -> AppError {
 
 /// Paquets de la voix d’Alfred : mlx-audio sur Mac Apple Silicon (son diffusé pendant le calcul),
 /// qwen-tts (PyTorch) ailleurs. soxr convertit la voix au taux du haut-parleur : sans lui, elle grésille.
-const QWEN_PACKAGES: [&str; 3] = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-    ["mlx-audio==0.6.5", "sounddevice", "soxr"]
+/// truststore fait vérifier les certificats par le système (l’autorité d’une entreprise derrière un miroir) ;
+/// publié depuis github.com/sethmlarson/truststore, avec attestation de provenance sur PyPI.
+const QWEN_PACKAGES: [&str; 4] = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    ["mlx-audio==0.6.5", "sounddevice", "soxr", "truststore==0.10.5"]
 } else {
-    ["qwen-tts==0.1.1", "sounddevice", "soxr"]
+    ["qwen-tts==0.1.1", "sounddevice", "soxr", "truststore==0.10.5"]
 };
 /// La voix d’Alfred : l’échantillon cloné par Qwen3-TTS.
 const ALFRED_REFERENCE: &[u8] = include_bytes!("alfred-majordome.wav");
@@ -161,6 +163,10 @@ async fn install_qwen(state: &Arc<AppState>) -> AppResult<Value> {
             let mut command = tokio::process::Command::new(&uv);
             command
                 .args(&args)
+                // Certificats du système, comme Alfred : un dépôt de paquets derrière l’autorité d’une entreprise passe
+                // (UV_SYSTEM_CERTS depuis uv 0.11, UV_NATIVE_TLS avant).
+                .env("UV_SYSTEM_CERTS", "1")
+                .env("UV_NATIVE_TLS", "1")
                 .stdin(std::process::Stdio::null())
                 .kill_on_drop(true);
             #[cfg(windows)]

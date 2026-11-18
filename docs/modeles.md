@@ -165,6 +165,12 @@ Alfred est ouvert depuis le Dock. Absent, la dictée dit quoi installer :
 - Windows : `whisper-bin-x64.zip` dans les Releases de `github.com/ggml-org/whisper.cpp`, décompressé, puis
   `whisper-server.exe` indiqué dans Réglages → Voix → Serveur whisper.cpp.
 
+**Serveur tombé** : un `whisper-server` qui s’est arrêté (plantage, mémoire épuisée, processus tué) est relancé avant
+l’envoi suivant. S’il tombe en pleine transcription (sous Windows : « Une connexion existante a dû être fermée par
+l’hôte distant (os error 10054) »), Alfred le relance et refait la transcription une fois. S’il retombe, le message
+cite les dernières lignes de son journal et conseille un niveau plus léger ou un nouveau téléchargement du modèle ;
+la dictée suivante repart d’un serveur neuf. Après un changement de réglages, l’ancien serveur n’est jamais relancé.
+
 ### Voix d’Alfred : Qwen3-TTS
 
 Le modèle est téléchargé par le programme Python de la voix (`voice/qwen_worker.py`), avec la bibliothèque Python de
@@ -178,6 +184,23 @@ menu Démarrer :
 | `HF_TOKEN` | le jeton qu’Alfred enverrait (réglage, puis `HF_TOKEN`) ; sinon Python lit le fichier de `huggingface-cli login` |
 | `HF_HOME` | le dossier du cache d’Alfred (sauf si `HF_HUB_CACHE` est déjà fixé) : un seul cache pour tous |
 | `HF_HUB_ETAG_TIMEOUT`, `HF_HUB_DOWNLOAD_TIMEOUT` | 86400 avec un miroir, qui peut mettre longtemps à répondre la première fois |
+| `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` | `certificats/racines-du-systeme.pem` du dossier d’Alfred (sauf si déjà fixées) |
+| `ALFRED_CA_BUNDLE` | le même fichier, pour que le programme le reconnaisse |
+
+**Certificats** : Python ne lit pas le Trousseau ni le magasin de Windows ; avec ses seules autorités (certifi), il
+refuse un miroir signé par l’autorité d’une entreprise (« CERTIFICATE_VERIFY_FAILED … self-signed certificate in
+certificate chain »). Deux défenses, sans jamais désactiver la vérification :
+
+1. `truststore` (installé avec la voix, version figée, publié depuis `github.com/sethmlarson/truststore` avec
+   attestation de provenance sur PyPI) : `truststore.inject_into_ssl()` au tout début du programme, avant toute
+   connexion. requests, urllib3 et httpx font alors vérifier chaque certificat par le système lui-même. Le
+   programme retire les variables ci-dessus qui désignent le fichier d’Alfred.
+2. En secours, pour une voix installée avant `truststore` : Alfred écrit à chaque lancement les racines du système
+   (rustls-native-certs, y compris l’autorité de l’entreprise) dans `racines-du-systeme.pem` et y pointe Python.
+
+Un certificat refusé est dit en français : « le certificat de <hôte> n’est pas reconnu … », la cause TLS étant
+retrouvée sous l’erreur vague de huggingface_hub. L’installation passe aussi par les certificats du système
+(`UV_SYSTEM_CERTS`, `UV_NATIVE_TLS` pour uv).
 
 Le jeton n’apparaît dans aucun journal : la sortie d’erreur du programme est ignorée et la structure qui le porte le
 masque à l’affichage.
@@ -204,3 +227,5 @@ cached snapshot folder ») ; un modèle déjà dans le cache reste lu.
 | « la version … du modèle … n’est pas prise en charge par cette version d’Alfred » | la dernière révision a changé de format : mettre à jour Alfred |
 | « le modèle Whisper … n’est pas téléchargé » | niveau choisi absent du cache : Réglages → Voix, Télécharger |
 | « whisper-server (whisper.cpp) est introuvable : … » | whisper.cpp pas installé : la suite du message dit quoi installer |
+| « Qwen : le certificat de … n’est pas reconnu » | Python refuse l’autorité du miroir : certificat de l’entreprise absent du système |
+| « whisper-server s’est arrêté pendant la transcription (…) » | le serveur est retombé après relance : niveau plus léger, ou modèle à télécharger à nouveau |

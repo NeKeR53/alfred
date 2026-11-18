@@ -363,6 +363,41 @@ struct QwenProcess {
     waiting: Waiting,
 }
 
+/// L'erreur du programme Qwen, lisible : un certificat refusé par Python (miroir des modèles derrière l'autorité
+/// d'une entreprise) est dit en français, avec l'hôte, plutôt que la trace de requests ou d'httpx.
+fn qwen_message(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    // requests et urllib3 (CERTIFICATE_VERIFY_FAILED), truststore (« certificate is not trusted » sur Mac,
+    // CERT_E_UNTRUSTEDROOT sous Windows), et la cause qu'en retrouve le programme (« certificate refused »).
+    if ["certificate_verify_failed", "certificate verify failed", "certificate refused", "certificate is not trusted", "cert_e_"]
+        .iter()
+        .any(|sign| lower.contains(sign))
+    {
+        let host = ["host='", "host=\"", "https://"]
+            .iter()
+            .find_map(|start| {
+                let rest = &raw[raw.find(start)? + start.len()..];
+                let end = rest.find(['\'', '"', '/', ':', ' ', ')']).unwrap_or(rest.len());
+                Some(&rest[..end]).filter(|host| !host.is_empty())
+            })
+            .unwrap_or("la source des modèles");
+        let reason = lower
+            .find("certificate verify failed: ")
+            .map(|at| &raw[at + "certificate verify failed: ".len()..])
+            .and_then(|rest| rest.split(['(', ')', '\'', '"']).next())
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(|reason| format!(" (Python : {reason})"))
+            .unwrap_or_default();
+        return format!(
+            "Qwen : le certificat de {host} n'est pas reconnu{reason}. Le modèle de la voix d'Alfred n'a pas pu être \
+téléchargé : vérifiez que le certificat de l'entreprise est installé dans le trousseau (Mac) ou le magasin de \
+certificats (Windows), puis réessayez"
+        );
+    }
+    format!("Qwen : {raw}")
+}
+
 impl QwenProcess {
     fn start(settings: &QwenSettings) -> Result<Self, VoiceError> {
         let waiting: Waiting = Arc::default();
@@ -415,7 +450,7 @@ impl QwenProcess {
                     continue;
                 };
                 let result = match message.get("error").and_then(|e| e.as_str()) {
-                    Some(error) => Err(VoiceError::Speech(format!("Qwen : {error}"))),
+                    Some(error) => Err(VoiceError::Speech(qwen_message(error))),
                     None => Ok(()),
                 };
                 if let Some(done) = reader_waiting.lock().expect("verrou Qwen").remove(&id) {
@@ -425,7 +460,7 @@ impl QwenProcess {
             // Processus terminé : les phrases en attente échouent, la suivante le relance.
             let message = load_error.unwrap_or_else(|| "le processus s'est arrêté".into());
             for (_, done) in reader_waiting.lock().expect("verrou Qwen").drain() {
-                let _ = done.send(Err(VoiceError::Speech(format!("Qwen : {message}"))));
+                let _ = done.send(Err(VoiceError::Speech(qwen_message(&message))));
             }
         });
         Ok(Self {
@@ -988,6 +1023,24 @@ done
             env.trim(),
             "HF_ENDPOINT=http://127.0.0.1:9/miroir HF_TOKEN=jeton-secret HF_HOME=/cache/huggingface"
         );
+    }
+
+    #[test]
+    fn a_refused_certificate_is_explained_in_french() {
+        let raw = "(MaxRetryError(\"HTTPSConnectionPool(host='miroir.exemple.fr', port=443): Max retries exceeded with url: /artifactory/api/huggingfaceml/huggingface/Qwen/Qwen3-TTS-12Hz-1.7B-Base/resolve/main/config.json (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1010)')))\"), '(Request ID: 1)')";
+        assert_eq!(
+            qwen_message(raw),
+            "Qwen : le certificat de miroir.exemple.fr n'est pas reconnu (Python : self-signed certificate in \
+certificate chain). Le modèle de la voix d'Alfred n'a pas pu être téléchargé : vérifiez que le certificat de \
+l'entreprise est installé dans le trousseau (Mac) ou le magasin de certificats (Windows), puis réessayez"
+        );
+        // httpx : l'adresse plutôt que host='…'.
+        let httpx = "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1010) https://autre.exemple.fr/api/models";
+        assert!(qwen_message(httpx).starts_with("Qwen : le certificat de autre.exemple.fr n'est pas reconnu (Python : unable to get local issuer certificate)."));
+        // truststore sur Mac, cause retrouvée par le programme sous l'erreur vague de huggingface_hub.
+        let truststore = "certificate refused: ('“miroir.exemple.fr” certificate is not trusted',) (host='miroir.exemple.fr')";
+        assert!(qwen_message(truststore).starts_with("Qwen : le certificat de miroir.exemple.fr n'est pas reconnu. "));
+        assert_eq!(qwen_message("le modèle est introuvable"), "Qwen : le modèle est introuvable");
     }
 
     #[cfg(unix)]

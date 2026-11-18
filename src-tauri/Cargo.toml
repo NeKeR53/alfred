@@ -69,6 +69,9 @@ quick-xml = "0.42"
 # `huggingface-cli login`). Le téléchargement passe par le client reqwest d’Alfred (racines du système), si bien
 # que les certificats d’entreprise installés sur le poste sont acceptés.
 hf-hub = { version = "=0.5.0", default-features = false }
+# Racines de certificats du système (Trousseau, magasin de Windows), données aux programmes Python lancés par Alfred :
+# sans elles, Python ne reconnaît pas l’autorité d’une entreprise. Déjà là par reqwest (rustls-tls-native-roots).
+rustls-native-certs = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
