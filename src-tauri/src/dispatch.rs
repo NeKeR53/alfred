@@ -211,6 +211,10 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
+    // Espace d’avant le choix des pages par compte : chaque compte garde les pages qu’il montre.
+    if let Err(error) = space.migrate_account_pages() {
+        log::error!("pages des comptes non reprises : {}", error.message);
+    }
     // Les services restés après la suppression de leur module (avant que le retrait ne les emporte) s’en vont.
     if let Err(error) = crate::clients::forget_unused(state, &space) {
         log::error!("services sans module non retirés : {}", error.message);

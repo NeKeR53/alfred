@@ -31,7 +31,7 @@ export interface ResolvedPage {
   perInstance?: string | null;
 }
 
-/** Page qui est pour chaque compte d’un client : la fiche d’un compte propose de la cocher. */
+/** Page qui est pour chaque compte d’un client : la fiche d’un compte propose de l’ajouter. */
 export interface AccountPage {
   /** `module/page` ; la page d’un compte est `module/page@instance`. */
   reference: string;
@@ -164,8 +164,10 @@ export interface Snapshot {
   layout?: Layout;
   /** Modules affichés avec leurs données d’exemple (réglage du poste, hors de l’espace). */
   examples?: string[];
-  /** Pages qui sont pour chaque compte d’un client, cochées ou non compte par compte. */
+  /** Pages qui sont pour chaque compte d’un client, que l’utilisateur peut ajouter à un compte. */
   accountPages?: AccountPage[];
+  /** Pages ajoutées à chaque compte : `client/instance` → `module/page`. */
+  accounts?: Record<string, string[]>;
 }
 
 export interface Override {
@@ -174,8 +176,6 @@ export interface Override {
   color?: string;
   hidden?: boolean;
   placement?: Placement;
-  /** Page d’un compte (`page:module/page@instance`) décochée dans la fiche du compte : elle n’existe pas pour lui. */
-  excluded?: boolean;
 }
 
 export interface Layout {

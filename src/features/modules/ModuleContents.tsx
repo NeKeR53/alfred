@@ -125,7 +125,7 @@ export function ModuleContents({
                       (candidate) => candidate.module === module.id && candidate.instance === instance,
                     );
                     if (section) return `Entrée « ${section.label} » dans le menu`;
-                    // Toutes ses pages sont décochées : le compte n’a pas d’entrée.
+                    // Aucune page ajoutée : le compte n’a pas d’entrée.
                     return perInstance(need.id) ? "Aucune page dans le menu pour ce compte" : undefined;
                   }}
                 >

@@ -233,6 +233,10 @@ beforeEach(() => {
         delete pending[`${client}#${instance.id}`];
         return describe(owner);
       }
+      case "clients.setAccountPages": {
+        const { client, instance, pages } = args as { client: string; instance: string; pages: string[] };
+        return { accounts: { [`${client}/${instance}`]: pages } };
+      }
       case "clients.deleteInstance": {
         const { client, instance } = args as { client: string; instance: string };
         const owner = stored.find((known) => known.id === client) as Stored;
@@ -704,7 +708,7 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
 });
 
-it("fait choisir, compte par compte, les pages du module qui existent pour lui", async () => {
+it("fait ajouter et retirer, compte par compte, les pages du module qui sont pour ses comptes", async () => {
   const user = userEvent.setup();
   stored = [
     {
@@ -733,59 +737,72 @@ it("fait choisir, compte par compte, les pages du module qui existent pour lui",
     { reference: "suivi/tickets", module: "suivi", title: "Tickets", section: "Suivi", need: "jira", client: "jira" },
     { reference: "suivi/sprints", module: "suivi", title: "Sprints", section: "Suivi", need: "jira", client: "jira" },
   ];
-  renderModules([], [], { accountPages, layout: { sections: [] } });
+  renderModules([], [], { accountPages, accounts: {} });
   await openModule(user, "Suivi");
-  expect(screen.getByText("Le module ajoute une entrée au menu par compte.", { exact: false })).toBeInTheDocument();
 
-  const addAccount = async (url: string, uncheck: string[]) => {
+  /** Ajoute un compte : sa fiche reste ouverte, sans page, et invite à en ajouter. */
+  const addAccount = async (url: string) => {
     await user.click(await screen.findByRole("button", { name: "Ajouter un compte à Jira" }));
-    const pages = await screen.findByRole("group", { name: "Pages de ce compte" });
-    // À la création, toutes les pages sont cochées.
-    expect(within(pages).getByRole("checkbox", { name: "Tickets" })).toBeChecked();
-    expect(within(pages).getByRole("checkbox", { name: "Sprints" })).toBeChecked();
-    for (const title of uncheck) await user.click(within(pages).getByRole("checkbox", { name: title }));
-    await user.type(screen.getByLabelText("Adresse de votre compte"), url);
+    expect(screen.queryByRole("heading", { name: "Pages de ce compte" })).not.toBeInTheDocument();
+    await user.type(await screen.findByLabelText("Adresse de votre compte"), url);
     await user.type(screen.getByLabelText("Jeton d’accès"), "pat-123");
     await user.click(screen.getByRole("button", { name: "Ajouter" }));
-    await screen.findByRole("group", { name: "Comptes Jira" });
+    expect(await screen.findByRole("heading", { name: "Pages de ce compte" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Votre compte est ajouté. Choisissez les pages à montrer pour lui dans le menu."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Aucune page pour ce compte pour l’instant.")).toBeInTheDocument();
   };
-  // Le compte « Jira » reçoit X et Y ; le compte « Jira Desk », seulement X.
-  await addAccount("https://jira.acme.fr", []);
-  expect(lastCall("clients.saveInstance")).toMatchObject({
-    create: true,
-    instance: { id: "compte" },
-    pages: { "suivi/tickets": true, "suivi/sprints": true },
-  });
-  await addAccount("https://desk.acme.fr", ["Sprints"]);
-  expect(lastCall("clients.saveInstance")).toMatchObject({
-    create: true,
-    instance: { id: "compte-2" },
-    pages: { "suivi/tickets": true, "suivi/sprints": false },
-  });
-  // Ajouter le deuxième compte n’a rien écrit pour le premier.
-  const saved = calls.filter((call) => call.command === "clients.saveInstance");
-  expect(saved.map((call) => (call.args.instance as ClientInstanceConfig).id)).toEqual(["compte", "compte-2"]);
+  const addPage = async (title: string) => {
+    await user.click(screen.getByRole("button", { name: "Ajouter une page" }));
+    await user.click(await screen.findByRole("menuitem", { name: title }));
+    await screen.findByRole("button", { name: `Retirer la page ${title}` });
+  };
 
-  // Le choix enregistré se relit dans la fiche du compte, et reste modifiable.
-  useShell.setState((state) => ({
-    snapshot: state.snapshot && {
-      ...state.snapshot,
-      layout: { sections: [], overrides: { "page:suivi/sprints@compte-2": { excluded: true } } },
-    },
-  }));
-  await user.click(await menuItem(user, "Jira — desk.acme.fr", "Modifier le compte…"));
-  const pages = await screen.findByRole("group", { name: "Pages de ce compte" });
-  expect(within(pages).getByRole("checkbox", { name: "Tickets" })).toBeChecked();
-  expect(within(pages).getByRole("checkbox", { name: "Sprints" })).not.toBeChecked();
-  await user.click(within(pages).getByRole("checkbox", { name: "Sprints" }));
-  await user.click(within(pages).getByRole("checkbox", { name: "Tickets" }));
-  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  await screen.findByRole("group", { name: "Comptes Jira" });
-  expect(lastCall("clients.saveInstance")).toMatchObject({
-    create: false,
-    instance: { id: "compte-2" },
-    pages: { "suivi/tickets": false, "suivi/sprints": true },
+  // Le compte « Jira » reçoit X et Y : rien d’office, puis une page après l’autre.
+  await addAccount("https://jira.acme.fr");
+  expect(lastCall("clients.saveInstance")).not.toHaveProperty("pages");
+  await addPage("Tickets");
+  expect(lastCall("clients.setAccountPages")).toEqual({ client: "jira", instance: "compte", pages: ["suivi/tickets"] });
+  await addPage("Sprints");
+  expect(lastCall("clients.setAccountPages")).toEqual({
+    client: "jira",
+    instance: "compte",
+    pages: ["suivi/tickets", "suivi/sprints"],
   });
+  // Toutes les pages sont là : plus rien à ajouter.
+  expect(screen.queryByRole("button", { name: "Ajouter une page" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Terminer" }));
+
+  // Le compte « Jira Desk » ne reçoit que X ; le premier compte n’est pas touché.
+  await addAccount("https://desk.acme.fr");
+  await addPage("Tickets");
+  expect(lastCall("clients.setAccountPages")).toEqual({
+    client: "jira",
+    instance: "compte-2",
+    pages: ["suivi/tickets"],
+  });
+  const chosen = calls.filter((call) => call.command === "clients.setAccountPages");
+  expect(chosen.filter((call) => call.args.instance === "compte")).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: "Terminer" }));
+
+  // La fiche d’un compte existant liste ses pages, et chacune se retire.
+  useShell.setState((state) => ({
+    snapshot: state.snapshot && { ...state.snapshot, accounts: { "jira/compte": ["suivi/tickets", "suivi/sprints"] } },
+  }));
+  await user.click(await menuItem(user, "Jira — jira.acme.fr", "Modifier le compte…"));
+  const pages = await screen.findByRole("group", { name: "Pages de Jira — jira.acme.fr" });
+  expect(within(pages).getByText("Tickets")).toBeInTheDocument();
+  expect(within(pages).getByText("Sprints")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retirer la page Sprints" }));
+  await waitFor(() =>
+    expect(lastCall("clients.setAccountPages")).toEqual({
+      client: "jira",
+      instance: "compte",
+      pages: ["suivi/tickets"],
+    }),
+  );
+  expect(await screen.findByRole("button", { name: "Ajouter une page" })).toBeInTheDocument();
 });
 
 it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs", async () => {

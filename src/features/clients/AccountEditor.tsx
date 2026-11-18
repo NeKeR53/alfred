@@ -11,7 +11,6 @@ import {
   CheckboxControl,
   Disclosure,
   FeedbackBanner,
-  Fieldset,
   FormActions,
   FormField,
   Page,
@@ -23,10 +22,9 @@ import {
   TextInput,
 } from "@alfred/ui";
 import { type FormEvent, useEffect, useId, useState } from "react";
-import type { AccountPage, Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
-import { useShell } from "../../shell/store";
 import { errorMessage, listVault, saveVaultEntry, type VaultEntry, type VaultKind } from "../vault/api";
+import { AccountPages } from "./AccountPages";
 import {
   AUTH_TYPES,
   type AuthType,
@@ -145,24 +143,6 @@ const headersText = (headers: Record<string, string> | undefined) =>
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
 
-/**
- * Pages qui sont pour chaque compte de ce client, et si elles sont cochées pour celui-ci : toutes pour un compte
- * nouveau, sinon toutes sauf celles que l’utilisateur a décochées (`excluded` de `page:module/page@compte`).
- */
-export function accountPagesOf(
-  snapshot: Snapshot | null | undefined,
-  client: string,
-  instance: string | undefined,
-): Array<AccountPage & { selected: boolean }> {
-  const overrides = snapshot?.layout?.overrides ?? {};
-  return (snapshot?.accountPages ?? [])
-    .filter((page) => page.client === client)
-    .map((page) => ({
-      ...page,
-      selected: instance === undefined || !overrides[`page:${page.reference}@${instance}`]?.excluded,
-    }));
-}
-
 type Errors = Partial<Record<"url" | "login" | "secret" | "headers", string>>;
 
 export function AccountEditor({
@@ -170,6 +150,7 @@ export function AccountEditor({
   initial,
   help,
   redirectUri,
+  created = false,
   onCancel,
   onSaved,
 }: {
@@ -179,8 +160,11 @@ export function AccountEditor({
   /** Aide du module : où trouver la clé, quel compte utiliser. */
   help?: string;
   redirectUri: string | null;
+  /** Le compte vient d’être ajouté : la fiche invite d’abord à lui ajouter des pages. */
+  created?: boolean;
   onCancel: () => void;
-  onSaved: () => void;
+  /** `created` : le compte est nouveau ; `saved`, le service tel qu’il est maintenant. */
+  onSaved: (result: { saved: ClientItem; instance: string; created: boolean }) => void;
 }) {
   const formId = useId();
   const simple = client.simple;
@@ -194,12 +178,6 @@ export function AccountEditor({
   const [entries, setEntries] = useState<VaultEntry[]>();
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
-  const snapshot = useShell((state) => state.snapshot);
-  // Le choix se lit une fois, à l’ouverture : la fiche le garde ensuite tel que l’utilisateur le règle.
-  const [pages, setPages] = useState(() =>
-    accountPagesOf(snapshot, client.id, editing ? editing.id : simple ? "default" : undefined),
-  );
-  const severalSections = new Set(pages.map((page) => `${page.module}/${page.section}`)).size > 1;
 
   const type: AuthType | undefined = simple
     ? client.auth?.type
@@ -264,11 +242,9 @@ export function AccountEditor({
       const extra = parseHeaders(headers).headers;
       if (Object.keys(extra).length > 0) instance.headers = extra;
       if (insecureTls) instance.insecureTls = true;
-      const choice =
-        pages.length > 0 ? Object.fromEntries(pages.map((page) => [page.reference, page.selected])) : undefined;
-      await saveInstance(client.id, instance, !simple && !initial, choice);
+      const saved = await saveInstance(client.id, instance, !simple && !initial);
       notify({ title: editing && (simple || initial) ? "Compte enregistré" : "Compte ajouté", tone: "success" });
-      onSaved();
+      onSaved({ saved, instance: instance.id, created: !simple && !initial });
     } catch (failure) {
       notify({ title: "Le compte n’a pas été enregistré", description: errorMessage(failure), tone: "error" });
       setPending(false);
@@ -278,8 +254,11 @@ export function AccountEditor({
   const clear = (key: keyof Errors) => setErrors((current) => ({ ...current, [key]: undefined }));
   const adding = !simple && !initial;
 
+  const pages = editing ? <AccountPages client={client} instance={editing} created={created} /> : null;
+
   return (
     <Page width="text">
+      {created ? pages : null}
       <Section
         title={adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`}
         description="Vos identifiants restent sur cet ordinateur, dans le coffre."
@@ -365,26 +344,6 @@ export function AccountEditor({
                 navigateur.
               </FeedbackBanner>
             ) : null}
-            {pages.length > 0 ? (
-              <Fieldset
-                legend="Pages de ce compte"
-                hint="Les pages du menu qui existent pour ce compte. Une page décochée quitte le menu ; ses données restent."
-              >
-                {pages.map((page) => (
-                  <CheckboxControl
-                    key={page.reference}
-                    label={severalSections ? `${page.title} · ${page.section}` : page.title}
-                    checked={page.selected}
-                    onChange={(event) => {
-                      const selected = event.target.checked;
-                      setPages((current) =>
-                        current.map((item) => (item.reference === page.reference ? { ...item, selected } : item)),
-                      );
-                    }}
-                  />
-                ))}
-              </Fieldset>
-            ) : null}
             <Disclosure
               label="Options avancées"
               appearance="subtle"
@@ -424,11 +383,13 @@ export function AccountEditor({
               submitLabel={adding ? "Ajouter" : "Enregistrer"}
               pendingLabel="Enregistrement…"
               pending={pending}
+              cancelLabel={created ? "Terminer" : undefined}
               onCancel={onCancel}
             />
           </Stack>
         </form>
       </Section>
+      {created ? null : pages}
     </Page>
   );
 }

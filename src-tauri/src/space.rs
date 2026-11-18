@@ -30,6 +30,16 @@ pub struct SpaceManifest {
     /// Client demandé par un module (`module/client`) → client déclaré dans l’espace.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, String>,
+    /// Pages que l’utilisateur a ajoutées à chaque compte (`client/instance` → `module/page`), parmi celles qui sont
+    /// pour ses comptes (`perInstance`). Un compte absent n’en a aucune. `None` : espace d’avant ce choix, où chaque
+    /// compte montre toutes ses pages jusqu’à `migrate_account_pages`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_pages: Option<BTreeMap<String, Vec<String>>>,
+}
+
+/// Clé d’un compte dans `account_pages`.
+pub fn account_key(client: &str, instance: &str) -> String {
+    format!("{client}/{instance}")
 }
 
 /// Réorganisation faite par l’utilisateur. Elle ne touche jamais aux modules, donc s’applique aussi à ceux qui
@@ -60,10 +70,6 @@ pub struct Override {
     pub hidden: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placement: Option<Placement>,
-    /// Page d’un compte (`page:<module>/<page>@<instance>`) que l’utilisateur a décochée dans la fiche du compte :
-    /// elle n’existe pas pour ce compte. Seul l’utilisateur la règle ; ses données restent.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub excluded: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -321,7 +327,7 @@ pub struct PageDecl {
     #[serde(default, skip_serializing_if = "Uses::is_empty")]
     pub uses: Uses,
     /// Besoin client du module (`jira`, ou `dépendance/besoin`) dont la page est pour chaque compte : elle existe
-    /// une fois par instance du client, pour les comptes où l’utilisateur l’a cochée.
+    /// une fois par instance du client, pour les comptes où l’utilisateur l’a ajoutée.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_instance: Option<String>,
 }
@@ -520,8 +526,10 @@ pub struct Snapshot {
     /// Modules affichés avec leurs données d’exemple (réglage du poste, dans la base d’Alfred) ; rempli par la
     /// commande qui envoie la vue à l’interface.
     pub examples: Vec<String>,
-    /// Pages qui sont pour chaque compte d’un client, cochées ou non compte par compte.
+    /// Pages qui sont pour chaque compte d’un client, que l’utilisateur peut ajouter à un compte.
     pub account_pages: Vec<AccountPage>,
+    /// Pages ajoutées à chaque compte (`client/instance` → `module/page`), pour chaque compte d’un client qui en a.
+    pub accounts: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -573,7 +581,7 @@ pub struct ResolvedPage {
     pub per_instance: Option<String>,
 }
 
-/// Page qui est pour chaque compte d’un client : ce que la fiche d’un compte propose de cocher.
+/// Page qui est pour chaque compte d’un client : ce que la fiche d’un compte propose d’ajouter.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountPage {
@@ -1138,17 +1146,18 @@ impl Space {
 
     /// Répète pour chaque instance d’un client les pages qui sont pour ses comptes : celles d’une section par
     /// instance, ou qui le déclarent elles-mêmes. Chaque compte a sa copie de la section, avec les seules pages que
-    /// l’utilisateur a cochées pour lui ; les autres pages de la section restent dans la section d’origine. Sans
+    /// l’utilisateur lui a ajoutées ; les autres pages de la section restent dans la section d’origine. Sans
     /// instance (ou sans client), la section reste seule et dit quoi faire.
     fn expand_instances(
         &self,
         sections: Vec<ResolvedSection>,
         manifest: &SpaceManifest,
         problems: &mut Vec<Problem>,
-    ) -> (Vec<ResolvedSection>, Vec<AccountPage>) {
+    ) -> (Vec<ResolvedSection>, Vec<AccountPage>, BTreeMap<String, Vec<String>>) {
         let overrides = &manifest.layout.overrides;
         let mut expanded = Vec::new();
         let mut account_pages = Vec::new();
+        let mut accounts: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for mut section in sections {
             // Une section par instance rend chacune de ses pages pour chaque compte.
             if let Some(need) = &section.per_instance {
@@ -1212,15 +1221,22 @@ impl Space {
                         expanded.push(ResolvedSection { pages: shared, per_instance: None, ..section.clone() });
                     }
                     for instance in &client.instances {
-                        let excluded = |page: &ResolvedPage| {
-                            overrides.get(&format!("page:{}@{}", page.reference, instance.id)).is_some_and(|o| o.excluded)
+                        let key = account_key(&client.id, &instance.id);
+                        // Espace d’avant le choix par compte : chaque compte montre toutes ses pages.
+                        let added = |page: &ResolvedPage| match &manifest.account_pages {
+                            None => true,
+                            Some(chosen) => chosen.get(&key).is_some_and(|pages| pages.contains(&page.reference)),
                         };
                         let pages: Vec<ResolvedPage> = own
                             .iter()
-                            .filter(|page| !excluded(page))
+                            .filter(|page| added(page))
                             .map(|page| page_for_instance(page, &instance.id, overrides))
                             .collect();
-                        // Aucune page cochée pour ce compte : il n’a pas d’entrée dans cette section.
+                        accounts
+                            .entry(key.clone())
+                            .or_default()
+                            .extend(own.iter().filter(|page| added(page)).map(|page| page.reference.clone()));
+                        // Aucune page ajoutée à ce compte : il n’a pas d’entrée dans cette section.
                         if pages.is_empty() {
                             continue;
                         }
@@ -1255,28 +1271,60 @@ impl Space {
                 Err(error) => expanded.push(ResolvedSection { waiting: Some(error.message), ..section }),
             }
         }
-        (expanded, account_pages)
+        // Chaque compte d’un client qui a des pages par compte figure, même sans page ajoutée.
+        for page in &account_pages {
+            if let Some(client) = page.client.as_deref() {
+                if let Ok(Some(def)) = crate::clients::load(self, client) {
+                    for instance in &def.instances {
+                        accounts.entry(account_key(client, &instance.id)).or_default();
+                    }
+                }
+            }
+        }
+        (expanded, account_pages, accounts)
     }
 
-    /// Coche ou décoche, pour un compte, les pages qui sont pour les comptes de son client (`AccountPage`). Seules
-    /// les pages nommées changent : les autres comptes, et les autres pages de celui-ci, gardent leur choix.
-    pub fn set_account_pages(&self, instance: &str, choices: &[(String, bool)]) -> AppResult<()> {
-        if !valid_id(instance) {
-            return Err(AppError::new(format!("Compte invalide : « {instance} ».")));
+    /// Fixe les pages ajoutées à un compte. Seul ce compte change : les autres gardent les leurs.
+    pub fn set_account_pages(&self, client: &str, instance: &str, pages: Vec<String>) -> AppResult<()> {
+        if !valid_id(client) || !valid_id(instance) {
+            return Err(AppError::new(format!("Compte invalide : « {client}/{instance} ».")));
         }
-        let mut manifest = self.manifest()?;
-        for (reference, selected) in choices {
+        for reference in &pages {
             if reference.contains('@') || reference.split_once('/').is_none_or(|(module, page)| !valid_id(module) || !valid_id(page)) {
                 return Err(AppError::new(format!("Page attendue : « module/page », pas « {reference} ».")));
             }
-            let key = format!("page:{reference}@{instance}");
-            let entry = manifest.layout.overrides.entry(key.clone()).or_default();
-            entry.excluded = !selected;
-            if *entry == Override::default() {
-                manifest.layout.overrides.remove(&key);
+        }
+        self.migrate_account_pages()?;
+        let mut manifest = self.manifest()?;
+        let mut pages = pages;
+        pages.dedup();
+        manifest.account_pages.get_or_insert_with(BTreeMap::new).insert(account_key(client, instance), pages);
+        self.write_manifest(&manifest)
+    }
+
+    /// Oublie les pages d’un compte supprimé : recréé sous le même nom, il repart sans page.
+    pub fn forget_account_pages(&self, client: &str, instance: &str) -> AppResult<()> {
+        self.migrate_account_pages()?;
+        let mut manifest = self.manifest()?;
+        if let Some(chosen) = manifest.account_pages.as_mut() {
+            if chosen.remove(&account_key(client, instance)).is_some() {
+                self.write_manifest(&manifest)?;
             }
         }
-        self.write_manifest(&manifest)
+        Ok(())
+    }
+
+    /// Espace d’avant le choix par compte : chaque compte qui existe garde les pages qu’il montre (toutes celles
+    /// de ses sections par instance), écrites une fois pour toutes. Les comptes ajoutés ensuite partent sans page.
+    pub fn migrate_account_pages(&self) -> AppResult<bool> {
+        if self.manifest()?.account_pages.is_some() {
+            return Ok(false);
+        }
+        let accounts = self.snapshot()?.accounts;
+        let mut manifest = self.manifest()?;
+        manifest.account_pages = Some(accounts);
+        self.write_manifest(&manifest)?;
+        Ok(true)
     }
 
     /// Calcule la navigation affichée et l’état de compilation de chaque page et fonction.
@@ -1410,7 +1458,7 @@ impl Space {
             }
         }
 
-        let (mut sections, account_pages) = self.expand_instances(sections, &manifest, &mut problems);
+        let (mut sections, account_pages, accounts) = self.expand_instances(sections, &manifest, &mut problems);
         // Une copie par instance prend la place de sa section tant que l’utilisateur ne l’a pas rangée elle-même.
         order_by_either(&mut sections, &manifest.layout.sections, |section| {
             (section.id.as_str(), section.instance_of.as_deref())
@@ -1498,6 +1546,7 @@ impl Space {
             layout: manifest.layout,
             examples: Vec::new(),
             account_pages,
+            accounts,
         })
     }
 }

@@ -1002,7 +1002,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 })).collect::<Vec<_>>(),
                 "next": match status {
                     "toValidate" => "Client « à valider » : s’il lui faut un secret, `vault_store` puis `declare_client` avec `auth.secret` (ou le `secret` de chaque instance) ; appeler `validate_client`, puis `grant_access` pour chaque page ou module qui l’utilise. Le déclarer aussi dans `clients` du module.json.",
-                    "noInstance" => "Client enregistré, sans instance : `vault_store` pour chaque compte, puis `declare_client` avec `instances` (id, label, url, method, secret), puis `validate_client`. Une page choisit l’instance par `client(id, { instance })` et les liste par `client(id).instances()` ; une page ou une section `perInstance` le suit d’office, pour les comptes où l’utilisateur l’a cochée.",
+                    "noInstance" => "Client enregistré, sans instance : `vault_store` pour chaque compte, puis `declare_client` avec `instances` (id, label, url, method, secret), puis `validate_client`. Une page choisit l’instance par `client(id, { instance })` et les liste par `client(id).instances()` ; une page ou une section `perInstance` le suit, pour les comptes où l’utilisateur l’a ajoutée.",
                     _ => "Client enregistré. Le déclarer dans `clients` du module.json qui l’utilise, puis appeler `check`.",
                 },
             }))
