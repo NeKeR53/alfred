@@ -14,10 +14,23 @@ erreur qui le dit.
 
 ## Téléchargement
 
-Alfred passe par [`hf-hub`](https://crates.io/crates/hf-hub) 0.5.0, la bibliothèque Rust de Hugging Face (dépôt
-`huggingface/hf-hub`) : mêmes adresses (`<source>/<dépôt>/resolve/<révision>/<fichier>`), mêmes en-têtes et même cache
-que la bibliothèque Python `huggingface_hub`. La 1.0 n’est pas retenue : elle télécharge par Xet, un protocole à part
-qu’un miroir ne relaie pas forcément et qu’on ne peut pas couper, et ajoute près de 300 dépendances.
+Alfred suit le déroulé de `snapshot_download`, que la documentation d’Artifactory demande pour résoudre un modèle :
+
+1. la liste des fichiers du modèle à sa révision : `GET <source>/api/models/<dépôt>/revision/<révision>`. La réponse
+   doit porter la révision figée et chacun des fichiers attendus ;
+2. chaque fichier : `GET <source>/<dépôt>/resolve/<révision>/<fichier>`, un simple GET, sans demande de plage.
+
+La première étape, les adresses, le jeton et le cache passent par [`hf-hub`](https://crates.io/crates/hf-hub) 0.5.0,
+la bibliothèque Rust de Hugging Face (dépôt `huggingface/hf-hub`). Les fichiers, eux, ne passent pas par son
+téléchargement : il demande d’abord l’octet 0 de chaque fichier et exige un en-tête `Content-Range`, qu’Artifactory
+ne renvoie pas (« en-tête content-range absent »). Le GET simple est celui de la bibliothèque Python.
+
+Pas de délai d’attente : la première fois, Artifactory peut mettre longtemps à répondre, le temps de récupérer le
+fichier chez Hugging Face. C’est ce que sa documentation obtient en Python avec `etag_timeout=86400` ou
+`HF_HUB_ETAG_TIMEOUT` ; Alfred attend sans limite.
+
+La 1.0 de `hf-hub` n’est pas retenue : elle télécharge par Xet, un protocole à part qu’un miroir ne relaie pas
+forcément et qu’on ne peut pas couper, et ajoute près de 300 dépendances.
 
 TLS : `hf-hub` emploie le client HTTP d’Alfred (reqwest, rustls) avec les **certificats racines du système** —
 Trousseau d’accès sur Mac, magasin de certificats sur Windows. Un certificat d’entreprise installé sur le poste est
@@ -46,8 +59,9 @@ Il part dans l’en-tête `Authorization: Bearer …`. Il n’apparaît dans auc
 ## Emplacement
 
 Le cache Hugging Face standard, partagé avec Python : `$HF_HOME/hub`, sinon `~/.cache/huggingface/hub` (sous
-Windows, `%USERPROFILE%\.cache\huggingface\hub`). Un modèle y est rangé sous
-`models--<org>--<nom>/snapshots/<révision>/`. Un modèle déjà téléchargé par Python à la même révision n’est pas
+Windows, `%USERPROFILE%\.cache\huggingface\hub`). Comme en Python, le contenu est dans
+`models--<org>--<nom>/blobs/<etag>` et `models--<org>--<nom>/snapshots/<révision>/<fichier>` le désigne par un lien
+(sous Windows, sans droit de créer un lien, le fichier y est déplacé). Un modèle déjà téléchargé par Python à la même révision n’est pas
 téléchargé à nouveau.
 
 Un modèle téléchargé avant cette version, complet dans `<données d’Alfred>/models/<modèle>`, reste là : Alfred continue
@@ -62,7 +76,8 @@ adresse :
 https://<serveur>/artifactory/api/huggingfaceml/<clé du dépôt>
 ```
 
-par exemple `https://jfrog.exemple.fr/artifactory/api/huggingfaceml/huggingface-remote`.
+où `<clé du dépôt>` est le nom affiché dans « Set Up A Hugging Face Client » (champ Repository), par exemple
+`https://jfrog.exemple.fr/artifactory/api/huggingfaceml/huggingface`.
 
 - **Avec le réglage** (conseillé sur Mac) : Réglages → Général → Source des modèles → Modifier…, « Miroir de
   l’entreprise », l’adresse ci-dessus, et le jeton d’identité Artifactory si le dépôt en demande un.
@@ -80,4 +95,5 @@ par exemple `https://jfrog.exemple.fr/artifactory/api/huggingfaceml/huggingface-
 | « … absent de … (404) » | le miroir n’a pas ce modèle, ce fichier ou cette révision |
 | « le certificat de … est refusé » | certificat de l’entreprise non installé sur le poste |
 | « … ne répond pas comme un dépôt Hugging Face » | l’adresse ne mène pas à l’API `huggingfaceml` |
+| « … annonce la révision … au lieu de … » | le miroir ne sert pas la révision figée par Alfred |
 | « … n’a pas l’empreinte attendue : fichier écarté » | le miroir sert une autre version du fichier |

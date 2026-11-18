@@ -1,25 +1,25 @@
 //! Modèles locaux téléchargés à la demande (recherche par le sens, décisions) : chaque fichier à une révision
 //! figée, son empreinte SHA-256 vérifiée avant usage. Rien de tout cela n’est dans le dépôt ni dans l’installeur.
 //!
-//! Le téléchargement passe par `hf-hub` (bibliothèque de Hugging Face) : les fichiers vont dans le cache
-//! Hugging Face standard, partagé avec Python (`$HF_HOME/hub`, sinon `~/.cache/huggingface/hub`).
+//! Le téléchargement suit `snapshot_download` (le déroulé que demande Artifactory) : la liste des fichiers par
+//! `hf-hub` (bibliothèque de Hugging Face), puis chaque fichier par un simple GET. Les fichiers vont dans le cache
+//! Hugging Face standard, au format de Python et partagé avec lui (`$HF_HOME/hub`, sinon `~/.cache/huggingface/hub`).
 //!
 //! **Source** : le réglage d’Alfred (Réglages → Général, « Source des modèles »), sinon la variable `HF_ENDPOINT`,
 //! sinon huggingface.co. Une entreprise y met l’adresse de son miroir, par exemple un dépôt distant Hugging Face
 //! d’Artifactory (`https://…/artifactory/api/huggingfaceml/<dépôt>`).
 //!
 //! **Jeton** : celui du réglage d’Alfred (dans le trousseau, et seulement avec l’adresse de ce réglage), sinon
-//! `HF_TOKEN`, sinon le fichier de `huggingface-cli login` (`$HF_HOME/token`), que `hf-hub` lit lui-même. Le
+//! `HF_TOKEN`, sinon le fichier de `huggingface-cli login` (`$HF_HOME/token`, lu par `hf-hub`). Le
 //! jeton n’apparaît jamais dans un journal ni un message d’erreur.
 //!
 //! **Ancien emplacement** : un modèle déjà complet dans `<données d’Alfred>/models/<modèle>` (téléchargé avant
 //! `hf-hub`) y reste et y est lu tel quel ; rien n’est téléchargé à nouveau ni déplacé.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use hf_hub::api::tokio::{ApiBuilder, ApiError, Progress};
+use hf_hub::api::tokio::{ApiBuilder, ApiError};
 use hf_hub::{Cache, Repo, RepoType};
 use serde_json::{json, Value};
 
@@ -230,59 +230,45 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
 // Téléchargement
 // ---------------------------------------------------------------------------------------------------------------
 
-/// Progression de l’ensemble : `report(reçu, total)`, avec le total annoncé tant que les tailles ne sont pas connues.
-#[derive(Clone)]
-struct Tracker {
-    received: Arc<AtomicU64>,
-    file_size: Arc<AtomicU64>,
-    before: u64,
-    hint: u64,
-    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+/// Un refus du serveur, en français.
+fn status_failure(status: reqwest::StatusCode, what: &str, host: &str) -> String {
+    match status.as_u16() {
+        401 | 403 => format!("{host} refuse l’accès ({status}) : jeton manquant ou refusé. Renseignez le jeton dans Réglages → Général, Source des modèles."),
+        404 => format!("{what} ou sa révision est absent de {host} (404). Vérifiez l’adresse de la source et que le miroir donne accès à ce modèle."),
+        _ => format!("{host} a répondu {status} pour {what}."),
+    }
 }
 
-impl Progress for Tracker {
-    async fn init(&mut self, size: usize, _filename: &str) {
-        self.file_size.store(size as u64, Ordering::Relaxed);
+/// Une requête qui n’a pas abouti, en français, sans adresse complète.
+fn request_failure(failure: &reqwest::Error, what: &str, host: &str) -> String {
+    if let Some(status) = failure.status() {
+        return status_failure(status, what, host);
     }
-
-    async fn update(&mut self, size: usize) {
-        let received = self.received.fetch_add(size as u64, Ordering::Relaxed) + size as u64;
-        let total = (self.before + self.file_size.load(Ordering::Relaxed)).max(self.hint);
-        (self.report)(self.before + received, total);
+    if certificate_refused(failure) {
+        return format!("le certificat de {host} est refusé : il n’est pas reconnu par le système de cet ordinateur. Installez le certificat de l’entreprise dans le trousseau (Mac) ou le magasin de certificats (Windows).");
     }
-
-    async fn finish(&mut self) {}
+    if failure.is_timeout() {
+        return format!("{host} ne répond pas (délai dépassé).");
+    }
+    if failure.is_decode() || failure.is_body() {
+        return format!("{host} a interrompu ou mal formé sa réponse pour {what}.");
+    }
+    format!("{host} est injoignable. Vérifiez l’adresse de la source et la connexion au réseau.")
 }
 
 /// Une erreur de `hf-hub` en français, sans jeton ni adresse complète.
-pub fn explain(error: &ApiError, file: &str, source: &Source) -> String {
+pub fn explain(error: &ApiError, what: &str, source: &Source) -> String {
     let host = host(&source.endpoint);
     match error {
-        ApiError::TooManyRetries(inner) => explain(inner, file, source),
-        ApiError::RequestError(failure) => {
-            if let Some(status) = failure.status() {
-                return match status.as_u16() {
-                    401 | 403 => format!("{host} refuse l’accès ({status}) : jeton manquant ou refusé. Renseignez le jeton dans Réglages → Général, Source des modèles."),
-                    404 => format!("{file} ou sa révision est absent de {host} (404). Vérifiez l’adresse de la source et que le miroir donne accès à ce modèle."),
-                    _ => format!("{host} a répondu {status} pour {file}."),
-                };
-            }
-            if certificate_refused(failure) {
-                return format!("le certificat de {host} est refusé : il n’est pas reconnu par le système de cet ordinateur. Installez le certificat de l’entreprise dans le trousseau (Mac) ou le magasin de certificats (Windows).");
-            }
-            if failure.is_timeout() {
-                return format!("{host} ne répond pas (délai dépassé).");
-            }
-            format!("{host} est injoignable. Vérifiez l’adresse de la source et la connexion au réseau.")
-        }
+        ApiError::TooManyRetries(inner) => explain(inner, what, source),
+        ApiError::RequestError(failure) => request_failure(failure, what, &host),
         ApiError::MissingHeader(header) => format!(
             "{host} ne répond pas comme un dépôt Hugging Face (en-tête « {header} » absent) : vérifiez l’adresse de la source."
         ),
         ApiError::InvalidHeader(header) => format!("{host} a envoyé un en-tête « {header} » illisible."),
         ApiError::InvalidHeaderValue(_) => "le jeton contient des caractères interdits.".to_string(),
         ApiError::IoError(failure) => format!("écriture impossible dans le cache des modèles ({failure})."),
-        ApiError::LockAcquisition(_) => format!("{file} est déjà en cours de téléchargement par un autre programme."),
-        _ => format!("le téléchargement de {file} depuis {host} a échoué."),
+        _ => format!("{host} n’a pas répondu comme un dépôt Hugging Face pour {what}."),
     }
 }
 
@@ -327,12 +313,44 @@ pub async fn fetch(
         return Ok(());
     }
     let source = source(state)?;
-    let token = resolve_token(&source, setting_token().await?, env("HF_TOKEN"));
+    // Ni réglage ni HF_TOKEN : le fichier de `huggingface-cli login`, que `hf-hub` lit (`$HF_HOME/token`).
+    let token = resolve_token(&source, setting_token().await?, env("HF_TOKEN")).or_else(|| Cache::from_env().token());
     download(spec, &source, token, &hub_cache(), total_hint, &error, Arc::new(progress)).await
 }
 
-/// Le téléchargement lui-même, vers le cache `cache` : `token` est passé à `hf-hub` s’il y en a un, sinon
-/// `hf-hub` lit le fichier de `huggingface-cli login`.
+/// Première étape de `snapshot_download`, comme la fait la bibliothèque Python : demander la liste des fichiers
+/// du modèle à sa révision (`GET <source>/api/models/<dépôt>/revision/<révision>`). Artifactory (dépôt
+/// `huggingfaceml`) résout un modèle par ce déroulé avant d’en servir les fichiers. La réponse doit porter la
+/// révision attendue et chacun des fichiers d’Alfred.
+async fn snapshot(
+    repo: &hf_hub::api::tokio::ApiRepo,
+    spec: &ModelSpec,
+    source: &Source,
+    error: &impl Fn(String) -> AppError,
+) -> AppResult<()> {
+    let label = format!("le modèle {}", spec.repo);
+    let info = repo.info().await.map_err(|failure| error(explain(&failure, &label, source)))?;
+    let host = host(&source.endpoint);
+    if info.sha != spec.revision {
+        return Err(error(format!(
+            "{host} annonce la révision {} du modèle {} au lieu de {}.",
+            info.sha, spec.repo, spec.revision
+        )));
+    }
+    for (file, _) in spec.files {
+        if !info.siblings.iter().any(|sibling| sibling.rfilename == *file) {
+            return Err(error(format!("{file} est absent du modèle {} sur {host}.", spec.repo)));
+        }
+    }
+    Ok(())
+}
+
+/// Le téléchargement lui-même, vers le cache `cache`, comme `snapshot_download` de la bibliothèque Python : la liste
+/// des fichiers par `hf-hub` (première étape), puis chaque fichier par un simple GET sur `<source>/<dépôt>/resolve/…`.
+/// `hf-hub` 0.5 demande d’abord l’octet 0 de chaque fichier et exige un en-tête `Content-Range`, que les dépôts
+/// Hugging Face d’Artifactory ne renvoient pas : le GET simple ne dépend que du corps de la réponse. Sans délai
+/// d’attente : Artifactory peut mettre longtemps à répondre la première fois, le temps de récupérer le fichier
+/// (l’`etag_timeout=86400` de sa documentation). `token` est le jeton final (`None` : aucun).
 async fn download(
     spec: &ModelSpec,
     source: &Source,
@@ -342,18 +360,22 @@ async fn download(
     error: &impl Fn(String) -> AppError,
     report: Arc<dyn Fn(u64, u64) + Send + Sync>,
 ) -> AppResult<()> {
-    let mut builder = ApiBuilder::from_env()
+    let api = ApiBuilder::from_env()
         .with_cache_dir(cache.to_path_buf())
         .with_endpoint(source.endpoint.clone())
         .with_progress(false)
-        .with_user_agent("alfred", env!("CARGO_PKG_VERSION"));
-    if token.is_some() {
-        builder = builder.with_token(token);
-    }
-    let api = builder.build().map_err(|failure| error(explain(&failure, spec.repo, source)))?;
+        .with_user_agent("alfred", env!("CARGO_PKG_VERSION"))
+        .with_token(token.clone())
+        .build().map_err(|failure| error(explain(&failure, spec.repo, source)))?;
     let repo = api.repo(spec.hf_repo());
+    let cache_repo = Cache::new(cache.to_path_buf()).repo(spec.hf_repo());
     let dir = spec.snapshot_dir(cache);
+    let http = reqwest::Client::builder()
+        .user_agent(format!("alfred/{}; hf-hub/0.5.0", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|failure| error(request_failure(&failure, spec.repo, &host(&source.endpoint))))?;
     let mut before = 0u64;
+    let mut listed = false;
     for (file, expected) in spec.files {
         let target = dir.join(file);
         if target.is_file() {
@@ -362,40 +384,125 @@ async fn download(
             }
             discard(&target);
         }
-        let tracker = Tracker {
-            received: Arc::new(AtomicU64::new(0)),
-            file_size: Arc::new(AtomicU64::new(0)),
-            before,
-            hint: total_hint,
-            report: report.clone(),
-        };
-        let path = repo
-            .download_with_progress(file, tracker.clone())
+        if !listed {
+            snapshot(&repo, spec, source, error).await?;
+            listed = true;
+        }
+        let received = get_file(&http, &repo.url(file), token.as_deref(), &cache_repo, &target, file, expected, source, total_hint, before, &report)
             .await
-            .map_err(|failure| error(explain(&failure, file, source)))?;
-        if path != target {
-            discard(&path);
-            return Err(error(format!(
-                "{} a servi {file} pour une autre révision que celle attendue ({}) : fichier écarté.",
-                host(&source.endpoint),
-                spec.revision
-            )));
-        }
-        if digest(&path).await? != *expected {
-            discard(&path);
-            return Err(error(format!(
-                "{file} reçu de {} n’a pas l’empreinte attendue : fichier écarté. Le miroir sert peut-être une autre version du modèle.",
-                host(&source.endpoint)
-            )));
-        }
-        before += tracker.file_size.load(Ordering::Relaxed);
+            .map_err(error)?;
+        before += received;
     }
     Ok(())
+}
+
+/// Télécharge un fichier dans le cache, au format de la bibliothèque Python : le contenu dans
+/// `blobs/<etag>`, et `snapshots/<révision>/<fichier>` qui le désigne. L’empreinte est vérifiée avant que le
+/// fichier prenne sa place ; un fichier différent est écarté. Renvoie le nombre d’octets reçus.
+#[allow(clippy::too_many_arguments)]
+async fn get_file(
+    http: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+    cache_repo: &hf_hub::CacheRepo,
+    target: &Path,
+    file: &str,
+    expected: &str,
+    source: &Source,
+    total_hint: u64,
+    before: u64,
+    report: &Arc<dyn Fn(u64, u64) + Send + Sync>,
+) -> Result<u64, String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncWriteExt;
+    let host = host(&source.endpoint);
+    let mut request = http.get(url);
+    if let Some(token) = token {
+        let value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| "le jeton contient des caractères interdits.".to_string())?;
+        request = request.header(reqwest::header::AUTHORIZATION, value);
+    }
+    let mut response = request.send().await.map_err(|failure| request_failure(&failure, file, &host))?;
+    if !response.status().is_success() {
+        return Err(status_failure(response.status(), file, &host));
+    }
+    let header = |name: &str| response.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
+    // Le nom du contenu, comme la bibliothèque Python : `X-Linked-Etag` (fichiers LFS), sinon `ETag`.
+    let etag = header("x-linked-etag")
+        .or_else(|| header("etag"))
+        .map(|etag| etag.trim_start_matches("W/").replace('"', ""))
+        .filter(|etag| !etag.is_empty() && !etag.contains(['/', '\\', '.']))
+        .unwrap_or_else(|| expected.to_string());
+    let size = header("x-linked-size").and_then(|size| size.parse().ok()).or(response.content_length()).unwrap_or(0);
+    let blob = cache_repo.blob_path(&etag);
+    let io = |failure: std::io::Error| format!("écriture impossible dans le cache des modèles ({failure}).");
+    tokio::fs::create_dir_all(blob.parent().unwrap_or(Path::new("."))).await.map_err(io)?;
+    let partial = blob.with_extension("incomplete");
+    let mut out = tokio::fs::File::create(&partial).await.map_err(io)?;
+    let mut hasher = Sha256::new();
+    let mut received = 0u64;
+    let total = (before + size).max(total_hint);
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(failure) => {
+                let _ = tokio::fs::remove_file(&partial).await;
+                return Err(request_failure(&failure, file, &host));
+            }
+        };
+        hasher.update(&chunk);
+        out.write_all(&chunk).await.map_err(io)?;
+        received += chunk.len() as u64;
+        report(before + received, total.max(before + received));
+    }
+    out.flush().await.map_err(io)?;
+    drop(out);
+    let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    if digest != expected {
+        let _ = tokio::fs::remove_file(&partial).await;
+        return Err(format!(
+            "{file} reçu de {host} n’a pas l’empreinte attendue : fichier écarté. Le miroir sert peut-être une autre version du modèle."
+        ));
+    }
+    tokio::fs::rename(&partial, &blob).await.map_err(io)?;
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(io)?;
+    }
+    link(&blob, target).map_err(io)?;
+    Ok(received)
+}
+
+/// `snapshots/<révision>/<fichier>` désigne `blobs/<etag>` par un lien relatif, comme la bibliothèque Python.
+/// Sous Windows, où un lien demande souvent des droits, le contenu est déplacé à la place.
+fn link(blob: &Path, pointer: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(pointer);
+    // Remonter du dossier du lien jusqu’au dossier du modèle (`snapshots/<révision>/…`), puis descendre dans `blobs`.
+    let model = blob.parent().and_then(Path::parent).unwrap_or(Path::new("."));
+    let depth = pointer.parent().and_then(|parent| parent.strip_prefix(model).ok()).map_or(0, |rest| rest.components().count());
+    let mut relative = PathBuf::new();
+    for _ in 0..depth {
+        relative.push("..");
+    }
+    relative.push("blobs");
+    relative.push(blob.file_name().unwrap_or_default());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&relative, pointer)
+    }
+    #[cfg(windows)]
+    {
+        if std::os::windows::fs::symlink_file(&relative, pointer).is_ok() {
+            return Ok(());
+        }
+        std::fs::rename(blob, pointer)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn source(endpoint: &str, origin: Origin) -> Source {
         Source { endpoint: endpoint.to_string(), origin }
@@ -484,6 +591,8 @@ mod tests {
         token: Option<&'static str>,
         /// Contenu servi (un autre que `CONTENT` pour éprouver l’empreinte).
         body: &'static [u8],
+        /// Révision annoncée par l’API `revision` (celle attendue par défaut).
+        sha: Option<&'static str>,
         seen: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
@@ -503,22 +612,18 @@ mod tests {
                 _ => {}
             }
         }
+        if uri.path() == format!("/mirror/api/models/org/modele/revision/{REVISION}") {
+            let sha = mirror.sha.unwrap_or(REVISION);
+            return axum::Json(serde_json::json!({ "sha": sha, "siblings": [{ "rfilename": "config.json" }] })).into_response();
+        }
         if uri.path() != format!("/mirror/org/modele/resolve/{REVISION}/config.json") {
             return StatusCode::NOT_FOUND.into_response();
         }
-        let body = mirror.body;
-        let range = headers.get(header::RANGE).and_then(|value| value.to_str().ok()).unwrap_or("bytes=0-");
-        let (start, stop) = range.trim_start_matches("bytes=").split_once('-').unwrap();
-        let start: usize = start.parse().unwrap();
-        let stop: usize = stop.parse::<usize>().unwrap_or(body.len() - 1).min(body.len() - 1);
+        // Comme Artifactory : la plage demandée est ignorée, le fichier entier part sans `Content-Range`.
         (
-            StatusCode::PARTIAL_CONTENT,
-            [
-                (header::ETAG, format!("\"{}\"", content_sha())),
-                (header::HeaderName::from_static("x-repo-commit"), REVISION.to_string()),
-                (header::CONTENT_RANGE, format!("bytes {start}-{stop}/{}", body.len())),
-            ],
-            body[start..=stop].to_vec(),
+            StatusCode::OK,
+            [(header::ETAG, format!("\"{}\"", content_sha())), (header::HeaderName::from_static("x-repo-commit"), REVISION.to_string())],
+            mirror.body.to_vec(),
         )
             .into_response()
     }
@@ -557,7 +662,7 @@ mod tests {
     }
 
     fn mirror_with(token: Option<&'static str>, body: &'static [u8]) -> Mirror {
-        Mirror { token, body, seen: Arc::new(std::sync::Mutex::new(Vec::new())) }
+        Mirror { token, body, sha: None, seen: Arc::new(std::sync::Mutex::new(Vec::new())) }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -568,8 +673,14 @@ mod tests {
         let progress = run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
         let file = spec().snapshot_dir(cache.path()).join("config.json");
         assert_eq!(std::fs::read(&file).unwrap(), CONTENT);
+        #[cfg(unix)]
+        assert_eq!(std::fs::read_link(&file).unwrap(), Path::new(&format!("../../blobs/{}", content_sha())));
         assert_eq!(progress.last(), Some(&(CONTENT.len() as u64, CONTENT.len() as u64)));
-        assert!(state.seen.lock().unwrap().iter().all(|line| line.ends_with("Bearer jeton-secret")));
+        let seen = state.seen.lock().unwrap().clone();
+        assert!(seen.iter().all(|line| line.ends_with("Bearer jeton-secret")));
+        // Déroulé de `snapshot_download` : la liste des fichiers d’abord, puis les fichiers.
+        assert_eq!(seen[0], format!("/mirror/api/models/org/modele/revision/{REVISION} Bearer jeton-secret"));
+        assert!(seen[1..].iter().all(|line| line.contains("/resolve/")));
         // Déjà là et intact : rien n’est redemandé.
         let before = state.seen.lock().unwrap().len();
         run(&endpoint, Some("jeton-secret"), cache.path()).await.unwrap();
@@ -592,6 +703,29 @@ mod tests {
 
         let unreachable = run("http://127.0.0.1:9/hf", None, cache.path()).await.unwrap_err().message;
         assert!(unreachable.contains("127.0.0.1:9 est injoignable"), "{unreachable}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_entries_point_to_their_blob_like_python() {
+        let cache = tempfile::tempdir().unwrap();
+        let model = cache.path().join("models--org--modele");
+        std::fs::create_dir_all(model.join("blobs")).unwrap();
+        std::fs::write(model.join("blobs/abc"), "contenu").unwrap();
+        let pointer = model.join("snapshots/rev/encoder/config.json");
+        std::fs::create_dir_all(pointer.parent().unwrap()).unwrap();
+        link(&model.join("blobs/abc"), &pointer).unwrap();
+        assert_eq!(std::fs::read_link(&pointer).unwrap(), Path::new("../../../blobs/abc"));
+        assert_eq!(std::fs::read_to_string(&pointer).unwrap(), "contenu");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_mirror_announcing_another_revision_is_refused() {
+        let endpoint = serve(Mirror { sha: Some("autre-revision"), ..mirror_with(None, CONTENT) }).await;
+        let cache = tempfile::tempdir().unwrap();
+        let message = run(&endpoint, None, cache.path()).await.unwrap_err().message;
+        assert!(message.contains("annonce la révision autre-revision"), "{message}");
+        assert!(!spec().snapshot_dir(cache.path()).join("config.json").exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]
