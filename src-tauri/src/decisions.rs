@@ -427,6 +427,7 @@ struct HeadLayer {
 
 /// mmBERT-base (ModernBERT) suivi de la tête de décision de Laya (`DecisionModel` du paquet).
 struct Laya {
+    device: Device,
     tokens: Tokens,
     /// Gardée en f16 : 256 000 lignes ; seules celles des jetons lus passent en f32.
     embeddings: Tensor,
@@ -444,21 +445,21 @@ struct Laya {
     config: AgentConfig,
 }
 
-fn rope_tables(theta: f64, head_dim: usize, max_len: usize) -> candle_core::Result<(Tensor, Tensor)> {
+fn rope_tables(theta: f64, head_dim: usize, max_len: usize, device: &Device) -> candle_core::Result<(Tensor, Tensor)> {
     let inv_freq: Vec<f32> = (0..head_dim).step_by(2).map(|i| 1.0 / theta.powf(i as f64 / head_dim as f64) as f32).collect();
     let half = inv_freq.len();
     let inv_freq = Tensor::from_vec(inv_freq, (1, half), &Device::Cpu)?;
     let positions = Tensor::arange(0u32, max_len as u32, &Device::Cpu)?.to_dtype(DType::F32)?.reshape((max_len, 1))?;
     let freqs = positions.matmul(&inv_freq)?;
-    Ok((freqs.cos()?, freqs.sin()?))
+    Ok((freqs.cos()?.to_device(device)?, freqs.sin()?.to_device(device)?))
 }
 
 impl Laya {
-    fn load(dir: &Path) -> AppResult<Self> {
+    fn load(dir: &Path, device: Device) -> AppResult<Self> {
         let encoder: EncoderConfig = serde_json::from_str(&std::fs::read_to_string(dir.join("encoder/config.json"))?).map_err(model_error)?;
         let config: AgentConfig = serde_json::from_str(&std::fs::read_to_string(dir.join("rl_agent_config.json"))?).map_err(model_error)?;
         let tokens = Tokens::load(&dir.join("tokenizer/tokenizer.json"))?;
-        let mut weights = candle_core::safetensors::load(dir.join("model.safetensors"), &Device::Cpu).map_err(model_error)?;
+        let mut weights = candle_core::safetensors::load(dir.join("model.safetensors"), &device).map_err(model_error)?;
         let embeddings = weights
             .remove("encoder.embeddings.tok_embeddings.weight")
             .ok_or_else(|| model_error("poids des jetons absents"))?
@@ -513,8 +514,9 @@ impl Laya {
         let head_dim = encoder.hidden_size / encoder.num_attention_heads;
         let theta = |kind: &str| encoder.rope_parameters.get(kind).map(|rope| rope.rope_theta).unwrap_or(160_000.0);
         let length = config.max_len.max(1);
-        let rope = [rope_tables(theta("full_attention"), head_dim, length).map_err(model_error)?, rope_tables(theta("sliding_attention"), head_dim, length).map_err(model_error)?];
+        let rope = [rope_tables(theta("full_attention"), head_dim, length, &device).map_err(model_error)?, rope_tables(theta("sliding_attention"), head_dim, length, &device).map_err(model_error)?];
         Ok(Laya {
+            device,
             tokens,
             embeddings,
             embedding_norm,
@@ -554,7 +556,7 @@ impl Laya {
     /// Logits des options d’une séquence (avant température).
     fn logits(&self, sequence: &Sequence, kind: Kind) -> candle_core::Result<Vec<f32>> {
         let length = sequence.ids.len();
-        let ids = Tensor::new(sequence.ids.as_slice(), &Device::Cpu)?;
+        let ids = Tensor::new(sequence.ids.as_slice(), &self.device)?;
         let mut h = self.embeddings.index_select(&ids, 0)?.to_dtype(DType::F32)?.unsqueeze(0)?;
         h = self.embedding_norm.forward(&h)?;
         // Fenêtre glissante : un jeton ne voit que ceux à `window` positions au plus (|i − j| ≤ 64).
@@ -563,7 +565,7 @@ impl Laya {
             let values: Vec<f32> = (0..length as isize)
                 .flat_map(|i| (0..length as isize).map(move |j| if (i - j).abs() > window { f32::NEG_INFINITY } else { 0.0 }))
                 .collect();
-            Some(Tensor::from_vec(values, (length, length), &Device::Cpu)?)
+            Some(Tensor::from_vec(values, (length, length), &self.device)?)
         } else {
             None
         };
@@ -597,7 +599,7 @@ impl Laya {
             h = (h + layer.linear2.forward(&hidden)?)?;
         }
         let positions: Vec<u32> = sequence.markers.iter().map(|&marker| marker as u32).collect();
-        let markers = h.i(0)?.index_select(&Tensor::new(positions.as_slice(), &Device::Cpu)?, 0)?;
+        let markers = h.i(0)?.index_select(&Tensor::new(positions.as_slice(), &self.device)?, 0)?;
         let scored = self.scorer_out.forward(&self.scorer_in.forward(&self.scorer_norm.forward(&markers)?)?.gelu_erf()?)?;
         scored.squeeze(1)?.to_vec1::<f32>()
     }
@@ -752,14 +754,32 @@ fn model_dir(state: &AppState) -> PathBuf {
     state.data_dir.join("models").join(MODEL_DIR)
 }
 
+/// Où calculer : la carte graphique sur macOS (Metal), sinon le processeur. Sur un Mac, le calcul sur Metal laisse
+/// les cœurs libres pour la fenêtre et les autres pages.
+fn compute_device() -> Device {
+    #[cfg(target_os = "macos")]
+    if let Ok(device) = Device::new_metal(0) {
+        return device;
+    }
+    Device::Cpu
+}
+
 /// Charge le modèle une fois, après avoir vérifié l’empreinte de chaque fichier.
-fn load_verified(dir: &Path) -> AppResult<Laya> {
+fn load_verified(dir: &Path, device: Device) -> AppResult<Laya> {
     for (file, expected) in SPEC.files {
         if sha256_file(&dir.join(file))? != *expected {
             return Err(model_error(format!("{file} est abîmé (empreinte inattendue). Téléchargez-le à nouveau dans Réglages → Général.")));
         }
     }
-    Laya::load(dir)
+    Laya::load(dir, device)
+}
+
+/// Le tour du modèle : un seul chargement et une seule décision à la fois. Les appels simultanés attendent leur tour,
+/// chacun dans son thread bloquant (jamais celui de la fenêtre ni le moteur asynchrone), au lieu de charger chacun
+/// 647 Mo ou de se disputer le calcul.
+fn turn() -> std::sync::MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    TURN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn missing_model() -> AppError {
@@ -775,7 +795,7 @@ fn model(state: &AppState) -> AppResult<Arc<Laya>> {
     if !SPEC.installed(&dir) {
         return Err(missing_model());
     }
-    match load_verified(&dir) {
+    match load_verified(&dir, compute_device()) {
         Ok(model) => {
             let model = Arc::new(model);
             let mut current = lock()?;
@@ -788,6 +808,55 @@ fn model(state: &AppState) -> AppResult<Arc<Laya>> {
             state.emit("decisions:changed", Value::Null);
             Err(error)
         }
+    }
+}
+
+/// Le code du module demande-t-il des décisions (`ai.decide` dans une page, une fonction ou une librairie) ?
+fn uses_decisions(dir: &Path) -> bool {
+    fn walk(dir: &Path, depth: usize) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name == "node_modules" {
+                return false;
+            }
+            if path.is_dir() {
+                return depth > 0 && walk(&path, depth - 1);
+            }
+            let code = matches!(path.extension().and_then(|ext| ext.to_str()), Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "sh" | "ps1"));
+            code && entry.metadata().is_ok_and(|meta| meta.len() <= 1024 * 1024)
+                && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("decide"))
+        })
+    }
+    walk(dir, 4)
+}
+
+/// Quand s’ouvre une page d’un module qui demande des décisions : le modèle se charge en arrière-plan et fait une
+/// décision à blanc (le calcul sur Metal y prépare ses programmes), si bien que la première vraie décision n’attend
+/// pas. Sans effet si le modèle n’est pas installé ou déjà chargé ; jamais sur le thread de l’appelant.
+pub fn warm_for_module(state: &Arc<AppState>, module_dir: PathBuf) {
+    static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    use std::sync::atomic::Ordering;
+    let ready = model_state().lock().is_ok_and(|current| current.loaded.is_some() || current.damaged.is_some() || current.downloading.is_some());
+    if ready || !SPEC.installed(&model_dir(state)) || WARMING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let state = state.clone();
+    let spawned = std::thread::Builder::new().name("decisions-warm".into()).spawn(move || {
+        if uses_decisions(&module_dir) {
+            let _turn = turn();
+            if let Ok(model) = model(&state) {
+                if let Ok(request) = parse_request(&json!({ "text": "Bonjour", "type": "yesno", "question": "Est-ce une salutation ?" })) {
+                    let _ = model.decide(&request);
+                }
+            }
+        }
+        WARMING.store(false, Ordering::Release);
+    });
+    if spawned.is_err() {
+        WARMING.store(false, Ordering::Release);
     }
 }
 
@@ -864,6 +933,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 // Le sujet (page ou fonction) est vérifié par le pont ; la décision ne lit rien de l’espace.
                 let _subject: Option<crate::permissions::Subject> = opt_arg(&args, "subject")?;
                 let request = parse_request(&args)?;
+                let _turn = turn();
                 let model = model(&state)?;
                 let answers = model.decide(&request)?;
                 Ok(result_json(&request, &answers))
@@ -940,13 +1010,49 @@ mod tests {
         assert!(error.message.contains("Réglages → Général"), "{}", error.message);
     }
 
+    #[test]
+    fn a_module_that_asks_for_decisions_is_recognized_by_its_code() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        std::fs::create_dir_all(dir.path().join("node_modules/x")).unwrap();
+        std::fs::write(dir.path().join("pages/liste.tsx"), "export default function Page() { return null; }").unwrap();
+        std::fs::write(dir.path().join("node_modules/x/index.js"), "ai.decide()").unwrap();
+        assert!(!uses_decisions(dir.path()));
+        std::fs::write(dir.path().join("pages/tri.tsx"), "const tri = await ai.decide({ text, preset: \"email\" });").unwrap();
+        assert!(uses_decisions(dir.path()));
+    }
+
     /// Le vrai modèle, s’il est déjà téléchargé dans `ALFRED_LAYA_DIR` : mêmes décisions que le paquet Python `laya`
     /// 0.4.35 sur les cas de `decisions_golden.json` (même choix, probabilités et confiances à 0,01 près).
     #[test]
     #[ignore]
     fn the_local_model_decides_like_the_python_package() {
         let Ok(dir) = std::env::var("ALFRED_LAYA_DIR") else { return };
-        let model = load_verified(Path::new(&dir)).unwrap();
+        let mut devices = vec![compute_device()];
+        if !devices[0].is_cpu() {
+            devices.push(Device::Cpu);
+        }
+        for device in devices {
+            eprintln!("— {device:?}");
+            decides_like_the_python_package_on(Path::new(&dir), device);
+        }
+    }
+
+    fn decides_like_the_python_package_on(dir: &Path, device: Device) {
+        let started = std::time::Instant::now();
+        let model = load_verified(dir, device).unwrap();
+        eprintln!("chargement (empreintes comprises) : {:?}", started.elapsed());
+        let single = parse_request(&json!({
+            "text": "Bonjour, pouvez-vous m’envoyer la facture de mars avant vendredi ? Merci, Claire",
+            "question": "De quoi parle ce message ?",
+            "choices": ["facture", "rendez-vous", "réclamation", "autre"],
+        }))
+        .unwrap();
+        for round in 1..=3 {
+            let started = std::time::Instant::now();
+            model.decide(&single).unwrap();
+            eprintln!("décision simple n° {round} : {:?}", started.elapsed());
+        }
         let cases: Vec<Value> = serde_json::from_str(include_str!("decisions_golden.json")).unwrap();
         let mut worst = 0f64;
         for case in &cases {

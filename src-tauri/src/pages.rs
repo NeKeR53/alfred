@@ -180,6 +180,9 @@ pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &serd
         if !crate::space::valid_id(&module) {
             return Err(crate::error::AppError::new("Module inconnu."));
         }
+        if let Ok(space) = state.space() {
+            crate::decisions::warm_for_module(state, space.module_dir(&module));
+        }
         Ok(serde_json::json!({ "key": frame_key(state, &module) }))
     })())
 }

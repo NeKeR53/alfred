@@ -73,6 +73,12 @@ tokio = { version = "1", features = ["test-util"] }
 [profile.dev]
 debug = 1
 
+# Les dépendances sont optimisées même en développement : sans cela, candle (décisions locales, recherche par le
+# sens), tokenizers et sha2 sont trente fois plus lents sous `pnpm tauri dev` (2 s au lieu de 70 ms par décision).
+# Le code d’Alfred reste en debug ; seules les dépendances, compilées une fois, le sont en optimisé.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1
@@ -81,6 +87,9 @@ panic = "abort"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+# Sur un Mac, les décisions locales calculent sur la carte graphique (Metal).
+candle-core = { version = "0.11", default-features = false, features = ["metal"] }
+candle-nn = { version = "0.11", default-features = false, features = ["metal"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
