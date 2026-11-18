@@ -293,29 +293,68 @@
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
-/* En-tête du menu de gauche : le bouton qui le replie, puis le nom de l’espace, qui ouvre le menu des espaces. Le bouton
- * a la marge des autres entrées : son icône reste à la même place, menu replié ou non. Replié, le nom se masque (le
- * menu des espaces reste au raccourci). */
-.sidebar__head {
+/* Barre du haut de la fenêtre principale, de bord à bord : le bouton qui replie le menu, puis, au-dessus de la page, la
+ * barre de la page affichée. Le bouton reste à la même place, menu replié ou déplié : son icône est alignée sur celles
+ * du menu (8 px de marge du menu, 9 px dans l’entrée). La fenêtre garde la barre de titre du système : pas de feux à
+ * contourner. */
+.app-topbar {
+  grid-column: 1 / -1;
+  min-width: 0;
+  height: 44px;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
+}
+.app-topbar__start {
+  width: var(--sidebar-width);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 1px;
+  padding: 0 8px;
 }
-.sidebar .sidebar__head > .nav-icon.sidebar__toggle {
+.app-topbar .nav-icon.app-topbar__toggle {
   width: 33px;
+  height: 30px;
   flex: 0 0 33px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 9px;
+  color: var(--color-muted);
 }
-.sidebar .sidebar-space {
+.app-topbar__page {
   min-width: 0;
   flex: 1 1 auto;
-  gap: 4px;
-  padding: 0 6px;
+  display: flex;
 }
-.app-shell--sidebar-collapsed .sidebar .sidebar-space {
-  visibility: hidden;
+.app-topbar__page > .page-topbar {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 43px;
+  border-bottom: 0;
+}
+/* Première entrée du menu : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
+ * reste ; elle ouvre le même menu des espaces. */
+.sidebar .sidebar-space {
+  flex: 0 0 30px;
+}
+.sidebar-space__mark {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  flex: 0 0 18px;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: color-mix(in oklch, var(--color-primary) 18%, transparent);
+  color: var(--color-primary-strong);
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  line-height: 1;
 }
 .sidebar .sidebar-space > .sidebar__brand {
   min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -324,6 +363,7 @@
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
+  margin-left: -6px;
   color: var(--color-muted);
 }
 .space-switcher__check {

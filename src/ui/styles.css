@@ -896,20 +896,25 @@ html select:not([multiple], [data-slot="native-select"]) {
 ) {
   min-height: 32px;
 }
+/* Fenêtre principale : la barre du haut sur toute la largeur, puis le menu de gauche et la page. Replier le menu ne
+ * change que sa largeur. */
 .app-shell {
+  --sidebar-width: 240px;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
   border-top: 1px solid var(--line);
   background: var(--color-bg);
   color: var(--color-ink);
 }
 .app-shell--sidebar-collapsed {
-  grid-template-columns: 52px minmax(0, 1fr);
+  --sidebar-width: 52px;
 }
-/* Fenêtre de page : la page seule, sans le menu de l’espace. */
+/* Fenêtre de page : la page seule, sans le menu de l’espace ; sa barre du haut reste en tête de la page. */
 .app-shell--page-window {
   grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 .sidebar {
   min-width: 0;
@@ -1056,10 +1061,6 @@ html select:not([multiple], [data-slot="native-select"]) {
 }
 .nav-icon.is-active:hover:not(:disabled) {
   background: var(--color-surface-strong);
-}
-/* Le bouton de repli garde la teinte atténuée, y compris au survol de .nav-icon. */
-.sidebar .nav-icon.sidebar__toggle {
-  color: var(--color-muted);
 }
 .product-nav {
   --product-color: var(--color-primary);

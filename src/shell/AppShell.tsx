@@ -1,4 +1,4 @@
-import { Button, EmptyState, IconButton, PageTopBar, Tabs } from "@alfred/ui";
+import { Button, EmptyState, IconButton, PageTopBar, PageTopBarSlot, Tabs } from "@alfred/ui";
 import {
   AppWindow,
   Bot,
@@ -17,6 +17,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { SetupGate } from "../features/setup/SetupGate";
 import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
@@ -465,6 +466,8 @@ export function AppShell({
   const toggleSidebar = useShell((state) => state.toggleSidebar);
   const editor = useNavigationEditor();
   const counts = useBadges((state) => state.counts);
+  // Emplacement, dans la barre du haut de la fenêtre, où se place la barre de la page affichée.
+  const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null);
   useEffect(() => startBadges(), []);
   const sections = useMemo(
     () =>
@@ -496,11 +499,13 @@ export function AppShell({
 
   return (
     <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
-      <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-        <div className="sidebar__head">
+      {/* Barre du haut de toute la fenêtre : le bouton qui replie le menu, à place fixe au-dessus de lui, puis la barre
+          de la page affichée, au-dessus de la page. */}
+      <div className="app-topbar" inert={settingsOpen}>
+        <div className="app-topbar__start">
           <IconButton
             appearance="navigation"
-            className="sidebar__toggle"
+            className="app-topbar__toggle"
             label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
             tooltipPlacement="right"
             aria-expanded={!collapsed}
@@ -512,124 +517,129 @@ export function AppShell({
               <PanelLeftClose size={16} aria-hidden="true" />
             )}
           </IconButton>
-          <SpaceSwitcher />
         </div>
-        <nav aria-label="Sections de l’espace de travail">
-          {drag.orderedItems.map(({ section }) => {
-            const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
-            const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
-            return (
-              <div
-                className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
-                key={section.id}
-                data-sortable-scope={drag.scopeId}
-                data-sortable-id={section.id}
-              >
-                <NavButton
-                  label={section.label}
-                  count={sectionCount(counts, section.pages)}
-                  active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
-                  onClick={() => setView({ kind: "section", id: section.id })}
-                  className={`product-nav product-color--${section.color ?? "steel"}`}
-                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
-                  onPointerDown={(event) => {
-                    const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
-                    if (row) drag.startDrag(event, section.id, row);
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
-                  }}
-                  onKeyDown={(event) => {
-                    if (isMenuKey(event)) {
-                      event.preventDefault();
-                      editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
-                    } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                      event.preventDefault();
-                      if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
-                        announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
-                      refocus(selector, (element) => element.querySelector("button"));
-                    }
-                  }}
+        <div ref={setTopBarSlot} className="app-topbar__page" />
+      </div>
+      <PageTopBarSlot.Provider value={topBarSlot}>
+        <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
+          <SpaceSwitcher />
+          <nav aria-label="Sections de l’espace de travail">
+            {drag.orderedItems.map(({ section }) => {
+              const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
+              const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
+              return (
+                <div
+                  className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
+                  key={section.id}
+                  data-sortable-scope={drag.scopeId}
+                  data-sortable-id={section.id}
                 >
-                  <SectionIcon section={section} />
-                </NavButton>
-                <div className="sidebar-product__actions">
-                  <IconButton
-                    size="small"
-                    label={`Actions de la section ${section.label}`}
-                    tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
-                    aria-haspopup="menu"
-                    aria-expanded={editor.menuOpenFor === section.id}
-                    onClick={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
+                  <NavButton
+                    label={section.label}
+                    count={sectionCount(counts, section.pages)}
+                    active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
+                    onClick={() => setView({ kind: "section", id: section.id })}
+                    className={`product-nav product-color--${section.color ?? "steel"}`}
+                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
+                    onPointerDown={(event) => {
+                      const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
+                      if (row) drag.startDrag(event, section.id, row);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
+                    }}
+                    onKeyDown={(event) => {
+                      if (isMenuKey(event)) {
+                        event.preventDefault();
+                        editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
+                      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                        event.preventDefault();
+                        if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
+                          announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
+                        refocus(selector, (element) => element.querySelector("button"));
+                      }
                     }}
                   >
-                    <MoreHorizontal size={16} aria-hidden="true" />
-                  </IconButton>
+                    <SectionIcon section={section} />
+                  </NavButton>
+                  <div className="sidebar-product__actions">
+                    <IconButton
+                      size="small"
+                      label={`Actions de la section ${section.label}`}
+                      tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
+                      aria-haspopup="menu"
+                      aria-expanded={editor.menuOpenFor === section.id}
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
+                      }}
+                    >
+                      <MoreHorizontal size={16} aria-hidden="true" />
+                    </IconButton>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </nav>
-        {agentAvailable === true ? (
+              );
+            })}
+          </nav>
+          {agentAvailable === true ? (
+            <NavButton
+              label={agentEntryLabel(agentSummary)}
+              active={!settingsOpen && sameView(effective, { kind: "agent" })}
+              onClick={() => setView({ kind: "agent" })}
+              className="sidebar-orchestrator"
+              badge={agentSummary}
+              glyph
+            >
+              <Bot size={16} aria-hidden="true" />
+            </NavButton>
+          ) : null}
           <NavButton
-            label={agentEntryLabel(agentSummary)}
-            active={!settingsOpen && sameView(effective, { kind: "agent" })}
-            onClick={() => setView({ kind: "agent" })}
-            className="sidebar-orchestrator"
-            badge={agentSummary}
-            glyph
+            label="Réglages"
+            active={settingsOpen}
+            onClick={() => setView({ kind: "settings" })}
+            className="sidebar-settings"
           >
-            <Bot size={16} aria-hidden="true" />
+            <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
           </NavButton>
-        ) : null}
-        <NavButton
-          label="Réglages"
-          active={settingsOpen}
-          onClick={() => setView({ kind: "settings" })}
-          className="sidebar-settings"
-        >
-          <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
-        </NavButton>
-      </aside>
-      <main className="workspace" inert={settingsOpen}>
-        {effective.kind === "agent" && agentAvailable !== null ? (
-          agentAvailable ? (
-            agent
-          ) : (
-            <div className="workspace__empty">
-              <EmptyState
-                title="Aucun agent installé"
-                description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
-              >
-                <Button
-                  onClick={() => {
-                    const shell = useShell.getState();
-                    shell.setView({ kind: "settings" });
-                    shell.setActiveTab(SETTINGS_SECTION, "agents");
-                  }}
+        </aside>
+        <main className="workspace" inert={settingsOpen}>
+          {effective.kind === "agent" && agentAvailable !== null ? (
+            agentAvailable ? (
+              agent
+            ) : (
+              <div className="workspace__empty">
+                <EmptyState
+                  title="Aucun agent installé"
+                  description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
                 >
-                  Vérifier dans les Réglages
-                </Button>
-              </EmptyState>
-            </div>
-          )
-        ) : null}
-        {effective.kind === "section" && shownSection ? (
-          <SectionView
-            key={shownSection.id}
-            title={shownSection.label}
-            sectionId={shownSection.id}
-            pages={shownSection.pages}
-            waiting={shownSection.waiting}
-            renderAgentPanel={renderAgentPanel}
-            renderPageTools={renderPageTools}
-            onPageMenu={editor.openPageMenu}
-          />
-        ) : null}
-      </main>
+                  <Button
+                    onClick={() => {
+                      const shell = useShell.getState();
+                      shell.setView({ kind: "settings" });
+                      shell.setActiveTab(SETTINGS_SECTION, "agents");
+                    }}
+                  >
+                    Vérifier dans les Réglages
+                  </Button>
+                </EmptyState>
+              </div>
+            )
+          ) : null}
+          {effective.kind === "section" && shownSection ? (
+            <SectionView
+              key={shownSection.id}
+              title={shownSection.label}
+              sectionId={shownSection.id}
+              pages={shownSection.pages}
+              waiting={shownSection.waiting}
+              renderAgentPanel={renderAgentPanel}
+              renderPageTools={renderPageTools}
+              onPageMenu={editor.openPageMenu}
+            />
+          ) : null}
+        </main>
+      </PageTopBarSlot.Provider>
       {settingsOpen ? (
         <SettingsModal
           tabs={settingsTabs}

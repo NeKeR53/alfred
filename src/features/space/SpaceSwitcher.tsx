@@ -14,14 +14,15 @@ export function isSwitchShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | 
 }
 
 /**
- * Titre du menu de gauche, à côté du bouton qui le replie : le nom de l’espace ouvert et une petite flèche, qui ouvrent
- * un menu pour passer à un espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni
- * redémarrer. Menu replié : le nom se masque sans rien décaler ; le menu reste au raccourci.
+ * Première entrée du menu de gauche : l’icône de l’espace ouvert, son nom et une petite flèche, qui ouvrent un menu pour
+ * passer à un espace récent, ouvrir un autre dossier ou créer un espace, sans revenir à l’accueil ni redémarrer. Menu
+ * replié : seule l’icône reste, à la même place, et ouvre le même menu ; le nom passe dans l’infobulle.
  */
 export function SpaceSwitcher() {
   const snapshot = useShell((state) => state.snapshot);
   const recent = useShell((state) => state.recentSpaces);
   const settingsOpen = useShell((state) => state.view.kind === "settings");
+  const collapsed = useShell((state) => state.sidebarCollapsed);
   const menuId = useId();
   const button = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -54,7 +55,8 @@ export function SpaceSwitcher() {
         appearance="navigation"
         className="sidebar-space"
         label={`${label}. Changer d’espace de travail`}
-        tooltip={false}
+        tooltip={collapsed && !anchor ? snapshot.name : false}
+        tooltipPlacement="right"
         aria-haspopup="menu"
         aria-expanded={Boolean(anchor)}
         aria-keyshortcuts={isMac() ? "Meta+Shift+O" : "Control+Shift+O"}
@@ -68,6 +70,9 @@ export function SpaceSwitcher() {
           }
         }}
       >
+        <span className="sidebar-space__mark" aria-hidden="true">
+          {spaceInitial(snapshot.name)}
+        </span>
         <span className="sidebar__label sidebar__brand" title={snapshot.path}>
           {snapshot.name}
         </span>
@@ -118,4 +123,10 @@ export function SpaceSwitcher() {
       {actions.elements}
     </>
   );
+}
+
+/** Lettre de l’icône d’un espace : la première lettre ou le premier chiffre de son nom, en capitale. */
+export function spaceInitial(name: string): string {
+  const letter = Array.from(name).find((character) => /[\p{L}\p{N}]/u.test(character));
+  return (letter ?? "·").toLocaleUpperCase("fr");
 }
