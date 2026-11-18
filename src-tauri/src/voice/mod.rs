@@ -559,6 +559,29 @@ async fn use_whisper_level(state: &Arc<AppState>, id: &str) -> AppResult<Value> 
     whisper_levels(state)
 }
 
+/// Supprime un niveau téléchargé pour libérer la place. Si c’est celui de la dictée, le moteur est arrêté : la
+/// dictée dit alors que le niveau n’est plus téléchargé, jusqu’à ce qu’un autre soit choisi.
+async fn remove_whisper_level(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
+    let level = whisper_models::find(id)
+        .ok_or_else(|| AppError::new(format!("Niveau de Whisper inconnu : {id}.")))?;
+    if whisper_models::downloading() == Some(level.id) {
+        return Err(AppError::new(format!(
+            "Whisper {id} est en cours de téléchargement : attendez la fin pour le supprimer."
+        )));
+    }
+    let in_use = load_config(state)?.whisper_level.as_deref() == Some(level.id);
+    if in_use {
+        // `whisper-server` lâche le fichier avant qu’il soit effacé.
+        reset().await;
+    }
+    level
+        .spec
+        .remove_from_cache(&crate::model_files::hub_cache())
+        .map_err(|error| AppError::new(format!("Whisper {id} n’a pas pu être supprimé : {error}.")))?;
+    state.emit(whisper_models::EVENT, Value::Null);
+    whisper_levels(state)
+}
+
 /// Télécharge un niveau par la source des modèles ; une fois là, la dictée s’en sert.
 fn download_whisper_level(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
     whisper_models::download(state.clone(), id, |state, level| async move {
@@ -705,6 +728,10 @@ pub async fn handle(
         "voice.whisper.levels" => whisper_levels(state),
         "voice.whisper.use" => match arg::<String>(args, "level") {
             Ok(level) => use_whisper_level(state, &level).await,
+            Err(error) => Err(error),
+        },
+        "voice.whisper.remove" => match arg::<String>(args, "level") {
+            Ok(level) => remove_whisper_level(state, &level).await,
             Err(error) => Err(error),
         },
         "voice.whisper.download" => match arg::<String>(args, "level") {
@@ -944,6 +971,11 @@ mod tests {
         assert_eq!(levels["current"], Value::Null);
         assert_eq!(levels["custom"], Value::Null);
         let error = handle(&state, "voice.whisper.download", &json!({ "level": "large-v2" }))
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.message, "Niveau de Whisper inconnu : large-v2.");
+        let error = handle(&state, "voice.whisper.remove", &json!({ "level": "large-v2" }))
             .await
             .unwrap()
             .unwrap_err();

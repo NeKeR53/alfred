@@ -142,13 +142,20 @@ annoncée, progression, mêmes erreurs. Le niveau téléchargé sert aussitôt ;
 (« Utiliser »). Le dépôt range tous les niveaux : télécharger un niveau avance `refs/main`, et ceux déjà téléchargés
 restent reconnus dans leur révision. Un contenu déjà présent dans `blobs/` sous son empreinte n’est pas retéléchargé.
 
+**Plusieurs niveaux** : chacun peut être téléchargé et garde son état dans la liste (« Téléchargé », « Utilisé »,
+« Conseillé », taille, version). On passe de l’un à l’autre par « Utiliser », sans rien retélécharger ni redémarrer
+Alfred : le moteur de la voix est refait et `whisper-server` relancé avec le nouveau modèle. « Supprimer », après
+confirmation, efface le fichier du niveau dans toutes les révisions du cache, et son contenu (`blobs/`) si plus rien
+ne le désigne ; les autres niveaux restent. Supprimer le niveau de la dictée l’arrête jusqu’à un autre choix. Un
+niveau en cours de téléchargement ne se supprime pas.
+
 **Niveau conseillé** : large-v3-turbo dès 16 Go de mémoire, small en dessous. large-v3-turbo transcrit presque comme
 large-v3 pour une fraction du temps (30 s d’audio en ≈ 1 s sur Mac Apple Silicon) ; il occupe environ 2 Go de mémoire
 en plus de la voix d’Alfred, qui en garde déjà plusieurs. Sur 8 Go, small (moins d’1 Go) laisse la machine respirer.
 Le choix reste à l’utilisateur : le niveau conseillé porte l’étiquette « Conseillé », rien ne se télécharge seul.
 
 **Fichier existant** : la dernière ligne garde le réglage d’avant, un fichier ggml indiqué à la main (ou repris
-d’Argos). L’indiquer remplace le niveau.
+d’Argos). L’indiquer, ou cliquer « Utiliser » quand un niveau est choisi, le remet à la place du niveau.
 
 **whisper-server** (le programme de whisper.cpp qui garde le modèle chargé) n’est pas fourni avec Alfred. Il est
 cherché tel quel s’il a un dossier, sinon dans le `PATH` du terminal et les dossiers usuels (Homebrew…), même quand

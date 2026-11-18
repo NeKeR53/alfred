@@ -163,6 +163,11 @@ pub fn status(current: Option<&str>, custom: &std::path::Path) -> Value {
     })
 }
 
+/// Le niveau en cours de téléchargement, s’il y en a un.
+pub fn downloading() -> Option<&'static str> {
+    download_state().lock().ok().and_then(|download| download.current.map(|(level, _, _)| level))
+}
+
 /// Télécharge un niveau en arrière-plan ; `done` est appelé une fois le fichier en place. Un seul téléchargement à
 /// la fois.
 pub fn download<F, Fut>(state: Arc<AppState>, id: &str, done: F) -> AppResult<()>

@@ -1,4 +1,4 @@
-import { Button, SettingRow, StatusBadge } from "@alfred/ui";
+import { Button, Row, SettingRow, StatusBadge, useConfirm } from "@alfred/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { notify } from "../../shell/notifications";
 import { formatSize } from "../space/BackupsSection";
@@ -7,6 +7,7 @@ import {
   downloadWhisperLevel,
   getWhisperLevels,
   onWhisperLevels,
+  removeWhisperLevel,
   type WhisperLevel,
   type WhisperLevels,
 } from "./api";
@@ -32,6 +33,7 @@ export function WhisperLevelRows({
 }) {
   const [levels, setLevels] = useState<WhisperLevels>();
   const [error, setError] = useState<string>();
+  const { confirm, confirmDialog } = useConfirm();
   // Niveau choisi à la dernière lecture : un changement fait côté Alfred (fin d’un téléchargement) est signalé.
   const known = useRef<string | null | undefined>(undefined);
 
@@ -85,8 +87,21 @@ export function WhisperLevelRows({
       return `Téléchargement : ${formatSize(received)} sur ${formatSize(total)}.`;
     }
     if (levels.error?.level === level.id) return `Le téléchargement a échoué : ${levels.error.message}`;
-    const version = level.installed && level.revision ? ` Téléchargé, version ${level.revision}.` : "";
+    const version = level.installed && level.revision ? ` Version ${level.revision}.` : "";
     return `${size} · ${level.summary}${version}`;
+  };
+
+  const remove = async (level: WhisperLevel, current: boolean) => {
+    const accepted = await confirm({
+      title: `Supprimer Whisper ${level.id} ?`,
+      message: current
+        ? `Le fichier (${formatSize(level.bytes)}) est effacé de cet ordinateur. C’est le niveau de la dictée : elle ne marchera plus tant qu’un autre niveau n’est pas choisi ou que celui-ci n’est pas téléchargé à nouveau.`
+        : `Le fichier (${formatSize(level.bytes)}) est effacé de cet ordinateur. Il pourra être téléchargé à nouveau.`,
+      confirmLabel: "Supprimer",
+      tone: "danger",
+    });
+    if (!accepted) return;
+    await run(() => removeWhisperLevel(level.id), "Le niveau de Whisper n’a pas été supprimé");
   };
 
   const usingCustom = levels.current === null && levels.custom !== null;
@@ -106,6 +121,8 @@ export function WhisperLevelRows({
                 <StatusBadge tone="success" size="compact">
                   Utilisé
                 </StatusBadge>
+              ) : level.installed ? (
+                <StatusBadge size="compact">Téléchargé</StatusBadge>
               ) : recommended ? (
                 <StatusBadge size="compact" title={levels.recommendedReason}>
                   Conseillé
@@ -114,13 +131,27 @@ export function WhisperLevelRows({
             }
             description={describe(level)}
           >
-            {current ? null : level.installed ? (
-              <Button
-                variant="secondary"
-                onClick={() => void run(() => chooseWhisperLevel(level.id), "Le niveau de Whisper n’a pas été choisi")}
-              >
-                Utiliser
-              </Button>
+            {level.installed ? (
+              <Row gap="xs">
+                {current ? null : (
+                  <Button
+                    variant="secondary"
+                    aria-label={`Utiliser Whisper ${level.id}`}
+                    onClick={() =>
+                      void run(() => chooseWhisperLevel(level.id), "Le niveau de Whisper n’a pas été choisi")
+                    }
+                  >
+                    Utiliser
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  aria-label={`Supprimer Whisper ${level.id}`}
+                  onClick={() => void remove(level, current)}
+                >
+                  Supprimer
+                </Button>
+              </Row>
             ) : (
               <Button
                 variant={recommended && !levels.current && !usingCustom ? "primary" : "secondary"}
@@ -149,16 +180,31 @@ export function WhisperLevelRows({
         }
         description="Un modèle ggml déjà sur cet ordinateur, à la place d’un niveau téléchargé par Alfred."
       >
-        <PathField
-          label="Fichier du modèle Whisper"
-          value={levels.custom ?? ""}
-          placeholder="~/models/ggml-large-v3-turbo.bin"
-          onCommit={async (path) => {
-            await onCustom(path);
-            await load();
-          }}
-        />
+        <Row gap="xs">
+          <PathField
+            label="Fichier du modèle Whisper"
+            value={levels.custom ?? ""}
+            placeholder="~/models/ggml-large-v3-turbo.bin"
+            onCommit={async (path) => {
+              await onCustom(path);
+              await load();
+            }}
+          />
+          {levels.custom && !usingCustom ? (
+            <Button
+              variant="secondary"
+              aria-label="Utiliser le fichier existant"
+              onClick={async () => {
+                await onCustom(levels.custom ?? "");
+                await load();
+              }}
+            >
+              Utiliser
+            </Button>
+          ) : null}
+        </Row>
       </SettingRow>
+      {confirmDialog}
     </>
   );
 }

@@ -113,6 +113,8 @@ export const getWhisperLevels = () => invoke<WhisperLevels>("voice.whisper.level
 export const downloadWhisperLevel = (level: string) => invoke<WhisperLevels>("voice.whisper.download", { level });
 /** Choisit un niveau déjà téléchargé. */
 export const chooseWhisperLevel = (level: string) => invoke<WhisperLevels>("voice.whisper.use", { level });
+/** Supprime un niveau téléchargé pour libérer la place. */
+export const removeWhisperLevel = (level: string) => invoke<WhisperLevels>("voice.whisper.remove", { level });
 export function onWhisperLevels(handler: () => void): () => void {
   return onNativeEvent("voice:whisper", () => handler());
 }

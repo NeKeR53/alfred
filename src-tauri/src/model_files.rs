@@ -92,6 +92,57 @@ impl ModelSpec {
         self.installed_in(data_dir, &hub_cache())
     }
 
+    /// Retire du cache les fichiers de ce modèle, dans toutes les révisions, et rend la place gagnée en octets. Le
+    /// contenu (`blobs/<etag>`) n’est effacé que si plus aucune révision ne le désigne : les autres fichiers du même
+    /// dépôt (les autres niveaux de Whisper) restent intacts.
+    pub fn remove_from_cache(&self, hub_cache: &Path) -> std::io::Result<u64> {
+        let model = self.model_cache(hub_cache);
+        let snapshots: Vec<PathBuf> = match std::fs::read_dir(model.join("snapshots")) {
+            Ok(entries) => entries.flatten().map(|entry| entry.path()).filter(|path| path.is_dir()).collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let mut freed = 0u64;
+        let mut blobs = Vec::new();
+        for snapshot in &snapshots {
+            for file in self.files {
+                let pointer = snapshot.join(file);
+                let Ok(meta) = std::fs::symlink_metadata(&pointer) else { continue };
+                if meta.file_type().is_symlink() {
+                    if let Ok(blob) = std::fs::canonicalize(&pointer) {
+                        blobs.push(blob);
+                    }
+                } else {
+                    // Contenu rangé dans la révision elle-même (Windows sans lien) : effacé avec elle.
+                    freed += meta.len();
+                }
+                std::fs::remove_file(&pointer)?;
+            }
+        }
+        blobs.sort();
+        blobs.dedup();
+        // Ce que désignent encore les autres fichiers du dépôt.
+        let mut still_used = Vec::new();
+        let mut stack = snapshots;
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if let Ok(target) = std::fs::canonicalize(&path) {
+                    still_used.push(target);
+                }
+            }
+        }
+        for blob in blobs {
+            if !still_used.contains(&blob) {
+                freed += std::fs::metadata(&blob).map(|meta| meta.len()).unwrap_or(0);
+                std::fs::remove_file(&blob)?;
+            }
+        }
+        Ok(freed)
+    }
+
     /// Le modèle complet dans une révision quelconque du cache : celle de `refs/main` d’abord, puis la plus
     /// récente. Pour un dépôt qui range plusieurs modèles indépendants (les niveaux de Whisper) : télécharger un
     /// niveau avance `refs/main`, et ceux déjà téléchargés restent dans leur révision.
@@ -1121,6 +1172,34 @@ mod tests {
         assert_eq!(progress.last(), Some(&(CONTENT.len() as u64, CONTENT.len() as u64)));
         // La révision précédente garde son fichier.
         assert_eq!(std::fs::read(SPEC.snapshot_dir(cache.path(), OWN).join("config.json")).unwrap(), CONTENT);
+    }
+
+    /// Supprimer un niveau ne touche ni aux autres niveaux du dépôt ni à un contenu qu’une autre révision désigne.
+    #[cfg(unix)]
+    #[test]
+    fn removing_a_model_keeps_the_rest_of_the_repository() {
+        let cache = tempfile::tempdir().unwrap();
+        let tiny = ModelSpec { repo: "ggerganov/whisper.cpp", legacy_dir: "", legacy_revision: "", files: &["ggml-tiny.bin"] };
+        let small = ModelSpec { repo: "ggerganov/whisper.cpp", legacy_dir: "", legacy_revision: "", files: &["ggml-small.bin"] };
+        let model = tiny.model_cache(cache.path());
+        std::fs::create_dir_all(model.join("blobs")).unwrap();
+        std::fs::write(model.join("blobs/aaa"), "tiny-tiny").unwrap();
+        std::fs::write(model.join("blobs/bbb"), "small").unwrap();
+        for revision in ["r1", "r2"] {
+            let dir = tiny.snapshot_dir(cache.path(), revision);
+            std::fs::create_dir_all(&dir).unwrap();
+            link(&model.join("blobs/aaa"), &dir.join("ggml-tiny.bin")).unwrap();
+        }
+        link(&model.join("blobs/bbb"), &small.snapshot_dir(cache.path(), "r2").join("ggml-small.bin")).unwrap();
+        assert_eq!(tiny.remove_from_cache(cache.path()).unwrap(), 9);
+        assert_eq!(tiny.installed_in_any_snapshot(cache.path()), None);
+        assert!(!model.join("blobs/aaa").exists());
+        assert_eq!(small.installed_in_any_snapshot(cache.path()).unwrap().revision, "r2");
+        assert!(model.join("blobs/bbb").is_file());
+        // Rien à retirer : sans erreur.
+        assert_eq!(tiny.remove_from_cache(cache.path()).unwrap(), 0);
+        let absent = ModelSpec { repo: "org/absent", legacy_dir: "", legacy_revision: "", files: &["x"] };
+        assert_eq!(absent.remove_from_cache(cache.path()).unwrap(), 0);
     }
 
     #[test]

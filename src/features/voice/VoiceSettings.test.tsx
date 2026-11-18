@@ -15,6 +15,7 @@ vi.hoisted(() => {
 });
 
 import { invoke, onNativeEvent } from "../../lib/native";
+import { installDialogPolyfill } from "../../ui/dialog.test-helper";
 import { VoiceSettings } from "./VoiceSettings";
 
 const config = {
@@ -74,6 +75,7 @@ const status = () => ({
 });
 
 beforeEach(() => {
+  installDialogPolyfill();
   installed = false;
   saved.length = 0;
   config.whisperLevel = null;
@@ -94,6 +96,13 @@ beforeEach(() => {
     if (command === "voice.whisper.use") {
       levels.current = (args as { level: string }).level;
       config.whisperLevel = levels.current;
+      return levelsState();
+    }
+    if (command === "voice.whisper.remove") {
+      const id = (args as { level: string }).level;
+      levels.levels = levels.levels.map((entry) =>
+        entry.id === id ? { ...entry, installed: false, revision: null } : entry,
+      );
       return levelsState();
     }
     if (command === "voice.whisper.download") {
@@ -134,15 +143,17 @@ it("Whisper : chaque niveau dit sa taille et ce qu’il apporte ; un niveau tél
   expect(await screen.findByText("Whisper large-v3-turbo")).toBeVisible();
   expect(screen.getByText("Conseillé")).toHaveAttribute("title", "Conseillé avec 32 Go de mémoire.");
   expect(screen.getByText(/^74 Mo · Le plus rapide/)).toBeVisible();
-  expect(screen.getByText(/Rapide et correct en français.*Téléchargé, version 5359861\./)).toBeVisible();
+  expect(screen.getByText(/Rapide et correct en français.*Version 5359861\./)).toBeVisible();
+  expect(within(row("Whisper small")).getByText("Téléchargé")).toBeVisible();
+  expect(within(row("Whisper tiny")).queryByText("Téléchargé")).not.toBeInTheDocument();
   // Le fichier indiqué à la main est celui qui sert.
   expect(screen.getByRole("textbox", { name: "Fichier du modèle Whisper" })).toHaveValue("/m/ggml.bin");
   expect(within(row("Fichier existant")).getByText("Utilisé")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Utiliser" }));
+  await user.click(screen.getByRole("button", { name: "Utiliser Whisper small" }));
   expect(vi.mocked(invoke)).toHaveBeenCalledWith("voice.whisper.use", { level: "small" });
   await waitFor(() => expect(within(row("Whisper small")).getByText("Utilisé")).toBeVisible());
   expect(within(row("Fichier existant")).queryByText("Utilisé")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Utiliser" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Utiliser Whisper small" })).not.toBeInTheDocument();
 });
 
 it("Whisper : un niveau se télécharge par la source des modèles, avec sa progression, puis sert", async () => {
@@ -177,6 +188,16 @@ it("Whisper : une erreur de téléchargement est lisible et se réessaie", async
   expect(screen.getByRole("button", { name: "Télécharger Whisper tiny" })).toHaveTextContent("Réessayer");
 });
 
+it("Whisper : on revient d’un clic au fichier existant déjà indiqué", async () => {
+  const user = userEvent.setup();
+  config.whisperLevel = "small";
+  levels.current = "small";
+  render(<VoiceSettings />);
+  await user.click(await screen.findByRole("button", { name: "Utiliser le fichier existant" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({ whisperLevel: null, whisperModel: "/m/ggml.bin" });
+});
+
 it("Whisper : un fichier ggml existant remplace le niveau", async () => {
   const user = userEvent.setup();
   config.whisperLevel = "small";
@@ -188,4 +209,30 @@ it("Whisper : un fichier ggml existant remplace le niveau", async () => {
   await user.tab();
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0]).toMatchObject({ whisperLevel: null, whisperModel: "/autre/ggml-medium.bin" });
+});
+
+it("Whisper : passer d’un niveau téléchargé à l’autre, puis en supprimer un après confirmation", async () => {
+  const user = userEvent.setup();
+  levels.levels[0] = { ...levels.levels[0], installed: true, revision: "5359861" };
+  levels.current = "small";
+  config.whisperLevel = "small";
+  render(<VoiceSettings />);
+  await user.click(await screen.findByRole("button", { name: "Utiliser Whisper tiny" }));
+  await waitFor(() => expect(within(row("Whisper tiny")).getByText("Utilisé")).toBeVisible());
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "voice.whisper.download")).toHaveLength(0);
+  // Supprimer small : une confirmation d’abord ; « Annuler » ne supprime rien.
+  await user.click(screen.getByRole("button", { name: "Supprimer Whisper small" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Supprimer Whisper small ?" });
+  expect(within(dialog).getByText(/465 Mo\) est effacé de cet ordinateur/)).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Annuler" }));
+  expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("voice.whisper.remove", expect.anything());
+  await user.click(screen.getByRole("button", { name: "Supprimer Whisper small" }));
+  await user.click(
+    within(await screen.findByRole("alertdialog", { name: "Supprimer Whisper small ?" })).getByRole("button", {
+      name: "Supprimer",
+    }),
+  );
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith("voice.whisper.remove", { level: "small" });
+  expect(await screen.findByRole("button", { name: "Télécharger Whisper small" })).toBeVisible();
+  expect(within(row("Whisper tiny")).getByText("Utilisé")).toBeVisible();
 });
