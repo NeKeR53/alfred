@@ -203,15 +203,21 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
     }
 }
 
-/// Comptes d’un autre service choisis pour une page (`client/instance`) : le choix de l’utilisateur vaut accord pour
-/// les fonctions du module qui sert ce besoin. Seule l’interface passe ici, jamais l’agent.
+/// Comptes choisis pour une page, du service du besoin (`instance`) ou d’un autre service du même type
+/// (`client/instance`) : le choix de l’utilisateur vaut accord pour les fonctions du module qui sert ce besoin, sans
+/// demande d’accès à part au premier appel de la page. Seule l’interface passe ici, jamais l’agent.
 fn grant_chosen_accounts(state: &AppState, space: &Space, args: &Value) -> AppResult<()> {
     let mut chosen: Vec<(String, String, String)> = Vec::new();
     let mut collect = |page: Option<&str>, accounts: Option<&Value>| {
         let module = page.and_then(|page| page.split('/').next()).unwrap_or_default().to_string();
         for (need, value) in accounts.and_then(Value::as_object).into_iter().flatten() {
-            if let Some((client, _)) = value.as_str().and_then(|value| value.split_once('/')) {
-                chosen.push((module.clone(), need.clone(), client.to_string()));
+            let Some(value) = value.as_str() else { continue };
+            let client = match value.split_once('/') {
+                Some((client, _)) => Some(client.to_string()),
+                None => crate::clients::client_for(space, &module, need).ok().map(|client| client.id),
+            };
+            if let Some(client) = client {
+                chosen.push((module.clone(), need.clone(), client));
             }
         }
     };

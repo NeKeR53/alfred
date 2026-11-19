@@ -20,6 +20,14 @@ export interface ClientAuth {
 export interface ClientMethod extends Omit<ClientAuth, "secret"> {
   id: string;
   label?: string;
+  /** Consigne du parcours de configuration, trois lignes au plus : où créer le jeton, quels droits lui donner. */
+  help?: string;
+  /** Page du service où créer le jeton ou la clé (« Créer mon jeton ») ; `{url}` y devient l’adresse du compte. */
+  tokenPage?: string;
+  /** Adresse d’exemple du compte (`https://acme.atlassian.net`). */
+  urlExample?: string;
+  /** OAuth 2 : identifiant public de l’application déclarée par le module ; « Se connecter avec… » sans rien saisir. */
+  clientId?: string;
 }
 
 /**
@@ -139,10 +147,24 @@ export interface ClientsOverview {
   redirectUri: string | null;
 }
 
+/**
+ * Pourquoi un test ou une vérification d’adresse a échoué : adresse injoignable, certificat non reconnu, accès
+ * refusé (401), droits insuffisants (403), adresse qui n’est pas celle attendue (404), autre erreur.
+ */
+export type FailureReason = "unreachable" | "certificate" | "refused" | "forbidden" | "notFound" | "error";
+
 export interface ClientTestResult {
   ok: boolean;
   status: number | null;
   durationMs: number;
+  message: string;
+  reason?: FailureReason | null;
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  status: number | null;
+  reason: FailureReason | null;
   message: string;
 }
 
@@ -179,6 +201,9 @@ export const validateClient = (client: ClientItem) =>
 const target = (id: string, instance?: string) => (instance ? { id, instance } : { id });
 export const testClient = (id: string, instance?: string) =>
   invoke<ClientTestResult>("clients.test", target(id, instance));
+/** Vérifie qu’une adresse répond, par une lecture anonyme, avant d’y envoyer un compte. */
+export const probeAddress = (url: string, insecureTls = false) =>
+  invoke<ProbeResult>("clients.probe", insecureTls ? { url, insecureTls } : { url });
 export const bindNeed = (need: string, client: string | null) =>
   invoke<{ bindings: Record<string, string> }>("clients.bind", { need, client });
 export const connectClient = (id: string, instance?: string) =>

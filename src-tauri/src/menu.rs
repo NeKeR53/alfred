@@ -646,7 +646,10 @@ impl Space {
         let (label, icon) = (clean(label), clean(icon));
         let menu = manifest.layout.menu.get_or_insert_with(Vec::new);
         let key;
-        if let Some(entry) = menu.iter_mut().find(|known| known.id == target) {
+        // La première copie d’une page et son premier onglet peuvent porter le même identifiant (`atlassian/jira`) :
+        // des comptes ne se donnent qu’à un onglet, c’est donc lui qui est visé.
+        let tab_wanted = accounts.is_some() && menu.iter().flat_map(|entry| entry.tabs.iter()).any(|tab| tab.id == target);
+        if let Some(entry) = menu.iter_mut().find(|known| known.id == target && !tab_wanted) {
             if accounts.is_some() {
                 return Err(AppError::new("Les comptes se choisissent onglet par onglet."));
             }
@@ -1400,9 +1403,57 @@ mod tests {
         request(&state, &plain, "bitbucket", json!({ "path": "/api/echo", "instance": "bitbucket/equipe" })).await.unwrap();
         assert_eq!(equipe.seen_paths().len(), 2);
 
+        // Choisir pour une page un compte de son propre service vaut aussi accord, du même geste : la page ne
+        // s’ouvre pas sur une demande d’accès (onboarding, fiche du module).
+        let root = space.root.to_string_lossy().to_string();
+        let granted = || crate::app_db::is_granted(&state.app_db.lock().unwrap(), &root, "function:atlassian/*", "client:bitbucket").unwrap();
+        assert!(!granted());
+        let own = snapshot
+            .sections
+            .iter()
+            .flat_map(|section| section.pages.iter())
+            .find(|page| page.module == "atlassian")
+            .unwrap()
+            .reference
+            .clone();
+        invoke(&state, "space.menu.configure", json!({ "target": own, "accounts": { "bitbucket": "equipe" } })).await.unwrap();
+        assert!(granted());
+
         // Un service d’un autre type ne s’accepte pas.
         let foreign = Some(BTreeMap::from([("bitbucket".to_string(), "prefect/prod".to_string())]));
         assert!(space.configure_menu_item("revues/revues", None, None, foreign).is_err());
+    }
+
+    /// La première copie d’une page et son onglet portent parfois le même identifiant (section « jira » et page
+    /// « jira » d’Atlassian) : des comptes visent alors l’onglet, un nom la page.
+    #[tokio::test]
+    async fn accounts_given_to_an_id_shared_by_a_page_and_its_tab_go_to_the_tab() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        prefect_module(&space, false);
+        write_client(&space, "prefect", &[("prod", "Prod")]);
+        let mut manifest = space.manifest().unwrap();
+        manifest.layout.menu = Some(vec![MenuPage {
+            id: "prefect/deploiements".into(),
+            section: "prefect/principal".into(),
+            label: None,
+            icon: None,
+            tabs: vec![MenuTab {
+                id: "prefect/deploiements".into(),
+                page: "prefect/deploiements".into(),
+                label: None,
+                icon: None,
+                accounts: BTreeMap::new(),
+            }],
+        }]);
+        space.write_manifest(&manifest).unwrap();
+        let accounts = BTreeMap::from([("prefect".to_string(), "prod".to_string())]);
+        space.configure_menu_item("prefect/deploiements", None, None, Some(accounts.clone())).unwrap();
+        space.configure_menu_item("prefect/deploiements", Some("Mes déploiements".into()), None, None).unwrap();
+        let menu = space.manifest().unwrap().layout.menu.unwrap();
+        assert_eq!(menu[0].tabs[0].accounts, accounts);
+        assert_eq!(menu[0].label.as_deref(), Some("Mes déploiements"));
+        assert_eq!(menu[0].tabs[0].label, None);
     }
 
     /// Un modèle nouveau (une page que l’agent ajoute au module) entre une fois au menu, dans sa section ; un module

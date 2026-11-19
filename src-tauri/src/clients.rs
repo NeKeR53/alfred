@@ -122,6 +122,21 @@ pub struct AuthMethod {
     pub label: String,
     #[serde(flatten)]
     pub auth: Auth,
+    /// Aide du parcours de configuration, propre à cette méthode : une consigne de trois lignes au plus (où créer le
+    /// jeton, quels droits lui donner). Jamais lue pour une requête.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub help: String,
+    /// Page du service où l’utilisateur crée son jeton ou sa clé : le parcours l’ouvre par « Créer mon jeton ».
+    /// `{url}` y devient l’adresse du compte. À ne pas confondre avec `tokenUrl`, le serveur de jetons d’OAuth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_page: Option<String>,
+    /// Adresse d’exemple, montrée dans le champ de l’adresse du compte (`https://acme.atlassian.net`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_example: Option<String>,
+    /// OAuth 2 : identifiant public de l’application que le module a déclarée chez le service. Avec lui, le
+    /// parcours propose « Se connecter avec… » sans rien faire saisir : la connexion se fait par PKCE.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// Compte ou installation du service : son adresse, la méthode choisie et l’entrée du coffre qui la sert. Seul
@@ -394,7 +409,7 @@ impl ClientDef {
         if self.methods.is_empty() {
             let mut auth = self.auth.take().unwrap_or_default();
             let secret = auth.secret.take();
-            self.methods.push(AuthMethod { id: DEFAULT_INSTANCE.to_string(), label: String::new(), auth });
+            self.methods.push(AuthMethod { id: DEFAULT_INSTANCE.to_string(), auth, ..Default::default() });
             if self.instances.is_empty() && !self.base_url.trim().is_empty() {
                 self.instances.push(Instance {
                     id: DEFAULT_INSTANCE.to_string(),
@@ -454,6 +469,13 @@ impl ClientDef {
                 method.id = slug(&method.label);
             }
             method.label = method.label.trim().to_string();
+            method.help = method.help.trim().to_string();
+            clean(&mut method.token_page);
+            clean(&mut method.url_example);
+            clean(&mut method.client_id);
+            if method.auth.kind != AuthKind::Oauth2 {
+                method.client_id = None;
+            }
             method.auth.normalize();
             // Le secret appartient à l’instance, jamais à la méthode.
             method.auth.secret = None;
@@ -504,6 +526,11 @@ impl ClientDef {
             auth.validate().map_err(|error| {
                 AppError::new(format!("Méthode « {} » : {}", method_label(method), error.message))
             })?;
+            if let Some(page) = &method.token_page {
+                check_url(&page.replace("{url}", "https://instance.exemple"), "La page du jeton", true).map_err(
+                    |error| AppError::new(format!("Méthode « {} » : {}", method_label(method), error.message)),
+                )?;
+            }
         }
         let mut seen = std::collections::HashSet::new();
         for instance in &self.instances {
@@ -1089,22 +1116,58 @@ fn shared_http(insecure: bool) -> AppResult<reqwest::Client> {
 pub fn network_error(error: reqwest::Error, secrets: &[String]) -> AppError {
     let error = error.without_url();
     if error.is_timeout() {
-        return AppError::new(format!(
-            "Délai dépassé : le service n’a pas répondu en {} s.",
-            REQUEST_TIMEOUT.as_secs()
-        ));
+        return AppError::with_detail(
+            format!("Délai dépassé : le service n’a pas répondu en {} s.", REQUEST_TIMEOUT.as_secs()),
+            json!({ "reason": "unreachable" }),
+        );
     }
     // La cause la plus profonde est la plus parlante (certificat refusé, nom introuvable, connexion refusée).
     let mut cause: &dyn std::error::Error = &error;
-    while let Some(source) = cause.source() {
-        cause = source;
+    let mut certificate = false;
+    loop {
+        let text = cause.to_string().to_lowercase();
+        certificate |= text.contains("certificate") || text.contains("certificat");
+        match cause.source() {
+            Some(source) => cause = source,
+            None => break,
+        }
     }
     let reason = redact(&cause.to_string(), secrets);
-    AppError::new(if error.is_connect() {
-        format!("Connexion au service impossible : {reason}.")
+    // Raison en un mot, pour que le parcours de configuration dise quoi faire : certificat d’entreprise non reconnu,
+    // adresse injoignable, ou autre échec.
+    let kind = if certificate {
+        "certificate"
+    } else if error.is_connect() {
+        "unreachable"
     } else {
-        format!("La requête n’a pas abouti : {reason}.")
-    })
+        "error"
+    };
+    AppError::with_detail(
+        if error.is_connect() {
+            format!("Connexion au service impossible : {reason}.")
+        } else {
+            format!("La requête n’a pas abouti : {reason}.")
+        },
+        json!({ "reason": kind }),
+    )
+}
+
+/// Vérifie qu’une adresse saisie dans le parcours de configuration répond, sans rien envoyer d’autre qu’une lecture
+/// anonyme : `{ ok, status, reason, message }`. Toute réponse HTTP prouve que l’adresse est joignable.
+async fn probe(args: &Value) -> AppResult<Value> {
+    let url = check_url(&arg::<String>(args, "url")?, "L’adresse", false)?;
+    let insecure = opt_arg::<bool>(args, "insecureTls")?.unwrap_or(false);
+    match shared_http(insecure)?.get(url).send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            Ok(json!({ "ok": true, "status": status, "reason": null, "message": format!("L’adresse répond ({status}).") }))
+        }
+        Err(error) => {
+            let error = network_error(error, &[]);
+            let reason = error.detail.as_ref().and_then(|detail| detail["reason"].as_str()).unwrap_or("error");
+            Ok(json!({ "ok": false, "status": null, "reason": reason, "message": error.message }))
+        }
+    }
 }
 
 fn decode_percent(segment: &str) -> String {
@@ -2193,6 +2256,13 @@ fn test_outcome(result: AppResult<Value>, path: &str, duration: u64) -> Value {
     match result {
         Ok(response) => {
             let status = response["status"].as_u64().unwrap_or_default();
+            let reason = match status {
+                200..=399 => Value::Null,
+                401 => json!("refused"),
+                403 => json!("forbidden"),
+                404 | 405 => json!("notFound"),
+                _ => json!("error"),
+            };
             let message = match status {
                 200..=399 => format!("Le service répond ({status})."),
                 401 | 403 => format!("Le service refuse l’authentification ({status})."),
@@ -2203,9 +2273,12 @@ fn test_outcome(result: AppResult<Value>, path: &str, duration: u64) -> Value {
                 ),
                 _ => format!("Le service répond par une erreur ({status})."),
             };
-            json!({ "ok": status < 400, "status": status, "durationMs": duration, "message": message })
+            json!({ "ok": status < 400, "status": status, "durationMs": duration, "message": message, "reason": reason })
         }
-        Err(error) => json!({ "ok": false, "status": null, "durationMs": duration, "message": error.message }),
+        Err(error) => {
+            let reason = error.detail.as_ref().and_then(|detail| detail["reason"].as_str()).unwrap_or("error");
+            json!({ "ok": false, "status": null, "durationMs": duration, "message": error.message, "reason": reason })
+        }
     }
 }
 
@@ -2216,6 +2289,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         "frame.clients.clearCache" => frame_clear_cache(state, args),
         "frame.clients.instances" => frame_instances(state, args),
         "clients.test" => test_client(state, args).await,
+        "clients.probe" => probe(args).await,
         "clients.connect" => match state.space().and_then(|space| require_instance(&space, args)) {
             Ok(client) => oauth::begin(state, &client).await.map(|url| json!({ "authorizationUrl": url })),
             Err(error) => Err(error),
@@ -2577,6 +2651,7 @@ mod tests {
         let tested = invoke(&state, "clients.test", json!({ "id": "relais" })).await.unwrap();
         assert_eq!((tested["ok"].clone(), tested["status"].clone()), (json!(false), json!(404)));
         assert!(tested["message"].as_str().unwrap().contains("chemin de test"), "{tested}");
+        assert_eq!(tested["reason"], json!("notFound"));
 
         // Avec un chemin de test, le bouton lit ce chemin.
         let mut with_path = client.clone();
@@ -2593,6 +2668,54 @@ mod tests {
             let error = invoke(&state, "clients.save", json!({ "client": wrong })).await.unwrap_err();
             assert!(error.message.contains("Chemin de test invalide"), "{path} : {}", error.message);
         }
+    }
+
+    /// Le parcours de configuration dit pourquoi un test échoue, vérifie une adresse avant tout compte, et garde
+    /// l’aide de chaque méthode (consigne, page du jeton, adresse d’exemple, application OAuth).
+    #[tokio::test]
+    async fn the_setup_flow_learns_why_a_test_failed_and_whether_an_address_answers() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let base = format!("{}/api", remote.origin);
+        save_client(&state, json!({ "id": "garde", "label": "Garde", "baseUrl": base, "testPath": "/protected", "auth": { "type": "none" } }))
+            .await;
+        let tested = invoke(&state, "clients.test", json!({ "id": "garde" })).await.unwrap();
+        assert_eq!((tested["ok"].clone(), tested["reason"].clone()), (json!(false), json!("refused")), "{tested}");
+
+        // Une adresse qui répond, même par une erreur, est joignable ; une adresse fermée ne l’est pas.
+        let answered = invoke(&state, "clients.probe", json!({ "url": format!("{base}/rien") })).await.unwrap();
+        assert_eq!(answered["ok"], json!(true), "{answered}");
+        let closed = {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let silent =
+            invoke(&state, "clients.probe", json!({ "url": format!("http://127.0.0.1:{closed}/api") })).await.unwrap();
+        assert_eq!((silent["ok"].clone(), silent["reason"].clone()), (json!(false), json!("unreachable")), "{silent}");
+        assert!(invoke(&state, "clients.probe", json!({ "url": "http://exemple.com" })).await.is_err());
+
+        let saved = save_client(
+            &state,
+            json!({ "id": "suivi", "label": "Suivi", "methods": [
+                { "id": "jeton", "label": "Jeton", "type": "bearer", "help": " Profil → Jetons. ", "tokenPage": "{url}/profil/jetons", "urlExample": "https://suivi.acme.fr", "clientId": "ignoré" },
+                { "id": "sso", "label": "SSO", "type": "oauth2", "authorizationUrl": "{url}/authorize", "tokenUrl": "{url}/token", "clientId": "app-publique" }
+            ] }),
+        )
+        .await;
+        let methods = &saved["methods"];
+        assert_eq!(methods[0]["help"], json!("Profil → Jetons."));
+        assert_eq!(methods[0]["tokenPage"], json!("{url}/profil/jetons"));
+        assert_eq!(methods[0]["urlExample"], json!("https://suivi.acme.fr"));
+        assert_eq!(methods[0].get("clientId"), None, "un identifiant d’application n’a de sens que pour OAuth");
+        assert_eq!(methods[1]["clientId"], json!("app-publique"));
+        let error = invoke(
+            &state,
+            "clients.save",
+            json!({ "client": { "id": "suivi", "label": "Suivi", "methods": [{ "id": "jeton", "type": "bearer", "tokenPage": "javascript:alert(1)" }] } }),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.message.contains("page du jeton"), "{}", error.message);
     }
 
     /// Cloisonnement : une page ou un panneau ne joint jamais un service par son client, même accordé ; seules les
@@ -2912,6 +3035,7 @@ mod tests {
         assert_no_leak("erreur réseau", &error.message, &[TOKEN, "cle="]);
         let tested = invoke(&state, "clients.test", json!({ "id": "eteint" })).await.unwrap();
         assert_eq!(tested["ok"], json!(false));
+        assert_eq!(tested["reason"], json!("unreachable"), "{tested}");
         assert_no_leak("test", &tested.to_string(), &[TOKEN, "cle="]);
     }
 

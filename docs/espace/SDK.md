@@ -327,6 +327,11 @@ Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des
 ```
 
 - `methods[].id` et `label` : identifiant et nom montré à l’utilisateur ; les autres champs sont ceux de `auth`, sans `secret`. `{url}` au début de `authorizationUrl` ou `tokenUrl` devient l’adresse de l’instance.
+- Aide du parcours de configuration, propre à chaque méthode et toute facultative (jamais lue pour une requête) :
+  - `urlExample` : adresse d’exemple montrée dans le champ de l’adresse (`"https://acme.atlassian.net"`) ;
+  - `help` : consigne de trois lignes au plus (« Dans Jira : votre avatar, Profil, Jetons d’accès personnels, Créer. ») ;
+  - `tokenPage` : page du service où l’utilisateur crée son jeton ou sa clé, ouverte par le bouton « Créer mon jeton » ; `{url}` y devient l’adresse du compte (`"{url}/secure/ViewProfile.jspa?selectedTab=com.atlassian.pats.pats-plugin:jira-user-personal-access-tokens"`). En https://. À ne pas confondre avec `tokenUrl`, le serveur de jetons d’OAuth ;
+  - `clientId` (`oauth2` seulement) : identifiant public de l’application que le module a déclarée chez le service. Avec lui, le parcours propose « Se connecter avec … » dans le navigateur, sans rien faire saisir (PKCE) ; sans lui, l’utilisateur doit saisir l’identifiant d’une application qu’il a créée.
 - `instances[]` : `id` (celui que les pages passent à `client(id, { instance })`), `label`, `url` (omise : `baseUrl`), `method`, `secret` (omis : l’entrée déjà reliée est gardée). La première est celle par défaut.
 - `baseUrl` (facultatif) : adresse proposée aux instances qui n’ont pas la leur.
 
