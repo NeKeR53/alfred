@@ -117,7 +117,8 @@ async fn serve(State(state): State<Shared>, headers: HeaderMap, Json(body): Json
 }
 
 /// Outils qui enregistrent un commit dans l’espace.
-const COMMITTING_TOOLS: [&str; 7] = [
+const COMMITTING_TOOLS: [&str; 8] = [
+    "user_pages",
     "declare_client",
     "declare_webhook",
     "remove_webhook",
@@ -470,6 +471,27 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "hidden": { "type": "boolean", "description": "true pour masquer, false pour réafficher." },
             }),
             &["target", "hidden"],
+        ),
+        tool(
+            "user_pages",
+            "Pages de l’utilisateur : les entrées du menu qu’il crée à partir des modèles de pages des modules (les pages que tu écris dans `module.json`), chacune avec ses onglets et le compte de chaque onglet. C’est lui qui les crée et les configure, dans Réglages → Modules, fiche du module. N’utilise cet outil que s’il te le demande explicitement (« ajoute-moi une page Prefect pour la recette », « renomme l’onglet Prod »), jamais de toi-même, ni pour livrer une page que tu viens d’écrire : un modèle nouveau entre déjà au menu une fois, tout seul. `list` montre les pages, leurs onglets, leurs comptes, et les modèles disponibles. Chaque autre action fait un commit.",
+            json!({
+                "action": { "type": "string", "enum": ["list", "add_page", "add_tab", "configure", "remove", "move"], "description": "`list` ; `add_page` (section, tabs, label, icon) ; `add_tab` (page, tab) ; `configure` (target, label, icon, accounts) ; `remove` (target) ; `move` (target, delta)." },
+                "section": { "type": "string", "description": "add_page : section déclarée du modèle, « module/section » (son apparence par défaut)." },
+                "tabs": { "type": "array", "description": "add_page : onglets de la page, au moins un.", "items": { "type": "object", "properties": {
+                    "page": { "type": "string", "description": "Modèle, « module/page »." },
+                    "label": { "type": "string", "description": "Nom de l’onglet ; omis, celui du modèle." },
+                    "accounts": { "type": "object", "description": "Compte par besoin du modèle : { \"prefect\": \"recette\" } ; un besoin omis prend le compte par défaut.", "additionalProperties": { "type": "string" } }
+                }, "required": ["page"] } },
+                "page": { "type": "string", "description": "add_tab : identifiant de la page qui reçoit l’onglet (donné par `list`)." },
+                "tab": { "type": "object", "description": "add_tab : l’onglet, de la même forme qu’un élément de `tabs`." },
+                "target": { "type": "string", "description": "configure, remove, move : identifiant d’une page ou d’un onglet (donné par `list`)." },
+                "label": { "type": "string", "description": "add_page, configure : nom ; vide pour revenir à celui du modèle." },
+                "icon": { "type": "string", "description": "add_page, configure : nom d’une icône Lucide (une page)." },
+                "accounts": { "type": "object", "description": "configure : comptes d’un onglet, par besoin.", "additionalProperties": { "type": "string" } },
+                "delta": { "type": "integer", "description": "move : places à gagner (-1 monte d’une place, 1 descend)." },
+            }),
+            &["action"],
         ),
         tool(
             "set_section_icon",
@@ -1002,7 +1024,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 })).collect::<Vec<_>>(),
                 "next": match status {
                     "toValidate" => "Client « à valider » : s’il lui faut un secret, `vault_store` puis `declare_client` avec `auth.secret` (ou le `secret` de chaque instance) ; appeler `validate_client`, puis `grant_access` pour chaque page ou module qui l’utilise. Le déclarer aussi dans `clients` du module.json.",
-                    "noInstance" => "Client enregistré, sans instance : `vault_store` pour chaque compte, puis `declare_client` avec `instances` (id, label, url, method, secret), puis `validate_client`. Une page choisit l’instance par `client(id, { instance })` et les liste par `client(id).instances()` ; une page ou une section `perInstance` le suit, pour les comptes où l’utilisateur l’a ajoutée.",
+                    "noInstance" => "Client enregistré, sans instance : `vault_store` pour chaque compte, puis `declare_client` avec `instances` (id, label, url, method, secret), puis `validate_client`. Une page choisit l’instance par `client(id, { instance })` et les liste par `client(id).instances()` ; l’utilisateur choisit, page par page, le compte que montre chacune (`usePageContext().accounts`).",
                     _ => "Client enregistré. Le déclarer dans `clients` du module.json qui l’utilise, puis appeler `check`.",
                 },
             }))
@@ -1057,6 +1079,41 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 state.emit("space:changed", Value::Null);
             }
             Ok(json!({ "target": target, "hidden": hidden, "changed": changed.is_some() }))
+        }
+        "user_pages" => {
+            let action: String = arg(args, "action")?;
+            if action == "list" {
+                let snapshot = space.snapshot()?;
+                let pages: Vec<Value> = snapshot
+                    .sections
+                    .iter()
+                    .map(|section| {
+                        json!({
+                            "id": section.id,
+                            "label": section.label,
+                            "section": section.instance_of.clone().unwrap_or_else(|| section.id.clone()),
+                            "hidden": section.hidden,
+                            "tabs": section.pages.iter().map(|page| json!({
+                                "id": page.reference, "label": page.title, "template": page.template,
+                                "accounts": page.accounts, "hidden": page.hidden, "waiting": page.waiting,
+                            })).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                return Ok(json!({ "pages": pages, "templates": snapshot.templates, "sections": snapshot.section_templates }));
+            }
+            let command = match action.as_str() {
+                "add_page" => "space.menu.addPage",
+                "add_tab" => "space.menu.addTab",
+                "configure" => "space.menu.configure",
+                "remove" => "space.menu.remove",
+                "move" => "space.menu.move",
+                other => return Err(AppError::new(format!("Action inconnue : « {other} »."))),
+            };
+            let (message, created) = crate::dispatch::menu_command(&space, command, args)?;
+            crate::git::commit_all(&space.root, &format!("{message} (à la demande de l’utilisateur)"))?;
+            state.emit("space:changed", Value::Null);
+            Ok(json!({ "done": message, "created": created }))
         }
         "set_section_icon" => {
             let section: String = arg(args, "section")?;
@@ -1649,6 +1706,38 @@ mod tests {
         assert_eq!((crm["hidden"].clone(), crm["requiredBy"].clone()), (json!(true), json!(["devis"])));
         let devis = overview["modules"].as_array().unwrap().iter().find(|module| module["module"] == "devis").unwrap();
         assert_eq!(devis["requires"], json!([{ "module": "crm" }]));
+    }
+
+    /// À la demande de l’utilisateur, l’agent ajoute une page à partir d’un modèle, la renomme et la retire.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_adds_a_user_page_from_a_template_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        state.set_space(Some(space.clone()));
+        space.place_page("Liste", None, "", &PlaceTarget::Menu { label: "CRM".into(), icon: None, color: None }, None).unwrap();
+        crate::git::commit_all(&space.root, "Module").unwrap();
+
+        let listed = call(&state, "user_pages", json!({ "action": "list" })).await.unwrap();
+        assert_eq!(listed["pages"][0]["id"], json!("crm/principal"));
+        assert_eq!(listed["templates"][0]["reference"], json!("crm/liste"));
+        let added = call(
+            &state,
+            "user_pages",
+            json!({ "action": "add_page", "section": "crm/principal", "label": "CRM Bis", "tabs": [{ "page": "crm/liste" }] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["created"], json!("crm/principal@crm-bis"));
+        assert!(crate::git::run(&space.root, &["log", "-1", "--format=%s"]).unwrap().contains("à la demande de l’utilisateur"));
+        call(&state, "user_pages", json!({ "action": "configure", "target": "crm/principal@crm-bis", "label": "Clients" }))
+            .await
+            .unwrap();
+        let labels: Vec<String> = space.snapshot().unwrap().sections.into_iter().map(|section| section.label).collect();
+        assert_eq!(labels, ["CRM", "Clients"]);
+        call(&state, "user_pages", json!({ "action": "remove", "target": "crm/principal@crm-bis" })).await.unwrap();
+        assert_eq!(space.snapshot().unwrap().sections.len(), 1);
+        assert!(call(&state, "user_pages", json!({ "action": "inventer" })).await.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread")]

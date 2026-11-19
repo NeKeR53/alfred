@@ -15,6 +15,9 @@ const LAST_SPACE: &str = "space.last";
 
 /// Vue de l’espace pour l’interface, avec les réglages du poste qui la complètent (données d’exemple).
 fn ui_snapshot(state: &AppState, space: &Space) -> AppResult<Value> {
+    // Un modèle nouveau (module installé, page écrite par l’agent) entre au menu une fois, et c’est écrit ; le
+    // commit suivant l’emporte avec lui.
+    let _ = space.persist_menu();
     let mut snapshot = space.snapshot()?;
     snapshot.examples = crate::examples::modules(state);
     Ok(serde_json::to_value(snapshot)?)
@@ -137,8 +140,13 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
         "space.updateLayout" => {
             let space = state.space()?;
             let mut manifest = space.manifest()?;
-            if let Some(layout) = opt_arg(&args, "layout")? {
-                manifest.layout = layout;
+            let before = manifest.layout.clone();
+            if let Some(layout) = opt_arg::<crate::space::Layout>(&args, "layout")? {
+                // Les pages de l’utilisateur ne se changent que par `space.menu.*` : la coquille ne les renvoie pas.
+                space.persist_menu()?;
+                let stored = space.manifest()?.layout;
+                manifest.layout =
+                    crate::space::Layout { menu: stored.menu, menu_templates: stored.menu_templates, ..layout };
             }
             if let Some(name) = opt_arg::<String>(&args, "name")? {
                 manifest.name = name;
@@ -147,10 +155,23 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
                 manifest.accent = opt_arg(&args, "accent")?;
             }
             space.write_manifest(&manifest)?;
+            space.apply_placements(&before)?;
             let message: Option<String> = opt_arg(&args, "message")?;
             commit(&space, message.as_deref().unwrap_or("Réorganisation de la navigation"))?;
             state.emit("space:changed", Value::Null);
             ui_snapshot(&state, &space)
+        }
+        "space.menu.addPage" | "space.menu.addTab" | "space.menu.configure" | "space.menu.remove"
+        | "space.menu.move" | "space.menu.moveTab" => {
+            let space = state.space()?;
+            let (message, created) = menu_command(&space, command, &args)?;
+            commit(&space, &message)?;
+            state.emit("space:changed", Value::Null);
+            let mut snapshot = ui_snapshot(&state, &space)?;
+            if let (Some(created), Some(object)) = (created, snapshot.as_object_mut()) {
+                object.insert("created".into(), Value::String(created));
+            }
+            Ok(snapshot)
         }
         "space.commit" => {
             let space = state.space()?;
@@ -177,6 +198,48 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             let reverted = git::revert(&space.root, &id)?;
             state.emit("space:changed", Value::Null);
             Ok(json!({ "commit": reverted }))
+        }
+        _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
+    }
+}
+
+/// Pages de l’utilisateur : l’opération demandée, le message du commit et, pour un ajout, l’identifiant créé.
+pub fn menu_command(space: &Space, command: &str, args: &Value) -> AppResult<(String, Option<String>)> {
+    use crate::menu::NewTab;
+    match command {
+        "space.menu.addPage" => {
+            let section: String = arg(args, "section")?;
+            let tabs: Vec<NewTab> = arg(args, "tabs")?;
+            let label: Option<String> = opt_arg(args, "label")?;
+            let id = space.add_menu_page(&section, tabs, label.clone(), opt_arg(args, "icon")?)?;
+            Ok((format!("Page {} ajoutée", label.unwrap_or_else(|| id.clone())), Some(id)))
+        }
+        "space.menu.addTab" => {
+            let page: String = arg(args, "page")?;
+            let tab: NewTab = arg(args, "tab")?;
+            let id = space.add_menu_tab(&page, tab)?;
+            Ok((format!("Onglet {id} ajouté à la page {page}"), Some(id)))
+        }
+        "space.menu.configure" => {
+            let target: String = arg(args, "target")?;
+            space.configure_menu_item(&target, opt_arg(args, "label")?, opt_arg(args, "icon")?, opt_arg(args, "accounts")?)?;
+            Ok((format!("Page {target} modifiée"), None))
+        }
+        "space.menu.remove" => {
+            let target: String = arg(args, "target")?;
+            space.remove_menu_item(&target)?;
+            Ok((format!("Page {target} retirée du menu"), None))
+        }
+        "space.menu.move" => {
+            let target: String = arg(args, "target")?;
+            space.move_menu_item(&target, arg(args, "delta")?)?;
+            Ok((format!("Page {target} déplacée"), None))
+        }
+        "space.menu.moveTab" => {
+            let tab: String = arg(args, "tab")?;
+            let to: String = arg(args, "to")?;
+            space.move_menu_tab(&tab, &to)?;
+            Ok((format!("Onglet {tab} déplacé vers {to}"), None))
         }
         _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
     }
@@ -211,9 +274,10 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
-    // Espace d’avant le choix des pages par compte : chaque compte garde les pages qu’il montre.
-    if let Err(error) = space.migrate_account_pages() {
-        log::error!("pages des comptes non reprises : {}", error.message);
+    // Espace d’avant les pages de l’utilisateur : son menu est repris tel qu’il s’affichait, et les modèles
+    // nouveaux y entrent une fois.
+    if let Err(error) = space.persist_menu() {
+        log::error!("menu non repris : {}", error.message);
     }
     // Les services restés après la suppression de leur module (avant que le retrait ne les emporte) s’en vont.
     if let Err(error) = crate::clients::forget_unused(state, &space) {

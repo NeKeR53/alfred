@@ -55,6 +55,14 @@ pub struct Layout {
     /// Clés `module:<module>`, `section:<id>` et `page:<module>/<page>`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, Override>,
+    /// Pages de l’utilisateur (entrées du menu), créées à partir des modèles des modules. `None` : espace d’avant,
+    /// dont le menu est repris des règles d’alors à l’ouverture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub menu: Option<Vec<crate::menu::MenuPage>>,
+    /// Modèles déjà proposés à l’utilisateur : un modèle nouveau est ajouté une fois au menu, un modèle retiré n’y
+    /// revient pas.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub menu_templates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -347,8 +355,8 @@ pub struct PageDecl {
     pub placement: Placement,
     #[serde(default, skip_serializing_if = "Uses::is_empty")]
     pub uses: Uses,
-    /// Besoin client du module (`jira`, ou `dépendance/besoin`) dont la page est pour chaque compte : elle existe
-    /// une fois par instance du client, pour les comptes où l’utilisateur l’a ajoutée.
+    /// Besoin client du module (`jira`, ou `dépendance/besoin`) dont la page montre un compte : sans compte, elle
+    /// attend. L’utilisateur choisit ce compte pour chaque copie de la page (`layout.menu`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_instance: Option<String>,
 }
@@ -547,10 +555,15 @@ pub struct Snapshot {
     /// Modules affichés avec leurs données d’exemple (réglage du poste, dans la base d’Alfred) ; rempli par la
     /// commande qui envoie la vue à l’interface.
     pub examples: Vec<String>,
-    /// Pages qui sont pour chaque compte d’un client, que l’utilisateur peut ajouter à un compte.
-    pub account_pages: Vec<AccountPage>,
-    /// Pages ajoutées à chaque compte (`client/instance` → `module/page`), pour chaque compte d’un client qui en a.
-    pub accounts: BTreeMap<String, Vec<String>>,
+    /// Modèles de pages des modules, que l’utilisateur ajoute comme pages ou comme onglets.
+    pub templates: Vec<crate::menu::PageTemplate>,
+    /// Sections déclarées : l’apparence d’une page et ses onglets par défaut.
+    pub section_templates: Vec<crate::menu::SectionTemplate>,
+    /// Onglets qui se servent de chaque compte (`client/instance` → références).
+    pub account_usage: BTreeMap<String, Vec<String>>,
+    /// Menu calculé qui n’est pas encore sur le disque (espace d’avant, modèles nouveaux) : `persist_menu` l’écrit.
+    #[serde(skip)]
+    pub pending_menu: Option<(Vec<crate::menu::MenuPage>, Vec<String>)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -602,6 +615,12 @@ pub struct ResolvedPage {
     pub instance: Option<String>,
     /// Besoin client dont la page suit les instances : le sien (`perInstance` de la page), sinon celui de sa section.
     pub per_instance: Option<String>,
+    /// Modèle dont la page est la copie (`module/page`) ; sa référence est la sienne, ou porte un suffixe.
+    pub template: String,
+    /// Compte choisi pour chaque besoin (`jira` → `acme`).
+    pub accounts: BTreeMap<String, String>,
+    /// La page attend un compte : ce qu’il faut faire, montré à la place de la page.
+    pub waiting: Option<String>,
 }
 
 /// Page qui est pour chaque compte d’un client : ce que la fiche d’un compte propose d’ajouter.
@@ -1172,7 +1191,7 @@ impl Space {
     /// instance, ou qui le déclarent elles-mêmes. Chaque compte a sa copie de la section, avec les seules pages que
     /// l’utilisateur lui a ajoutées ; les autres pages de la section restent dans la section d’origine. Sans
     /// instance (ou sans client), la section reste seule et dit quoi faire.
-    fn expand_instances(
+    pub(crate) fn expand_instances(
         &self,
         sections: Vec<ResolvedSection>,
         manifest: &SpaceManifest,
@@ -1357,49 +1376,6 @@ impl Space {
         (expanded, account_pages, accounts)
     }
 
-    /// Fixe les pages ajoutées à un compte. Seul ce compte change : les autres gardent les leurs.
-    pub fn set_account_pages(&self, client: &str, instance: &str, pages: Vec<String>) -> AppResult<()> {
-        if !valid_id(client) || !valid_id(instance) {
-            return Err(AppError::new(format!("Compte invalide : « {client}/{instance} ».")));
-        }
-        for reference in &pages {
-            if reference.contains('@') || reference.split_once('/').is_none_or(|(module, page)| !valid_id(module) || !valid_id(page)) {
-                return Err(AppError::new(format!("Page attendue : « module/page », pas « {reference} ».")));
-            }
-        }
-        self.migrate_account_pages()?;
-        let mut manifest = self.manifest()?;
-        let mut pages = pages;
-        pages.dedup();
-        manifest.account_pages.get_or_insert_with(BTreeMap::new).insert(account_key(client, instance), pages);
-        self.write_manifest(&manifest)
-    }
-
-    /// Oublie les pages d’un compte supprimé : recréé sous le même nom, il repart sans page.
-    pub fn forget_account_pages(&self, client: &str, instance: &str) -> AppResult<()> {
-        self.migrate_account_pages()?;
-        let mut manifest = self.manifest()?;
-        if let Some(chosen) = manifest.account_pages.as_mut() {
-            if chosen.remove(&account_key(client, instance)).is_some() {
-                self.write_manifest(&manifest)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Espace d’avant le choix par compte : chaque compte qui existe garde les pages qu’il montre (toutes celles
-    /// de ses sections par instance), écrites une fois pour toutes. Les comptes ajoutés ensuite partent sans page.
-    pub fn migrate_account_pages(&self) -> AppResult<bool> {
-        if self.manifest()?.account_pages.is_some() {
-            return Ok(false);
-        }
-        let accounts = self.snapshot()?.accounts;
-        let mut manifest = self.manifest()?;
-        manifest.account_pages = Some(accounts);
-        self.write_manifest(&manifest)?;
-        Ok(true)
-    }
-
     /// Calcule la navigation affichée et l’état de compilation de chaque page et fonction.
     pub fn snapshot(&self) -> AppResult<Snapshot> {
         let manifest = self.manifest()?;
@@ -1450,6 +1426,9 @@ impl Space {
                     panel: None,
                     instance: None,
                     per_instance: page.per_instance.clone().filter(|need| !need.trim().is_empty()),
+                    template: reference.clone(),
+                    accounts: BTreeMap::new(),
+                    waiting: None,
                     reference,
                 };
                 pages.push((resolved, placement));
@@ -1532,7 +1511,28 @@ impl Space {
             }
         }
 
-        let (mut sections, account_pages, accounts) = self.expand_instances(sections, &manifest, &mut problems);
+        // Une section par instance donne son besoin à ses pages : ce sont des modèles qui montrent un compte.
+        for section in &mut sections {
+            if let Some(need) = &section.per_instance {
+                for page in &mut section.pages {
+                    page.per_instance.get_or_insert_with(|| need.clone());
+                }
+            }
+        }
+        let (templates, section_templates) = crate::menu::templates(&sections);
+        let (menu, known) = self.effective_menu(&manifest, &sections, &mut problems);
+        let pending_menu = (manifest.layout.menu.as_ref() != Some(&menu) || manifest.layout.menu_templates != known)
+            .then(|| (menu.clone(), known));
+        let template_pages: Vec<ResolvedPage> =
+            sections.iter().flat_map(|section| section.pages.iter().cloned()).collect();
+        let elsewhere: BTreeSet<String> = pages.iter().map(|(page, _)| page.reference.clone()).collect();
+        let resolved = self.resolve_menu(&menu, &sections, &template_pages, &elsewhere, &manifest, &mut problems);
+        let mut sections = resolved.sections;
+        // Ordre par défaut : celui des modules (leurs dossiers), puis celui du menu ; le layout passe ensuite devant.
+        let module_order = self.module_ids();
+        sections.sort_by_key(|section| {
+            module_order.iter().position(|module| module == &section.module).unwrap_or(usize::MAX)
+        });
         // Une copie par instance prend la place de sa section tant que l’utilisateur ne l’a pas rangée elle-même.
         order_by_either(&mut sections, &manifest.layout.sections, |section| {
             (section.id.as_str(), section.instance_of.as_deref())
@@ -1617,10 +1617,13 @@ impl Space {
             functions,
             bindings: manifest.bindings,
             problems,
-            layout: manifest.layout,
+            // Les pages de l’utilisateur ne passent pas par le layout de la coquille : elle les lit dans `sections`.
+            layout: Layout { menu: None, menu_templates: Vec::new(), ..manifest.layout },
             examples: Vec::new(),
-            account_pages,
-            accounts,
+            templates,
+            section_templates,
+            account_usage: resolved.usage,
+            pending_menu,
         })
     }
 }

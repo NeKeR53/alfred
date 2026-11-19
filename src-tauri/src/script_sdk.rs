@@ -84,6 +84,7 @@ pub fn grant(module: &str, function: &str, examples: bool) -> Grant {
         module: module.to_string(),
         reference: format!("{module}/{function}"),
         instance: None,
+        accounts: Default::default(),
         examples,
     };
     if let Ok(mut all) = tokens().lock() {

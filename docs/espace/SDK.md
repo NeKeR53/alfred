@@ -271,7 +271,7 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
-Dans une page pour chaque compte (`perInstance` de la page ou de sa section, AGENTS.md), chaque page connaît son instance (`usePageContext().instance`) et la passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Le même fichier de page sert à toutes les instances ; l’utilisateur ajoute, compte par compte, les pages qui existent pour lui, et une page ne suppose donc pas qu’une autre page du module existe pour le même compte. Une page peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix. Que les comptes s’affichent en entrées du menu ou en onglets d’une seule entrée (`instancesAs: "tabs"` sur la section), la page et son panneau reçoivent l’instance de la même façon.
+Le menu appartient à l’utilisateur : il fait ses pages et leurs onglets à partir des pages déclarées par le module (les modèles), et choisit pour chacun le compte de chaque besoin (AGENTS.md, « Modèles de pages et pages de l’utilisateur »). Le même fichier de page sert à toutes ses copies. La page lit ses comptes dans `usePageContext()` : `accounts` (`{ jira: "acme" }`, un compte par besoin) et `instance` (le compte du besoin qu’elle suit par `perInstance`, ou son seul compte), et les passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Une fonction appelée par la page vise aussi d’office les comptes de la page : `client("jira")`, sans instance, y appelle le compte choisi pour `jira` (puis, à défaut, celui par défaut) ; pour une fonction d’un module dont la page dépend, le compte choisi pour `dépendance/besoin`. Une fonction en script (bash, PowerShell, Python) ne reçoit que son `input`. Une page ne suppose pas qu’une autre page du module existe pour le même compte. Elle peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
 
 `client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
 
@@ -506,7 +506,7 @@ export default function Dicter() {
 
 ```ts
 shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
-shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@instance » pour la page d’un compte)
+shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@suffixe » pour l’une de ses copies)
 shell.openWindow(reference?: string): Promise<void>;    // ouvre la page (sans argument : celle-ci) seule dans sa fenêtre
 shell.setPanelVisible(visible: boolean): Promise<void>; // panneau de droite de la page
 shell.publish(selection: unknown): Promise<void>;       // sélection transmise au panneau
@@ -523,7 +523,8 @@ interface PageContext {
   surface: "section" | "settings"; // « settings » : page placée dans les Réglages, qui prend leur style (DESIGN.md)
   theme: "light" | "dark"; // appliqué par Alfred, rien à faire
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
-  instance: string | null; // page pour chaque compte (`perInstance`) : l’instance du client que montre la page ; sinon null
+  instance: string | null; // compte du besoin que suit la page (`perInstance`), ou son seul compte ; sinon null
+  accounts: Record<string, string>; // compte choisi par l’utilisateur pour chaque besoin de la page : { jira: "acme" }
 }
 ```
 
@@ -577,7 +578,7 @@ badge.clear(options?: { page?: string }): Promise<{ count: number }>;           
 `badge` règle le compteur de la page : une pastille avec ce nombre apparaît sur l’entrée de sa section dans le menu de gauche (la somme des onglets de la section) et sur son onglet, tant qu’il est supérieur à zéro. Le compteur dit combien d’éléments attendent l’utilisateur : messages non lus, demandes à traiter. Il est conservé d’un lancement à l’autre, et Alfred ne le remet jamais à zéro de lui-même : c’est la page qui le fait, quand l’utilisateur a vu ou traité les éléments.
 
 - Sans `page`, le compteur est celui de la page qui appelle ; un panneau règle celui de sa page.
-- `page` nomme une autre page du même module (« boite », ou « boite@instance ») ; jamais celle d’un autre module. Dans une section par instance, une page sans instance nommée est celle de la même instance.
+- `page` nomme une autre page du même module (« boite », ou « boite@suffixe » pour l’une de ses copies) ; jamais celle d’un autre module. Depuis une copie (« liste@recette »), une page nommée sans suffixe est sa copie de même suffixe, si elle existe.
 - Une fonction (planifiée, webhook) nomme toujours la page : c’est ainsi qu’un relevé fait en arrière-plan prévient l’utilisateur alors que la page est fermée.
 - Pour un nombre que la page sait recompter, préfère `badge.set` (le total exact) à `badge.increment`.
 

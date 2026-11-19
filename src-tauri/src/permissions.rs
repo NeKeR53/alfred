@@ -24,6 +24,10 @@ pub struct Subject {
     /// Instance d’un client que montre la page (section par instance). Les accords ne dépendent pas d’elle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
+    /// Comptes de la page qui a appelé la fonction, par besoin (`jira` → `acme`) : `client("jira")` vise d’office le
+    /// sien. Les accords ne dépendent pas d’eux.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub accounts: std::collections::BTreeMap<String, String>,
     /// Le demandeur montre des données d’exemple (page ou fonction appelée depuis une page en mode exemple) : la
     /// coquille le fixe, jamais le cadre. Aucune requête ne part alors vers un service.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

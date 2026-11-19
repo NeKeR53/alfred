@@ -318,6 +318,7 @@ fn rewrite_layout(
             (key, value)
         })
         .collect();
+    crate::menu::rewrite(&mut manifest, &map);
     let mut next = BTreeMap::new();
     for (need, client) in &manifest.bindings {
         let targets = bindings(need);

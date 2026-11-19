@@ -1660,6 +1660,7 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
                 .is_some_and(|target| target.starts_with(&prefix))
     });
     layout_owner.bindings.retain(|need, _| !need.starts_with(&prefix));
+    crate::menu::forget_module(&mut layout_owner, module_id);
     space.write_manifest(&layout_owner)?;
     // Ses services et leurs comptes partent avec lui, sauf ceux qu’un autre module utilise encore.
     crate::clients::forget_unused(state, &space)?;

@@ -31,6 +31,7 @@ mod module_history;
 mod module_search;
 mod module_semantic;
 mod mcp;
+mod menu;
 mod oauth;
 mod page_windows;
 mod pages;
