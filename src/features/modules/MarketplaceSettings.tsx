@@ -326,7 +326,11 @@ export function MarketplaceSettings() {
           </div>
           <DataTable
             label="Modules disponibles"
-            columns={columns}
+            columns={
+              shown.some((offer) => importable(offer.module))
+                ? columns
+                : columns.filter((column) => column.key !== "action")
+            }
             rows={shown}
             rowKey={keyOf}
             onRowClick={(offer) => setScreen({ kind: "module", key: keyOf(offer) })}

@@ -666,12 +666,12 @@ export function AgentSettings() {
 
           <Section
             title="Dans les pages"
-            description="Le modèle que vos pages et vos fonctions utilisent pour résumer, classer, rédiger ou lancer une conversation. Les décisions locales restent faites sur ce poste."
+            description="Pour résumer, classer ou rédiger depuis vos pages et vos fonctions."
           >
             <SettingRows>
               <ModelChoiceFields
                 title="Modèle des pages"
-                description="« Comme l’agent » reprend le harnais, le modèle et le raisonnement des conversations. Si le harnais choisi n’est plus installé ou ne répond pas, Alfred se sert de celui de l’agent et le note au journal."
+                description="« Comme l’agent » reprend le harnais, le modèle et le raisonnement des conversations."
                 subject="des pages"
                 inheritLabel="Comme l’agent"
                 modelDefaultLabel="Modèle de l’agent pour ce harnais"

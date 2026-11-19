@@ -218,7 +218,7 @@ export function VoiceSettings() {
 
       <Section
         title="Dictée"
-        description="La transcription tourne sur cet ordinateur avec whisper.cpp : rien ne part sur le réseau. Tous les niveaux comprennent le français ; plus gros, ils sont plus précis et plus lents. Le modèle se charge à la première dictée."
+        description="Sur cet ordinateur, avec whisper.cpp : rien ne part sur le réseau. Plus gros, plus précis et plus lent."
         actions={
           <Button variant="secondary" onClick={() => void takeOverArgos()}>
             Reprendre les réglages d’Argos
@@ -228,7 +228,7 @@ export function VoiceSettings() {
         <SettingRows>
           <SettingRow
             title="Autoriser la dictée"
-            description="Bloquée, le micro ne s’ouvre plus, ni dans la page Agent ni dans une page de l’espace de travail, même si vous parlez. La lecture à voix haute continue."
+            description="Bloquée, le micro ne s’ouvre plus nulle part. La lecture à voix haute continue."
           >
             <SwitchControl
               label=""
@@ -254,7 +254,7 @@ export function VoiceSettings() {
         <SettingRows>
           <SettingRow
             title="Serveur whisper.cpp"
-            description="Le programme whisper-server, cherché dans le PATH sans dossier. Sur Mac : brew install whisper-cpp. Sous Windows : whisper-bin-x64.zip des Releases de github.com/ggml-org/whisper.cpp."
+            description="Le programme whisper-server (sur Mac : brew install whisper-cpp ; sous Windows : whisper-bin-x64.zip de github.com/ggml-org/whisper.cpp)."
           >
             <PathField
               label="Serveur whisper.cpp"

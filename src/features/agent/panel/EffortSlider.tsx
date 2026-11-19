@@ -53,16 +53,19 @@ export function EffortSlider({
         aria-valuetext={effortName(levels[index])}
         onChange={(event) => onChange(levels[Number(event.target.value)] ?? "")}
       />
+      {/* Les deux bouts seulement : le niveau choisi est écrit au-dessus, et six libellés se chevauchaient. */}
       <div className="effort-slider__ticks" aria-hidden="true">
-        {levels.map((level, position) => (
-          <span
-            key={level || "default"}
-            className={level === levels[index] ? "is-current" : undefined}
-            style={{ "--position": position / (levels.length - 1) } as CSSProperties}
-          >
-            {level ? effortName(level) : "défaut"}
-          </span>
-        ))}
+        {levels.map((level, position) =>
+          position !== 0 && position !== levels.length - 1 ? null : (
+            <span
+              key={level || "default"}
+              className={level === levels[index] ? "is-current" : undefined}
+              style={{ "--position": position / (levels.length - 1) } as CSSProperties}
+            >
+              {level ? effortName(level) : "défaut"}
+            </span>
+          ),
+        )}
       </div>
     </div>
   );

@@ -202,7 +202,7 @@ it("enregistre le modèle des pages, « Comme l’agent » par défaut", async (
   const user = userEvent.setup();
   render(<AgentSettings />);
   expect(screen.getByRole("heading", { name: "Dans les pages" })).toBeInTheDocument();
-  expect(screen.getByText(/vos pages et vos fonctions utilisent pour résumer, classer, rédiger/)).toBeInTheDocument();
+  expect(screen.getByText(/Pour résumer, classer ou rédiger depuis vos pages/)).toBeInTheDocument();
   const provider = screen.getByLabelText("Harnais des pages");
   expect(provider).toHaveValue("");
   expect(
