@@ -13,6 +13,15 @@ describe("raccourcis remontés par un cadre", () => {
     }
   });
 
+  it("reconnaît Cmd+F et Ctrl+F, qui mènent à la recherche de la barre du haut", () => {
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
+      const shortcut = frameShortcut(key({ key: "f", ...modifier }));
+      expect(shortcut && isShellShortcut(shortcut)).toBe(true);
+    }
+    const shifted = frameShortcut(key({ key: "f", metaKey: true, shiftKey: true }));
+    expect(shifted && isShellShortcut(shifted)).toBe(false);
+  });
+
   it("ne remonte jamais la frappe ordinaire, une répétition ou une touche de modification seule", () => {
     expect(frameShortcut(key({ key: "k" }))).toBeUndefined();
     expect(frameShortcut(key({ key: "K", shiftKey: true }))).toBeUndefined();

@@ -55,9 +55,13 @@ export function frameShortcut(event: ShortcutSource): FrameShortcut | undefined 
   return { key, code, metaKey, ctrlKey, altKey, shiftKey };
 }
 
-/** Raccourcis que la coquille traite elle-même : le cadre empêche alors l’action par défaut du navigateur. */
+/**
+ * Raccourcis que la coquille traite elle-même : le cadre empêche alors l’action par défaut du navigateur. Cmd+K ou
+ * Ctrl+K ouvre la palette ; Cmd+F ou Ctrl+F mène à la recherche de la barre du haut, quand la page en a une.
+ */
 export function isShellShortcut(shortcut: FrameShortcut): boolean {
-  return shortcut.key.toLowerCase() === "k" && !shortcut.altKey && !shortcut.shiftKey;
+  const key = shortcut.key.toLowerCase();
+  return (key === "k" || key === "f") && !shortcut.altKey && !shortcut.shiftKey;
 }
 
 /** Relit un raccourci reçu d’un cadre ; `undefined` si le message est mal formé. */

@@ -44,6 +44,7 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 - Une page peut s’ajouter aux onglets des **Réglages**.
 - Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
 - L’état d’une page (données d’exemple, service à configurer…) se signale par un indicateur compact dans sa barre du haut, jamais par un bandeau pleine largeur ; seule la page d’attente remplace une page qui ne peut pas s’afficher.
+- La **recherche** d’une page est dans la barre du haut, en tête des actions, comme `PageTopBar` de OneApp : 240 px qui se réduisent, sans barre de filtres à part. La page la déclare (`search` de `CollectionPage` ou de `Page`, ou `useTopBarSearch` du SDK) et Alfred lui renvoie chaque frappe ; ⌘F ou Ctrl+F y mène, même depuis la page, et Échap l’efface. Elle ignore casse et accents et exige chaque mot tapé (`matchesSearch` du SDK). Le texte est retenu tant qu’Alfred est ouvert. Une page sans recherche n’y affiche rien ; un panneau de droite garde la sienne dans son cadre.
 - Une page est affichée dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Une modale, un menu ou une infobulle restent dans son cadre. `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas.
 
 Choisir le gabarit d’après ce que la page montre, sans exception :
@@ -133,7 +134,7 @@ Barre (recherche, filtres, vues, Actualiser, actions), tableau dense trié au cl
 | `columns: Column[]` | Colonnes, l’identité de l’objet en premier ; cinq au plus (voir ci-dessous). |
 | `emptyTitle: string` | « Aucune tâche » (jamais « Pas encore de… »). |
 | `emptyDescription?: string` | À quoi sert la page, une phrase. |
-| `search?: { label; text? }` | Recherche : `label` « Rechercher une tâche » ; `text(row)` le texte où chercher (par défaut, toutes les colonnes). Toujours la fournir au-delà de dix lignes possibles. |
+| `search?: { label; placeholder?; text? }` | Recherche, placée dans la barre du haut d’Alfred (section 2) : `label` « Rechercher une tâche » ; `placeholder` le texte grisé (« Rechercher… ») ; `text(row)` le texte où chercher (par défaut, toutes les colonnes). Sans casse ni accents, chaque mot doit y apparaître. Toujours la fournir au-delà de dix lignes possibles. |
 | `filters?: CollectionFilter[]` | Deux au plus : `{ label: "État", all: "Tous les états", value: (row) => row.etat, options: [{ value, label }] }`. Rendus en listes à la largeur de leur contenu. |
 | `views?: { label; items: { id, label, test(row) }[] }` | Deux à quatre vues prédéfinies (« Ouvertes », « Toutes »), en boutons segmentés ; la première est active. |
 | `actions?: Action[]` | Actions sur toute la collection ; la `primary` revient dans l’état vide. |
@@ -341,7 +342,7 @@ Une zone libre reçoit **ce que la page veut** : des composants de `@alfred/ui` 
 
 **`Page`** — racine. Props :
 - `header?` : soit `{ title, subtitle?, status?: { label, tone }, actions?: Action[] }` (l’en-tête de l’objet que montre la page : un panneau de droite composé, la fiche d’un document), soit un contenu libre. Jamais le titre de la section, que la coquille affiche.
-- `search?: { label, value, onChange(value) }` : la recherche simple, à gauche de la barre.
+- `search?: { label, placeholder?, value, onChange(value) }` : la recherche simple, qu’Alfred place dans sa barre du haut (section 2). Sans autre état à partager, `useTopBarSearch` du SDK fait la même chose et filtre en plus (`recherche.matches(…)`).
 - `bar?: ReactNode` : zone libre de la barre, après la recherche (ou à sa place) : filtres, recherche à étiquettes, compteur, choix de vue. Elle s’étire sur la largeur disponible.
 - `actions?: Action[]` : à droite de la barre (icônes, « ⋯ », action principale, disposées comme en section 3).
 - `footer?: ReactNode` : pied fixe sous ce qui défile (total, sélection, pagination).
@@ -366,11 +367,11 @@ const [etiquettes, setEtiquettes] = usePageState<string[]>("etiquettes", []);
 
 Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et accessible : la page les **emploie**, elle ne les dessine pas. Cherche ici le besoin, prends le composant, règle ses props. Un besoin absent se compose avec eux (règle 9).
 
-**Rechercher et filtrer** (dans la barre de la page, `search` ou `bar`)
+**Rechercher et filtrer** (la recherche dans la barre du haut, les filtres dans la barre de la page : `bar`)
 
 | Besoin | Composant | Props essentielles |
 |---|---|---|
-| Recherche simple dans la page | `Page search` (ou `SearchField` dans une zone) | `label`, `value`, `onChange` ; la valeur dans un `usePageState` pour la retrouver au retour |
+| Recherche dans la page, placée par Alfred dans la barre du haut | `useTopBarSearch` du SDK, ou `Page search` | `label`, `placeholder?` ; `recherche.matches(champ, …)` filtre sans accents, chaque mot exigé. Le texte est retenu au retour. Jamais un `SearchField` en tête de page : il ne sert que dans un bloc (une recherche propre à une liste secondaire) |
 | Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
 | Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
 | Deux à quatre choix exclusifs visibles (vue, période) | `ChoiceGroup appearance="segmented"` + `ChoiceButton` | `label` ; chaque bouton `label`, `selected`, `onClick`, `variant="label"`, `size="compact"` |
@@ -840,7 +841,6 @@ export default function ReglagesSuivi() {
 Une synthèse de la semaine : aucun gabarit ne convient, la page compose des blocs. Les actions passent quand même par `Page actions` et `Section actions`.
 
 ```tsx
-import { useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import {
   Button,
@@ -854,7 +854,7 @@ import {
   Page,
   Section,
 } from "@alfred/ui";
-import { db, shell, useAsync } from "@alfred/sdk";
+import { db, shell, useAsync, useTopBarSearch } from "@alfred/sdk";
 import { ETATS, type Tache } from "../lib/taches";
 
 export default function SemainePage() {
@@ -865,16 +865,14 @@ export default function SemainePage() {
       ),
     [],
   );
-  const [recherche, setRecherche] = useState("");
-  const liste = (taches.data ?? []).filter((tache) =>
-    tache.titre.toLocaleLowerCase("fr").includes(recherche.trim().toLocaleLowerCase("fr")),
-  );
+  // La recherche, dans la barre du haut d’Alfred : sans accents ni casse, chaque mot doit être dans le titre.
+  const recherche = useTopBarSearch({ label: "Rechercher une tâche de la semaine" });
+  const liste = (taches.data ?? []).filter((tache) => recherche.matches(tache.titre));
   const ouvertes = liste.filter((tache) => tache.etat !== "terminee").length;
 
   return (
     <Page
       width="text"
-      search={{ label: "Rechercher une tâche de la semaine", value: recherche, onChange: setRecherche }}
       actions={[
         { label: "Actualiser", icon: RefreshCw, onClick: taches.reload },
         { label: "Exporter la semaine", icon: Download, onClick: () => shell.navigate("suivi/export") },

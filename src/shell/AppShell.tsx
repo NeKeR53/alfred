@@ -34,6 +34,7 @@ import { PageFrame } from "./PageFrame";
 import { ResizablePanel } from "./ResizablePanel";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
+import { TopBarSearch } from "./TopBarSearch";
 import { useDragReorder } from "./useDragReorder";
 import "./shell.css";
 
@@ -238,6 +239,7 @@ export function SectionView({
               : undefined
           }
         >
+          {page && !builtInTab && !waiting ? <TopBarSearch reference={page.reference} /> : null}
           {/* Actions de la page, puis un trait, puis celles de la coquille : le trait disparaît quand la page n’en a pas. */}
           <span className="shell-topbar__page-tools">
             {actions}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Copy, Pencil, Share2, Trash2 } from "lucide-react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -113,6 +113,51 @@ describe("CollectionPage", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "État" }), "a_faire");
     expect(within(table).queryByText("Relancer le client")).not.toBeInTheDocument();
     expect(within(table).getByText("Préparer la revue")).toBeInTheDocument();
+  });
+});
+
+describe("CollectionPage dans un cadre de page", () => {
+  it("place sa recherche dans la barre du haut, sans accents et chaque mot exigé", async () => {
+    let onQuery: (query: string) => void = noop;
+    const dispose = vi.fn();
+    const topBarSearch = vi.fn((_options: { label?: string; placeholder?: string }, listener: typeof onQuery) => {
+      onQuery = listener;
+      return { setQuery: (query: string) => listener(query), dispose };
+    });
+    const { unmount } = render(
+      <FrameServicesContext.Provider value={services({ topBarSearch })}>
+        <CollectionPage<Tache>
+          label="Tâches"
+          load={async () => [
+            { id: 1, titre: "Relancer l’élève", etat: "en_cours" },
+            { id: 2, titre: "Préparer la revue", etat: "a_faire" },
+          ]}
+          rowKey={(row) => row.id}
+          columns={[
+            { key: "titre", header: "Titre" },
+            { key: "etat", header: "État" },
+          ]}
+          emptyTitle="Aucune tâche"
+          search={{ label: "Rechercher une tâche", placeholder: "Tâche, état…" }}
+        />
+      </FrameServicesContext.Provider>,
+    );
+    const table = await screen.findByRole("table", { name: "Tâches" });
+    expect(topBarSearch).toHaveBeenCalledWith(
+      { label: "Rechercher une tâche", placeholder: "Tâche, état…" },
+      expect.any(Function),
+    );
+    // Le champ n’est pas répété dans la page.
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    act(() => onQuery("ELEVE cours"));
+    expect(within(table).getByText("Relancer l’élève")).toBeInTheDocument();
+    expect(within(table).queryByText("Préparer la revue")).not.toBeInTheDocument();
+    act(() => onQuery("eleve revue"));
+    expect(screen.getByText("Aucun résultat")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Effacer les filtres" }));
+    expect(within(screen.getByRole("table", { name: "Tâches" })).getByText("Préparer la revue")).toBeInTheDocument();
+    unmount();
+    expect(dispose).toHaveBeenCalled();
   });
 });
 

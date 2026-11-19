@@ -21,6 +21,14 @@ export interface FrameServices {
   readFile?(id: string): Promise<{ name: string; mime: string; data: string }>;
   /** Ouvre un fichier du module avec l’application du système (`files.open`). */
   openFile?(id: string): Promise<void>;
+  /**
+   * Place la recherche de la page dans la barre du haut d’Alfred (`useTopBarSearch` du SDK) ; `onQuery` reçoit le
+   * texte tapé. Absent hors d’un cadre de page : le gabarit garde alors son champ dans sa barre d’outils.
+   */
+  topBarSearch?(
+    options: { label?: string; placeholder?: string },
+    onQuery: (query: string) => void,
+  ): { setQuery(query: string): void; dispose(): void };
   /** État retenu par Alfred pour cette page (`usePageState`) : valeurs au chargement, et enregistrement. */
   state?: { initial: Record<string, unknown>; set(key: string, value: unknown): void };
 }

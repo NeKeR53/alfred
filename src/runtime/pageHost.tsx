@@ -3,7 +3,7 @@
  * rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur d’exécution).
  */
 
-import { emitToShell, files, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
+import { declareTopBarSearch, emitToShell, files, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
 import { EmptyState, type FrameServices, FrameServicesContext } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -102,6 +102,10 @@ const services: FrameServices = {
   },
   openFile: (id) => files.open(id),
   onPeer: (handler) => onShellEvent("peer", handler),
+  // La recherche d’une page va dans la barre du haut d’Alfred ; un panneau garde la sienne.
+  ...(params.get("kind") === "panel"
+    ? {}
+    : { topBarSearch: (options, onQuery) => declareTopBarSearch(options, onQuery, () => undefined) }),
   onSelection: (handler) => {
     let active = true;
     void request<PageContext>("shell.context").then(

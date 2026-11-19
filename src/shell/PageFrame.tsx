@@ -17,6 +17,7 @@ import { frameKey } from "./frameKeys";
 import { addFrameConsole, addFrameErrorLog, addFrameLog } from "./frameLogs";
 import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
+import { onTopBarQuery } from "./topBarSearchStore";
 
 /**
  * Affiche une page ou un panneau de l’espace dans un cadre isolé : origine opaque, aucun réseau, et pour seul
@@ -53,8 +54,9 @@ export function PageFrame({
       host,
       instance: page.instance ?? undefined,
       ...(examples ? { examples: true } : {}),
+      ...(capture ? { capture: true } : {}),
     }),
-    [kind, page.module, page.reference, host, page.instance, examples],
+    [kind, page.module, page.reference, host, page.instance, examples, capture],
   );
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
@@ -78,6 +80,8 @@ export function PageFrame({
       module: page.module,
       key: moduleKey,
       page: page.id,
+      // Un panneau garde sa recherche dans son cadre : la barre du haut est celle de la page.
+      kind,
       v: `${revision}.${ready}`,
       theme: initialTheme.current.theme,
     });
@@ -85,7 +89,7 @@ export function PageFrame({
     // Entrer dans les données d’exemple ou en sortir recharge la page : elle relit tout dans le nouveau mode.
     if (examples) query.set("examples", "1");
     return `${frameBase(info.pageBase)}/host/page?${query}`;
-  }, [info, moduleKey, page.module, page.id, revision, ready, examples]);
+  }, [info, moduleKey, page.module, page.id, kind, revision, ready, examples]);
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
@@ -161,6 +165,13 @@ export function PageFrame({
       if ((payload as { module?: string } | null)?.module === identity.module)
         post({ alfred: ALFRED_MESSAGE, kind: "event", name: "dataChanged", payload: null });
     });
+    // Frappe dans la recherche de la barre du haut : la page la reçoit (`useTopBarSearch`).
+    const stopSearch =
+      kind === "page" && !capture
+        ? onTopBarQuery(identity.reference, (query) =>
+            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "search", payload: { query } }),
+          )
+        : () => undefined;
     const stopPeer = capture
       ? () => undefined
       : registerPeer(identity, (message) =>
@@ -170,12 +181,13 @@ export function PageFrame({
       snapshot.dispose();
       window.removeEventListener("message", onMessage);
       stopPeer();
+      stopSearch();
       stopData();
       stopSelection();
       stopTheme();
       if (!capture) releaseFrame(identity);
     };
-  }, [identity, capture]);
+  }, [identity, capture, kind]);
 
   if (!source) return null;
   return (

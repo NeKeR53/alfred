@@ -4,8 +4,9 @@
  *
  * La référence d’usage est `docs/alfred/SDK.md` dans l’espace.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALFRED_MESSAGE, type FrameEvent, type FrameRequest, isFrameMessage } from "./protocol";
+import { matchesSearch, searchTerms } from "./textSearch";
 
 export class AlfredSdkError extends Error {
   detail?: unknown;
@@ -698,6 +699,145 @@ export const shell = {
     return request<void>("shell.send", { message });
   },
 };
+
+// --- Recherche de la barre du haut -----------------------------------------------------------------------------
+
+export { matchesSearch, searchTerms } from "./textSearch";
+
+export interface TopBarSearchOptions {
+  /** Nom accessible du champ : « Rechercher un ticket ». Par défaut « Rechercher dans la page ». */
+  label?: string;
+  /** Texte grisé du champ vide. Par défaut « Rechercher… ». */
+  placeholder?: string;
+}
+
+export interface TopBarSearchHandle {
+  /** Change le texte du champ (vide pour l’effacer). */
+  setQuery(query: string): void;
+  /** Retire le champ de la barre du haut. */
+  dispose(): void;
+}
+
+interface DeclaredSearch {
+  options: TopBarSearchOptions;
+  onQuery: (query: string) => void;
+  onRefused?: (error: Error) => void;
+  /** Texte propre à cette déclaration ; `null` tant qu’elle n’a pas reçu celui que la coquille a retenu. */
+  query: string | null;
+}
+
+/** Recherches déclarées par le cadre : la plus récente (une sous-page par-dessus sa page) tient la barre du haut. */
+const declaredSearches: DeclaredSearch[] = [];
+let listeningSearch = false;
+
+function showTopSearch() {
+  const top = declaredSearches.at(-1);
+  if (!top) {
+    void request("shell.search.remove").catch(() => undefined);
+    return;
+  }
+  const { label, placeholder } = top.options;
+  void request<{ query: string }>("shell.search.declare", { label, placeholder }).then(
+    (result) => {
+      if (declaredSearches.at(-1) !== top) return;
+      // La page a déjà son texte (elle l’a changé, ou elle revient au premier plan) : la barre le reprend.
+      if (top.query !== null) {
+        void request("shell.search.set", { query: top.query }).catch(() => undefined);
+      } else if (typeof result?.query === "string") {
+        top.query = result.query;
+        top.onQuery(result.query);
+      }
+    },
+    (error: Error) => {
+      if (!top.onRefused) throw error;
+      top.onRefused(error);
+    },
+  );
+}
+
+/**
+ * Bas niveau de `useTopBarSearch` (gabarits) : déclare une recherche à la coquille, qui l’affiche dans la barre du
+ * haut et rappelle `onQuery` à chaque frappe, et d’emblée avec le texte retenu de la page. Une recherche déclarée
+ * ensuite (sous-page) prend la barre jusqu’à son `dispose`, puis la précédente revient avec son texte.
+ */
+export function declareTopBarSearch(
+  options: TopBarSearchOptions,
+  onQuery: (query: string) => void,
+  /** Refus de la coquille (un panneau) ; sans lui, le refus remonte comme une erreur de la page. */
+  onRefused?: (error: Error) => void,
+): TopBarSearchHandle {
+  if (!listeningSearch) {
+    listeningSearch = true;
+    onShellEvent("search", (payload) => {
+      const query = (payload as { query?: unknown } | null)?.query;
+      const top = declaredSearches.at(-1);
+      if (!top || typeof query !== "string") return;
+      top.query = query;
+      top.onQuery(query);
+    });
+  }
+  const entry: DeclaredSearch = { options, onQuery, onRefused, query: null };
+  declaredSearches.push(entry);
+  showTopSearch();
+  return {
+    setQuery(query) {
+      if (!declaredSearches.includes(entry)) return;
+      entry.query = query;
+      onQuery(query);
+      if (declaredSearches.at(-1) === entry)
+        void request("shell.search.set", { query }).catch(() => undefined);
+    },
+    dispose() {
+      const index = declaredSearches.indexOf(entry);
+      if (index < 0) return;
+      const wasTop = index === declaredSearches.length - 1;
+      declaredSearches.splice(index, 1);
+      if (wasTop) showTopSearch();
+    },
+  };
+}
+
+export interface TopBarSearch {
+  /** Texte tapé, tel quel. */
+  query: string;
+  /** Ses mots, sans casse ni accents (`searchTerms`). */
+  terms: string[];
+  /** Vrai quand chaque mot apparaît dans un des champs : `items.filter((t) => search.matches(t.titre, t.client))`. */
+  matches(...fields: unknown[]): boolean;
+  setQuery(query: string): void;
+  /** Vide la recherche (« Effacer la recherche » d’un état vide). */
+  clear(): void;
+}
+
+/**
+ * Recherche de la page, placée par Alfred dans la barre du haut (240 px, ⌘F ou Ctrl+F) au lieu d’un champ dans la
+ * page. Le texte est retenu tant qu’Alfred est ouvert. Réservée à une page : un panneau de droite n’en a pas.
+ */
+export function useTopBarSearch(options: TopBarSearchOptions = {}): TopBarSearch {
+  const [query, setLocal] = useState("");
+  const handle = useRef<TopBarSearchHandle | null>(null);
+  const { label, placeholder } = options;
+  useEffect(() => {
+    const declared = declareTopBarSearch({ label, placeholder }, setLocal);
+    handle.current = declared;
+    return () => {
+      declared.dispose();
+      if (handle.current === declared) handle.current = null;
+    };
+  }, [label, placeholder]);
+  const terms = useMemo(() => searchTerms(query), [query]);
+  const setQuery = useCallback((next: string) => {
+    if (handle.current) handle.current.setQuery(next);
+    else setLocal(next);
+  }, []);
+  return {
+    query,
+    terms,
+    matches: (...fields) => matchesSearch(terms, fields),
+    setQuery,
+    clear: () => setQuery(""),
+  };
+}
 
 // --- Compteur de la page ---------------------------------------------------------------------------------------
 

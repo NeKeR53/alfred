@@ -1,4 +1,5 @@
 import { type ReactNode, useMemo } from "react";
+import { matchesSearch } from "../../sdk/textSearch";
 import { Button } from "../components/Button";
 import { ChoiceButton, ChoiceGroup } from "../components/ChoiceButton";
 import { DataTable, type DataTableColumn } from "../components/DataTable";
@@ -14,6 +15,7 @@ import { type Action, ActionBar } from "./actions";
 import { columnLayout, FormattedValue, type StatusMap, sortValueOf, type ValueType, valueText } from "./format";
 import { usePageState } from "./pageState";
 import { useFrameServices, useReloadOnPeerChange } from "./services";
+import { useTopBarSearchField } from "./topBarSearch";
 import { useLoad } from "./useLoad";
 
 /** Une colonne, décrite par sa donnée : le type fixe format, alignement, largeur et tri. */
@@ -79,8 +81,11 @@ export function CollectionPage<Row>({
   emptyTitle: string;
   /** À quoi sert la page, une phrase. */
   emptyDescription?: string;
-  /** Recherche : son nom (« Rechercher une tâche ») et le texte de la ligne dans lequel chercher. */
-  search?: { label: string; text?: (row: Row) => string };
+  /**
+   * Recherche, placée par Alfred dans la barre du haut : son nom (« Rechercher une tâche »), son texte grisé et le
+   * texte de la ligne dans lequel chercher (par défaut, les colonnes). Sans casse ni accents, chaque mot doit y être.
+   */
+  search?: { label: string; placeholder?: string; text?: (row: Row) => string };
   /** Filtres en liste, dans la barre ; deux au plus. */
   filters?: ReadonlyArray<CollectionFilter<Row>>;
   /** Vues prédéfinies, en boutons segmentés à gauche (« Ouvertes », « Toutes ») ; quatre au plus. */
@@ -100,7 +105,14 @@ export function CollectionPage<Row>({
   const state = useLoad(load, deps);
   useReloadOnPeerChange(state.reload);
   // Retenus par Alfred : en revenant sur la page, la recherche, les filtres, la vue et la ligne ouverte sont là.
+  const rows = state.data ?? [];
+  // Une collection vide n’a rien à chercher : la barre du haut n’affiche pas de recherche.
   const [query, setQuery] = usePageState("alfred:collection:query", "");
+  const inTopBar = useTopBarSearchField(
+    search && !(state.data && rows.length === 0) ? search : undefined,
+    query,
+    setQuery,
+  );
   const [keptFilters, setFilterValues] = usePageState<string[]>("alfred:collection:filters", () =>
     filters.map(() => ""),
   );
@@ -110,19 +122,17 @@ export function CollectionPage<Row>({
   const view = views?.items.some((item) => item.id === keptView) ? keptView : (views?.items[0]?.id ?? "");
   const [selected, setSelected] = usePageState<string | number | null>("alfred:collection:selected", null);
 
-  const rows = state.data ?? [];
   const visible = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase("fr");
     const viewTest = views?.items.find((item) => item.id === view)?.test;
     return rows.filter((row) => {
       if (viewTest && !viewTest(row)) return false;
       if (filters.some((filter, index) => filterValues[index] && filter.value(row) !== filterValues[index]))
         return false;
-      if (!needle) return true;
+      if (!query.trim()) return true;
       const text = search?.text
         ? search.text(row)
         : columns.map((column) => valueText(read(row, column), column)).join(" ");
-      return text.toLocaleLowerCase("fr").includes(needle);
+      return matchesSearch(query, [text]);
     });
   }, [rows, query, filterValues, view, views, filters, search, columns]);
 
@@ -181,10 +191,10 @@ export function CollectionPage<Row>({
     <PageToolbar
       start={
         <>
-          {search ? (
+          {search && !inTopBar ? (
             <SearchField
               label={search.label}
-              placeholder="Rechercher…"
+              placeholder={search.placeholder ?? "Rechercher…"}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />

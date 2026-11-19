@@ -2,6 +2,7 @@ import { type CSSProperties, isValidElement, type ReactNode } from "react";
 import { type Action, ActionBar } from "../templates/actions";
 import { TemplateDialogHost, useDialogOwner } from "../templates/dialogs";
 import { PageHeaderBar, type PageHeaderSpec, SubpageLayer, useSubpage } from "../templates/subpages";
+import { useTopBarSearchField } from "../templates/topBarSearch";
 import { useOverflowEdges } from "./overflowEdges";
 import { PageToolbar } from "./PageToolbar";
 import { PageScope } from "./pageScope";
@@ -22,6 +23,8 @@ function isHeaderSpec(header: PageHeaderSpec | ReactNode): header is PageHeaderS
  * les marges. Une page n’écrit ni marge extérieure ni couleur de fond elle-même. L’en-tête (`header`) et la barre
  * restent fixes au-dessus de la zone qui défile. La première `Page` montée héberge les modales et les sous-pages.
  */
+const ignore = () => undefined;
+
 export function Page({
   children,
   toolbar,
@@ -41,8 +44,11 @@ export function Page({
   toolbar?: ReactNode;
   /** Actions de la page, disposées par Alfred dans la barre du haut (icônes, « ⋯ », action principale). */
   actions?: ReadonlyArray<Action>;
-  /** Recherche de la page, à gauche de la barre. */
-  search?: { label: string; value: string; onChange: (value: string) => void };
+  /**
+   * Recherche de la page : Alfred la place dans sa barre du haut (240 px, ⌘F ou Ctrl+F), comme `useTopBarSearch` ;
+   * hors d’un cadre de page, à gauche de la barre de la page.
+   */
+  search?: { label: string; placeholder?: string; value: string; onChange: (value: string) => void };
   /**
    * Contenu libre de la barre, après la recherche : filtres (`ChoiceGroup`, `SelectControl`), compteur, onglets de
    * vue. Les actions restent dans `actions`, à droite.
@@ -66,19 +72,21 @@ export function Page({
   const host = useDialogOwner();
   const subpage = useSubpage();
   const covered = host && subpage !== undefined;
+  const inTopBar = useTopBarSearchField(search, search?.value ?? "", search?.onChange ?? ignore);
+  const own = inTopBar ? undefined : search;
   const topBar =
     toolbar ??
-    (actions?.length || search || bar ? (
+    (actions?.length || own || bar ? (
       <PageToolbar
         start={
-          search || bar ? (
+          own || bar ? (
             <>
-              {search ? (
+              {own ? (
                 <SearchField
-                  label={search.label}
-                  placeholder="Rechercher…"
-                  value={search.value}
-                  onChange={(event) => search.onChange(event.target.value)}
+                  label={own.label}
+                  placeholder={own.placeholder ?? "Rechercher…"}
+                  value={own.value}
+                  onChange={(event) => own.onChange(event.target.value)}
                 />
               ) : null}
               {bar ? <PageBar>{bar}</PageBar> : null}

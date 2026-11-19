@@ -16,6 +16,7 @@ import { isKnownPage } from "./badges";
 import { notify } from "./notifications";
 import { loadDurablePageMemory, pageMemoryOf, rememberPageValue } from "./pageMemory";
 import { useShell } from "./store";
+import { declareTopBarSearch, removeTopBarSearch, setTopBarQuery, topBarQueryOf } from "./topBarSearchStore";
 
 export interface FrameIdentity {
   kind: "page" | "panel" | "function";
@@ -31,6 +32,8 @@ export interface FrameIdentity {
    * part vers un service. La coquille le fixe, jamais le cadre.
    */
   examples?: boolean;
+  /** Cadre invisible chargé pour une capture de l’agent : il lit la recherche de la page sans prendre la barre. */
+  capture?: boolean;
 }
 
 /** Référence déclarée de la page, sans l’instance qu’elle montre. */
@@ -104,6 +107,7 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
 
 /** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
 export function releaseFrame(identity: FrameIdentity) {
+  if (identity.kind === "page" && !identity.capture) removeTopBarSearch(identity.reference);
   void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
 }
 
@@ -171,6 +175,20 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       await notifySystem(title, description).catch(() => false);
       return null;
     }
+    // Recherche de la barre du haut (`useTopBarSearch`) : une par page affichée, jamais pour un panneau.
+    case "shell.search.declare":
+      if (identity.kind !== "page")
+        throw new AlfredError({
+          message: "La recherche de la barre du haut est réservée à une page : un panneau de droite n’en a pas.",
+        });
+      if (identity.capture) return { query: topBarQueryOf(identity.reference) };
+      return declareTopBarSearch(identity.reference, params);
+    case "shell.search.set":
+      if (identity.kind === "page" && !identity.capture) setTopBarQuery(identity.reference, params.query, "page");
+      return null;
+    case "shell.search.remove":
+      if (identity.kind === "page" && !identity.capture) removeTopBarSearch(identity.reference);
+      return null;
     case "badge.update":
       return invoke("frame.badges.update", {
         subject,

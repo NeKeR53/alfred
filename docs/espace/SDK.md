@@ -502,7 +502,7 @@ export default function Dicter() {
 }
 ```
 
-## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `badge`
+## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `useTopBarSearch`, `badge`
 
 ```ts
 shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
@@ -532,6 +532,36 @@ Page et panneau : `CollectionPage` avec `panel` publie `{ id }` de la ligne choi
 Blocs du panneau : ceux de `DetailPanel` (`sections`) et de `PanelSections` (panneau composé) se replient et se déplacent ; Alfred retient leur ordre et leur repli pour la page, sur le poste, sous une clé `usePageState` réservée (`alfred.sections.<name>`). Les clés `alfred.*` ne sont pas pour la page ; les autres ne durent que tant qu’Alfred est ouvert. La largeur du panneau (340 px, 460 px, large) est réglée par l’utilisateur.
 
 Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou une valeur de type `url` ou `email`, qui le fait seule). La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
+
+### Recherche de la barre du haut : `useTopBarSearch`, `matchesSearch`
+
+La recherche d’une page est dans la barre du haut d’Alfred, pas dans la page (DESIGN.md, section 2). La page la déclare ; Alfred affiche le champ (240 px, ⌘F ou Ctrl+F y mène, Échap l’efface) et lui renvoie chaque frappe. Le texte est retenu tant qu’Alfred est ouvert : en revenant sur la page, il est là.
+
+```ts
+useTopBarSearch(options?: { label?: string; placeholder?: string }): {
+  query: string;                        // texte tapé, tel quel
+  terms: string[];                      // ses mots, sans casse ni accents
+  matches(...fields: unknown[]): boolean; // chaque mot apparaît dans un des champs (textes, nombres, listes ; null ignoré)
+  setQuery(query: string): void;
+  clear(): void;                        // « Effacer la recherche » d’un état « Aucun résultat »
+};
+searchTerms(query: string): string[];
+matchesSearch(search: string | string[], fields: unknown[]): boolean; // la même règle, hors d’une page
+```
+
+```tsx
+import { useAsync, useTopBarSearch } from "@alfred/sdk";
+
+const tickets = useAsync(() => db.query<Ticket>("SELECT * FROM support_tickets"), []);
+const recherche = useTopBarSearch({ label: "Rechercher un ticket", placeholder: "Titre, client, numéro…" });
+const visibles = (tickets.data ?? []).filter((ticket) => recherche.matches(ticket.titre, ticket.client, ticket.numero));
+```
+
+- « eleve paris » trouve « Élève inscrit à Paris » : casse et accents ignorés, chaque mot exigé, dans n’importe quel champ. Une recherche vide trouve tout.
+- `search` de `CollectionPage` et de `Page` passe déjà par là : ne déclare `useTopBarSearch` que pour une page composée qui filtre elle-même, et une seule par page. Une sous-page qui a la sienne prend la barre tant qu’elle est ouverte.
+- Elle filtre ce qui est chargé. Pour chercher dans toute une table (milliers de lignes, texte long), passe `recherche.query` à `search.query` (section 12) dans un `useAsync`.
+- Réservée à une page : dans un panneau de droite, `useTopBarSearch` est refusé (erreur de la page) ; un panneau garde un `SearchField` ou `Page search`.
+- Jamais de `SearchField` en tête d’une page ni de barre de filtres à part pour chercher : un `SearchField` ne sert que dans un bloc, pour une liste secondaire.
 
 ### Notifications et compteur : `shell.notify`, `badge`
 
