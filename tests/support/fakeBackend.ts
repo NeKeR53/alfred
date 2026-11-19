@@ -43,6 +43,16 @@ interface SpaceState {
   name: string;
   modules: FakeModule[];
   layout: Layout;
+  accent?: string | null;
+}
+
+/** Module proposé par un faux marketplace. */
+export interface FakeOffer {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  blocked?: string;
 }
 
 export interface Call {
@@ -111,6 +121,12 @@ export class FakeBackend {
   schedules: Json[] = [];
   space: SpaceState | null = null;
   lastSpace: string | null = null;
+  /** Dossiers qui sont déjà des espaces de travail (`space.open` avec `existing`). */
+  readonly spaceFolders = new Set<string>();
+  /** Marketplaces branchés et le catalogue de chacun (par adresse), modules importés (`marketplace/module`). */
+  marketplaces: Array<{ id: string; url: string; name: string; addedAt: string; lastChecked: string | null }> = [];
+  catalogs = new Map<string, FakeOffer[]>();
+  installed: string[] = [];
   /** Fichiers que l’agent a modifiés depuis le dernier commit. */
   changed: string[] = [];
   readonly pending = new Map<string, (answer: { result?: unknown; error?: string }) => void>();
@@ -146,6 +162,7 @@ export class FakeBackend {
   /** Prépare un espace déjà ouvert au lancement précédent (`space.restore` le rouvre). */
   withSpace(path: string, name: string, modules: FakeModule[]) {
     this.space = { path, name, modules: clone(modules), layout: { sections: [] } };
+    this.spaceFolders.add(path);
     this.lastSpace = path;
     return this;
   }
@@ -231,7 +248,7 @@ export class FakeBackend {
     return {
       path: space.path,
       name: space.name,
-      accent: null,
+      accent: space.accent ?? null,
       sections,
       settingsPages,
       modules: space.modules.map((module) => ({
@@ -462,6 +479,12 @@ export class FakeBackend {
     "space.restore": () => (this.space && this.lastSpace ? this.#open() : null),
     "space.open": (args) => {
       const path = String(args.path);
+      if (args.existing === true && !this.spaceFolders.has(path)) {
+        throw new Error(
+          `Le dossier ${path} n’est plus un espace de travail : il a été déplacé ou supprimé. Retirez-le de la liste dans Réglages › Général.`,
+        );
+      }
+      this.spaceFolders.add(path);
       if (this.space?.path !== path) {
         const name = String(args.name ?? path.split("/").at(-1) ?? "Espace");
         this.space = { path, name, modules: [], layout: { sections: [] } };
@@ -479,6 +502,7 @@ export class FakeBackend {
       if (!space) throw new Error("Aucun espace n’est ouvert.");
       if (args.layout) space.layout = clone(args.layout as Layout);
       if (typeof args.name === "string") space.name = args.name;
+      if ("accent" in args) space.accent = (args.accent as string | null) ?? null;
       this.changed.push("alfred.json");
       this.commit(String(args.message ?? "Réorganisation de la navigation"));
       this.emit("space:changed");
@@ -614,7 +638,39 @@ export class FakeBackend {
     }),
     "webhooks.list": () => clone(this.webhooks),
     "schedules.list": () => clone(this.schedules),
-    "marketplace.list": () => [],
+    "marketplace.list": () => clone(this.marketplaces),
+    "marketplace.add": (args) => {
+      const url = String(args.url);
+      if (!this.catalogs.has(url)) throw new Error(`Le dépôt ${url} est introuvable.`);
+      const name =
+        url
+          .split("/")
+          .at(-1)
+          ?.replace(/\.git$/, "") ?? url;
+      const added = { id: name, url, name, addedAt: "2026-11-19T10:00:00Z", lastChecked: null };
+      this.marketplaces.push(added);
+      return clone(added);
+    },
+    "marketplace.modules": (args) => {
+      const marketplace = this.marketplaces.find((candidate) => candidate.id === args.id);
+      if (!marketplace) throw new Error("Marketplace inconnu.");
+      return (this.catalogs.get(marketplace.url) ?? []).map((offer) => ({
+        version: "1.0.0",
+        description: "",
+        ...offer,
+        installed: this.installed.includes(`${marketplace.id}/${offer.id}`) ? (offer.version ?? "1.0.0") : null,
+      }));
+    },
+    "marketplace.install": (args) => {
+      const marketplace = this.marketplaces.find((candidate) => candidate.id === args.marketplace);
+      const offer =
+        marketplace && this.catalogs.get(marketplace.url)?.find((candidate) => candidate.id === args.module);
+      if (!marketplace || !offer || !this.space) throw new Error("Module introuvable.");
+      this.installed.push(`${marketplace.id}/${offer.id}`);
+      this.space.modules.push({ id: offer.id, name: offer.name, sections: [], pages: [], functions: [] });
+      this.commit(`Import de ${offer.name}`);
+      return null;
+    },
     "marketplace.updates": () => [],
     "marketplace.publications": () => [],
     "marketplace.refresh": () => [],

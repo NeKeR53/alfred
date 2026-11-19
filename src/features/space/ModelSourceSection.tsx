@@ -51,7 +51,7 @@ function describe(source: ModelSource): string {
  * D’où viennent les modèles locaux (recherche par le sens, décisions) : Hugging Face, ou le miroir de
  * l’entreprise (Artifactory…), avec un jeton facultatif rangé dans le trousseau.
  */
-export function ModelSourceSection() {
+export function ModelSourceSection({ description }: { description?: string } = {}) {
   const [source, setSource] = useState<ModelSource>();
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState(false);
@@ -72,7 +72,10 @@ export function ModelSourceSection() {
   return (
     <Section
       title="Source des modèles"
-      description="D’où Alfred télécharge les modèles ci-dessus. Une entreprise qui ne laisse pas joindre Hugging Face y met l’adresse de son miroir."
+      description={
+        description ??
+        "D’où Alfred télécharge les modèles ci-dessus. Une entreprise qui ne laisse pas joindre Hugging Face y met l’adresse de son miroir."
+      }
     >
       {error ? (
         <FeedbackBanner

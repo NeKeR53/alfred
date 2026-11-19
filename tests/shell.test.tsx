@@ -16,17 +16,22 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   const user = userEvent.setup();
   render(<App />);
 
-  // Accueil : aucun espace mémorisé, le dossier proposé est dans le dossier personnel.
+  // Accueil : aucun espace mémorisé, le parcours du premier démarrage. Un espace créé dans le dossier choisi.
   expect(await screen.findByRole("heading", { name: "Bonjour, je suis Alfred" })).toBeVisible();
-  const folder = screen.getByRole("textbox", { name: "Dossier de l’espace de travail" });
-  expect(folder).toHaveValue("/Users/lea/Alfred");
+  await user.click(screen.getByRole("button", { name: "Commencer" }));
+  await user.type(screen.getByRole("textbox", { name: "Nom de l’espace" }), "Maison");
+  const folder = screen.getByRole("textbox", { name: "Dossier" });
+  expect(folder).toHaveValue("/Users/lea/Alfred/Maison");
   await user.clear(folder);
   await user.type(folder, "/Users/lea/Maison");
-  await user.click(screen.getByRole("button", { name: "Ouvrir l’espace de travail" }));
+  await user.click(screen.getByRole("button", { name: "Créer l’espace" }));
+  await user.click(await screen.findByRole("button", { name: "Plus tard" }));
+  await user.click(await screen.findByRole("button", { name: "Plus tard" }));
+  await user.click(await screen.findByRole("button", { name: "Ouvrir Alfred" }));
 
   // Espace ouvert, encore vide : la page Agent invite à construire.
   expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
-  expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison" });
+  expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison", name: "Maison" });
   const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
   expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
 
@@ -175,4 +180,4 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
 
   expect(backend.unknown, "commandes absentes du faux backend").toEqual([]);
-});
+}, 20_000);

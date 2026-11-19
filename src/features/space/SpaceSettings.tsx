@@ -28,6 +28,7 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { startWelcome } from "../../shell/welcome/store";
 import { BackupsSection } from "./BackupsSection";
 import { DecisionsSection } from "./DecisionsSection";
 import { ModelSourceSection } from "./ModelSourceSection";
@@ -231,6 +232,9 @@ function SpacesSection({
           <Button disabled={busy} onClick={actions.create}>
             Créer un espace de travail…
           </Button>
+          <Button variant="subtle" disabled={busy} onClick={() => startWelcome(true)}>
+            Revoir l’accueil
+          </Button>
         </>
       }
     >
@@ -294,7 +298,8 @@ function SpacesSection({
   );
 }
 
-function AppearanceSection({ snapshot }: { snapshot: Snapshot }) {
+/** Thème et couleur d’accent ; repris par l’accueil, avec sa propre phrase (`description`). */
+export function AppearanceSection({ snapshot, description }: { snapshot: Snapshot; description?: string }) {
   const theme = useShell((state) => state.theme);
   const followsSystem = useShell((state) => state.themeFollowsSystem);
   const setTheme = useShell((state) => state.setTheme);
@@ -338,7 +343,10 @@ function AppearanceSection({ snapshot }: { snapshot: Snapshot }) {
   return (
     <Section
       title="Apparence"
-      description="S’applique tout de suite. Le reste du thème (police, tailles, couleurs des états) est fixé par Alfred pour que toutes les pages restent lisibles et cohérentes."
+      description={
+        description ??
+        "S’applique tout de suite. Le reste du thème (police, tailles, couleurs des états) est fixé par Alfred pour que toutes les pages restent lisibles et cohérentes."
+      }
     >
       <SettingRows>
         <SettingRow title="Thème" description="Clair, sombre, ou le même que votre ordinateur.">

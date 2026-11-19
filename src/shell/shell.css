@@ -141,46 +141,6 @@
   flex-direction: column;
 }
 
-/* Accueil : aucun espace ouvert. */
-.welcome {
-  height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: var(--color-bg);
-  color: var(--color-ink);
-}
-.welcome__panel {
-  width: min(520px, 100%);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.welcome__panel h1 {
-  margin: 0;
-  font-size: var(--font-size-display);
-  font-weight: 600;
-}
-.welcome__panel p {
-  margin: 0;
-  color: var(--color-muted);
-  line-height: 1.5;
-}
-.welcome__form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.welcome__path {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-.welcome__path > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-
 /* Notifications */
 .notification-bell {
   position: relative;

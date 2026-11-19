@@ -18,7 +18,21 @@ export class AlfredError extends Error {
   }
 }
 
-const DEV_BRIDGE = "http://127.0.0.1:14731";
+/**
+ * Pont HTTP de développement : celui de l’Alfred de développement (port fixe 14731), ou, avec `?bridge=<port>` dans
+ * l’adresse, celui d’un autre Alfred de développement (identifiant à part, données vierges), retenu pour l’onglet.
+ */
+const DEV_BRIDGE = (() => {
+  const fallback = "http://127.0.0.1:14731";
+  try {
+    const asked = new URLSearchParams(window.location.search).get("bridge");
+    if (asked && /^\d{2,5}$/.test(asked)) window.sessionStorage.setItem("alfred.devBridge", asked);
+    const port = window.sessionStorage.getItem("alfred.devBridge");
+    return port && /^\d{2,5}$/.test(port) ? `http://127.0.0.1:${port}` : fallback;
+  } catch {
+    return fallback;
+  }
+})();
 
 declare global {
   interface Window {

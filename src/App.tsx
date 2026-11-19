@@ -12,11 +12,14 @@ import { AppShell } from "./shell/AppShell";
 import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
 import { useShell } from "./shell/store";
-import { Welcome } from "./shell/Welcome";
+import { Accueil, ShortWelcome } from "./shell/welcome/Accueil";
+import { useWelcome } from "./shell/welcome/store";
 
 export function App() {
   const snapshot = useShell((state) => state.snapshot);
   const start = useShell((state) => state.start);
+  const firstRun = useShell((state) => state.recentSpaces.length === 0);
+  const welcoming = useWelcome((state) => state.active);
   useEffect(() => {
     bindPageAi();
     void start();
@@ -53,7 +56,10 @@ export function App() {
       </>
     );
   }
-  if (snapshot === null) return <Welcome />;
+  // Accueil complet : au premier démarrage (aucun espace connu), ou relancé depuis Réglages › Général. Il reste
+  // affiché après l’ouverture de l’espace, jusqu’à « Ouvrir Alfred ». Le dernier espace fermé : la version courte.
+  if (welcoming || (snapshot === null && firstRun)) return <Accueil />;
+  if (snapshot === null) return <ShortWelcome />;
   return (
     <>
       <AppShell

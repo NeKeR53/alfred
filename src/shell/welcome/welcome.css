@@ -1,0 +1,259 @@
+/* Accueil : une fenêtre centrée, de la taille d’un formulaire (560 à 640 px), sur le fond de la coquille. */
+.welcome {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  overflow-y: auto;
+}
+.welcome__window {
+  width: min(600px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 32px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-floating);
+}
+.welcome__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+}
+.welcome__step {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.welcome__window h1 {
+  margin: 0;
+  font-size: var(--font-size-display);
+  font-weight: 600;
+}
+.welcome__intro {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+.welcome__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+}
+.welcome__secondary {
+  display: flex;
+  gap: 4px;
+}
+
+/* Les deux (ou trois) grandes cartes du choix de l’espace. */
+.welcome-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.welcome-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  text-align: left;
+  font: inherit;
+  cursor: default;
+}
+.welcome-card:hover {
+  background: var(--color-surface);
+}
+.welcome-card.is-selected {
+  border-color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 8%, var(--color-bg));
+}
+.welcome-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.welcome-card__icon {
+  margin-bottom: 4px;
+  color: var(--color-muted);
+}
+.welcome-card.is-selected .welcome-card__icon {
+  color: var(--color-primary-strong);
+}
+.welcome-card__title {
+  font-weight: 600;
+}
+.welcome-card__description {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+
+.welcome-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.welcome-form__path {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.welcome-form__path > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+/* Le bouton s’aligne sur le champ, pas sur son libellé. */
+.welcome-form__path > button {
+  margin-top: 20px;
+}
+
+.welcome-meta {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+.welcome-meta--danger {
+  color: var(--color-danger-ink);
+}
+.welcome-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Catalogue : une ligne par module, sa case et son nom, puis ce qu’il fait. */
+.welcome-modules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.welcome-modules > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 8px;
+  padding: 8px 12px;
+}
+.welcome-modules > li + li {
+  border-top: 1px solid var(--line);
+}
+.welcome-modules__details {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 24px;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+}
+.welcome-modules__details:empty {
+  display: none;
+}
+
+/* Réglages de base : des sections serrées, sans le grand espacement des Réglages. */
+.welcome-basics {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.welcome-basics .settings-section,
+.welcome-basics section {
+  margin: 0;
+}
+.welcome-disclosure > :not(summary) {
+  margin-top: 8px;
+}
+.welcome-note p {
+  margin: 0;
+  line-height: 1.5;
+}
+.welcome-note p + p {
+  margin-top: 4px;
+  color: var(--color-muted);
+}
+
+/* Résumé de « C’est prêt ». */
+.welcome-summary {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.welcome-summary > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 12px;
+}
+.welcome-summary > div + div {
+  border-top: 1px solid var(--line);
+}
+.welcome-summary dt {
+  color: var(--color-muted);
+}
+.welcome-summary dd {
+  margin: 0;
+  min-width: 0;
+}
+.welcome-summary__path {
+  display: block;
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Version courte : les espaces récents, chacun avec « Ouvrir ». */
+.welcome-recents {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.welcome-recents > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.welcome-recents > li + li {
+  border-top: 1px solid var(--line);
+}
+.welcome-recents__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.welcome-recents__name {
+  font-weight: 500;
+}
+.welcome-recents__path {
+  font-size: var(--font-size-meta);
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Dans une fenêtre étroite, le bouton d’une ligne garde sa largeur : c’est le texte qui passe à la ligne. */
+.welcome-basics .setting-row__control {
+  flex-shrink: 0;
+}
