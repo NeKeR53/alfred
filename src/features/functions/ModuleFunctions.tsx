@@ -382,7 +382,7 @@ export function FunctionGroup({
               .join(" · ")}
           </Text>
           {testCount > 0 ? (
-            <Button aria-label={`Vérifier : ${label}`} onClick={() => setVerifying(true)}>
+            <Button variant="outline" aria-label={`Vérifier : ${label}`} onClick={() => setVerifying(true)}>
               Vérifier…
             </Button>
           ) : null}

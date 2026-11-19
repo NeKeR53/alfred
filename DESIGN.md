@@ -410,10 +410,21 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Besoin | Composant | Props essentielles |
 |---|---|---|
 | Action de page, d’objet, de section ou de ligne | une `Action` (section 3) dans `actions` | `label`, `icon?`, `onClick`, `primary?`, `danger?` |
-| Bouton dans le contenu d’un bloc (« Tester la connexion » sous une explication) | `Button` | `variant?` (`primary`, `secondary`, `danger`), `loading?`, `onClick` |
+| Bouton dans le contenu d’un bloc (« Tester la connexion » sous une explication) | `Button` | `variant?` (`primary`, `outline`, `secondary`, `danger`, hiérarchie ci-dessous), `loading?`, `onClick` |
 | Icône seule dans un contenu | `IconButton` | `label` (obligatoire, devient l’infobulle), `onClick`, `size?` |
 | Menu de quelques choix dans un contenu | `MenuButton` (texte) ou `OverflowMenu` (« ⋯ ») + `MenuItem` | `label`, `children` |
 | Modifier une valeur isolée sur place | `InlineEdit` | `label`, `value`, `onSave`, `renderEditor` |
+
+Hiérarchie des boutons texte, du plus au moins appuyé ; un bouton doit toujours se voir comme un bouton, sans survol :
+
+| `variant` | Rendu | Pour |
+|---|---|---|
+| `primary` | Plein | L’action attendue de l’endroit, une seule : « Ajouter votre compte » quand il n’y en a aucun, « Enregistrer » |
+| `outline` | Contour et fond | Une action secondaire posée seule dans un contenu, loin d’un bouton plein : « Ajouter un compte », « Tester », « Exécuter maintenant », « Ajouter une page » |
+| `secondary` | Discret, sans contour | Juste à côté d’un bouton plein, qu’il accompagne (« Annuler », « Précédent »), ou un retour avec `ArrowLeft` (« Tous les modules ») |
+| `danger` | Texte rouge | Une action destructrice hors d’une `Action` |
+
+Un bouton `secondary` posé seul dans un contenu se confond avec du texte : c’est un `outline`. Une action utile ne se cache pas dans un menu « ⋯ » quand elle est l’action courante de la ligne (« Tester » un compte prêt) : elle reste visible, le menu garde les autres.
 
 **Saisir** (dans `openForm` de préférence ; ailleurs, toujours dans un `FormField`)
 

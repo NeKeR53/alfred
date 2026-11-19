@@ -22,7 +22,13 @@ import {
   transitionTooltipInteraction,
 } from "./tooltipInteraction";
 
-export type ButtonVariant = "primary" | "secondary" | "danger";
+/**
+ * Hiérarchie des boutons texte : `primary` plein, l’action attendue de l’endroit, une seule ; `outline` à contour,
+ * une action secondaire posée seule dans un contenu (« Ajouter un compte », « Exécuter maintenant »), qui doit se voir
+ * comme un bouton ; `secondary` discret, sans contour, à côté d’un bouton plein (« Annuler », « Précédent ») ou pour un
+ * retour ; `danger` pour une action destructrice.
+ */
+export type ButtonVariant = "primary" | "outline" | "secondary" | "danger";
 export type IconButtonAppearance = "default" | "table" | "navigation" | "marker";
 export type IconButtonTone = "default" | "primary" | "danger";
 /** `compact` est un ancien alias de `default` (28 px), gardé pour les appelants existants : ne plus l’employer. */
@@ -51,7 +57,15 @@ export function Button({
     <DesktopButton
       {...props}
       type={type}
-      variant={variant === "primary" ? "default" : variant === "danger" ? "danger" : "ghost"}
+      variant={
+        variant === "primary"
+          ? "default"
+          : variant === "danger"
+            ? "danger"
+            : variant === "outline"
+              ? "outline"
+              : "ghost"
+      }
       className={className}
       disabled={disabled || loading}
       aria-busy={loading || undefined}

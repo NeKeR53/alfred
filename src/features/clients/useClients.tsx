@@ -338,16 +338,17 @@ export function useClients() {
     return (
       <>
         {oauth && state.status === "toConnect" ? (
-          <Button aria-label={`Se connecter à ${label}`} onClick={() => void connect(target)}>
+          <Button variant="primary" aria-label={`Se connecter à ${label}`} onClick={() => void connect(target)}>
             Se connecter
           </Button>
         ) : null}
         {oauth && state.connected ? (
-          <Button aria-label={`Se déconnecter de ${label}`} onClick={() => void disconnect(target)}>
+          <Button variant="outline" aria-label={`Se déconnecter de ${label}`} onClick={() => void disconnect(target)}>
             Se déconnecter
           </Button>
         ) : null}
         <Button
+          variant="outline"
           aria-label={`Tester ${label}`}
           loading={testing === key}
           loadingLabel="Test…"
