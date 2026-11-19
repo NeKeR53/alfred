@@ -66,6 +66,27 @@ export function ModuleContents({
   const hasPages = snapshot ? moduleGroups(snapshot, module.id).length > 0 : false;
   const perInstance = (need: string) =>
     Boolean(snapshot?.accountPages?.some((page) => page.module === module.id && page.need === need));
+  /** Les comptes de ce besoin s’affichent en onglets d’une seule entrée, plutôt qu’en entrées du menu. */
+  const asTabs = (need: string) =>
+    Boolean(
+      snapshot?.sections.some(
+        (section) => section.module === module.id && section.instancesAs === "tabs" && section.perInstance === need,
+      ),
+    );
+  /** Où le compte apparaît dans le menu : son entrée, ou ses onglets dans l’entrée commune. */
+  const placeOf = (instance: string) => {
+    const section = snapshot?.sections.find(
+      (candidate) => candidate.module === module.id && candidate.instance === instance,
+    );
+    if (section) return `Entrée « ${section.label} » dans le menu`;
+    for (const candidate of snapshot?.sections ?? []) {
+      if (candidate.module !== module.id) continue;
+      const tabs = candidate.pages.filter((page) => page.instance === instance).map((page) => `« ${page.title} »`);
+      if (tabs.length === 1) return `Onglet ${tabs[0]} dans « ${candidate.label} »`;
+      if (tabs.length > 1) return `Onglets ${listing(tabs)} dans « ${candidate.label} »`;
+    }
+    return undefined;
+  };
 
   /** À quoi sert le service : les pages qui l’utilisent, et les modules qui passent par ce module. */
   const purposeOf = (need: ClientNeedItem) => {
@@ -73,7 +94,11 @@ export function ModuleContents({
     return [
       pages.length === 1 ? `Sert à la page « ${pages[0]} ».` : null,
       pages.length > 1 ? `Sert aux pages ${listing(pages.map((page) => `« ${page} »`))}.` : null,
-      perInstance(need.id) ? "Le module ajoute une entrée au menu par compte." : null,
+      perInstance(need.id)
+        ? asTabs(need.id)
+          ? "Le module ajoute un onglet par compte."
+          : "Le module ajoute une entrée au menu par compte."
+        : null,
       module.requiredBy.length > 0
         ? `${listing(module.requiredBy.map(nameOf))} ${module.requiredBy.length > 1 ? "s’en servent" : "s’en sert"} aussi, par ce module.`
         : null,
@@ -121,10 +146,8 @@ export function ModuleContents({
                   titled
                   purpose={purposeOf(need) || undefined}
                   describeInstance={(instance) => {
-                    const section = snapshot?.sections.find(
-                      (candidate) => candidate.module === module.id && candidate.instance === instance,
-                    );
-                    if (section) return `Entrée « ${section.label} » dans le menu`;
+                    const place = placeOf(instance);
+                    if (place) return place;
                     // Aucune page ajoutée : le compte n’a pas d’entrée.
                     return perInstance(need.id) ? "Aucune page dans le menu pour ce compte" : undefined;
                   }}

@@ -301,6 +301,27 @@ pub struct SectionDecl {
     /// client qui y répond, et ses pages appellent cette instance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub per_instance: Option<String>,
+    /// Comment les comptes d’une section par instance s’affichent : une entrée de menu par compte (par défaut), ou
+    /// une seule entrée avec un onglet par compte (`"tabs"`).
+    #[serde(skip_serializing_if = "InstancesAs::is_sections")]
+    pub instances_as: InstancesAs,
+}
+
+/// Affichage des comptes d’une section dont les pages sont pour chaque compte.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum InstancesAs {
+    /// Une copie de la section par compte, chacune avec ses pages en onglets.
+    #[default]
+    Sections,
+    /// Une seule section, avec un onglet par page de chaque compte.
+    Tabs,
+}
+
+impl InstancesAs {
+    fn is_sections(&self) -> bool {
+        *self == InstancesAs::Sections
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -548,6 +569,8 @@ pub struct ResolvedSection {
     pub pages: Vec<ResolvedPage>,
     /// Besoin client dont la section suit les instances (`perInstance` du module).
     pub per_instance: Option<String>,
+    /// Affichage des comptes : une copie de la section par compte, ou un onglet par compte dans cette section.
+    pub instances_as: InstancesAs,
     /// Instance que montre cette copie de la section ; son identifiant est alors `module/section@instance`.
     pub instance: Option<String>,
     /// Section déclarée dont celle-ci est la copie pour une instance.
@@ -904,6 +927,7 @@ impl Space {
                         icon: section_icon.clone(),
                         color: color.clone(),
                         per_instance: None,
+                        instances_as: InstancesAs::Sections,
                     }],
                     ..ModuleManifest::default()
                 };
@@ -1213,6 +1237,55 @@ impl Space {
                 });
             }
             match client {
+                Ok(client) if !client.instances.is_empty() && section.instances_as == InstancesAs::Tabs => {
+                    // Une seule section : chaque page ajoutée à un compte y devient un onglet, nommé d’après le compte.
+                    let added: Vec<Vec<&ResolvedPage>> = client
+                        .instances
+                        .iter()
+                        .map(|instance| {
+                            let key = account_key(&client.id, &instance.id);
+                            let chosen: Vec<&ResolvedPage> = section
+                                .pages
+                                .iter()
+                                .filter(|page| page.per_instance.is_some())
+                                .filter(|page| match &manifest.account_pages {
+                                    None => true,
+                                    Some(chosen) => {
+                                        chosen.get(&key).is_some_and(|pages| pages.contains(&page.reference))
+                                    }
+                                })
+                                .collect();
+                            accounts.entry(key).or_default().extend(chosen.iter().map(|page| page.reference.clone()));
+                            chosen
+                        })
+                        .collect();
+                    let mut pages = Vec::new();
+                    for page in &section.pages {
+                        if page.per_instance.is_none() {
+                            pages.push(page.clone());
+                            continue;
+                        }
+                        for (instance, chosen) in client.instances.iter().zip(&added) {
+                            if !chosen.iter().any(|candidate| candidate.reference == page.reference) {
+                                continue;
+                            }
+                            let mut copy = page_for_instance(page, &instance.id, overrides);
+                            let renamed = overrides.get(&format!("page:{}", copy.reference)).is_some_and(|o| o.label.is_some());
+                            if !renamed {
+                                copy.title = if chosen.len() > 1 {
+                                    format!("{} — {}", copy.title, instance.display_label())
+                                } else {
+                                    instance.display_label().to_string()
+                                };
+                            }
+                            pages.push(copy);
+                        }
+                    }
+                    // Aucun compte n’a de page ni la section de page commune : elle n’a pas d’entrée.
+                    if !pages.is_empty() {
+                        expanded.push(ResolvedSection { pages, per_instance: Some(need.clone()), ..section });
+                    }
+                }
                 Ok(client) if !client.instances.is_empty() => {
                     let (own, shared): (Vec<ResolvedPage>, Vec<ResolvedPage>) =
                         section.pages.iter().cloned().partition(|page| page.per_instance.is_some());
@@ -1435,6 +1508,7 @@ impl Space {
                     hidden: overridden.is_some_and(|o| o.hidden) || module_hidden(&module.id),
                     pages: Vec::new(),
                     per_instance: section.per_instance.clone().filter(|need| !need.trim().is_empty()),
+                    instances_as: section.instances_as,
                     instance: None,
                     instance_of: None,
                     waiting: None,

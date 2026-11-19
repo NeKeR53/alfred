@@ -56,6 +56,7 @@ export function ModuleNaming({ module }: { module: ModuleSummary }) {
   const perAccount = sections.some(
     (section) => section.instance || section.perInstance || section.pages.some((page) => page.perInstance),
   );
+  const accountTabs = sections.some((section) => section.instancesAs === "tabs");
 
   return (
     <div className="setup-flow__body">
@@ -67,7 +68,9 @@ export function ModuleNaming({ module }: { module: ModuleSummary }) {
       </Text>
       {perAccount ? (
         <Text tone="muted">
-          Une entrée apparaît pour chaque compte que vous connecterez : elle porte le nom du compte.
+          {accountTabs
+            ? "Un onglet apparaît pour chaque compte que vous connecterez : il porte le nom du compte."
+            : "Une entrée apparaît pour chaque compte que vous connecterez : elle porte le nom du compte."}
         </Text>
       ) : null}
       <ul className="onboarding-pages" aria-label="Pages du module dans le menu">

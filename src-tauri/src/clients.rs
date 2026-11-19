@@ -3765,6 +3765,136 @@ mod tests {
         assert_eq!(shown(&space)[2], ("jira/principal@neuf".to_string(), 1));
     }
 
+    /// Une section `instancesAs: "tabs"` : une seule entrée au menu, avec un onglet par page de chaque compte, nommé
+    /// d’après le compte (« Page — Compte » quand le compte en a plusieurs). Le panneau suit le compte de son onglet.
+    #[tokio::test]
+    async fn a_section_with_instances_as_tabs_shows_one_tab_per_account() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        let menu = crate::space::PlaceTarget::Menu { label: "Prefect".into(), icon: None, color: None };
+        space.place_page("Accueil", None, "", &menu, None).unwrap();
+        let tab = crate::space::PlaceTarget::Tab { section: "prefect/principal".into() };
+        for title in ["Déploiements", "Files"] {
+            space.place_page(title, None, "", &tab, Some("prefect")).unwrap();
+        }
+        let panel = crate::space::PlaceTarget::Panel { page: "prefect/deploiements".into() };
+        space.place_page("Historique", None, "", &panel, Some("prefect")).unwrap();
+        let mut module = space.module("prefect").unwrap();
+        module.sections[0].instances_as = crate::space::InstancesAs::Tabs;
+        for page in module.pages.iter_mut().filter(|page| ["deploiements", "files"].contains(&page.id.as_str())) {
+            page.per_instance = Some("prefect".into());
+        }
+        module.clients.push(crate::space::ClientNeed { id: "prefect".into(), label: "Prefect".into(), ..Default::default() });
+        space.write_module(&module).unwrap();
+        let tabs = |space: &Space| -> Vec<(String, Vec<(String, String)>)> {
+            space
+                .snapshot()
+                .unwrap()
+                .sections
+                .into_iter()
+                .map(|section| {
+                    let pages = section.pages.into_iter().map(|page| (page.reference, page.title)).collect();
+                    (section.id, pages)
+                })
+                .collect()
+        };
+        let pairs = |items: &[(&str, &str)]| {
+            items.iter().map(|(reference, title)| (reference.to_string(), title.to_string())).collect::<Vec<_>>()
+        };
+
+        // Sans compte : la section attend, comme une section par compte.
+        let snapshot = space.snapshot().unwrap();
+        assert_eq!(snapshot.sections.len(), 1);
+        assert!(snapshot.sections[0].waiting.is_some());
+
+        save_client(
+            &state,
+            json!({ "id": "prefect", "label": "Prefect", "methods": [{ "id": "web", "label": "Web", "type": "none" }] }),
+        )
+        .await;
+        for (id, label) in [("prod", "Prod"), ("recette", "Recette")] {
+            invoke(
+                &state,
+                "clients.saveInstance",
+                json!({ "client": "prefect", "create": true,
+                    "instance": { "id": id, "label": label, "url": "https://prefect.example.com", "method": "web" } }),
+            )
+            .await
+            .unwrap();
+        }
+        let choose = |id: &str, pages: &[&str]| {
+            let state = state.clone();
+            let args = json!({ "client": "prefect", "instance": id, "pages": pages });
+            async move { invoke(&state, "clients.setAccountPages", args).await.unwrap() }
+        };
+
+        // Les comptes sans page : seule la page commune reste ; un onglet par compte dès qu’il a sa page.
+        assert_eq!(tabs(&space), [("prefect/principal".to_string(), pairs(&[("prefect/accueil", "Accueil")]))]);
+        choose("prod", &["prefect/deploiements"]).await;
+        choose("recette", &["prefect/deploiements"]).await;
+        assert_eq!(
+            tabs(&space),
+            [(
+                "prefect/principal".to_string(),
+                pairs(&[
+                    ("prefect/accueil", "Accueil"),
+                    ("prefect/deploiements@prod", "Prod"),
+                    ("prefect/deploiements@recette", "Recette"),
+                ])
+            )]
+        );
+        let snapshot = space.snapshot().unwrap();
+        let section = &snapshot.sections[0];
+        assert_eq!((section.instance.as_deref(), section.instance_of.as_deref()), (None, None));
+        assert_eq!(section.instances_as, crate::space::InstancesAs::Tabs);
+        let recette = &section.pages[2];
+        assert_eq!(recette.instance.as_deref(), Some("recette"));
+        let panel = recette.panel.as_ref().unwrap();
+        assert_eq!((panel.reference.as_str(), panel.instance.as_deref()), ("prefect/historique@recette", Some("recette")));
+
+        // Un compte à plusieurs pages : « Page — Compte » pour les siennes ; l’autre compte garde son nom seul.
+        choose("prod", &["prefect/deploiements", "prefect/files"]).await;
+        assert_eq!(
+            tabs(&space)[0].1,
+            pairs(&[
+                ("prefect/accueil", "Accueil"),
+                ("prefect/deploiements@prod", "Déploiements — Prod"),
+                ("prefect/deploiements@recette", "Recette"),
+                ("prefect/files@prod", "Files — Prod"),
+            ])
+        );
+
+        // Masquer, renommer et ranger un onglet de compte marche toujours.
+        space.set_visibility("page:prefect/files@prod", true).unwrap();
+        let mut manifest = space.manifest().unwrap();
+        manifest.layout.overrides.entry("page:prefect/deploiements@recette".into()).or_default().label = Some("Rec".into());
+        manifest.layout.tabs.insert(
+            "prefect/principal".into(),
+            vec!["prefect/deploiements@recette".into(), "prefect/accueil".into()],
+        );
+        space.write_manifest(&manifest).unwrap();
+        let snapshot = space.snapshot().unwrap();
+        let shown: Vec<(&str, &str, bool)> = snapshot.sections[0]
+            .pages
+            .iter()
+            .map(|page| (page.reference.as_str(), page.title.as_str(), page.hidden))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("prefect/deploiements@recette", "Rec", false),
+                ("prefect/accueil", "Accueil", false),
+                ("prefect/deploiements@prod", "Déploiements — Prod", false),
+                ("prefect/files@prod", "Files — Prod", true),
+            ]
+        );
+
+        // Un compte supprimé emporte ses onglets.
+        invoke(&state, "clients.deleteInstance", json!({ "client": "prefect", "instance": "prod" })).await.unwrap();
+        let references: Vec<String> = tabs(&space)[0].1.iter().map(|(reference, _)| reference.clone()).collect();
+        assert_eq!(references, ["prefect/deploiements@recette", "prefect/accueil"]);
+    }
+
     /// L’agent autonome déclare lui-même les instances et leur entrée du coffre, puis les valide ; une redéclaration
     /// sans secret garde celui qui était relié, et ne touche pas aux instances qu’elle ne nomme pas.
     #[tokio::test]

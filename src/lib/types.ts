@@ -58,6 +58,11 @@ export interface ResolvedSection {
   pages: ResolvedPage[];
   /** Besoin client dont la section suit les instances. */
   perInstance?: string | null;
+  /**
+   * Affichage des comptes : une copie de la section par compte (`sections`, par défaut), ou une seule section avec
+   * un onglet par compte (`tabs`), dont chaque page porte son `instance`.
+   */
+  instancesAs?: "sections" | "tabs";
   /** Instance que montre cette copie de la section. */
   instance?: string | null;
   /** Section déclarée dont celle-ci est la copie. */

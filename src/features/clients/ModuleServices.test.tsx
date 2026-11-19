@@ -708,6 +708,88 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
 });
 
+it("dit, pour des comptes en onglets, l’onglet que chaque compte alimente dans l’entrée commune", async () => {
+  const user = userEvent.setup();
+  stored = [
+    {
+      id: "prefect",
+      label: "Prefect",
+      baseUrl: "",
+      methods: [{ id: "web", label: "Web", type: "none" }],
+      instances: [
+        { id: "prod", label: "Prod", url: "https://prefect.acme.fr", method: "web" },
+        { id: "recette", label: "Recette", url: "https://prefect.acme.fr", method: "web" },
+      ],
+    },
+  ];
+  needs = [
+    {
+      key: "prefect/prefect",
+      module: "prefect",
+      moduleName: "Prefect",
+      id: "prefect",
+      label: "Prefect",
+      baseUrl: null,
+      auth: null,
+      binding: null,
+      client: "prefect",
+    },
+  ];
+  const tab = (instance: string, title: string): ResolvedPage => ({
+    reference: `prefect/deploiements@${instance}`,
+    module: "prefect",
+    id: "deploiements",
+    title,
+    icon: null,
+    description: "",
+    hidden: false,
+    readOnly: false,
+    missing: false,
+    errors: [],
+    uses: { clients: [], functions: [] },
+    panel: null,
+    instance,
+    perInstance: "prefect",
+  });
+  const accountPages = [
+    {
+      reference: "prefect/deploiements",
+      module: "prefect",
+      title: "Déploiements",
+      section: "Prefect",
+      need: "prefect",
+      client: "prefect",
+    },
+  ];
+  renderModules(
+    [
+      {
+        id: "prefect/principal",
+        module: "prefect",
+        label: "Prefect",
+        icon: null,
+        color: null,
+        hidden: false,
+        pages: [tab("prod", "Prod"), tab("recette", "Recette")],
+        perInstance: "prefect",
+        instancesAs: "tabs",
+      },
+    ],
+    [],
+    {
+      accountPages,
+      accounts: { "prefect/prod": ["prefect/deploiements"], "prefect/recette": ["prefect/deploiements"] },
+    },
+  );
+  await openModule(user, "Prefect");
+
+  const accounts = await screen.findByRole("group", { name: "Comptes Prefect" });
+  expect(within(accounts).getByText("Onglet « Prod » dans « Prefect »")).toBeInTheDocument();
+  expect(within(accounts).getByText("Onglet « Recette » dans « Prefect »")).toBeInTheDocument();
+  expect(screen.getByText(/Le module ajoute un onglet par compte\./)).toBeInTheDocument();
+  expect(screen.queryByText(/une entrée au menu par compte/)).not.toBeInTheDocument();
+});
+
 it("fait ajouter et retirer, compte par compte, les pages du module qui sont pour ses comptes", async () => {
   const user = userEvent.setup();
   stored = [

@@ -423,6 +423,34 @@ describe("sections par instance", () => {
     expect(screen.getByText("En attente d’un compte")).toBeInTheDocument();
   });
 
+  it("montre les comptes d’une section en onglets dans une seule entrée, et ouvre l’onglet du compte nommé", () => {
+    const tabs = withInstances();
+    tabs.sections.push(
+      section(
+        "prefect/principal",
+        "Prefect",
+        [
+          page("prefect", "deploiements", "Prod", { reference: "prefect/deploiements@prod", instance: "prod" }),
+          page("prefect", "deploiements", "Recette", {
+            reference: "prefect/deploiements@recette",
+            instance: "recette",
+          }),
+        ],
+        { perInstance: "prefect", instancesAs: "tabs" },
+      ),
+    );
+    useShell.setState({ snapshot: tabs });
+    renderShell();
+    expect(sidebarLabels()).toEqual(["Suivi", "Jira — Acme", "Jira — Cloud", "Mail", "Prefect"]);
+    fireEvent.click(screen.getByRole("button", { name: "Prefect" }));
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Prod", "Recette"]);
+    useShell.getState().openPage("prefect/deploiements@recette");
+    expect(useShell.getState().view).toEqual({ kind: "section", id: "prefect/principal" });
+    expect(useShell.getState().activeTab["prefect/principal"]).toBe("prefect/deploiements@recette");
+    useShell.getState().openPage("prefect/deploiements");
+    expect(useShell.getState().activeTab["prefect/principal"]).toBe("prefect/deploiements@prod");
+  });
+
   it("ouvre la page déclarée dans la première copie, ou celle de l’instance nommée", () => {
     useShell.getState().openPage("jira/tickets");
     expect(useShell.getState().view).toEqual({ kind: "section", id: "jira/principal@acme" });
