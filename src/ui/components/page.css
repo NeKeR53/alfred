@@ -68,6 +68,12 @@
   min-width: 0;
   flex: 1;
 }
+/* Un titre ou une description sans espace (environmental.migration.bootstrap) se coupe dans sa colonne au lieu de
+   passer sous les actions. */
+.al-section__title h2,
+.al-section__title p {
+  overflow-wrap: anywhere;
+}
 .al-section__title h2 {
   margin: 0;
   font-size: var(--font-size-panel);
@@ -83,6 +89,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 .al-stack {
   display: flex;
