@@ -82,3 +82,22 @@ it("place les onglets de la section à gauche, juste après son titre, et les ac
   expect(within(actions).queryByRole("tablist")).toBeNull();
   expect(within(actions).getByRole("button", { name: "Action" })).toBeInTheDocument();
 });
+
+it("sépare d’un trait les outils de la page de ceux de la coquille, et fond le bord des onglets qui débordent", () => {
+  render(
+    <SectionView
+      title="Suivi"
+      sectionId="suivi/principal"
+      pages={pages}
+      renderPageTools={() => <button type="button">Corriger l’interface</button>}
+    />,
+  );
+  const bar = screen.getByRole("banner");
+  const tool = within(bar).getByRole("button", { name: "Corriger l’interface" });
+  const separator = bar.querySelector(".page-topbar__separator");
+  const bell = within(bar).getByRole("button", { name: /notification/i });
+  if (!separator) throw new Error("trait absent");
+  expect(tool.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(separator.compareDocumentPosition(bell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(bar.querySelector(".shell-tabs")?.classList.contains("overflow-fade")).toBe(true);
+});

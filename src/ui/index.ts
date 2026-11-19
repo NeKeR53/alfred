@@ -72,6 +72,7 @@ export { TagSearchField, type TagSearchFieldProps } from "./components/TagSearch
 export { type Action, ActionBar, type ActionIcon, type ActionPlace } from "./templates/actions";
 export { type CollectionFilter, CollectionPage, type Column } from "./templates/CollectionPage";
 export { type DetailField, DetailPanel, type DetailSection } from "./templates/DetailPanel";
+export { type PanelSection, PanelSections } from "./components/PanelSections";
 export {
   type ConfirmSpec,
   confirmAction,

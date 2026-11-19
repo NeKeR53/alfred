@@ -529,6 +529,8 @@ interface PageContext {
 
 Page et panneau : `CollectionPage` avec `panel` publie `{ id }` de la ligne choisie et ouvre le panneau ; `DetailPanel` lit cette sélection, charge l’objet et, après une action, prévient la page, qui recharge sa liste (DESIGN.md, sections 4.1 et 4.2). Ces appels ne servent donc qu’à une page composée : `shell.publish({ id })` et `shell.setPanelVisible(true)` côté page, `usePageContext()?.selection` côté panneau, `shell.send(message)` et `usePeerMessage(handler)` pour se prévenir d’une écriture.
 
+Blocs du panneau : ceux de `DetailPanel` (`sections`) et de `PanelSections` (panneau composé) se replient et se déplacent ; Alfred retient leur ordre et leur repli pour la page, sur le poste, sous une clé `usePageState` réservée (`alfred.sections.<name>`). Les clés `alfred.*` ne sont pas pour la page ; les autres ne durent que tant qu’Alfred est ouvert. La largeur du panneau (340 px, 460 px, large) est réglée par l’utilisateur.
+
 Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou une valeur de type `url` ou `email`, qui le fait seule). La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
 
 ### Notifications et compteur : `shell.notify`, `badge`

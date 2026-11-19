@@ -1,14 +1,14 @@
 import { IconButton } from "@alfred/ui";
 import { Maximize2, Minimize2, X } from "lucide-react";
-import { createContext, type PointerEvent, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import { invoke } from "../lib/native";
 
-/** Agrandissement du panneau qui contient l’en-tête : le panneau prend alors toute la largeur de la page. */
-const PanelSize = createContext<{ maximized: boolean; toggle: () => void } | null>(null);
+/** Largeur du panneau qui contient l’en-tête, que son bouton Agrandir fait passer à la suivante. */
+const PanelSize = createContext<{ size: PanelWidth; toggle: () => void } | null>(null);
 
 /**
  * En-tête d’un panneau de droite, comme la barre du haut de la page et aligné sur elle (44 px) : à gauche, ce que montre
- * le panneau ; à droite, ses actions, puis Agrandir (dans un panneau redimensionnable) et Fermer.
+ * le panneau ; à droite, ses actions, puis Agrandir (qui passe à la largeur suivante) et Fermer.
  */
 export function PanelBar({
   title,
@@ -38,8 +38,12 @@ export function PanelBar({
       <div className="page-topbar__actions">
         {actions}
         {size ? (
-          <IconButton label={size.maximized ? "Réduire le panneau" : "Agrandir le panneau"} onClick={size.toggle}>
-            {size.maximized ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+          <IconButton label={size.size === "wide" ? "Réduire le panneau" : "Agrandir le panneau"} onClick={size.toggle}>
+            {size.size === "wide" ? (
+              <Minimize2 size={15} aria-hidden="true" />
+            ) : (
+              <Maximize2 size={15} aria-hidden="true" />
+            )}
           </IconButton>
         ) : null}
         <IconButton label={closeLabel} onClick={onClose}>
@@ -50,13 +54,24 @@ export function PanelBar({
   );
 }
 
-const MIN = 280;
-const MAX = 900;
+/**
+ * Largeurs du panneau, reprises de OneApp (`RightPanel`) : sections (340 px), formulaire (460 px) et large. Agrandir
+ * passe de l’une à la suivante, puis revient à la plus étroite.
+ */
+export const PANEL_SIZES = ["compact", "form", "wide"] as const;
+export type PanelWidth = (typeof PANEL_SIZES)[number];
+
+const isPanelWidth = (value: unknown): value is PanelWidth => PANEL_SIZES.includes(value as PanelWidth);
+
+export function nextPanelWidth(size: PanelWidth): PanelWidth {
+  return PANEL_SIZES[(PANEL_SIZES.indexOf(size) + 1) % PANEL_SIZES.length];
+}
 
 /**
- * Panneau de droite d’une page : posé à côté du contenu, sur toute la hauteur de la fenêtre, redimensionnable à la
- * souris et au clavier, et agrandi à toute la largeur de la page depuis son en-tête. Avec `title` et `onClose`, il
- * porte lui-même son en-tête ; sinon son contenu pose un `PanelBar`.
+ * Panneau de droite d’une page : posé à côté du contenu, sur toute la hauteur de la fenêtre, en l’une des trois
+ * largeurs de OneApp, que le bouton Agrandir de son en-tête fait passer de l’une à l’autre. La largeur choisie est
+ * retenue sur le poste (`storageKey`). Avec `title` et `onClose`, il porte lui-même son en-tête ; sinon son contenu
+ * pose un `PanelBar`.
  */
 export function ResizablePanel({
   children,
@@ -71,63 +86,26 @@ export function ResizablePanel({
   title?: string;
   onClose?: () => void;
 }) {
-  const [width, setWidth] = useState(380);
-  const [maximized, setMaximized] = useState(false);
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const [size, setSize] = useState<PanelWidth>("compact");
 
   useEffect(() => {
-    void invoke<number | null>("settings.get", { key: storageKey }).then((stored) => {
-      if (typeof stored === "number") setWidth(Math.min(MAX, Math.max(MIN, stored)));
-    });
+    void invoke<unknown>("settings.get", { key: storageKey })
+      .then((stored) => {
+        if (isPanelWidth(stored)) setSize(stored);
+      })
+      .catch(() => undefined);
   }, [storageKey]);
 
-  const commit = (next: number) => {
-    const clamped = Math.min(MAX, Math.max(MIN, Math.round(next)));
-    setWidth(clamped);
-    return clamped;
-  };
-  const save = (value: number) => void invoke("settings.set", { key: storageKey, value });
-
-  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    drag.current = { startX: event.clientX, startWidth: width };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (drag.current) commit(drag.current.startWidth + drag.current.startX - event.clientX);
-  };
-  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
-    save(commit(drag.current.startWidth + drag.current.startX - event.clientX));
-    drag.current = null;
+  const toggle = () => {
+    const next = nextPanelWidth(size);
+    setSize(next);
+    void invoke("settings.set", { key: storageKey, value: next }).catch(() => undefined);
   };
 
   return (
-    <aside
-      className={`shell-panel${maximized ? " is-maximized" : ""}`}
-      style={maximized ? undefined : { width }}
-      aria-label={label}
-    >
-      {/* biome-ignore lint/a11y/useSemanticElements: séparateur interactif, sans équivalent HTML natif. */}
-      <div
-        className="shell-panel__resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Largeur du panneau"
-        aria-valuemin={MIN}
-        aria-valuemax={MAX}
-        aria-valuenow={width}
-        tabIndex={0}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowLeft") save(commit(width + 24));
-          else if (event.key === "ArrowRight") save(commit(width - 24));
-        }}
-      />
-      {/* Pendant le glissement, le cadre ne doit pas capter le pointeur. */}
+    <aside className={`shell-panel shell-panel--${size}`} aria-label={label} data-size={size}>
       <div className="shell-panel__content">
-        <PanelSize.Provider value={{ maximized, toggle: () => setMaximized((current) => !current) }}>
+        <PanelSize.Provider value={{ size, toggle }}>
           {title && onClose ? <PanelBar title={title} onClose={onClose} /> : null}
           {children}
         </PanelSize.Provider>

@@ -156,4 +156,19 @@ describe("zones libres de la page", () => {
     expect(within(footer).getByText("20 contacts")).toBeTruthy();
     expect(footer.closest(".al-page__body")).toBeNull();
   });
+
+  it("garde la barre sur une ligne qui défile, avec un bord fondu, la recherche à part", () => {
+    render(
+      <Page
+        search={{ label: "Rechercher un déploiement", value: "", onChange: () => undefined }}
+        bar={<Text>3 filtres</Text>}
+      >
+        <Text>Liste</Text>
+      </Page>,
+    );
+    const bar = screen.getByText("3 filtres").closest(".al-page__bar");
+    expect(bar?.classList.contains("overflow-fade")).toBe(true);
+    // La recherche reste hors de la zone qui défile.
+    expect(screen.getByRole("searchbox", { name: "Rechercher un déploiement" }).closest(".al-page__bar")).toBeNull();
+  });
 });

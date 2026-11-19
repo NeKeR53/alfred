@@ -6,7 +6,7 @@
  * quitter le parcours à tout moment et le reprendre là où il en était.
  */
 import { Button, FeedbackBanner, SettingRow, SettingRows, Spinner, StatusBadge, StepList, Text } from "@alfred/ui";
-import { ArrowLeft, Check, Plus } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -379,7 +379,6 @@ export function SetupFlow({
                   aria-label={`Ajouter un compte à ${client.label}`}
                   onClick={() => onEdit({ kind: "account", client, help: item.help || undefined })}
                 >
-                  <Plus size={14} aria-hidden="true" />
                   {client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un autre compte"}
                 </Button>
               </div>

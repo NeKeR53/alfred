@@ -338,14 +338,42 @@
 .al-page__header > .al-action-bar {
   margin-top: -4px;
 }
-/* Zones libres de la page : contenu de la barre (après la recherche), pied fixe. */
+/*
+ * Zones libres de la page : contenu de la barre (après la recherche), pied fixe. La barre tient sur une ligne, comme
+ * dans OneApp : quand la largeur manque, elle défile horizontalement (bord fondu, `overflow-fade`) au lieu de passer
+ * à la ligne, ce qui couperait la barre de 40 px. Un `Row wrap` posé dedans reste lui aussi sur une ligne.
+ */
 .al-page__bar {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  /* Toute la hauteur de la barre de 40 px : le contour de focus des contrôles reste visible malgré le défilement. */
+  align-self: stretch;
+  margin: -4px;
+  padding: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.al-page__bar::-webkit-scrollbar {
+  display: none;
+}
+.al-page__bar .al-row--wrap,
+.al-page__bar .choice-group {
+  flex-wrap: nowrap;
+}
+/* Chaque contrôle garde sa largeur ; seule la recherche à étiquettes se réduit, jusqu’à sa largeur minimale. */
+.al-page__bar > *,
+.al-page__bar > .al-row > * {
+  flex-shrink: 0;
+}
+.al-page__bar > .al-row,
+.al-page__bar .al-tag-search {
+  flex-shrink: 1;
 }
 .al-page__footer {
   flex: 0 0 auto;

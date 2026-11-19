@@ -3,7 +3,8 @@ import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
 import { FeedbackBanner } from "../components/FeedbackBanner";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
-import { KeyValueList, Page, Section, Text } from "../components/page";
+import { PanelSections } from "../components/PanelSections";
+import { KeyValueList, Page, Text } from "../components/page";
 import { type Action, ActionBar } from "./actions";
 import { FormattedValue, type StatusMap, type ValueOptions } from "./format";
 import { useFrameServices, useReloadOnPeerChange } from "./services";
@@ -17,9 +18,19 @@ export interface DetailField extends ValueOptions {
   hideEmpty?: boolean;
 }
 
-/** Un bloc titré sous la fiche : un texte, une liste, un tableau composé par la page. */
+/**
+ * Un bloc titré sous la fiche : un texte, une liste, un tableau composé par la page. L’utilisateur le replie d’un clic
+ * sur son titre et le déplace par sa poignée ; l’ordre et le repli sont retenus pour la page.
+ */
 export interface DetailSection {
+  /** Identifiant stable qui retient la place et le repli du bloc ; par défaut, son titre. */
+  id?: string;
   title: string;
+  /** État court dans l’en-tête du bloc, lisible même replié : « 3 ouverts », « Échec ». */
+  summary?: string;
+  summaryTone?: "neutral" | "success" | "warning" | "danger";
+  /** Replié tant que l’utilisateur ne l’a pas ouvert (un historique long, un journal). */
+  defaultCollapsed?: boolean;
   /** Un texte (affiché en paragraphe) ou des composants de `@alfred/ui`. Vide : `empty` s’affiche. */
   content?: ReactNode;
   /** « Aucune description ». */
@@ -135,28 +146,29 @@ export function DetailPanel<Item>({
           }))}
         />
       ) : null}
-      {(sections?.(item) ?? []).map((section) => {
-        const empty = section.content == null || section.content === "" || section.content === false;
-        return (
-          <Section
-            key={section.title}
-            title={section.title}
-            actions={
-              section.actions ? (
-                <ActionBar actions={section.actions} place="section" subject={name} onDone={state.reload} />
-              ) : undefined
-            }
-          >
-            {empty ? (
+      <PanelSections
+        name="detail"
+        sections={(sections?.(item) ?? []).map((section) => {
+          const empty = section.content == null || section.content === "" || section.content === false;
+          return {
+            id: section.id ?? section.title,
+            title: section.title,
+            summary: section.summary,
+            summaryTone: section.summaryTone,
+            defaultCollapsed: section.defaultCollapsed,
+            action: section.actions ? (
+              <ActionBar actions={section.actions} place="section" subject={name} onDone={state.reload} />
+            ) : undefined,
+            content: empty ? (
               <Text tone="muted">{section.empty ?? "Aucun contenu"}</Text>
             ) : typeof section.content === "string" ? (
               <Text>{section.content}</Text>
             ) : (
               section.content
-            )}
-          </Section>
-        );
-      })}
+            ),
+          };
+        })}
+      />
     </Page>
   );
 }

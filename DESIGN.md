@@ -29,10 +29,10 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 │ ▯         │ Titre [Onglet 1|Onglet 2]   cloche ▯ │ Panneau      ⤢ ✕ │ en-têtes : 44 px, alignés
 ├───────────┼───────────────────────────────────┼──────────────────┤
 │ Section A │ [recherche][filtre]  ⟳ ✎ ⋯ [Nouveau] │ Fiche            │ barre de la page
-│ Section B ├───────────────────────────────────┤ Blocs            │
+│ Section B ├───────────────────────────────────┤ ▸ Blocs repliés  │
 │ …         │  tableau                          │ panneau de droite│
 │ Agent     │                                   │ toute la hauteur │
-│ Espace ˅  │                                   │ 280 à 900 px     │
+│ Espace ˅  │                                   │ 340, 460 ou large│
 │ Réglages  │                                   │                  │
 └───────────┴───────────────────────────────────┴──────────────────┘
 ```
@@ -40,7 +40,7 @@ La règle 5 est absolue : l’utilisateur règle le mode clair ou sombre, l’ac
 - Comme dans Claude Desktop, le menu, la page et le panneau de droite prennent chacun toute la hauteur et ont chacun leur en-tête de 44 px, alignés en une seule rangée séparée par de fins traits verticaux. L’en-tête du menu porte le bouton qui le replie ; replié, il prend le fond de la barre de la page, qui semble partir du bord gauche, et le bouton ne bouge pas. L’en-tête du panneau dit ce qu’il montre, à gauche, et porte ses actions, Agrandir et Fermer, à droite. Le menu : les sections en haut ; en bas, dans cet ordre, Agent, l’espace ouvert (qui ouvre le menu des espaces) et Réglages. Replier le menu ne change que sa largeur : aucune icône ni aucun texte ne bouge.
 - Une entrée du menu de gauche ouvre une **section**, dont les pages sont les **onglets** de la barre du haut. Ils sont à gauche, juste après le titre de la section ; les actions de la page, l’indicateur d’état, la cloche et le bouton du panneau restent calés à droite. Quand la place manque (panneau de droite ouvert), les onglets défilent : ni le titre ni les actions ne se réduisent pour eux.
 - La page **Agent** suit les conversations dans son panneau de droite, comme la liste des agents de OneApp : une seule carte « Conversations » liste toutes les conversations, la plus récemment créée d’abord, chacune sur deux lignes (titre, puis le harnais, suivi de « réponse attendue » ou « en échec » quand c’est le cas), avec une pastille d’état dans la marge (au travail, qui pulse doucement ; réponse attendue ; en échec ; terminée ; neutre en veille) et l’heure de la dernière activité à droite (le jour et le mois avant aujourd’hui), que « Archiver » remplace au survol, sur chaque ligne. Le résumé de la carte dit « N à traiter », sinon « N au travail ». La carte « Modifications » suit. Les messages en attente tiennent une ligne chacun en tête du cadre de la saisie : poignée (ou horloge), texte, Modifier et Retirer en gris, puis le petit bouton d’envoi rond, flèche inclinée, qui l’envoie maintenant ; c’est le même bouton que l’envoi de la saisie.
-- Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche, masque et redimensionne (280 à 900 px).
+- Chaque page peut déclarer **un** panneau de droite, que l’utilisateur affiche et masque. Il a trois largeurs, reprises de OneApp : 340 px (sections), 460 px (formulaire) et large (1 100 px au plus, la page gardant au moins 320 px). Le bouton Agrandir de son en-tête passe de l’une à la suivante, puis revient à la plus étroite (« Réduire le panneau » une fois large) ; la largeur choisie est retenue sur le poste. Il n’y a plus de séparateur à faire glisser : comme dans OneApp, les trois tailles le remplacent. Ses blocs se replient d’un clic sur leur titre et se déplacent par leur poignée, et leur disposition est retenue pour la page (4.2).
 - Une page peut s’ajouter aux onglets des **Réglages**.
 - Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
 - L’état d’une page (données d’exemple, service à configurer…) se signale par un indicateur compact dans sa barre du haut, jamais par un bandeau pleine largeur ; seule la page d’attente remplace une page qui ne peut pas s’afficher.
@@ -157,10 +157,12 @@ Il lit lui-même la sélection publiée par la `CollectionPage` de sa page, char
 | `status?: { value: (item) => string; statuses: StatusMap }` | État, en badge à côté du nom. |
 | `actions?: (item) => Action[]` | Actions sur l’objet : trois icônes au plus, puis « ⋯ ». |
 | `fields?: (item) => DetailField[]` | La fiche : `{ label, value, type?, statuses?, currency?, hideEmpty? }`, six lignes au plus ; une valeur vide s’affiche « — » (ou disparaît avec `hideEmpty`). |
-| `sections?: (item) => DetailSection[]` | Blocs titrés : `{ title, content, empty?, actions? }`. `content` est un texte (affiché en paragraphe) ou un contenu composé (`List`, `Markdown`, `HtmlContent`, `DataTable` à deux colonnes au plus) ; vide, il affiche `empty` (« Aucune description »). |
+| `sections?: (item) => DetailSection[]` | Blocs titrés : `{ id?, title, content, empty?, actions?, summary?, summaryTone?, defaultCollapsed? }`. `content` est un texte (affiché en paragraphe) ou un contenu composé (`List`, `Markdown`, `HtmlContent`, `DataTable` à deux colonnes au plus) ; vide, il affiche `empty` (« Aucune description »). `summary` est un état court lu même bloc replié (« 3 ouverts », « Échec », ton `summaryTone`) ; `defaultCollapsed` replie un bloc long (journal, historique complet) tant que l’utilisateur ne l’a pas ouvert. `id` (par défaut le titre) retient la place et le repli du bloc : garde-le stable. |
 | `notFoundTitle?: string` | « Élément introuvable » par défaut. |
 
 Le panneau ne charge jamais une liste à lui seul et ne remplace pas la page : il montre un objet.
+
+**Blocs repliables et déplaçables**, comme les sections du panneau d’infos de OneApp : chaque bloc a un en-tête de 32 px, son titre suivi d’un chevron et, à droite, son résumé puis ses actions. Un clic sur le titre le replie ; la poignée, révélée au survol, le déplace à la souris, ou au clavier avec Alt+↑/↓. L’ordre et les blocs repliés sont retenus pour la page, sur le poste, et survivent à la fermeture d’Alfred ; un bloc nouveau prend sa place déclarée. La fiche reste fixe en tête. Un panneau composé à la main obtient les mêmes blocs avec `PanelSections` (section 5).
 
 ### 4.3 `SettingsPage` — un onglet de Réglages
 
@@ -345,7 +347,7 @@ Une zone libre reçoit **ce que la page veut** : des composants de `@alfred/ui` 
 - `footer?: ReactNode` : pied fixe sous ce qui défile (total, sélection, pagination).
 - `width`: `"full" \| "text"` (`"full"` ; `text` pour de la lecture : 760 px au plus) ; `fill?: boolean` (le contenu occupe la hauteur sans défiler : pour un `DataTable fill` ou un éditeur) ; `children`.
 
-**Ce qui doit survivre au départ de la page** : quand l’utilisateur quitte une page et y revient, son cadre est recréé. Toute valeur qu’il s’attend à retrouver (texte de recherche, étiquettes, filtres, onglet, vue, élément ouvert) se déclare avec `usePageState(clé, valeurDeDépart)` de `@alfred/ui`, qui s’emploie exactement comme `useState` : Alfred la retient et la rend au retour, sans clignotement. Les gabarits le font d’eux-mêmes (`CollectionPage` retrouve sa recherche, ses filtres, sa vue et sa ligne ouverte). Réserve-le à l’état de l’écran, petit et en JSON ; les données restent dans la base.
+**Ce qui doit survivre au départ de la page** : quand l’utilisateur quitte une page et y revient, son cadre est recréé. Toute valeur qu’il s’attend à retrouver (texte de recherche, étiquettes, filtres, onglet, vue, élément ouvert) se déclare avec `usePageState(clé, valeurDeDépart)` de `@alfred/ui`, qui s’emploie exactement comme `useState` : Alfred la retient et la rend au retour, sans clignotement. Les gabarits le font d’eux-mêmes (`CollectionPage` retrouve sa recherche, ses filtres, sa vue et sa ligne ouverte). Réserve-le à l’état de l’écran, petit et en JSON ; les données restent dans la base. Les clés qui commencent par `alfred.` sont réservées aux gabarits (disposition des blocs d’un panneau) : n’en choisis pas.
 
 ```tsx
 const [etiquettes, setEtiquettes] = usePageState<string[]>("etiquettes", []);
@@ -355,6 +357,8 @@ const [etiquettes, setEtiquettes] = usePageState<string[]>("etiquettes", []);
 **La barre** est la petite bande fixe sous l’en-tête : elle apparaît dès que `search`, `bar` ou `actions` est donné. Une page composée qui veut une recherche ou des filtres en haut s’en sert, toujours (seule la prop `toolbar`, une barre toute faite, est réservée aux gabarits). Marge, défilement et espacement des blocs (24 px) sont fixés ; l’en-tête, la barre et le pied restent fixes.
 
 **`Section`** — un bloc titré : `title`, `description?` (une phrase), `actions?: Action[]` (à droite du titre : deux icônes au plus, une action principale en texte s’il le faut, le reste dans « ⋯ »), `children`. Un bloc par sujet ; pas de titre de page au-dessus.
+
+**`PanelSections`** — les blocs d’un panneau de droite composé à la main, repliables et déplaçables comme ceux de `DetailPanel` : `sections: { id, title, content, summary?, summaryTone?, action?, defaultCollapsed? }[]`, et `name?` pour distinguer deux listes dans le même panneau. L’ordre et le repli sont retenus pour la page (clé réservée `alfred.sections.<name>`). Dans un panneau, préfère-le à une suite de `Section`.
 
 **Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`) encadre un contenu autonome dans une page large ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres.
 
@@ -397,7 +401,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Rubriques d’un même objet | `Tabs` | `label`, `items: { id, label, content? }[]`, `activeId`, `onChange` |
 | Contenu secondaire replié | `Disclosure` | `label`, `children`, `appearance?` |
 | Étapes d’un parcours | `StepList` | `label`, `steps`, `current`, `onSelect?` |
-| Disposer | `Stack`, `Row`, `Grid`, `Divider`, `Surface`, `Section` | voir plus haut |
+| Disposer | `Stack`, `Row`, `Grid`, `Divider`, `Surface`, `Section`, `PanelSections` (panneau) | voir plus haut |
 | Ouvrir un objet en entier, une saisie, un contenu | `openSubpage`, `openForm`, `openModal` (section 4) | — |
 
 **Agir**

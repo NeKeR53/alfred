@@ -50,6 +50,15 @@ describe("TagSearchField", () => {
     expect(screen.getByRole("status", { hidden: true }).textContent).toBe("");
   });
 
+  it("pose ses suggestions en position fixe, sous le champ, pour qu’une barre qui défile ne les coupe pas", async () => {
+    const user = userEvent.setup();
+    render(<Tags />);
+    await user.type(screen.getByRole("combobox", { name: "Rechercher un contact" }), "ly");
+    const list = screen.getByRole("listbox");
+    expect(list.style.top).not.toBe("");
+    expect(list.style.left).not.toBe("");
+  });
+
   it("sans texte libre, n’accepte que les suggestions", async () => {
     const user = userEvent.setup();
     render(<Tags free={false} />);

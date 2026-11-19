@@ -89,11 +89,9 @@
   font: inherit;
   font-size: var(--font-size-body);
 }
+/* Position fixe, calculée sous le champ par le composant : une barre qui défile ne coupe pas la liste. */
 .al-tag-search__list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  position: fixed;
   z-index: var(--z-popover);
   padding: 4px 0;
   border: 1px solid var(--line);

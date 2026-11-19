@@ -1278,9 +1278,23 @@ html select:not([multiple], [data-slot="native-select"]) {
 }
 .page-toolbar__actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+/*
+ * Rangée qui défile horizontalement (onglets de la barre du haut, barre d’une page), comme dans les Réglages de
+ * OneApp : un dégradé fond le bord du côté où elle continue. `useOverflowEdges` pose `data-overflow`.
+ */
+.overflow-fade[data-overflow="end"] {
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+.overflow-fade[data-overflow="start"] {
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+.overflow-fade[data-overflow="both"] {
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
 }
 
 .state-label {

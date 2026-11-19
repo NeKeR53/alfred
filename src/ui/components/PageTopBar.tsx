@@ -26,6 +26,11 @@ export function PanelToggleButton({
   );
 }
 
+/** Trait vertical entre deux groupes d’actions de la barre du haut (outils de la page, puis ceux de la coquille). */
+export function PageTopBarSeparator() {
+  return <span className="page-topbar__separator" aria-hidden="true" />;
+}
+
 /**
  * Barre du haut de la coquille (section, Agent, Réglages) : 44 px sur toute la largeur, titre à gauche,
  * actions calées à droite, bascule du panneau en dernier. Hauteur, marges et typographie du titre sont fixées ici.

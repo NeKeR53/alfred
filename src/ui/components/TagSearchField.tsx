@@ -5,7 +5,8 @@
  * pour filtrer au fil de la saisie.
  */
 import { Search, X } from "lucide-react";
-import { type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "./essentials.css";
 
 const fold = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("fr").trim();
@@ -51,6 +52,29 @@ export function TagSearchField({
       .slice(0, 8);
   }, [query, suggestions, tags, formatTag]);
   const listed = open && matches.length > 0;
+  const control = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties>();
+
+  // La liste se pose en position fixe, sous le champ, dans le corps du document : une barre qui défile ne la coupe pas.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: une étiquette ajoutée ou retirée déplace le champ.
+  useLayoutEffect(() => {
+    if (!listed) return;
+    const update = () => {
+      const rect = control.current?.getBoundingClientRect();
+      if (!rect) return;
+      // Le champ peut être en partie hors de vue dans une barre qui défile : la liste reste dans la fenêtre.
+      const width = Math.min(Math.max(rect.width, 240), window.innerWidth - 16);
+      const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+      setPlace({ top: rect.bottom + 4, left, width });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [listed, tags.length]);
 
   // Autocomplétion : pendant la frappe, la première suggestion est prête à être prise par Entrée.
   const type = (text: string) => {
@@ -103,7 +127,7 @@ export function TagSearchField({
     <div className="al-tag-search">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: un clic n’importe où dans le cadre place le curseur dans le champ. */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: le clavier atteint déjà le champ lui-même. */}
-      <div className="al-tag-search__control" onClick={() => input.current?.focus()}>
+      <div ref={control} className="al-tag-search__control" onClick={() => input.current?.focus()}>
         <Search size={16} aria-hidden="true" />
         <ul className="al-tag-search__tags" aria-label="Critères de recherche">
           {tags.map((tag) => (
@@ -147,31 +171,36 @@ export function TagSearchField({
           </button>
         ) : null}
       </div>
-      <div
-        id={listId}
-        role="listbox"
-        aria-label={`Suggestions pour ${label}`}
-        hidden={!listed}
-        className="al-tag-search__list"
-      >
-        {matches.map((item, index) => (
-          <div
-            key={item}
-            id={`${listId}-${index}`}
-            role="option"
-            tabIndex={-1}
-            aria-selected={index === active}
-            className="al-tag-search__option"
-            // Avant la perte du focus du champ, qui fermerait la liste.
-            onMouseDown={(event) => {
-              event.preventDefault();
-              add(item);
-            }}
-          >
-            {formatTag(item)}
-          </div>
-        ))}
-      </div>
+      {/* Hors de la barre, dans le corps du document : ni son défilement ni son fondu ne masquent la liste. */}
+      {createPortal(
+        <div
+          id={listId}
+          role="listbox"
+          aria-label={`Suggestions pour ${label}`}
+          hidden={!listed}
+          className="al-tag-search__list"
+          style={place}
+        >
+          {matches.map((item, index) => (
+            <div
+              key={item}
+              id={`${listId}-${index}`}
+              role="option"
+              tabIndex={-1}
+              aria-selected={index === active}
+              className="al-tag-search__option"
+              // Avant la perte du focus du champ, qui fermerait la liste.
+              onMouseDown={(event) => {
+                event.preventDefault();
+                add(item);
+              }}
+            >
+              {formatTag(item)}
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Button, EmptyState, IconButton, PageTopBar, Tabs } from "@alfred/ui";
+import { Button, EmptyState, IconButton, PageTopBar, PageTopBarSeparator, Tabs } from "@alfred/ui";
 import {
   AppWindow,
   Bot,
@@ -22,6 +22,7 @@ import { SetupGate } from "../features/setup/SetupGate";
 import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
+import { useOverflowEdges } from "../ui/components/overflowEdges";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { ExampleIndicator } from "./ExampleIndicator";
 import { SectionIcon } from "./icons";
@@ -164,6 +165,7 @@ export function SectionView({
   const hasPanel = Boolean(panel) || Boolean(agentConversation);
   const panelVisible = hasPanel ? !panelHidden[page?.reference ?? ""] : false;
   const main = useRef<HTMLDivElement>(null);
+  const tabsRow = useOverflowEdges<HTMLDivElement>();
 
   return (
     <div
@@ -181,7 +183,8 @@ export function SectionView({
               {tabs.length > 1 && activeId ? (
                 // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
                 <div
-                  className="shell-tabs"
+                  ref={tabsRow}
+                  className="shell-tabs overflow-fade"
                   onPointerDown={(event) => {
                     const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
                     const tab = target?.element.closest<HTMLElement>('[role="tab"]');
@@ -235,25 +238,29 @@ export function SectionView({
               : undefined
           }
         >
-          {actions}
-          {detachable && inTauri && page && !builtInTab && !waiting ? (
-            <IconButton
-              label="Ouvrir dans une nouvelle fenêtre"
-              onClick={() =>
-                void openPageWindow(page.reference).catch((error: unknown) =>
-                  notify({
-                    title: "La fenêtre n’a pas pu s’ouvrir",
-                    description: error instanceof Error ? error.message : String(error),
-                    tone: "error",
-                  }),
-                )
-              }
-            >
-              <AppWindow size={16} aria-hidden="true" />
-            </IconButton>
-          ) : null}
+          {/* Actions de la page, puis un trait, puis celles de la coquille : le trait disparaît quand la page n’en a pas. */}
+          <span className="shell-topbar__page-tools">
+            {actions}
+            {detachable && inTauri && page && !builtInTab && !waiting ? (
+              <IconButton
+                label="Ouvrir dans une nouvelle fenêtre"
+                onClick={() =>
+                  void openPageWindow(page.reference).catch((error: unknown) =>
+                    notify({
+                      title: "La fenêtre n’a pas pu s’ouvrir",
+                      description: error instanceof Error ? error.message : String(error),
+                      tone: "error",
+                    }),
+                  )
+                }
+              >
+                <AppWindow size={16} aria-hidden="true" />
+              </IconButton>
+            ) : null}
+            {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
+          </span>
+          <PageTopBarSeparator />
           {page && !builtInTab && !waiting ? <ExampleIndicator module={page.module} /> : null}
-          {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
           <NotificationBell />
         </PageTopBar>
         <div ref={main} className="shell-body__main">

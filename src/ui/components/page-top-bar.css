@@ -45,6 +45,14 @@
   justify-content: flex-end;
   gap: 8px;
 }
+/* Trait entre deux groupes d’actions, comme dans OneApp ; caché quand le groupe qui le précède est vide. */
+.page-topbar__separator {
+  width: 1px;
+  height: 18px;
+  flex: none;
+  margin: 0 4px;
+  background: var(--line);
+}
 .panel-toggle[aria-pressed="true"] {
   background: var(--color-surface-strong);
   color: var(--color-ink);

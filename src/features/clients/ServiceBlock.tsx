@@ -3,7 +3,6 @@
  * tester. La façon de s’y connecter appartient au module (l’agent la décrit) : elle ne se règle pas ici.
  */
 import { Button, MenuItem, OverflowMenu, SettingRow, SettingRows, StatusBadge } from "@alfred/ui";
-import { Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { notify } from "../../shell/notifications";
 import { errorMessage } from "../vault/api";
@@ -237,7 +236,6 @@ export function ServiceBlock({
             disabled={client.methods.length === 0}
             onClick={() => void addAccount()}
           >
-            <Plus size={14} aria-hidden="true" />
             {client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un compte"}
           </Button>
         </div>

@@ -89,14 +89,25 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
+/*
+ * Panneau de droite : trois largeurs reprises de OneApp (`RightPanel`), sections 340 px, formulaire 460 px et large ;
+ * Agrandir passe de l’une à l’autre. La page garde toujours au moins 320 px.
+ */
 .shell-panel {
   position: relative;
   flex: 0 0 auto;
+  width: 340px;
   min-width: 0;
-  max-width: 70%;
+  max-width: calc(100% - 320px);
   display: flex;
   border-left: 1px solid var(--line);
   background: var(--color-bg);
+}
+.shell-panel--form {
+  width: 460px;
+}
+.shell-panel--wide {
+  width: min(1100px, calc(100vw - 420px));
 }
 /* En-tête du panneau : la barre du haut de la page, prolongée au-delà du trait vertical qui les sépare. */
 .shell-panel__header h2 {
@@ -115,26 +126,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.shell-panel__resizer {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  width: 6px;
-  cursor: col-resize;
-  touch-action: none;
-}
-.shell-panel__resizer:hover,
-.shell-panel__resizer:focus-visible {
-  outline: 0;
-  background: color-mix(in oklch, var(--color-primary) 35%, transparent);
-}
-/* Un cadre capterait le pointeur pendant le glissement du séparateur. */
-.shell-panel__resizer:active ~ .shell-panel__content,
-.shell-body:has(.shell-panel__resizer:active) .page-frame {
-  pointer-events: none;
 }
 
 /* Accueil : aucun espace ouvert. */
@@ -359,18 +350,6 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-}
-/* Agrandi, le panneau prend toute la largeur de la page, à la place de sa colonne. */
-.shell-panel.is-maximized {
-  flex: 1 1 auto;
-  max-width: none;
-  border-left: 0;
-}
-.shell-panel.is-maximized > .shell-panel__resizer {
-  display: none;
-}
-.shell-body:has(> .shell-panel.is-maximized) > .shell-column {
-  display: none;
 }
 /* Entrée du bas du menu, entre Agent et Réglages : l’espace ouvert, avec les mêmes marges que les autres entrées. Replié, seule son icône
  * reste ; elle ouvre le même menu des espaces. */

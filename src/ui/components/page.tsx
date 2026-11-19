@@ -2,6 +2,7 @@ import { type CSSProperties, isValidElement, type ReactNode } from "react";
 import { type Action, ActionBar } from "../templates/actions";
 import { TemplateDialogHost, useDialogOwner } from "../templates/dialogs";
 import { PageHeaderBar, type PageHeaderSpec, SubpageLayer, useSubpage } from "../templates/subpages";
+import { useOverflowEdges } from "./overflowEdges";
 import { PageToolbar } from "./PageToolbar";
 import { PageScope } from "./pageScope";
 import { SearchField } from "./SearchField";
@@ -80,7 +81,7 @@ export function Page({
                   onChange={(event) => search.onChange(event.target.value)}
                 />
               ) : null}
-              {bar ? <div className="al-page__bar">{bar}</div> : null}
+              {bar ? <PageBar>{bar}</PageBar> : null}
             </>
           ) : undefined
         }
@@ -108,6 +109,19 @@ export function Page({
         {covered ? <SubpageLayer entry={subpage} /> : null}
       </div>
     </PageScope.Provider>
+  );
+}
+
+/**
+ * Zone libre de la barre : une seule ligne, comme dans OneApp. Quand la largeur manque, elle défile horizontalement
+ * et son bord fondu montre de quel côté elle continue ; rien n’est coupé ni renvoyé à la ligne.
+ */
+function PageBar({ children }: { children: ReactNode }) {
+  const row = useOverflowEdges<HTMLDivElement>();
+  return (
+    <div ref={row} className="al-page__bar overflow-fade">
+      {children}
+    </div>
   );
 }
 
