@@ -293,10 +293,38 @@ export function Grid({
 
 /** Surface délimitée pour regrouper un contenu autonome (formulaire, synthèse). À ne pas répéter en mur de cartes.
  * `footer` est collé au bas de la surface, quelle que soit la hauteur du contenu : dans une `Grid`, les surfaces d’une
- * même rangée ont la même hauteur et leurs pieds (une barre d’avancement) s’alignent. */
-export function Surface({ children, title, footer }: { children: ReactNode; title?: string; footer?: ReactNode }) {
+ * même rangée ont la même hauteur et leurs pieds (une barre d’avancement) s’alignent.
+ * `onOpen` rend la surface ouvrable, comme une ligne de liste : un vrai bouton, nommé par `openLabel`, couvre la
+ * surface sous son contenu ; un clic hors des boutons de la surface, ou Entrée et Espace quand il a le focus, l’ouvre
+ * (le panneau de droite sur cet objet). Les boutons, liens et menus du contenu gardent leur propre clic. `selected`
+ * marque la surface de l’objet ouvert. */
+export function Surface({
+  children,
+  title,
+  footer,
+  onOpen,
+  openLabel,
+  selected = false,
+}: {
+  children: ReactNode;
+  title?: string;
+  footer?: ReactNode;
+  onOpen?: () => void;
+  openLabel?: string;
+  selected?: boolean;
+}) {
+  const openable = typeof onOpen === "function";
   return (
-    <div className="al-surface">
+    <div className={`al-surface${openable ? " al-surface--openable" : ""}${selected ? " is-selected" : ""}`}>
+      {openable ? (
+        <button
+          type="button"
+          className="al-surface__open"
+          aria-label={openLabel}
+          aria-current={selected ? "true" : undefined}
+          onClick={onOpen}
+        />
+      ) : null}
       {title ? <h3 className="al-surface__title">{title}</h3> : null}
       {children}
       {footer ? <div className="al-surface__footer">{footer}</div> : null}

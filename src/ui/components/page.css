@@ -164,6 +164,55 @@
 .al-surface > .al-section:not(:last-child) {
   flex: 1 1 auto;
 }
+/* Surface ouvrable : un bouton couvre la surface sous son contenu, qui laisse passer le clic sauf sur ses propres
+   commandes. */
+.al-surface--openable {
+  position: relative;
+  transition:
+    border-color 0.12s ease,
+    background-color 0.12s ease;
+}
+.al-surface--openable:hover {
+  border-color: var(--control-border);
+}
+.al-surface__open {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.al-surface__open:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.al-surface--openable > :not(.al-surface__open) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+.al-surface--openable
+  :is(button, a, input, select, textarea, label, summary, [role="menu"], [role="menuitem"], [tabindex]) {
+  pointer-events: auto;
+}
+.al-surface.is-selected {
+  border-color: var(--color-primary);
+  background: color-mix(in oklch, var(--color-primary) 6%, var(--color-bg));
+}
+@media (forced-colors: active) {
+  .al-surface.is-selected {
+    outline: 2px solid Highlight;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .al-surface--openable {
+    transition: none;
+  }
+}
 .al-surface__footer {
   margin-top: auto;
   padding-top: 4px;

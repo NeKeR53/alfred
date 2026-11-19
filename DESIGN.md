@@ -361,7 +361,7 @@ const [etiquettes, setEtiquettes] = usePageState<string[]>("etiquettes", []);
 
 **`PanelSections`** — les blocs d’un panneau de droite composé à la main, repliables et déplaçables comme ceux de `DetailPanel` : `sections: { id, title, content, summary?, summaryTone?, action?, defaultCollapsed? }[]`, et `name?` pour distinguer deux listes dans le même panneau. L’ordre et le repli sont retenus pour la page (clé réservée `alfred.sections.<name>`). Dans un panneau, préfère-le à une suite de `Section`.
 
-**Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`, `footer?`) encadre un contenu autonome dans une page large ; un bloc qui suit une `Section` dans la surface (le pied d’une carte : état et `ProgressBar`) est collé au bas de la surface, quelle que soit la hauteur du contenu, comme `footer` : dans une `Grid`, les surfaces d’une rangée ont la même hauteur et leurs pieds s’alignent ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres.
+**Disposer dans un bloc** — `Stack` (empile, `gap` `"md"` par défaut), `Row` (aligne, `gap` `"sm"`, `align`, `justify`, `wrap`), `Grid` (colonnes fluides d’au moins `minColumnWidth` px, 240 par défaut), `Divider` (filet entre deux groupes d’un même bloc). `Surface` (`title?`, `footer?`) encadre un contenu autonome dans une page large ; un bloc qui suit une `Section` dans la surface (le pied d’une carte : état et `ProgressBar`) est collé au bas de la surface, quelle que soit la hauteur du contenu, comme `footer` : dans une `Grid`, les surfaces d’une rangée ont la même hauteur et leurs pieds s’alignent ; jamais autour d’une liste ou d’un tableau, jamais imbriquée, jamais répétée en grille de chiffres. Une carte qui ouvre son objet dans le panneau de droite (une carte de déploiement) prend `onOpen` (un bouton couvre la carte : clic hors de ses boutons, Entrée ou Espace au clavier), `openLabel` (« Ouvrir le détail de … », obligatoire) et `selected` pour la carte ouverte, comme un `ListItem`.
 
 ### Catalogue des composants
 
@@ -567,7 +567,7 @@ Une **notification** est transitoire : elle s’efface après 5 secondes (une er
 
 L’objectif est WCAG 2.2 AA. Les composants en portent l’essentiel ; la page ne doit pas le défaire.
 
-- **Clavier.** Les gabarits sont entièrement utilisables au clavier. Ne jamais rendre cliquable un `Text` ou une `Surface` : une action est une `Action`, un `Link`, un `ListItem` ou une ligne de tableau.
+- **Clavier.** Les gabarits sont entièrement utilisables au clavier. Ne jamais rendre cliquable un `Text` ou une `Surface` à la main : une action est une `Action`, un `Link`, un `ListItem`, une ligne de tableau ou une `Surface onOpen`, qui gère elle-même le focus, Entrée et Espace.
 - **Focus.** Il est visible sur chaque contrôle et revient au déclencheur à la fermeture d’une modale ou d’un menu. Ne pas le déplacer à la main.
 - **Noms accessibles.** Ils viennent des libellés : `label` d’une `Action`, d’une collection, d’un champ, `title` d’un réglage. Un libellé décrit l’action et son objet.
 - **Couleur.** Un état n’est jamais porté par la couleur seule : `StatusBadge` contient son libellé, `StatusDot` est suivie d’un texte, une erreur de champ est une phrase.

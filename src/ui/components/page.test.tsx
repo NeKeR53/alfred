@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LoadingSkeleton } from "./LoadingSkeleton";
 import { KeyValueList, Page, Surface } from "./page";
@@ -52,5 +52,44 @@ describe("Surface", () => {
   it("n’a pas de pied sans footer", () => {
     const { container } = render(<Surface>Contenu</Surface>);
     expect(container.querySelector(".al-surface__footer")).toBeNull();
+  });
+});
+
+describe("Surface ouvrable", () => {
+  it("s’ouvre par son bouton, et ses propres boutons gardent leur clic", () => {
+    const onOpen = vi.fn();
+    const onBouton = vi.fn();
+    render(
+      <Surface onOpen={onOpen} openLabel="Ouvrir le détail de ingestion">
+        <p>Ingestion</p>
+        <button type="button" onClick={onBouton}>
+          Lancer
+        </button>
+      </Surface>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ouvrir le détail de ingestion" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Lancer" }));
+    expect(onBouton).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("marque la surface sélectionnée", () => {
+    const { container } = render(
+      <Surface onOpen={() => undefined} openLabel="Ouvrir le détail de ingestion" selected>
+        Ingestion
+      </Surface>,
+    );
+    expect(container.querySelector(".al-surface")).toHaveClass("is-selected");
+    expect(screen.getByRole("button", { name: "Ouvrir le détail de ingestion" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+
+  it("reste un simple bloc sans onOpen", () => {
+    const { container } = render(<Surface>Contenu</Surface>);
+    expect(container.querySelector(".al-surface--openable")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });
