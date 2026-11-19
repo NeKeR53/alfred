@@ -26,18 +26,17 @@ import { applyLayoutChange } from "../../shell/navigationEditing";
 import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { ModuleAutomations } from "../automations/ModuleAutomations";
 import type { ClientNeedItem } from "../clients/api";
 import { serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
 import { ModuleJobs } from "../jobs/ModuleJobs";
-import { ModuleSchedules } from "../schedules/ModuleSchedules";
 import { MODULE_FOCUS } from "../settings/open";
 import { remainingSummary } from "../setup/api";
 import { openOnboarding } from "../setup/Onboarding";
 import { useModuleSetup } from "../setup/useModuleSetup";
 import { TeamSync } from "../teamSync/TeamSync";
-import { ModuleWebhooks } from "../webhooks/ModuleWebhooks";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
 import { ModuleContents } from "./ModuleContents";
@@ -360,7 +359,7 @@ export function ModulesSettings() {
             </StatusBadge>
           ) : (
             <StatusBadge tone="warning" size="compact">
-              Mise à jour disponible : v{update.available}
+              Mise à jour v{update.available}
             </StatusBadge>
           )
         ) : null}
@@ -395,9 +394,13 @@ export function ModulesSettings() {
     const installed = module.origin !== null && !module.origin.detached;
     const working = busy === `module:${module.id}`;
     return (
-      <div className="modules-list__actions module-row__actions">
+      <div className="modules-list__actions module-row__actions modules-table__actions">
         {update?.available ? (
-          <Button disabled={busy !== null} onClick={() => setOpened({ kind: "update", module: module.id })}>
+          <Button
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => setOpened({ kind: "update", module: module.id })}
+          >
             Mettre à jour
           </Button>
         ) : null}
@@ -442,32 +445,35 @@ export function ModulesSettings() {
     return publishedOf(module).length > 0 ? "Local, publié" : "Local";
   };
 
-  /** Tableau des modules installés : une ligne par module, qui ouvre sa fiche. */
+  /**
+   * Tableau des modules installés : une ligne par module, qui ouvre sa fiche. Trois colonnes seulement, pour tenir
+   * sans défilement horizontal à toute largeur des Réglages : la version et l’origine passent sous le nom, avec la
+   * description, sur une ligne coupée par des points de suspension.
+   */
   const columns: DataTableColumn<ModuleSummary>[] = [
     {
       key: "name",
       header: "Module",
       sortValue: (module) => module.name,
-      render: (module) => (
-        <span className="modules-table__module">
-          {moduleIcon(module)}
-          <span className="modules-table__text">
-            <span className="modules-table__name">{module.name}</span>
-            {module.description ? (
-              <span className="modules-table__description" title={module.description}>
-                {module.description}
+      render: (module) => {
+        const meta = [`v${module.version}`, originShort(module), module.description].filter(Boolean).join(" · ");
+        return (
+          <span className="modules-table__module">
+            {moduleIcon(module)}
+            <span className="modules-table__text">
+              <span className="modules-table__name">{module.name}</span>
+              <span className="modules-table__description" title={meta}>
+                {meta}
               </span>
-            ) : null}
+            </span>
           </span>
-        </span>
-      ),
+        );
+      },
     },
-    { key: "version", header: "Version", width: "90px", sortValue: (module) => module.version },
-    { key: "origin", header: "Origine", width: "150px", sortValue: originShort, render: originShort },
     {
       key: "state",
       header: "État",
-      width: "190px",
+      width: "130px",
       sortable: false,
       render: (module) => <span className="modules-table__badges">{moduleBadges(module)}</span>,
     },
@@ -476,7 +482,7 @@ export function ModulesSettings() {
       header: "Actions",
       headerLabel: "Actions",
       align: "end",
-      width: "150px",
+      width: "1%",
       sortable: false,
       render: (module) => moduleActions(module),
     },
@@ -529,8 +535,7 @@ export function ModulesSettings() {
           nameOf={nameOf}
         />
         <TeamSync module={module} />
-        <ModuleWebhooks module={module.id} />
-        <ModuleSchedules module={module.id} />
+        <ModuleAutomations module={module.id} />
         <ModuleJobs module={module.id} />
         {module.requires.length > 0 || module.requiredBy.length > 0 ? (
           <ModulePart
@@ -588,7 +593,12 @@ export function ModulesSettings() {
             {checking ? <Spinner label="Vérification des mises à jour" /> : null}
             <RefreshButton label="Vérifier les mises à jour" disabled={checking} onClick={() => void checkNow()} />
             {pending > 0 ? (
-              <Button loading={busy === "all"} disabled={busy !== null} onClick={() => void updateAll()}>
+              <Button
+                variant="outline"
+                loading={busy === "all"}
+                disabled={busy !== null}
+                onClick={() => void updateAll()}
+              >
                 Tout mettre à jour ({pending})
               </Button>
             ) : null}
@@ -610,7 +620,11 @@ export function ModulesSettings() {
               <FeedbackBanner
                 tone="warning"
                 appearance="contained"
-                action={<Button onClick={() => setFilter("attention")}>Les afficher</Button>}
+                action={
+                  <Button variant="outline" onClick={() => setFilter("attention")}>
+                    Les afficher
+                  </Button>
+                }
               >
                 {counts.attention > 1
                   ? `${counts.attention} modules ont une configuration à terminer : connectez et testez les services qui leur manquent.`

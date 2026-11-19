@@ -290,10 +290,10 @@ describe("ModulesSettings", () => {
     render(<ModulesSettings />);
 
     const row = rowOf(moduleList(), "Suivi");
-    expect(await within(row).findByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
+    expect(await within(row).findByText("Mise à jour v1.1.0")).toBeInTheDocument();
     expect(within(row).getByText("Modifié sur place")).toBeInTheDocument();
-    expect(within(row).getByText("Équipe")).toBeInTheDocument();
-    expect(within(rowOf(moduleList(), "Notes")).getByText("Local")).toBeInTheDocument();
+    expect(within(row).getByText(/· Équipe(?: ·|$)/)).toBeInTheDocument();
+    expect(within(rowOf(moduleList(), "Notes")).getByText(/· Local(?: ·|$)/)).toBeInTheDocument();
     // L’ouverture de l’écran interroge les marketplaces distants.
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.updates", { refresh: true }));
     expect(screen.getByRole("button", { name: "Tout mettre à jour (1)" })).toBeInTheDocument();
@@ -311,9 +311,9 @@ describe("ModulesSettings", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Mettre à jour" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(invoke).toHaveBeenCalledWith("marketplace.update", { module: "suivi" });
-    await waitFor(() => expect(screen.queryByText(/Mise à jour disponible/)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/Mise à jour v/)).not.toBeInTheDocument());
     await waitFor(() =>
-      expect(within(rowOf(moduleList(), "Suivi")).queryByText(/Mise à jour disponible/)).not.toBeInTheDocument(),
+      expect(within(rowOf(moduleList(), "Suivi")).queryByText(/Mise à jour v/)).not.toBeInTheDocument(),
     );
     expect(screen.queryByRole("button", { name: /Tout mettre à jour/ })).not.toBeInTheDocument();
     expect(lastNotification()).toBe("Suivi mis à jour");
@@ -322,13 +322,13 @@ describe("ModulesSettings", () => {
   it("fige, détache après confirmation, et demande le sort des données à la suppression", async () => {
     desk();
     render(<ModulesSettings />);
-    await screen.findByText("Mise à jour disponible : v1.1.0");
+    await screen.findByText("Mise à jour v1.1.0");
 
     openModuleMenu("Suivi", /Figer sur cette version/);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.pin", { module: "suivi", pinned: true }));
     expect(await within(rowOf(moduleList(), "Suivi")).findByText("Figé")).toBeInTheDocument();
     // Figé : la mise à jour reste signalée, mais ne compte plus pour « Tout mettre à jour ».
-    expect(screen.getByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
+    expect(screen.getByText("Mise à jour v1.1.0")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("button", { name: /Tout mettre à jour/ })).not.toBeInTheDocument());
 
     openModuleMenu("Suivi", /Détacher/);
@@ -337,7 +337,7 @@ describe("ModulesSettings", () => {
     expect(invoke).not.toHaveBeenCalledWith("marketplace.detach", expect.anything());
     fireEvent.click(within(confirmation).getByRole("button", { name: "Détacher" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.detach", { module: "suivi" }));
-    expect(await within(rowOf(moduleList(), "Suivi")).findByText("Détaché")).toBeInTheDocument();
+    expect(await within(rowOf(moduleList(), "Suivi")).findByText(/· Détaché(?: ·|$)/)).toBeInTheDocument();
 
     openModuleMenu("Notes", /Supprimer/);
     const removal = screen.getByRole("dialog", { name: "Supprimer Notes" });
@@ -385,7 +385,7 @@ describe("ModulesSettings", () => {
     );
     expect(lastNotification()).toBe("Notes v0.1.0 publié");
     // L’espace de travail se souvient de la publication : le module reste le sien, publié.
-    expect(await within(rowOf(moduleList(), "Notes")).findByText("Local, publié")).toBeInTheDocument();
+    expect(await within(rowOf(moduleList(), "Notes")).findByText(/· Local, publié(?: ·|$)/)).toBeInTheDocument();
   });
 
   it("importe depuis le Marketplace : catalogue de tous les marketplaces, fiche du module, puis configuration", async () => {
@@ -506,7 +506,7 @@ describe("ModulesSettings", () => {
       },
     });
     render(<ModulesSettings />);
-    expect(await screen.findByText("Mise à jour disponible : v1.1.0")).toBeInTheDocument();
+    expect(await screen.findByText("Mise à jour v1.1.0")).toBeInTheDocument();
 
     // La recherche ignore les accents et lit aussi la description.
     fireEvent.change(screen.getByLabelText("Rechercher un module"), { target: { value: "equipe" } });

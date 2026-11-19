@@ -270,10 +270,25 @@
   align-items: center;
   gap: 10px;
 }
+/*
+ * Dans un tableau à disposition automatique, un texte qui ne passe pas à la ligne impose sa largeur à la colonne et
+ * fait défiler le tableau. Largeur nulle et `min-width: 100%` : le texte ne réclame rien, prend la place laissée par
+ * les autres colonnes et se coupe par des points de suspension.
+ */
+.modules-table__module {
+  width: 0;
+  min-width: 100%;
+}
 .modules-table__text {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   flex-direction: column;
+}
+.modules-table__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .modules-table__name {
   font-weight: 600;
@@ -290,6 +305,16 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+/* Une pastille longue passe à la ligne plutôt que d’élargir la colonne. */
+.modules-table__badges > * {
+  max-width: 100%;
+  white-space: normal;
+}
+/* Actions d’une ligne : sur une seule ligne, la colonne prend juste leur largeur. */
+.modules-table__actions {
+  justify-content: flex-end;
+  white-space: nowrap;
+}
 
 /* Fiche d’un module proposé : une ligne par élément, son titre, une pastille, puis son explication. */
 .modules-offer__items > .modules-offer__item {
@@ -304,3 +329,4 @@
 .modules-offer__item-detail {
   color: var(--color-muted);
 }
+

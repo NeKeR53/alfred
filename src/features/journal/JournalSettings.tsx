@@ -23,6 +23,7 @@ import {
 import { X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, onNativeEvent } from "../../lib/native";
+import "./journal.css";
 
 export interface JournalEntry {
   id: number;
@@ -132,7 +133,7 @@ const columns: DataTableColumn<JournalEntry>[] = [
   {
     key: "at",
     header: "Heure",
-    width: "150px",
+    width: "120px",
     render: (entry) => <Text as="span">{formatTime(entry.at)}</Text>,
     sortValue: (entry) => entry.at,
   },
@@ -143,18 +144,24 @@ const columns: DataTableColumn<JournalEntry>[] = [
     render: (entry) => KIND_LABEL[entry.kind] ?? entry.kind,
     sortValue: (entry) => KIND_LABEL[entry.kind] ?? entry.kind,
   },
-  { key: "subject", header: "Sujet", width: "22%" },
+  {
+    key: "subject",
+    header: "Sujet",
+    width: "22%",
+    render: (entry) => <span className="journal-cell">{entry.subject}</span>,
+    sortValue: (entry) => entry.subject,
+  },
   {
     key: "status",
     header: "État",
-    width: "96px",
+    width: "88px",
     render: (entry) => <EntryStatus entry={entry} />,
     sortValue: (entry) => (isFailure(entry) ? 0 : 1),
   },
   {
     key: "durationMs",
     header: "Durée",
-    width: "84px",
+    width: "64px",
     align: "end",
     render: (entry) => formatDuration(entry.durationMs),
     sortValue: (entry) => entry.durationMs,
@@ -163,9 +170,11 @@ const columns: DataTableColumn<JournalEntry>[] = [
     key: "summary",
     header: "Résumé",
     render: (entry) => (
-      <Text as="span" tone={isFailure(entry) ? "danger" : "default"}>
-        {entry.summary || "—"}
-      </Text>
+      <span className="journal-cell">
+        <Text as="span" tone={isFailure(entry) ? "danger" : "default"}>
+          {entry.summary || "—"}
+        </Text>
+      </span>
     ),
     sortValue: (entry) => entry.summary,
   },

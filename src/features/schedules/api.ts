@@ -29,9 +29,16 @@ export const setScheduleEnabled = (schedule: string, enabled: boolean) =>
   invoke<null>("schedules.setEnabled", { schedule, enabled });
 export const runScheduleNow = (schedule: string) => invoke<RunResult>("schedules.runNow", { schedule });
 
-/** Rythme lisible : « toutes les 15 minutes », « chaque jour à 08:00 ». */
+/** Heure dite comme on la dit : « 7 h », « 7 h 30 », « 18 h 05 ». */
+export function spokenTime(at: string): string {
+  const [hours, minutes] = at.split(":").map((part) => Number.parseInt(part, 10));
+  if (Number.isNaN(hours)) return at;
+  return minutes ? `${hours} h ${String(minutes).padStart(2, "0")}` : `${hours} h`;
+}
+
+/** Rythme lisible : « toutes les 15 minutes », « tous les jours à 8 h ». */
 export function cadence(item: Pick<ScheduleItem, "everyMinutes" | "at">): string {
-  if (item.at) return `chaque jour à ${item.at}`;
+  if (item.at) return `tous les jours à ${spokenTime(item.at)}`;
   const minutes = item.everyMinutes ?? 0;
   if (minutes === 1) return "toutes les minutes";
   if (minutes % 1440 === 0) return minutes === 1440 ? "tous les jours" : `tous les ${minutes / 1440} jours`;
