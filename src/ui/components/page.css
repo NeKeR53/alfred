@@ -152,6 +152,11 @@
   flex-direction: column;
   gap: 8px;
 }
+/* Une section suivie d’autres blocs prend la hauteur libre : ce qui la suit (le pied d’une carte) est collé au bas
+   de la surface, et dans une Grid les pieds d’une rangée s’alignent, sans que la page ait à le demander. */
+.al-surface > .al-section:not(:last-child) {
+  flex: 1 1 auto;
+}
 .al-surface__footer {
   margin-top: auto;
   padding-top: 4px;
