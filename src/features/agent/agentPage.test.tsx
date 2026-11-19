@@ -263,27 +263,64 @@ describe("page Agent", () => {
     expect(pill.closest(".agent-composer__options")).not.toBeNull();
   });
 
-  it("le suivi reprend les états de OneApp et range chaque carte par création", async () => {
+  it("le suivi liste toutes les conversations comme OneApp : pastille d’état, heure, archiver au survol", async () => {
+    const today = new Date();
+    today.setHours(14, 2, 0, 0);
+    const at = today.getTime();
     database = {
-      c1: stored("c1", "Ancienne", 1_000, { updatedAt: 9_000, unread: true, lastStatus: "done" }),
-      c2: stored("c2", "Récente", 5_000, { unread: true, lastStatus: "error" }),
-      c3: stored("c3", "Lue", 3_000, { lastStatus: "cancelled" }),
-      c4: stored("c4", "Plus récente", 6_000, { unread: true, lastStatus: "done" }),
+      c1: stored("c1", "Ancienne", at - 5_000, { updatedAt: Date.UTC(2026, 0, 5, 12), lastStatus: "done" }),
+      c2: stored("c2", "Récente", at - 1_000, { updatedAt: at, unread: true, lastStatus: "error" }),
+      c3: stored("c3", "Lue", at - 3_000, { updatedAt: at, lastStatus: "cancelled" }),
+      c4: stored("c4", "Plus récente", at, { unread: true, lastStatus: "done" }),
     };
     render(<AgentPage />);
     const panel = await screen.findByLabelText("Suivi des conversations");
-    const attention = await within(panel).findByRole("region", { name: "À traiter" });
-    // Un tour en erreur non lu : « En échec », à traiter.
-    await waitFor(() => expect(attention).toHaveTextContent("Claude Code · En échec"));
-    const done = within(panel).getByRole("region", { name: "Terminées" });
-    const titles = within(done)
-      .getAllByRole("listitem")
-      .map((row) => row.textContent ?? "");
-    // La plus récemment créée d’abord ; une conversation lue est en veille, sans libellé d’état.
-    expect(titles[0]).toContain("Plus récente");
-    expect(titles[0]).toContain("À consulter");
-    expect(titles.at(-1)).toContain("Ancienne");
-    expect(titles.find((title) => title.includes("Lue"))).not.toContain("En échec");
+    // Une seule carte, résumée par ce qui demande l’utilisateur ; plus de cartes par état.
+    const list = await within(panel).findByRole("region", { name: "Conversations" });
+    expect(within(panel).queryByRole("region", { name: "À traiter" })).toBeNull();
+    expect(within(panel).queryByRole("region", { name: "Terminées" })).toBeNull();
+    await waitFor(() => expect(list.closest(".info-panel__card")).toHaveTextContent("1 à traiter"));
+    // La plus récemment créée d’abord, quel que soit son état.
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((row) => row.querySelector(".info-panel-rows__text")?.textContent)).toEqual([
+      "Plus récente",
+      "Récente",
+      "Lue",
+      "Ancienne",
+    ]);
+    // Pastille d’état dans la marge, état annoncé, heure de la dernière activité à droite.
+    const failed = within(list).getByRole("button", { name: /^Récente/ });
+    expect(failed).toHaveTextContent("Claude Code · en échec");
+    expect(failed).toHaveTextContent("14:02");
+    expect(failed).toHaveAccessibleName(/En échec/);
+    expect(failed.querySelector(".agent-list__dot--error")).not.toBeNull();
+    expect(
+      within(list)
+        .getByRole("button", { name: /^Plus récente/ })
+        .querySelector(".agent-list__dot--done"),
+    ).not.toBeNull();
+    // Une conversation lue est en veille : pastille neutre, sans libellé d’état visible.
+    const read = within(list).getByRole("button", { name: /^Lue/ });
+    expect(read.querySelector(".agent-list__dot--idle")).not.toBeNull();
+    expect(read).not.toHaveTextContent("en échec");
+    // Un autre jour : le jour et le mois.
+    expect(within(list).getByRole("button", { name: /^Ancienne/ })).toHaveTextContent("5 janv.");
+    // Chaque conversation s’archive depuis sa ligne, pas seulement les terminées.
+    for (const title of ["Plus récente", "Récente", "Lue", "Ancienne"])
+      expect(within(list).getByRole("button", { name: `Archiver ${title}` })).toBeInTheDocument();
+  });
+
+  it("le suivi résume les conversations au travail quand rien n’attend l’utilisateur", async () => {
+    render(<AgentPage />);
+    const panel = await screen.findByLabelText("Suivi des conversations");
+    const list = await within(panel).findByRole("region", { name: "Conversations" });
+    act(() =>
+      useAgents.setState({ runtime: { c1: { status: "responding", approvals: [], questions: [], queued: [] } } }),
+    );
+    await waitFor(() => expect(list.closest(".info-panel__card")).toHaveTextContent("1 au travail"));
+    const row = within(list).getByRole("button", { name: /^Factures/ });
+    expect(row).toHaveAccessibleName(/Au travail/);
+    expect(row.querySelector(".agent-list__dot--working")).not.toBeNull();
   });
 
   it("archiver notifie aussitôt, avec « Annuler »", async () => {

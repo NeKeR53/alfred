@@ -32,6 +32,8 @@ export type InfoPanelRow = {
   /** Infobulle native et précision lue par les lecteurs d’écran. */
   title?: string;
   description?: string;
+  /** État lu seulement par les lecteurs d’écran, quand le pictogramme est le seul à le montrer. */
+  announcement?: string;
   /** Action révélée au survol, à droite de la ligne. */
   action?: ReactNode;
 };
@@ -40,10 +42,22 @@ export function InfoPanelNote({ children }: { children: ReactNode }) {
   return <p className="info-panel__note">{children}</p>;
 }
 
-export function InfoPanelRows({ rows, empty }: { rows: readonly InfoPanelRow[]; empty: ReactNode }) {
+/**
+ * Lignes d’une carte, mêmes alignements partout. `detailed`, comme dans OneApp, affiche la précision de chaque ligne
+ * sous son texte, en petit (suivi des conversations) ; sinon, elle n’est lue que par les lecteurs d’écran.
+ */
+export function InfoPanelRows({
+  rows,
+  empty,
+  variant = "compact",
+}: {
+  rows: readonly InfoPanelRow[];
+  empty: ReactNode;
+  variant?: "compact" | "detailed";
+}) {
   if (!rows.length) return <InfoPanelNote>{empty}</InfoPanelNote>;
   return (
-    <ul className="info-panel-rows">
+    <ul className={`info-panel-rows${variant === "detailed" ? " info-panel-rows--detailed" : ""}`}>
       {rows.map((row) => {
         const tone = row.tone ?? "neutral";
         const content = (
@@ -51,8 +65,18 @@ export function InfoPanelRows({ rows, empty }: { rows: readonly InfoPanelRow[]; 
             <span className={`info-panel-rows__glyph info-panel-rows__glyph--${tone}`} aria-hidden="true">
               {row.glyph}
             </span>
-            <span className="info-panel-rows__text">{row.text}</span>
-            {row.description ? <span className="sr-only"> · {row.description}</span> : null}
+            {variant === "detailed" ? (
+              <span className="info-panel-rows__label">
+                <span className="info-panel-rows__text">{row.text}</span>
+                {row.description ? <span className="info-panel-rows__description">{row.description}</span> : null}
+              </span>
+            ) : (
+              <>
+                <span className="info-panel-rows__text">{row.text}</span>
+                {row.description ? <span className="sr-only"> · {row.description}</span> : null}
+              </>
+            )}
+            {row.announcement ? <span className="sr-only"> · {row.announcement}</span> : null}
             {row.meta ? (
               <span className={`info-panel-rows__meta info-panel-rows__meta--${tone}`}>{row.meta}</span>
             ) : null}

@@ -223,6 +223,40 @@
 .info-panel-rows__meta--danger {
   color: var(--color-danger-ink);
 }
+/* Variante détaillée, reprise de OneApp : texte et précision sur deux lignes, état et heure de part et d’autre. */
+.info-panel-rows--detailed li {
+  min-height: 36px;
+}
+.info-panel-rows__label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-block: 3px;
+  font-size: var(--font-size-body);
+  line-height: 1.3;
+}
+.info-panel-rows__description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+.info-panel-rows--detailed .info-panel-rows__button.is-selected {
+  background: var(--color-surface-strong);
+}
+.info-panel-rows--detailed .info-panel-rows__button.is-selected .info-panel-rows__text {
+  font-weight: inherit;
+}
+/* L’heure reste en place ; l’action la remplace au survol ou au focus de la ligne. */
+.info-panel-rows--detailed li.has-action .info-panel-rows__button {
+  padding-right: 0;
+}
+.info-panel-rows--detailed li.has-action:hover .info-panel-rows__meta,
+.info-panel-rows--detailed li.has-action:focus-within .info-panel-rows__meta {
+  visibility: hidden;
+}
 /* Action de la carte, alignée à droite sur la ligne de l’en-tête. */
 .info-panel__action {
   display: inline-flex;

@@ -114,31 +114,52 @@
   font-size: var(--font-size-secondary);
 }
 
-/* Suivi des agents (panneau de droite) */
-.agent-list__question {
-  width: 13px;
-  height: 13px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: var(--color-bg);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1;
-}
-.agent-list__idle {
-  width: 13px;
-  height: 13px;
-  display: grid;
-  place-items: center;
-}
-.agent-list__idle::before {
-  content: "";
-  width: 5px;
-  height: 5px;
+/* Suivi des conversations (panneau de droite), repris de OneApp : la forme de la pastille ne change pas, la couleur
+   et la clarté distinguent les états. */
+.agent-list__dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--line);
+}
+/* L’accent d’Alfred est proche du rouge d’échec : la pastille au travail pulse doucement pour s’en distinguer. */
+.agent-list__dot--working {
+  background: var(--color-primary);
+  animation: agent-list-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes agent-list-dot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-list__dot--working {
+    animation: none;
+  }
+}
+.agent-list__dot--attention {
+  background: var(--color-warning);
+}
+.agent-list__dot--error {
+  background: var(--color-danger);
+}
+.agent-list__dot--done {
+  background: var(--color-success);
+}
+/* Contraste élevé : pleine pour ce qui travaille ou attend l’utilisateur, creuse pour le reste. */
+@media (forced-colors: active) {
+  .agent-list__dot {
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
+  .agent-list__dot--working {
+    background: Highlight;
+    border-color: Highlight;
+  }
+  .agent-list__dot--attention,
+  .agent-list__dot--error {
+    background: CanvasText;
+  }
 }
 .agent-changes {
   margin: 0;
