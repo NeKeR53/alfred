@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LoadingSkeleton } from "./LoadingSkeleton";
-import { KeyValueList, Page } from "./page";
+import { KeyValueList, Page, Surface } from "./page";
 
 describe("KeyValueList", () => {
   it("affiche deux libellés identiques sans avertissement de clé", () => {
@@ -33,5 +33,24 @@ describe("LoadingSkeleton", () => {
     const skeleton = screen.getByRole("status", { name: "Chargement des tâches…" });
     expect(skeleton.closest(".al-page__body")).not.toBeNull();
     vi.useRealTimers();
+  });
+});
+
+describe("Surface", () => {
+  it("rend son pied en dernier, dans la zone collée au bas de la surface", () => {
+    const { container } = render(
+      <Surface footer={<span>Build n° 12</span>}>
+        <p>Contenu</p>
+      </Surface>,
+    );
+    const surface = container.querySelector(".al-surface");
+    const pied = surface?.lastElementChild;
+    expect(pied).toHaveClass("al-surface__footer");
+    expect(pied).toHaveTextContent("Build n° 12");
+  });
+
+  it("n’a pas de pied sans footer", () => {
+    const { container } = render(<Surface>Contenu</Surface>);
+    expect(container.querySelector(".al-surface__footer")).toBeNull();
   });
 });

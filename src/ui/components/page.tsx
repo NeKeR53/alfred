@@ -291,12 +291,15 @@ export function Grid({
   );
 }
 
-/** Surface délimitée pour regrouper un contenu autonome (formulaire, synthèse). À ne pas répéter en mur de cartes. */
-export function Surface({ children, title }: { children: ReactNode; title?: string }) {
+/** Surface délimitée pour regrouper un contenu autonome (formulaire, synthèse). À ne pas répéter en mur de cartes.
+ * `footer` est collé au bas de la surface, quelle que soit la hauteur du contenu : dans une `Grid`, les surfaces d’une
+ * même rangée ont la même hauteur et leurs pieds (une barre d’avancement) s’alignent. */
+export function Surface({ children, title, footer }: { children: ReactNode; title?: string; footer?: ReactNode }) {
   return (
     <div className="al-surface">
       {title ? <h3 className="al-surface__title">{title}</h3> : null}
       {children}
+      {footer ? <div className="al-surface__footer">{footer}</div> : null}
     </div>
   );
 }
