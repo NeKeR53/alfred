@@ -271,6 +271,7 @@ export function SectionView({
           ) : waiting ? (
             <EmptyState title="En attente d’un compte" description={waiting}>
               <Button
+                variant="primary"
                 onClick={() => {
                   const shell = useShell.getState();
                   shell.setView({ kind: "settings" });
