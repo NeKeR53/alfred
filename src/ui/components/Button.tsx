@@ -23,12 +23,12 @@ import {
 } from "./tooltipInteraction";
 
 /**
- * Hiérarchie des boutons texte : `primary` plein, l’action attendue de l’endroit, une seule ; `outline` à contour,
- * une action secondaire posée seule dans un contenu (« Ajouter un compte », « Exécuter maintenant »), qui doit se voir
- * comme un bouton ; `secondary` discret, sans contour, à côté d’un bouton plein (« Annuler », « Précédent ») ou pour un
- * retour ; `danger` pour une action destructrice.
+ * Hiérarchie des boutons texte, qui se voient tous comme des boutons : `primary` plein, l’action attendue de
+ * l’endroit, une seule ; `secondary` (par défaut) à contour, toute autre action (« Ajouter un compte », « Annuler ») ;
+ * `subtle` discret, sans contour, réservé à un retour (« Tous les modules ») ou à une action d’appoint dans une rangée
+ * dense ; `danger` à contour rouge, pour une action destructrice. `outline` est l’ancien nom de `secondary`.
  */
-export type ButtonVariant = "primary" | "outline" | "secondary" | "danger";
+export type ButtonVariant = "primary" | "secondary" | "outline" | "subtle" | "danger";
 export type IconButtonAppearance = "default" | "table" | "navigation" | "marker";
 export type IconButtonTone = "default" | "primary" | "danger";
 /** `compact` est un ancien alias de `default` (28 px), gardé pour les appelants existants : ne plus l’employer. */
@@ -58,13 +58,7 @@ export function Button({
       {...props}
       type={type}
       variant={
-        variant === "primary"
-          ? "default"
-          : variant === "danger"
-            ? "danger"
-            : variant === "outline"
-              ? "outline"
-              : "ghost"
+        variant === "primary" ? "default" : variant === "danger" ? "danger" : variant === "subtle" ? "ghost" : "outline"
       }
       className={className}
       disabled={disabled || loading}

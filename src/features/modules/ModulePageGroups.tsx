@@ -290,7 +290,7 @@ export function ModulePageGroups({
             ? (instance) =>
                 chosen?.has(instance.id) ? null : (
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     aria-label={`Ajouter la page ${page.title} à ${instance.label}`}
                     onClick={() => void addTo(page, client, instance.id, instance.label)}
                   >
@@ -400,7 +400,7 @@ export function ModulePageGroups({
       </div>
       {offered.length > 0 ? (
         <div className="module-groups__footer">
-          <MenuButton label="Ajouter une page" variant="outline">
+          <MenuButton label="Ajouter une page" variant="secondary">
             {offered.map((page) => (
               <MenuItem key={page.reference} onClickCapture={() => addFor(page)}>
                 {`${page.title} pour un autre compte…`}

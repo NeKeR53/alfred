@@ -87,7 +87,7 @@ interface Action {
 | Action | Dans une barre de page, un en-tête d’objet | Dans une section | Dans une ligne de tableau |
 |---|---|---|---|
 | `primary` | Bouton plein en texte, en dernier à droite ; revient dans l’état vide | Bouton plein en texte | Ignoré : icône ou menu |
-| Avec `icon` | Icône avec infobulle (`label`), trois au plus | Icône, deux au plus | Icône, deux au plus, visible au survol |
+| Avec `icon` | Icône avec infobulle (`label`), trois au plus | Icône, deux au plus | Icône, deux au plus, toujours visible, en gris au repos |
 | Sans `icon`, ou au-delà du nombre d’icônes | Entrée du menu « ⋯ » | Menu « ⋯ » | Menu « ⋯ » |
 | `danger` | Entrée rouge du menu « ⋯ », sous « Actions définitives », confirmée | Idem | Idem |
 
@@ -410,21 +410,21 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Besoin | Composant | Props essentielles |
 |---|---|---|
 | Action de page, d’objet, de section ou de ligne | une `Action` (section 3) dans `actions` | `label`, `icon?`, `onClick`, `primary?`, `danger?` |
-| Bouton dans le contenu d’un bloc (« Tester la connexion » sous une explication) | `Button` | `variant?` (`primary`, `outline`, `secondary`, `danger`, hiérarchie ci-dessous), `loading?`, `onClick` |
+| Bouton dans le contenu d’un bloc (« Tester la connexion » sous une explication) | `Button` | `variant?` (`primary`, `secondary`, `subtle`, `danger`, hiérarchie ci-dessous), `loading?`, `onClick` |
 | Icône seule dans un contenu | `IconButton` | `label` (obligatoire, devient l’infobulle), `onClick`, `size?` |
 | Menu de quelques choix dans un contenu | `MenuButton` (texte) ou `OverflowMenu` (« ⋯ ») + `MenuItem` | `label`, `children` |
 | Modifier une valeur isolée sur place | `InlineEdit` | `label`, `value`, `onSave`, `renderEditor` |
 
-Hiérarchie des boutons texte, du plus au moins appuyé ; un bouton doit toujours se voir comme un bouton, sans survol :
+Hiérarchie des boutons texte, du plus au moins appuyé. Tous se voient comme des boutons au repos, sans survol, en clair comme en sombre :
 
 | `variant` | Rendu | Pour |
 |---|---|---|
 | `primary` | Plein | L’action attendue de l’endroit, une seule : « Ajouter votre compte » quand il n’y en a aucun, « Enregistrer » |
-| `outline` | Contour et fond | Une action secondaire posée seule dans un contenu, loin d’un bouton plein : « Ajouter un compte », « Tester », « Exécuter maintenant », « Ajouter une page » |
-| `secondary` | Discret, sans contour | Juste à côté d’un bouton plein, qu’il accompagne (« Annuler », « Précédent »), ou un retour avec `ArrowLeft` (« Tous les modules ») |
-| `danger` | Texte rouge | Une action destructrice hors d’une `Action` |
+| `secondary` (par défaut) | Contour et fond | Toute autre action : « Ajouter un compte », « Tester », « Annuler », « Tout voir » |
+| `subtle` | Discret, sans contour | Un retour avec `ArrowLeft` (« Tous les modules », « Terminer plus tard ») ; rien d’autre |
+| `danger` | Contour et texte rouges | Une action destructrice hors d’une `Action` |
 
-Un bouton `secondary` posé seul dans un contenu se confond avec du texte : c’est un `outline`. Une action utile ne se cache pas dans un menu « ⋯ » quand elle est l’action courante de la ligne (« Tester » un compte prêt) : elle reste visible, le menu garde les autres.
+`outline` est l’ancien nom de `secondary`. Une action utile ne se cache ni dans un menu « ⋯ » quand elle est l’action courante de la ligne (« Tester » un compte prêt), ni derrière un survol : elle reste visible, le menu garde les autres.
 
 **Saisir** (dans `openForm` de préférence ; ailleurs, toujours dans un `FormField`)
 

@@ -344,7 +344,7 @@ export function MarketplaceSettings() {
 
   const offer = screen.kind === "module" ? offers?.find((candidate) => keyOf(candidate) === screen.key) : undefined;
   const back = (
-    <Button onClick={() => setScreen({ kind: "catalog" })}>
+    <Button variant="subtle" onClick={() => setScreen({ kind: "catalog" })}>
       <ArrowLeft size={16} aria-hidden="true" />
       Modules disponibles
     </Button>

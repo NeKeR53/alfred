@@ -147,7 +147,7 @@ export function ModuleJobs({ module }: { module: string }) {
       render: (job) =>
         job.status === "queued" || job.status === "running" ? (
           <Button
-            variant="outline"
+            variant="secondary"
             loading={busy === job.id}
             disabled={job.cancelRequested || (busy !== undefined && busy !== job.id)}
             aria-label={`Annuler la tâche ${job.title}`}
@@ -157,7 +157,7 @@ export function ModuleJobs({ module }: { module: string }) {
           </Button>
         ) : job.status === "failed" || job.status === "cancelled" ? (
           <Button
-            variant="outline"
+            variant="secondary"
             loading={busy === job.id}
             disabled={busy !== undefined && busy !== job.id}
             aria-label={`Reprendre la tâche ${job.title}`}
@@ -167,7 +167,7 @@ export function ModuleJobs({ module }: { module: string }) {
           </Button>
         ) : (
           <Button
-            variant="outline"
+            variant="secondary"
             loading={busy === job.id}
             disabled={busy !== undefined && busy !== job.id}
             aria-label={`Retirer la tâche ${job.title}`}

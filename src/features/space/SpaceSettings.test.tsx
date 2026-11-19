@@ -256,7 +256,7 @@ it("annule une modification de l’historique et retire un accès accordé", asy
   const user = userEvent.setup();
   render(<SpaceSettings />);
 
-  const table = await screen.findByRole("table", { name: "Historique de l’espace de travail" });
+  const table = await screen.findByRole("group", { name: "Dernières modifications de l’espace de travail" });
   expect(within(table).getByText("Ajout de la page Tableau des ventes")).toBeInTheDocument();
   expect(lastCall("space.history")).toEqual({ limit: 50 });
 

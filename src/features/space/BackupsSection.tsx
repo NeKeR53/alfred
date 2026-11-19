@@ -18,10 +18,11 @@ import {
 } from "@alfred/ui";
 import { X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { inTauri, invoke, onNativeEvent, pickFile, pickFolder, pickSaveFile } from "../../lib/native";
+import { inTauri, invoke, onNativeEvent, pickFile, pickFolder } from "../../lib/native";
 import type { Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { ModuleExportDialog } from "./ModuleDataDialog";
 
 export interface BackupInfo {
   id: string;
@@ -91,7 +92,8 @@ export function BackupsSection({
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [module, setModule] = useState(snapshot.modules[0]?.id ?? "");
+  /** Modale d’export ou d’import des données d’un module. */
+  const [transfer, setTransfer] = useState<"export" | "import">();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,10 +116,6 @@ export function BackupsSection({
     void load();
     return onNativeEvent("backups:changed", () => void load());
   }, [load]);
-
-  if (!snapshot.modules.some((candidate) => candidate.id === module) && snapshot.modules[0]) {
-    setModule(snapshot.modules[0].id);
-  }
 
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -199,20 +197,8 @@ export function BackupsSection({
     });
   };
 
-  const exportModule = () =>
-    run("export", async () => {
-      const day = new Date().toISOString().slice(0, 10);
-      const path = await pickSaveFile("Exporter les données du module", `${module}-${day}.json`);
-      if (!path) return;
-      try {
-        await invoke("backups.exportModule", { module, path });
-        notify({ title: "Données exportées", description: path, tone: "success" });
-      } catch (failure) {
-        notify({ title: "L’export a échoué", description: errorMessage(failure), tone: "error" });
-      }
-    });
-
-  const importModule = async () => {
+  const importModule = async (module: string) => {
+    setTransfer(undefined);
     const path = await pickFile("Importer des données dans le module");
     if (!path) return;
     const confirmed = await confirm({
@@ -355,32 +341,17 @@ export function BackupsSection({
             </IconButton>
           ) : null}
         </SettingRow>
-        {snapshot.modules.length > 0 ? (
+        {snapshot.modules.length > 0 && inTauri ? (
           <SettingRow
             title="Données d’un module"
-            description="Un fichier pour passer les données d’un module dans un autre espace ou sur un autre ordinateur."
+            description="Pour les passer dans un autre espace ou sur un autre ordinateur."
           >
-            <SelectControl
-              aria-label="Module à exporter ou importer"
-              value={module}
-              onChange={(event) => setModule(event.target.value)}
-            >
-              {snapshot.modules.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </SelectControl>
-            {inTauri ? (
-              <>
-                <Button loading={busy === "export"} disabled={busy !== null} onClick={() => void exportModule()}>
-                  Exporter…
-                </Button>
-                <Button loading={busy === "import"} disabled={busy !== null} onClick={() => void importModule()}>
-                  Importer…
-                </Button>
-              </>
-            ) : null}
+            <Button disabled={busy !== null} onClick={() => setTransfer("export")}>
+              Exporter…
+            </Button>
+            <Button loading={busy === "import"} disabled={busy !== null} onClick={() => setTransfer("import")}>
+              Importer…
+            </Button>
           </SettingRow>
         ) : null}
       </SettingRows>
@@ -403,6 +374,13 @@ export function BackupsSection({
           loading={loading}
         />
       )}
+      {transfer ? (
+        <ModuleExportDialog
+          modules={snapshot.modules}
+          onClose={() => setTransfer(undefined)}
+          onImport={transfer === "import" ? (module) => void importModule(module) : undefined}
+        />
+      ) : null}
     </Section>
   );
 }

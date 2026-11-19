@@ -9,6 +9,7 @@ import {
   IconButton,
   LoadingSkeleton,
   MenuItem,
+  Modal,
   OverflowMenu,
   Page,
   RefreshButton,
@@ -17,6 +18,7 @@ import {
   SettingRow,
   SettingRows,
   StatusBadge,
+  Text,
   useConfirm,
 } from "@alfred/ui";
 import { Monitor, Moon, Sun, Undo2 } from "lucide-react";
@@ -375,9 +377,13 @@ function AppearanceSection({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+/** Dernières modifications montrées dans la rubrique ; le reste s’ouvre avec « Tout voir ». */
+const RECENT = 5;
+
 function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["confirm"] }) {
   const history = useList<Commit>("space.history", { limit: 50 }, ["space:changed"]);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
 
   const undo = async (commit: Commit) => {
     const confirmed = await confirm({
@@ -401,49 +407,38 @@ function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["c
     }
   };
 
-  const columns: DataTableColumn<Commit>[] = [
-    {
-      key: "date",
-      header: "Date",
-      width: "150px",
-      render: (commit) => formatDate(commit.date),
-      sortValue: (commit) => commit.date,
-    },
-    { key: "message", header: "Modification" },
-    {
-      key: "files",
-      header: "Fichiers",
-      width: "80px",
-      align: "end",
-      render: (commit) => new Intl.NumberFormat("fr-FR").format(commit.files.length),
-      sortValue: (commit) => commit.files.length,
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      width: "72px",
-      align: "end",
-      sortable: false,
-      render: (commit) => (
-        <IconButton
-          label={`Annuler la modification « ${commit.message} »`}
-          tooltip="Annuler cette modification"
-          size="small"
-          loading={undoing === commit.id}
-          disabled={undoing !== null}
-          onClick={() => void undo(commit)}
-        >
-          <Undo2 size={16} aria-hidden="true" />
-        </IconButton>
-      ),
-    },
-  ];
+  /** Une modification sur une ligne : ce qu’elle a changé, sa date et son nombre de fichiers, et « Annuler ». */
+  const row = (commit: Commit) => (
+    <SettingRow
+      key={commit.id}
+      title={commit.message}
+      description={`${formatDate(commit.date)} · ${new Intl.NumberFormat("fr-FR").format(commit.files.length)} fichier${commit.files.length > 1 ? "s" : ""}`}
+    >
+      <IconButton
+        label={`Annuler la modification « ${commit.message} »`}
+        tooltip="Annuler cette modification"
+        size="small"
+        loading={undoing === commit.id}
+        disabled={undoing !== null}
+        onClick={() => void undo(commit)}
+      >
+        <Undo2 size={16} aria-hidden="true" />
+      </IconButton>
+    </SettingRow>
+  );
+  const items = history.items ?? [];
 
   return (
     <Section
       title="Historique"
-      description="Chaque tour d’agent et chaque réglage de l’espace de travail est enregistré. Annuler une modification la défait sans effacer l’historique."
-      actions={<RefreshButton label="Actualiser l’historique" loading={history.loading} onClick={history.reload} />}
+      description="Chaque tour d’agent et chaque réglage est enregistré, et s’annule."
+      actions={
+        items.length > RECENT ? (
+          <Button onClick={() => setAll(true)}>
+            Tout voir ({new Intl.NumberFormat("fr-FR").format(items.length)})
+          </Button>
+        ) : null
+      }
     >
       {history.error ? (
         <FeedbackBanner
@@ -456,23 +451,26 @@ function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["c
       ) : null}
       {history.items === undefined ? (
         history.error ? null : (
-          <LoadingSkeleton rows={4} label="Chargement de l’historique…" />
+          <LoadingSkeleton rows={3} label="Chargement de l’historique…" />
         )
-      ) : history.items.length === 0 ? (
-        <EmptyState
-          size="compact"
-          title="Aucune modification enregistrée"
-          description="Les modifications de l’espace de travail apparaissent ici dès que l’agent ou un réglage le change."
-        />
+      ) : items.length === 0 ? (
+        <Text size="meta" tone="muted">
+          Aucune modification enregistrée pour l’instant.
+        </Text>
       ) : (
-        <DataTable
-          label="Historique de l’espace de travail"
-          columns={columns}
-          rows={history.items}
-          rowKey={(commit) => commit.id}
-          loading={history.loading}
-        />
+        <SettingRows label="Dernières modifications de l’espace de travail">
+          {items.slice(0, RECENT).map(row)}
+        </SettingRows>
       )}
+      <Modal
+        open={all}
+        onClose={() => setAll(false)}
+        size="wide"
+        title="Historique de l’espace de travail"
+        description="Les dernières modifications, la plus récente d’abord. Annuler une modification la défait sans effacer l’historique."
+      >
+        <SettingRows label="Historique de l’espace de travail">{items.map(row)}</SettingRows>
+      </Modal>
     </Section>
   );
 }
@@ -623,12 +621,12 @@ export function SpaceSettings() {
   return (
     <Page width="text">
       <SpacesSection snapshot={snapshot} confirm={confirm} />
-      <HistorySection confirm={confirm} />
       <BackupsSection snapshot={snapshot} confirm={confirm} />
       <SemanticSection />
       <DecisionsSection />
       <ModelSourceSection />
       <GrantsSection snapshot={snapshot} confirm={confirm} />
+      <HistorySection confirm={confirm} />
       {confirmDialog}
     </Page>
   );

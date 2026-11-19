@@ -205,7 +205,7 @@ export function ServiceBlock({
               {rowButton?.(instance)}
               {instance.status === "ready" ? (
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   aria-label={`Tester ${name}`}
                   disabled={testing !== undefined}
                   onClick={() => void test(target)}
@@ -263,7 +263,7 @@ export function ServiceBlock({
       {client.simple ? null : (
         <div className="service-block__footer">
           <Button
-            variant={client.instances.length === 0 ? "primary" : "outline"}
+            variant={client.instances.length === 0 ? "primary" : "secondary"}
             aria-label={`Ajouter un compte à ${label}`}
             disabled={client.methods.length === 0}
             onClick={() => void addAccount()}

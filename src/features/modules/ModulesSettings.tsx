@@ -44,6 +44,7 @@ import { ModulePart } from "./ModulePart";
 import { MergeDialog, modulePages, SplitDialog } from "./reorganize";
 import { countPendingUpdates, useModuleUpdatesStore } from "./useModuleUpdates";
 import "./modules.css";
+import { ModuleExportDialog } from "../space/ModuleDataDialog";
 
 export { useModuleUpdates } from "./useModuleUpdates";
 
@@ -54,7 +55,8 @@ type Opened =
   | { kind: "uninstall"; module: ModuleSummary }
   | { kind: "publish"; module: ModuleSummary }
   | { kind: "merge"; module: ModuleSummary }
-  | { kind: "split"; module: ModuleSummary };
+  | { kind: "split"; module: ModuleSummary }
+  | { kind: "export"; module: ModuleSummary };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
@@ -303,7 +305,7 @@ export function ModulesSettings() {
   });
   const opened_ = screen.kind === "module" ? modules.find((module) => module.id === screen.id) : undefined;
   const back = (
-    <Button onClick={() => setScreen({ kind: "list" })}>
+    <Button variant="subtle" onClick={() => setScreen({ kind: "list" })}>
       <ArrowLeft size={16} aria-hidden="true" />
       Tous les modules
     </Button>
@@ -397,7 +399,7 @@ export function ModulesSettings() {
       <div className="modules-list__actions module-row__actions modules-table__actions">
         {update?.available ? (
           <Button
-            variant="outline"
+            variant="secondary"
             disabled={busy !== null}
             onClick={() => setOpened({ kind: "update", module: module.id })}
           >
@@ -415,6 +417,7 @@ export function ModulesSettings() {
         />
         <OverflowMenu label={`Actions du module ${module.name}`} disabled={busy !== null}>
           <MenuAction onSelect={() => openOnboarding(module.id, "intro")}>Configurer…</MenuAction>
+          <MenuAction onSelect={() => setOpened({ kind: "export", module })}>Exporter les données…</MenuAction>
           {installed ? (
             <>
               <MenuAction onSelect={() => void togglePin(module, !module.origin?.pinned)}>
@@ -594,7 +597,7 @@ export function ModulesSettings() {
             <RefreshButton label="Vérifier les mises à jour" disabled={checking} onClick={() => void checkNow()} />
             {pending > 0 ? (
               <Button
-                variant="outline"
+                variant="secondary"
                 loading={busy === "all"}
                 disabled={busy !== null}
                 onClick={() => void updateAll()}
@@ -621,7 +624,7 @@ export function ModulesSettings() {
                 tone="warning"
                 appearance="contained"
                 action={
-                  <Button variant="outline" onClick={() => setFilter("attention")}>
+                  <Button variant="secondary" onClick={() => setFilter("attention")}>
                     Les afficher
                   </Button>
                 }
@@ -784,6 +787,9 @@ export function ModulesSettings() {
             });
           }}
         />
+      ) : null}
+      {opened?.kind === "export" ? (
+        <ModuleExportDialog modules={modules} initial={opened.module.id} onClose={() => setOpened(null)} />
       ) : null}
       {confirmDialog}
       {services.confirmDialog}

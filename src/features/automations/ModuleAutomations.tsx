@@ -183,7 +183,7 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
         </IconButton>
       </Row>
       <Row gap="sm" wrap>
-        <Button variant="outline" aria-pressed={revealed} onClick={() => setRevealed(!revealed)}>
+        <Button variant="secondary" aria-pressed={revealed} onClick={() => setRevealed(!revealed)}>
           {revealed ? "Masquer le secret" : "Révéler le secret"}
         </Button>
         <Button variant="danger" loading={rotating} loadingLabel="Régénération…" onClick={() => void rotate()}>
@@ -290,7 +290,7 @@ function Detail({
               onChange={(event) => onToggle(entry.item, event.target.checked)}
             />
             <Button
-              variant="outline"
+              variant="secondary"
               aria-label={`Exécuter maintenant ${name}`}
               loading={running || entry.item.running === true}
               loadingLabel="Exécution…"

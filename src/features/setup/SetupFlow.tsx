@@ -189,7 +189,7 @@ export function SetupFlow({
 
   const header = (
     <div className="setup-flow__header">
-      <Button onClick={onClose}>
+      <Button variant="subtle" onClick={onClose}>
         <ArrowLeft size={16} aria-hidden="true" />
         Terminer plus tard
       </Button>
@@ -314,7 +314,7 @@ export function SetupFlow({
       tone = "success";
       action = (
         <Button
-          variant="outline"
+          variant="secondary"
           aria-label={`Tester à nouveau ${label}`}
           onClick={() => void runTest(target, instance)}
         >
@@ -326,7 +326,7 @@ export function SetupFlow({
       tone = "danger";
       action = (
         <>
-          <Button variant="outline" onClick={edit}>
+          <Button variant="secondary" onClick={edit}>
             Modifier…
           </Button>
           <Button variant="primary" aria-label={`Réessayer ${label}`} onClick={() => void runTest(target, instance)}>
@@ -440,7 +440,7 @@ export function SetupFlow({
                 description={`N’a pas encore la page « ${entry.title} ».`}
               >
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   aria-label={`Ajouter la page ${entry.title} à ${instance.label}`}
                   onClick={() => void addPageTo(client, instance, entry)}
                 >
@@ -453,7 +453,7 @@ export function SetupFlow({
         {client.simple ? null : (
           <div className="setup-flow__inline-actions">
             <Button
-              variant={shown.length === 0 ? "primary" : "outline"}
+              variant={shown.length === 0 ? "primary" : "secondary"}
               aria-label={`Ajouter un compte à ${client.label}`}
               onClick={() => onEdit({ kind: "account", client, help: item.help || undefined, page })}
             >
@@ -623,7 +623,7 @@ export function SetupFlow({
                 </Button>
               </>
             ) : (
-              <Button variant={ready ? "primary" : "outline"} onClick={() => go(1)}>
+              <Button variant={ready ? "primary" : "secondary"} onClick={() => go(1)}>
                 {current === INTRO
                   ? total === 0
                     ? "Continuer"

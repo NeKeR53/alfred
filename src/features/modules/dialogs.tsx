@@ -472,15 +472,10 @@ export function PublishDialog({
           appearance="contained"
           action={<Button onClick={onManage}>Ajouter un marketplace</Button>}
         >
-          Aucun marketplace n’est branché. Un marketplace est le catalogue de modules partagé de votre équipe :
-          ajoutez-le dans Réglages › Marketplace avant de publier.
+          Aucun marketplace n’est branché : ajoutez celui de votre équipe pour publier.
         </FeedbackBanner>
       ) : (
-        <p>
-          Alfred vérifie que chaque page et fonction compile et qu’aucun secret ni chemin de ce poste ne part, puis
-          envoie le module au marketplace. Une dépendance sans version minimale part avec celle de cet espace de travail
-          : qui importe le module recevra la même version majeure.
-        </p>
+        <p>Alfred vérifie que tout compile et qu’aucun secret ni chemin de ce poste ne part, puis l’envoie.</p>
       )}
       {error ? (
         <FeedbackBanner tone="error" appearance="contained">

@@ -163,7 +163,7 @@ export function TeamSync({ module }: { module: ModuleSummary }) {
             version de l’équipe est gardée et la vôtre est notée au journal.
           </Text>
           <div>
-            <Button variant="outline" disabled={busy !== undefined} onClick={() => void unlink()}>
+            <Button variant="secondary" disabled={busy !== undefined} onClick={() => void unlink()}>
               Arrêter le partage
             </Button>
           </div>

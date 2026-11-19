@@ -63,7 +63,7 @@ export function AccountPages({
           {shown.map((page) => (
             <SettingRow key={page.reference} title={name(page)}>
               <Button
-                variant="outline"
+                variant="secondary"
                 aria-label={`Retirer la page ${page.title}`}
                 disabled={pending}
                 onClick={() =>
@@ -83,7 +83,7 @@ export function AccountPages({
       )}
       {others.length > 0 ? (
         <div className="service-block__footer">
-          <MenuButton label="Ajouter une page" variant={shown.length === 0 ? "primary" : "outline"} disabled={pending}>
+          <MenuButton label="Ajouter une page" variant={shown.length === 0 ? "primary" : "secondary"} disabled={pending}>
             {others.map((page) => (
               <MenuItem
                 key={page.reference}
