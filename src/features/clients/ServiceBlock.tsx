@@ -39,7 +39,12 @@ export function ServiceBlock({
   note,
   describeInstance,
   titled = false,
+  heading,
   purpose,
+  onAdd,
+  addLabel,
+  rowButton,
+  rowActions,
   children,
 }: {
   /** Besoin du module auquel ce service répond. */
@@ -57,8 +62,17 @@ export function ServiceBlock({
   describeInstance?: (instance: string) => string | undefined;
   /** Le service porte son nom au-dessus de ses comptes (fiche d’un module). */
   titled?: boolean;
+  /** Titre à la place du nom du service (une page par compte : « Comptes de Déploiements »). */
+  heading?: string;
   /** À quoi sert le service dans le module, sous son nom : les pages qui l’utilisent. */
   purpose?: ReactNode;
+  /** Remplace l’ajout d’un compte : choisir un compte existant ou en créer un (page par compte). */
+  onAdd?: () => void;
+  addLabel?: string;
+  /** Bouton propre à l’endroit, posé sur la ligne d’un compte (« Ajouter la page »). */
+  rowButton?: (instance: ClientInstanceItem) => ReactNode;
+  /** Actions propres à l’endroit, ajoutées au menu « ⋯ » d’un compte (« Retirer de cette page »). */
+  rowActions?: (instance: ClientInstanceItem) => Array<{ label: string; run: () => void }>;
   /** Ce que le module fait avec le service, sous ses comptes. */
   children?: ReactNode;
 }) {
@@ -66,9 +80,14 @@ export function ServiceBlock({
     controller;
   const [creating, setCreating] = useState(false);
   const label = client?.label ?? need.label;
+  const shown = client?.instances ?? [];
 
   /** Ajoute un compte ; crée d’abord le service d’après le modèle du module s’il n’existe pas encore. */
   const addAccount = async () => {
+    if (client && onAdd) {
+      onAdd();
+      return;
+    }
     if (client) {
       onEdit({ kind: "account", client, help });
       return;
@@ -87,12 +106,10 @@ export function ServiceBlock({
 
   const head = titled ? (
     <div className="service-block__head">
-      <h4 className="service-block__title">{label}</h4>
+      <h4 className="service-block__title">{heading ?? label}</h4>
       {client && !client.simple ? (
         <span className="service-block__note">
-          {client.instances.length === 0
-            ? "Aucun compte"
-            : `${client.instances.length} compte${client.instances.length > 1 ? "s" : ""}`}
+          {shown.length === 0 ? "Aucun compte" : `${shown.length} compte${shown.length > 1 ? "s" : ""}`}
         </span>
       ) : null}
       {purpose ? <p className="service-block__purpose">{purpose}</p> : null}
@@ -145,7 +162,7 @@ export function ServiceBlock({
     <div className="service-block">
       {head}
       <SettingRows label={`Comptes ${label}`}>
-        {client.instances.map((instance) => {
+        {shown.map((instance) => {
           const title = accountTitle(client, instance);
           const name = client.simple ? label : `${label} — ${instance.label}`;
           const key = client.simple ? client.id : targetKey(client.id, instance.id);
@@ -181,38 +198,53 @@ export function ServiceBlock({
                 </Button>
               ) : null}
               {instance.authType === "oauth2" && instance.status === "toConnect" ? (
-                <Button aria-label={`Se connecter à ${name}`} onClick={() => void connect(target)}>
+                <Button variant="primary" aria-label={`Se connecter à ${name}`} onClick={() => void connect(target)}>
                   Se connecter
                 </Button>
               ) : null}
+              {rowButton?.(instance)}
+              {instance.status === "ready" ? (
+                <Button
+                  variant="outline"
+                  aria-label={`Tester ${name}`}
+                  disabled={testing !== undefined}
+                  onClick={() => void test(target)}
+                >
+                  Tester
+                </Button>
+              ) : null}
               <OverflowMenu label={`Actions de ${name}`} size="small">
-                {[
-                  {
-                    label: "Tester",
-                    disabled: blocked(instance) || testing !== undefined,
-                    run: () => void test(target),
-                  },
-                  {
-                    label: "Se déconnecter",
-                    hidden: instance.authType !== "oauth2" || !instance.connected,
-                    run: () => void disconnect(target),
-                  },
-                  {
-                    label: "Utiliser par défaut",
-                    hidden: client.simple || instance.default,
-                    run: () => void makeDefault(client, instance),
-                  },
-                  {
-                    label: "Modifier le compte…",
-                    hidden: instance.authType === "none" && (client.simple || Boolean(client.baseUrl)),
-                    run: () => onEdit({ kind: "account", client, instance, help }),
-                  },
-                  {
-                    label: "Supprimer le compte…",
-                    hidden: client.simple,
-                    run: () => void removeInstance(client, instance),
-                  },
-                ]
+                {(
+                  [
+                    {
+                      label: "Tester",
+                      hidden: instance.status === "ready",
+                      disabled: blocked(instance) || testing !== undefined,
+                      run: () => void test(target),
+                    },
+                    ...(rowActions?.(instance) ?? []),
+                    {
+                      label: "Se déconnecter",
+                      hidden: instance.authType !== "oauth2" || !instance.connected,
+                      run: () => void disconnect(target),
+                    },
+                    {
+                      label: "Utiliser par défaut",
+                      hidden: client.simple || instance.default,
+                      run: () => void makeDefault(client, instance),
+                    },
+                    {
+                      label: "Modifier le compte…",
+                      hidden: instance.authType === "none" && (client.simple || Boolean(client.baseUrl)),
+                      run: () => onEdit({ kind: "account", client, instance, help }),
+                    },
+                    {
+                      label: "Supprimer le compte…",
+                      hidden: client.simple,
+                      run: () => void removeInstance(client, instance),
+                    },
+                  ] as Array<{ label: string; run: () => void; hidden?: boolean; disabled?: boolean }>
+                )
                   .filter((item) => !item.hidden)
                   .map((item) => (
                     // L’action part dès la capture : le menu se ferme avant la remontée du clic (voir `ModulesSettings`).
@@ -231,12 +263,12 @@ export function ServiceBlock({
       {client.simple ? null : (
         <div className="service-block__footer">
           <Button
-            variant={client.instances.length === 0 ? "primary" : "secondary"}
+            variant={client.instances.length === 0 ? "primary" : "outline"}
             aria-label={`Ajouter un compte à ${label}`}
             disabled={client.methods.length === 0}
             onClick={() => void addAccount()}
           >
-            {client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un compte"}
+            {addLabel ?? (client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un compte")}
           </Button>
         </div>
       )}

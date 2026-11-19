@@ -1,7 +1,7 @@
 /**
- * Contenu d’un module dans sa fiche (Réglages → Modules), rangé par la hiérarchie : ce qu’il ajoute au menu, puis
- * un bloc par service (à quoi il sert, vos comptes chez lui, ce que le module fait avec), puis ses autres fonctions.
- * Rien de vide ne s’affiche.
+ * Contenu d’un module dans sa fiche (Réglages → Modules), page d’abord : ses pages, chacune avec les comptes dont
+ * elle se sert ; puis les comptes qu’aucune page n’utilise (fonctions, automatismes) ; puis ses fonctions, rangées
+ * par service. Rien de vide ne s’affiche.
  */
 import { Spinner, Text } from "@alfred/ui";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../../lib/types";
@@ -13,8 +13,10 @@ import type { ClientsController } from "../clients/useClients";
 import { FunctionGroup } from "../functions/ModuleFunctions";
 import { useFunctionTests } from "../functions/tests";
 import { ExampleModePart } from "./ExampleModePart";
-import { listing, ModulePages, moduleGroups, pagesUsing } from "./ModulePages";
+import { ModulePageGroups } from "./ModulePageGroups";
+import { listing } from "./ModulePages";
 import { ModulePart } from "./ModulePart";
+import { needsWithoutPage, pageGroups } from "./pageGroups";
 
 /**
  * Range les fonctions du module sous ses services : chacune sous ceux qu’elle déclare (`uses.clients`) ; sans
@@ -63,115 +65,110 @@ export function ModuleContents({
     functions,
     overview ? needs.map((need) => need.id) : module.clients.map((need) => need.id),
   );
-  const hasPages = snapshot ? moduleGroups(snapshot, module.id).length > 0 : false;
-  const perInstance = (need: string) =>
-    Boolean(snapshot?.accountPages?.some((page) => page.module === module.id && page.need === need));
-  /** Les comptes de ce besoin s’affichent en onglets d’une seule entrée, plutôt qu’en entrées du menu. */
-  const asTabs = (need: string) =>
-    Boolean(
-      snapshot?.sections.some(
-        (section) => section.module === module.id && section.instancesAs === "tabs" && section.perInstance === need,
-      ),
-    );
-  /** Où le compte apparaît dans le menu : son entrée, ou ses onglets dans l’entrée commune. */
-  const placeOf = (instance: string) => {
-    const section = snapshot?.sections.find(
-      (candidate) => candidate.module === module.id && candidate.instance === instance,
-    );
-    if (section) return `Entrée « ${section.label} » dans le menu`;
-    for (const candidate of snapshot?.sections ?? []) {
-      if (candidate.module !== module.id) continue;
-      const tabs = candidate.pages.filter((page) => page.instance === instance).map((page) => `« ${page.title} »`);
-      if (tabs.length === 1) return `Onglet ${tabs[0]} dans « ${candidate.label} »`;
-      if (tabs.length > 1) return `Onglets ${listing(tabs)} dans « ${candidate.label} »`;
-    }
-    return undefined;
-  };
-
-  /** À quoi sert le service : les pages qui l’utilisent, et les modules qui passent par ce module. */
-  const purposeOf = (need: ClientNeedItem) => {
-    const pages = snapshot ? pagesUsing(snapshot, module.id, need.id) : [];
-    return [
-      pages.length === 1 ? `Sert à la page « ${pages[0]} ».` : null,
-      pages.length > 1 ? `Sert aux pages ${listing(pages.map((page) => `« ${page} »`))}.` : null,
-      perInstance(need.id)
-        ? asTabs(need.id)
-          ? "Le module ajoute un onglet par compte."
-          : "Le module ajoute une entrée au menu par compte."
-        : null,
-      module.requiredBy.length > 0
-        ? `${listing(module.requiredBy.map(nameOf))} ${module.requiredBy.length > 1 ? "s’en servent" : "s’en sert"} aussi, par ce module.`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-  };
+  const groups = snapshot ? pageGroups(snapshot, module.id) : [];
+  // Les besoins du module qu’aucune page n’utilise, et ceux de ses dépendances dont une page se sert.
+  const withoutPage = needsWithoutPage(
+    groups,
+    needs.map((need) => need.key),
+  );
+  const loading =
+    overview === undefined ? (
+      services.error ? (
+        <Text size="meta" tone="danger">
+          Les comptes n’ont pas pu être lus. {services.error}
+        </Text>
+      ) : (
+        <Spinner label="Chargement des comptes" />
+      )
+    ) : null;
+  const usedBy =
+    module.requiredBy.length > 0
+      ? `${listing(module.requiredBy.map(nameOf))} ${module.requiredBy.length > 1 ? "s’en servent" : "s’en sert"} aussi, par ce module.`
+      : undefined;
+  const serviceNames = needs.filter((need) => (byService.get(need.id) ?? []).length > 0);
 
   return (
     <>
-      {hasPages && snapshot ? (
+      {groups.length > 0 && snapshot ? (
         <ModulePart
           part="pages"
-          title="Dans le menu"
-          description="Les entrées que ce module ajoute au menu de gauche, et leurs onglets. Décochez ce que vous ne voulez pas voir."
+          title="Pages"
+          description="Les pages que ce module ajoute au menu, et sous chacune les comptes dont elle se sert. Décochez une page pour la retirer du menu."
         >
-          <ModulePages snapshot={snapshot} module={module.id} disabled={hidden} />
+          <ModulePageGroups
+            module={module}
+            modules={modules}
+            snapshot={snapshot}
+            groups={groups}
+            services={services}
+            onEdit={onEditService}
+            disabled={hidden}
+            loading={loading}
+          />
         </ModulePart>
       ) : null}
-      {module.clients.length > 0 || needs.length > 0 ? (
+      {(overview === undefined && groups.length === 0 && module.clients.length > 0) || withoutPage.length > 0 ? (
         <ModulePart
           part="services"
-          title="Services"
-          description="Les services en ligne auxquels ce module se connecte : vos comptes chez chacun, et ce que le module en fait."
+          title={groups.length > 0 ? "Autres comptes" : "Comptes"}
+          description={
+            groups.length > 0
+              ? "Les comptes dont se servent les fonctions et les automatismes du module, sans page à eux."
+              : "Les comptes dont ce module se sert, et de quoi les ajouter et les tester."
+          }
         >
-          {overview === undefined ? (
-            services.error ? (
-              <Text size="meta" tone="danger">
-                Les services n’ont pas pu être lus. {services.error}
-              </Text>
-            ) : (
-              <Spinner label="Chargement des services" />
-            )
-          ) : (
+          {loading ?? (
             <div className="service-list">
-              {needs.map((need) => (
-                <ServiceBlock
-                  key={need.key}
-                  need={need}
-                  client={overview.clients.find((client) => client.id === need.client)}
-                  template={templateOf(modules, need.module, need.id)}
-                  help={module.clients.find((item) => item.id === need.id)?.help || undefined}
-                  controller={services}
-                  onEdit={onEditService}
-                  titled
-                  purpose={purposeOf(need) || undefined}
-                  describeInstance={(instance) => {
-                    const place = placeOf(instance);
-                    if (place) return place;
-                    // Aucune page ajoutée : le compte n’a pas d’entrée.
-                    return perInstance(need.id) ? "Aucune page dans le menu pour ce compte" : undefined;
-                  }}
-                >
-                  <FunctionGroup
-                    module={module}
-                    functions={byService.get(need.id) ?? []}
-                    tests={tests}
-                    label={`Ce que le module fait avec ${need.label}`}
+              {withoutPage.map((key) => {
+                const need = needs.find((candidate) => candidate.key === key);
+                if (!need || !overview) return null;
+                return (
+                  <ServiceBlock
+                    key={need.key}
+                    need={need}
+                    client={overview.clients.find((client) => client.id === need.client)}
+                    template={templateOf(modules, need.module, need.id)}
+                    help={module.clients.find((item) => item.id === need.id)?.help || undefined}
+                    controller={services}
+                    onEdit={onEditService}
+                    titled
+                    purpose={usedBy}
                   />
-                </ServiceBlock>
-              ))}
+                );
+              })}
             </div>
           )}
         </ModulePart>
       ) : null}
       {snapshot ? <ExampleModePart module={module} snapshot={snapshot} /> : null}
-      {others.length > 0 ? (
+      {functions.length > 0 ? (
         <ModulePart
-          part="other-functions"
-          title={needs.length > 0 || module.clients.length > 0 ? "Autres fonctions" : "Fonctions"}
-          description="Les traitements propres au module, qui ne passent par aucun service."
+          part="functions"
+          title="Fonctions"
+          description="Ce que le module fait, rangé par service : lire, écrire, et les traitements qui ne passent par aucun service."
         >
-          <FunctionGroup module={module} functions={others} tests={tests} label="Fonctions" open={false} />
+          <div className="module-functions">
+            {serviceNames.map((need) => (
+              <FunctionGroup
+                key={need.key}
+                module={module}
+                functions={byService.get(need.id) ?? []}
+                tests={tests}
+                label={`Ce que le module fait avec ${need.label}`}
+              />
+            ))}
+            {others.length > 0 ? (
+              <div data-part="other-functions">
+                <FunctionGroup
+                  module={module}
+                  functions={others}
+                  tests={tests}
+                  label={serviceNames.length > 0 ? "Sans service" : "Fonctions"}
+                  open={false}
+                />
+              </div>
+            ) : null}
+          </div>
         </ModulePart>
       ) : null}
     </>

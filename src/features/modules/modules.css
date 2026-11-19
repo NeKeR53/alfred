@@ -330,3 +330,48 @@
   color: var(--color-muted);
 }
 
+/*
+ * Pages de la fiche d’un module : un groupe par page, nettement séparé du suivant. Le titre de la page (son entrée
+ * du menu) ouvre le groupe ; ses comptes suivent en retrait, sous un filet à gauche, pour qu’on lise « cette page,
+ * puis ses comptes ».
+ */
+.module-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.module-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.module-group > .setting-rows > .setting-row:first-child .module-entry--section {
+  font-weight: 600;
+}
+.module-group__accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-left: 24px;
+}
+.module-group > .al-text {
+  margin-left: 24px;
+}
+.module-groups__footer {
+  display: flex;
+  padding-top: 12px;
+}
+.module-functions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+@media (max-width: 720px) {
+  .module-group__accounts,
+  .module-group > .al-text {
+    margin-left: 0;
+  }
+}

@@ -520,11 +520,11 @@ describe("ModulesSettings", () => {
     // La fiche s’ouvre sur sa propre vue, et le retour ramène à la liste.
     fireEvent.click(within(moduleList()).getByText("Suivi"));
     expect(screen.getByRole("heading", { name: "Suivi" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Dans le menu" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
     // Une section d’une seule page tient sur une ligne, qui nomme la page.
-    expect(screen.getByText("Page « Tâches ».")).toBeInTheDocument();
-    // Rien de vide : ni services, ni autres fonctions pour un module qui n’en a pas.
-    expect(screen.queryByRole("heading", { name: "Services" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Page « Tâches ».")).toBeInTheDocument();
+    // Rien de vide : ni comptes, ni fonctions pour un module qui n’en a pas.
+    expect(screen.queryByRole("heading", { name: /Comptes/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /fonctions/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("table", { name: /Modules de l.espace/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tous les modules" }));
