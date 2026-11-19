@@ -302,7 +302,7 @@
   color: var(--color-danger-ink);
 }
 .nav-dialog {
-  width: min(440px, calc(100vw - 32px));
+  width: min(480px, calc(100vw - 32px));
   overflow: hidden;
 }
 .nav-dialog__header {

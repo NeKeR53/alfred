@@ -278,7 +278,7 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
   // La fiche signale le module incomplet et propose de terminer sa configuration.
   useShell.getState().setActiveTab(MODULE_FOCUS, "boite");
   // Pas de bandeau : ce qui reste tient en une ligne sous celle du module, avec le bouton à côté.
-  const left = await screen.findByText("Reste à configurer : Gmail.");
+  const left = await screen.findByText("Compte Gmail à ajouter.");
   expect(left.closest(".al-feedback, .feedback-banner")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Terminer la configuration" }));
 
@@ -314,7 +314,7 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
   // Le panneau se ferme ; la fiche, derrière, n’a plus de bandeau : le module est prêt.
   expect(useOnboarding.getState().module).toBeNull();
   await screen.findByRole("button", { name: "Tous les modules" });
-  await waitFor(() => expect(screen.queryByText(/Reste à configurer/)).toBeNull());
+  await waitFor(() => expect(document.querySelector(".module-row__todo")).toBeNull());
   expect(screen.queryByRole("button", { name: "Terminer la configuration" })).toBeNull();
 });
 
@@ -367,7 +367,7 @@ it("présente le module, compte les dépendances et les services facultatifs, et
   // Le panneau se ferme ; la fiche du module dit ce qui reste.
   expect(useOnboarding.getState().module).toBeNull();
   act(() => useShell.getState().setActiveTab(MODULE_FOCUS, "suivi"));
-  expect(await screen.findByText(/Reste à configurer : Jira\./)).toBeTruthy();
+  expect(await screen.findByText("Compte Jira à ajouter.")).toBeTruthy();
 });
 
 it("reprend à la première étape essentielle incomplète et résume ce qui reste", () => {
@@ -395,7 +395,21 @@ it("reprend à la première étape essentielle incomplète et résume ce qui res
   expect(resumeStep(setup([step("a", "ready"), step("b", "missing", true), step("c", "untested")]))).toBe("c");
   expect(resumeStep(setup([step("a", "ready"), step("b", "missing", true)]))).toBe("b");
   expect(resumeStep(setup([step("a", "ready")]))).toBe("fin");
-  expect(remainingSummary(setup([step("a", "failed"), step("b", "missing", true)]))).toBe("Reste à configurer : A.");
+  expect(remainingSummary(setup([step("a", "failed"), step("b", "missing", true)]))).toBe(
+    "Test échoué pour A : vérifiez le compte, puis testez à nouveau.",
+  );
+  // Compte par compte quand on les connaît : lesquels tester, lesquels ont échoué.
+  const accounts = (state: string) =>
+    state === "untested"
+      ? [
+          { label: "Prod", status: "ready", lastTest: null },
+          { label: "Recette", status: "ready", lastTest: null },
+        ]
+      : [{ label: "Prod", status: "ready", lastTest: { ok: false } }];
+  expect(remainingSummary(setup([step("a", "untested"), step("b", "failed")]), (item) => accounts(item.state))).toBe(
+    "Comptes A à tester : Prod et Recette. Test échoué pour B : Prod. Vérifiez ce compte, puis testez à nouveau.",
+  );
+  expect(remainingSummary(setup([step("a", "missing")]))).toBe("Compte A à ajouter.");
 });
 
 it("une page à qui il manque un service affiche la page d’attente, et son bouton ouvre l’onboarding du module", async () => {
@@ -651,4 +665,25 @@ it("configure les comptes service par service, puis montre les pages pré-ajout�
       name: "Bitbucket",
     }),
   ).toBeInTheDocument();
+});
+
+it("la fiche d’un module teste d’office un compte prêt jamais testé, et propose de tester à nouveau un test raté", async () => {
+  const user = userEvent.setup();
+  modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
+  vault = [
+    { id: "jeton", label: "Jeton", kind: "token", meta: {}, updatedAt: "2026-11-15T10:00:00Z", hasSecret: true },
+  ];
+  stored = [
+    { id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "bearer", secret: "jeton" } },
+  ];
+  testOk = false;
+  renderModules();
+  act(() => useShell.getState().setActiveTab(MODULE_FOCUS, "boite"));
+  // Jamais testé : la fiche le teste d’elle-même, une fois ; il échoue, elle dit lequel et propose de retester.
+  expect(await screen.findByText("Test échoué pour Gmail : vérifiez le compte, puis testez à nouveau.")).toBeTruthy();
+  expect(calls.filter((call) => call.command === "clients.test")).toHaveLength(1);
+  testOk = true;
+  await user.click(screen.getByRole("button", { name: "Tester les comptes" }));
+  await waitFor(() => expect(document.querySelector(".module-row__todo")).toBeNull());
+  expect(calls.filter((call) => call.command === "clients.test")).toHaveLength(2);
 });

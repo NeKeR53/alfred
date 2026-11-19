@@ -47,9 +47,43 @@ export interface ModuleSetup {
 export const getSetup = (module?: string) =>
   invoke<{ modules: ModuleSetup[] }>("modules.setup", module ? { module } : {}).then((result) => result.modules);
 
-/** Ce qu’il reste à faire, en mots simples, pour la fiche d’un module. */
-export function remainingSummary(setup: ModuleSetup): string {
+/** Comptes d’un service, pour dire lesquels attendent : nom et dernier test. */
+export interface SetupAccount {
+  label: string;
+  status: string;
+  lastTest?: { ok: boolean } | null;
+}
+
+/** « A », « A et B », « A, B et C ». */
+const joined = (items: string[]) =>
+  items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} et ${items.at(-1)}`;
+
+/**
+ * Ce qu’il reste à faire, en mots simples, pour la fiche d’un module, compte par compte quand on les connaît :
+ * « Comptes Prefect à tester : Prod et Recette. », « Test échoué pour Prefect : Prod. », « Compte Jira à ajouter. ».
+ * `accountsOf` rend les comptes du service d’une étape.
+ */
+export function remainingSummary(setup: ModuleSetup, accountsOf?: (step: SetupStep) => SetupAccount[]): string {
   const left = setup.steps.filter((step) => !step.optional && step.state !== "ready");
   if (left.length === 0) return "Tout est prêt.";
-  return `Reste à configurer : ${left.map((step) => step.label).join(", ")}.`;
+  return left
+    .map((step) => {
+      const accounts = accountsOf?.(step) ?? [];
+      const ready = accounts.filter((account) => account.status === "ready");
+      if (step.state === "untested") {
+        const names = ready.filter((account) => !account.lastTest).map((account) => account.label);
+        return names.length > 0
+          ? `${names.length > 1 ? "Comptes" : "Compte"} ${step.label} à tester : ${joined(names)}.`
+          : `Compte ${step.label} à tester.`;
+      }
+      if (step.state === "failed") {
+        const names = ready.filter((account) => account.lastTest?.ok === false).map((account) => account.label);
+        return names.length > 0
+          ? `Test échoué pour ${step.label} : ${joined(names)}. Vérifiez ${names.length > 1 ? "ces comptes" : "ce compte"}, puis testez à nouveau.`
+          : `Test échoué pour ${step.label} : vérifiez le compte, puis testez à nouveau.`;
+      }
+      if (step.state === "incomplete") return `Compte ${step.label} à terminer (clé, approbation ou connexion).`;
+      return `Compte ${step.label} à ajouter.`;
+    })
+    .join(" ");
 }

@@ -207,16 +207,15 @@ describe("réorganisation de la navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("change la couleur et refuse une icône inconnue", async () => {
+  it("change l’icône dans une grille, avec une recherche, puis la couleur", async () => {
     renderShell();
     fireEvent.contextMenu(screen.getByRole("button", { name: "Compta" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
-    const field = screen.getByRole("textbox", { name: "Nom de l’icône" });
-    fireEvent.change(field, { target: { value: "pas-une-icone-xyz" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
-    expect(screen.getByText("Aucune icône Lucide ne s’appelle « pas-une-icone-xyz ».")).toBeInTheDocument();
-    fireEvent.change(field, { target: { value: "wallet" } });
-    expect(screen.getByText("Aperçu : wallet")).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Rechercher une icône" });
+    fireEvent.change(search, { target: { value: "pas-une-icone-xyz" } });
+    expect(screen.getByText(/Aucune icône ne correspond/)).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "wallet" } });
+    fireEvent.click(screen.getByRole("radio", { name: "wallet" }));
     fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Compta en wallet"));
 
@@ -523,17 +522,16 @@ describe("logo d’un service comme icône d’une entrée du menu", () => {
 
     fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
-    const field = screen.getByRole("textbox", { name: "Nom de l’icône" });
-    expect(field).toHaveValue("");
-    expect(screen.getByText(/pour revenir à une icône Lucide/)).toBeInTheDocument();
-    expect(screen.getByText("Aperçu : logo du service")).toBeInTheDocument();
-    // Vide, le champ garde le logo : rien n’est enregistré.
+    // « Par défaut », choisi d’office, montre le logo et le garde : rien n’est enregistré.
+    const byDefault = screen.getByRole("radio", { name: "Par défaut" });
+    expect(byDefault).toBeChecked();
+    expect(byDefault.closest("label")?.querySelector("img.section-icon-image")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
     expect(lastLayoutCall()).toBeUndefined();
 
     fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Nom de l’icône" }), { target: { value: "bug" } });
+    fireEvent.click(screen.getByRole("radio", { name: "bug" }));
     fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Jira en bug"));
     expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "bug" });

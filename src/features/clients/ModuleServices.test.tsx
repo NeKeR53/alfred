@@ -1039,7 +1039,7 @@ it("ajoute une deuxième page Prefect pour un autre compte, puis un onglet à un
   await user.selectOptions(within(dialog).getByRole("combobox", { name: "Compte Prefect" }), "recette");
   // Une page Prefect existe déjà : le nom proposé dit le compte.
   expect(within(dialog).getByLabelText("Nom")).toHaveValue("Prefect Recette");
-  await user.type(within(dialog).getByLabelText("Icône"), "flask-conical");
+  await user.click(within(dialog).getByRole("radio", { name: "flask-conical" }));
   await user.click(within(dialog).getByRole("button", { name: "Ajouter la page" }));
   await waitFor(() =>
     expect(lastCall("space.menu.addPage")).toEqual({

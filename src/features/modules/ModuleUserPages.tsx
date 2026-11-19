@@ -31,6 +31,7 @@ import type {
   SectionTemplate,
   Snapshot,
 } from "../../lib/types";
+import { IconPicker } from "../../shell/IconPicker";
 import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { applyLayoutChange, IconDialog, RenameDialog } from "../../shell/navigationEditing";
 import { reorderSections, reorderTabs, setPageHidden, setSectionHidden } from "../../shell/navigationLayout";
@@ -106,7 +107,9 @@ function optionLabel({ client, instance }: AccountOption): string {
     instance.status === "ready"
       ? instance.lastTest?.ok
         ? "testé"
-        : "connecté"
+        : instance.lastTest
+          ? "test échoué"
+          : "connecté"
       : (STATUS[instance.status]?.label ?? instance.status).toLowerCase();
   return `${instance.label} · ${client.label} · ${state}`;
 }
@@ -368,15 +371,11 @@ function AddDialog({
         <FormField label="Nom">
           <TextInput value={shownName} autoComplete="off" onChange={(event) => setName(event.target.value)} />
         </FormField>
-        {mode === "page" ? (
-          <FormField label="Icône" hint="Facultatif : le nom d’une icône Lucide, par exemple flask-conical.">
-            <TextInput
-              value={icon}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setIcon(event.target.value)}
-            />
-          </FormField>
+        {mode === "page" && chosen ? (
+          <fieldset className="modules-choice">
+            <legend className="modules-choice__legend">Icône</legend>
+            <IconPicker value={icon} onChange={setIcon} fallback={chosen.section} />
+          </fieldset>
         ) : null}
         {needs.map((need) => {
           const label = lookup.needOf(module.id, need)?.label ?? need;
@@ -590,7 +589,14 @@ export function ModuleUserPages({
         <IconDialog
           section={dialog.section.label}
           initial={dialog.section.iconUrl ? "" : (dialog.section.icon ?? "")}
-          logo={dialog.section.iconUrl}
+          logo={
+            snapshot.sectionTemplates?.find((known) => known.id === (dialog.section.instanceOf ?? dialog.section.id))
+              ?.iconUrl
+          }
+          fallbackIcon={
+            snapshot.sectionTemplates?.find((known) => known.id === (dialog.section.instanceOf ?? dialog.section.id))
+              ?.icon
+          }
           onClose={() => setDialog(undefined)}
           onSubmit={(value) =>
             void act("L’icône n’a pas été changée", () => userPages.configure(dialog.section.id, { icon: value }))

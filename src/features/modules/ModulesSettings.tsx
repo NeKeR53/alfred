@@ -18,7 +18,7 @@ import {
   useConfirm,
 } from "@alfred/ui";
 import { ArrowLeft, Boxes } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { SectionIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
@@ -32,8 +32,9 @@ import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
 import { ModuleJobs } from "../jobs/ModuleJobs";
 import { MODULE_FOCUS } from "../settings/open";
-import { remainingSummary } from "../setup/api";
-import { openOnboarding } from "../setup/Onboarding";
+import { remainingSummary, type SetupStep } from "../setup/api";
+import { openOnboarding, useOnboarding } from "../setup/Onboarding";
+import { verify } from "../setup/SetupGate";
 import { useModuleSetup } from "../setup/useModuleSetup";
 import { TeamSync } from "../teamSync/TeamSync";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
@@ -126,6 +127,9 @@ export function ModulesSettings() {
   const [publications, setPublications] = useState<ModulePublication[]>([]);
   /** Opération en cours, pour désactiver ce qui la doublerait : `all`, `module:<id>`. */
   const [busy, setBusy] = useState<string | null>(null);
+  /** Test des comptes d’une fiche en cours ; modules dont les comptes ont déjà été testés d’office. */
+  const [testing, setTesting] = useState(false);
+  const autoTested = useRef(new Set<string>());
   const [opened, setOpened] = useState<Opened | null>(null);
   const { confirm, confirmDialog } = useConfirm();
   const snapshot = useShell((state) => state.snapshot);
@@ -261,6 +265,42 @@ export function ModulesSettings() {
   };
 
   const openedUpdate = opened?.kind === "update" ? updateOf.get(opened.module) : undefined;
+
+  // La fiche ouverte : ce qui lui reste à faire, et ses comptes à tester (avant tout retour anticipé : des hooks).
+  const openedId = screen.kind === "module" ? screen.id : undefined;
+  const focusedSetup = openedId ? setups.of(openedId) : undefined;
+  // Les comptes d’un service à un seul compte n’ont pas de nom à eux : la phrase nomme le service seul.
+  const accountsOfStep = (step: SetupStep) => {
+    const client = services.overview?.clients.find((candidate) => candidate.id === step.client);
+    return client && !client.simple ? client.instances : [];
+  };
+  const openedLeft = focusedSetup?.steps.filter((step) => !step.optional && step.state !== "ready") ?? [];
+  /** Il ne manque qu’un test (réussi) : le bouton teste, au lieu d’ouvrir la configuration. */
+  const onlyTests =
+    openedLeft.length > 0 && openedLeft.every((step) => step.state === "untested" || step.state === "failed");
+  // Un compte prêt jamais testé l’est d’office, une fois par fiche, comme sur la page d’attente.
+  // L’onboarding ouvert teste lui-même ses comptes : la fiche, derrière, ne le double pas.
+  const onboarding = useOnboarding((state) => state.module);
+  const untested = !onboarding && openedLeft.some((step) => step.state === "untested");
+  const runTestsRef = useRef<(again: boolean) => Promise<void>>(async () => undefined);
+  useEffect(() => {
+    if (!openedId || !untested || autoTested.current.has(openedId)) return;
+    autoTested.current.add(openedId);
+    void runTestsRef.current(false);
+  }, [openedId, untested]);
+  const runTests = async (again: boolean) => {
+    setTesting(true);
+    try {
+      await verify(openedLeft, again);
+    } catch (failure) {
+      notify({ title: "Le test n’a pas pu être lancé", description: errorMessage(failure), tone: "error" });
+    } finally {
+      setTesting(false);
+      await services.load();
+      await reloadSetups();
+    }
+  };
+  runTestsRef.current = runTests;
 
   if (editingService) {
     return (
@@ -672,13 +712,19 @@ export function ModulesSettings() {
               {moduleBadges(opened_)}
             </p>
             {openedSetup && !openedSetup.ready ? (
-              <p className="module-row__todo">{remainingSummary(openedSetup)}</p>
+              <p className="module-row__todo">{remainingSummary(openedSetup, accountsOfStep)}</p>
             ) : null}
           </div>
           {openedSetup && !openedSetup.ready ? (
-            <Button variant="primary" onClick={() => openOnboarding(opened_.id)}>
-              Terminer la configuration
-            </Button>
+            onlyTests ? (
+              <Button variant="primary" loading={testing} onClick={() => void runTests(true)}>
+                Tester les comptes
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => openOnboarding(opened_.id)}>
+                Terminer la configuration
+              </Button>
+            )
           ) : null}
           {moduleActions(opened_)}
         </div>

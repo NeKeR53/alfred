@@ -54,12 +54,18 @@ export function pageNeeds(steps: SetupStep[], module: string): string {
   return `Pour l’afficher, il reste ${joined(items, groups.size > 1 && steps.length > groups.size ? ", et " : " et ")}.`;
 }
 
-/** Teste les comptes prêts mais jamais testés des services qui manquent ; Alfred garde le résultat. */
-async function verify(steps: SetupStep[]) {
-  const wanted = new Set(steps.filter((step) => step.state === "untested").map((step) => step.client));
+/**
+ * Teste les comptes prêts des services qui manquent : ceux jamais testés, et, avec `again`, ceux dont le test a
+ * échoué. Alfred garde le résultat.
+ */
+export async function verify(steps: SetupStep[], again = false) {
+  const states = again ? ["untested", "failed"] : ["untested"];
+  const wanted = new Set(steps.filter((step) => states.includes(step.state)).map((step) => step.client));
   const { clients } = await listClients();
   for (const client of clients.filter((candidate) => wanted.has(candidate.id))) {
-    for (const instance of client.instances.filter((item) => item.status === "ready" && !item.lastTest)) {
+    for (const instance of client.instances.filter(
+      (item) => item.status === "ready" && (!item.lastTest || (again && !item.lastTest.ok)),
+    )) {
       await testClient(client.id, client.simple ? undefined : instance.id);
     }
   }

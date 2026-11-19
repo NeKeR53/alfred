@@ -1,0 +1,59 @@
+.icon-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.icon-picker__grid {
+  margin: 0;
+  border: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 4px;
+  max-height: 196px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.icon-picker__tile {
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-ink);
+  cursor: default;
+}
+.icon-picker__tile:hover {
+  background: var(--color-surface-strong);
+}
+.icon-picker__tile:has(input:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.icon-picker__tile:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-surface-strong);
+}
+.icon-picker__tile--default {
+  grid-column: span 3;
+  display: inline-flex;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+}
+.icon-picker__glyph {
+  display: inline-grid;
+  place-items: center;
+}
+.icon-picker__name {
+  font-size: var(--font-size-secondary);
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+/* La recherche prend la largeur du sélecteur, dans une petite boîte comme dans une modale. */
+.icon-picker .page-toolbar-search {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}

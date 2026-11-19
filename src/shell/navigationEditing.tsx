@@ -2,19 +2,7 @@
  * Gestes de réorganisation de la navigation : application optimiste d’un nouveau `layout`, commit par
  * `space.updateLayout`, retour en arrière si le backend refuse ; menus contextuels et dialogues de la coquille.
  */
-import {
-  Dialog,
-  FormActions,
-  FormField,
-  Menu,
-  MenuGroup,
-  MenuItem,
-  Row,
-  Stack,
-  Text,
-  TextInput,
-  useConfirm,
-} from "@alfred/ui";
+import { Dialog, FormActions, FormField, Menu, MenuGroup, MenuItem, TextInput, useConfirm } from "@alfred/ui";
 import {
   AppWindow,
   ArrowRightLeft,
@@ -37,7 +25,8 @@ import { SECTION_COLORS, type Snapshot } from "../lib/types";
 import { focusStayed } from "../ui/components/AnchoredMenu";
 import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
 import { DialogHeader } from "./DialogHeader";
-import { isImageIcon, NamedIcon, SectionIcon } from "./icons";
+import { IconPicker } from "./IconPicker";
+import { isImageIcon } from "./icons";
 import {
   baseReference,
   COLOR_LABELS,
@@ -314,86 +303,42 @@ export function RenameDialog({
   );
 }
 
-/** Change l’icône d’une section : nom Lucide en minuscules et tirets, avec un aperçu. */
+/**
+ * Change l’icône d’une section ou d’une page : une grille d’icônes avec une recherche, et « Par défaut » pour revenir
+ * à celle du module (ou au logo du service).
+ */
 export function IconDialog({
   section,
   initial,
   logo,
+  fallbackIcon,
   onSubmit,
   onClose,
 }: {
   section: string;
   initial: string;
-  /** Logo du service en place (adresse `data:`) : un nom Lucide le remplace, laisser vide le garde. */
+  /** Logo du service en place (adresse `data:`) : une icône le remplace, « Par défaut » le garde. */
   logo?: string | null;
+  /** Icône Lucide du module, que « Par défaut » rend. */
+  fallbackIcon?: string | null;
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
   const titleId = useId();
   const formId = useId();
   const dialog = useModal();
-  const [value, setValue] = useState(initial);
-  const [error, setError] = useState<string>();
-  const name = value.trim();
-  const known = name === "" || iconExists(name);
+  const [value, setValue] = useState(iconExists(initial) ? initial : "");
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!known) {
-      setError(
-        ICON_NAME.test(name)
-          ? `Aucune icône Lucide ne s’appelle « ${name} ».`
-          : "Écrire le nom en minuscules, chiffres et tirets, par exemple list-checks.",
-      );
-      return;
-    }
-    onSubmit(name);
+    onSubmit(value);
     dialog.current?.close();
   };
   return (
     <Dialog ref={dialog} className="nav-dialog" aria-labelledby={titleId} onClose={onClose}>
       <form id={formId} noValidate onSubmit={submit}>
-        <DialogHeader title={`Icône de la section « ${section} »`} titleId={titleId} dialogRef={dialog} />
+        <DialogHeader title={`Icône de « ${section} »`} titleId={titleId} dialogRef={dialog} />
         <div className="nav-dialog__body">
-          <Stack gap="md">
-            <FormField
-              label="Nom de l’icône"
-              hint={
-                logo
-                  ? "Cette entrée a pour icône le logo du service. Écrire le nom d’une icône Lucide en minuscules et tirets, par exemple list-checks, pour revenir à une icône Lucide ; laisser vide pour garder le logo."
-                  : "Nom d’une icône Lucide en minuscules et tirets, par exemple list-checks. Laisser vide pour revenir à l’icône du module."
-              }
-              error={error}
-            >
-              <TextInput
-                value={value}
-                autoComplete="off"
-                spellCheck={false}
-                autoFocus
-                onChange={(event) => {
-                  setValue(event.target.value);
-                  setError(undefined);
-                }}
-              />
-            </FormField>
-            <Row gap="xs">
-              <span className="nav-dialog__preview">
-                {known && name ? (
-                  <NamedIcon name={name} size={18} />
-                ) : name === "" && logo ? (
-                  <SectionIcon section={{ iconUrl: logo }} size={18} />
-                ) : null}
-              </span>
-              <Text as="span" tone={known ? "muted" : "warning"}>
-                {name === ""
-                  ? logo
-                    ? "Aperçu : logo du service"
-                    : "Aperçu : icône du module"
-                  : known
-                    ? `Aperçu : ${name}`
-                    : "Icône inconnue"}
-              </Text>
-            </Row>
-          </Stack>
+          <IconPicker value={value} onChange={setValue} fallback={{ icon: fallbackIcon, iconUrl: logo }} />
         </div>
         <div className="nav-dialog__footer">
           <FormActions onCancel={() => dialog.current?.close()} submitLabel="Enregistrer" form={formId} />
