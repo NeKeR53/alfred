@@ -45,8 +45,9 @@ export { MenuButton } from "./components/MenuButton";
 export { Modal } from "./components/Modal";
 export { OverflowMenu } from "./components/OverflowMenu";
 export { PageToolbar, ToolbarSeparator } from "./components/PageToolbar";
-export { PageTopBar, PanelToggleButton } from "./components/PageTopBar";
+export { PageTopBar, PageTopBarSeparator, PanelToggleButton } from "./components/PageTopBar";
 export { PanelHeader } from "./components/PanelHeader";
+export { type PanelSection, PanelSections } from "./components/PanelSections";
 export {
   Form,
   Grid,
@@ -72,7 +73,6 @@ export { TagSearchField, type TagSearchFieldProps } from "./components/TagSearch
 export { type Action, ActionBar, type ActionIcon, type ActionPlace } from "./templates/actions";
 export { type CollectionFilter, CollectionPage, type Column } from "./templates/CollectionPage";
 export { type DetailField, DetailPanel, type DetailSection } from "./templates/DetailPanel";
-export { type PanelSection, PanelSections } from "./components/PanelSections";
 export {
   type ConfirmSpec,
   confirmAction,

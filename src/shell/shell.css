@@ -53,9 +53,22 @@
 .shell-tabs::-webkit-scrollbar {
   display: none;
 }
+/* Onglets sans filet, comme les vues d’un produit dans OneApp : le groupe n’a que son fond. */
 .shell-tabs > .shell-tabs__list {
   flex: 0 0 auto;
   flex-wrap: nowrap;
+  border: 0;
+}
+/*
+ * Outils de la page (nouvelle fenêtre, correction de l’interface), puis un trait, puis ceux de la coquille (Exemple,
+ * cloche, panneau). Sans outil de page, le groupe et son trait disparaissent.
+ */
+.shell-topbar__page-tools {
+  display: contents;
+}
+.shell-topbar__page-tools:empty,
+.shell-topbar__page-tools:empty + .page-topbar__separator {
+  display: none;
 }
 .shell-tabs__tab {
   height: 26px;
