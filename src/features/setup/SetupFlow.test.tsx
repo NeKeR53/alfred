@@ -277,8 +277,9 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
 
   // La fiche signale le module incomplet et propose de terminer sa configuration.
   useShell.getState().setActiveTab(MODULE_FOCUS, "boite");
-  const banner = await screen.findByText(/Ce module n’est pas encore prêt/);
-  expect(banner.textContent).toContain("Reste à configurer : Gmail.");
+  // Pas de bandeau : ce qui reste tient en une ligne sous celle du module, avec le bouton à côté.
+  const left = await screen.findByText("Reste à configurer : Gmail.");
+  expect(left.closest(".al-feedback, .feedback-banner")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Terminer la configuration" }));
 
   // Reprise : directement à l’étape du service qui manque, avec l’aide du module.
@@ -313,7 +314,8 @@ it("guide la configuration d’un module : service créé depuis son modèle, cl
   // Le panneau se ferme ; la fiche, derrière, n’a plus de bandeau : le module est prêt.
   expect(useOnboarding.getState().module).toBeNull();
   await screen.findByRole("button", { name: "Tous les modules" });
-  await waitFor(() => expect(screen.queryByText(/Ce module n’est pas encore prêt/)).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/Reste à configurer/)).toBeNull());
+  expect(screen.queryByRole("button", { name: "Terminer la configuration" })).toBeNull();
 });
 
 it("présente le module, compte les dépendances et les services facultatifs, et ne le dit pas prêt après un test raté", async () => {

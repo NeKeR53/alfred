@@ -47,6 +47,7 @@ import {
 } from "../agent/panel/ModelPicker";
 import { type AgentDefaults, useAgents } from "../agent/store";
 import { ArchivedConversations } from "./ArchivedConversations";
+import "./agent-settings.css";
 
 type ProbeResult = Awaited<ReturnType<typeof probe>>;
 type Loadable<T> = { status: "loading" } | { status: "ready"; value: T } | { status: "error"; message: string };
@@ -189,30 +190,37 @@ function ModelFields({
         ) : undefined
       }
     >
-      <SelectControl
-        aria-label={`Modèle de ${label}`}
-        value={value.model ?? ""}
-        disabled={models?.status !== "ready"}
-        // Comme dans OneApp, changer de modèle revient à son raisonnement par défaut.
-        onChange={(event) => onChange({ model: event.target.value || undefined, effort: undefined })}
-      >
-        <option value="">Modèle par défaut</option>
-        {value.model && !selected ? <option value={value.model}>{value.model}</option> : null}
-        {list.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.name}
-          </option>
-        ))}
-      </SelectControl>
-      {/* Comme dans OneApp : le raisonnement en curseur, sur les seuls niveaux du modèle choisi. */}
-      {selected ? (
-        <EffortSlider
-          label={`Raisonnement de ${label}`}
-          efforts={efforts}
-          value={value.effort ?? ""}
-          onChange={(effort) => onChange({ model: value.model, effort: effort || undefined })}
-        />
-      ) : null}
+      <div className="model-fields">
+        {/* Colonne du harnais, vide ici : les modèles et les curseurs s’alignent sur ceux de « Nommage ». */}
+        <span className="model-fields__provider" aria-hidden="true" />
+        <SelectControl
+          aria-label={`Modèle de ${label}`}
+          title={selected?.name ?? value.model ?? "Modèle par défaut"}
+          value={value.model ?? ""}
+          disabled={models?.status !== "ready"}
+          // Comme dans OneApp, changer de modèle revient à son raisonnement par défaut.
+          onChange={(event) => onChange({ model: event.target.value || undefined, effort: undefined })}
+        >
+          <option value="">Modèle par défaut</option>
+          {value.model && !selected ? <option value={value.model}>{value.model}</option> : null}
+          {list.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </SelectControl>
+        {/* Comme dans OneApp : le raisonnement en curseur, sur les seuls niveaux du modèle choisi. */}
+        {selected ? (
+          <EffortSlider
+            label={`Raisonnement de ${label}`}
+            efforts={efforts}
+            value={value.effort ?? ""}
+            onChange={(effort) => onChange({ model: value.model, effort: effort || undefined })}
+          />
+        ) : (
+          <span className="model-fields__effort" aria-hidden="true" />
+        )}
+      </div>
     </SettingRow>
   );
 }
@@ -260,53 +268,58 @@ function ModelChoiceFields({
   const efforts = selected?.efforts ?? [];
   return (
     <SettingRow title={title} description={description}>
-      <SelectControl
-        aria-label={`Harnais ${subject}`}
-        value={provider ?? ""}
-        onChange={(event) => {
-          const next = event.target.value as Provider | "";
-          if (!next) return onChange(null);
-          const first = shown(next)[0];
-          onChange({ provider: next, ...(first ? { model: first.id } : {}) });
-        }}
-      >
-        <option value="">{inheritLabel}</option>
-        {/* Un harnais réglé puis désinstallé reste affiché : le réglage n’est pas perdu en silence. */}
-        {provider && !providers.includes(provider) ? (
-          <option value={provider}>{PROVIDER_LABEL[provider]} (non installé)</option>
-        ) : null}
-        {providers.map((item) => (
-          <option key={item} value={item}>
-            {PROVIDER_LABEL[item]}
-          </option>
-        ))}
-      </SelectControl>
-      <SelectControl
-        aria-label={`Modèle ${subject}`}
-        value={value?.model ?? ""}
-        disabled={!provider}
-        onChange={(event) =>
-          provider && onChange({ provider, ...(event.target.value ? { model: event.target.value } : {}) })
-        }
-      >
-        <option value="">{provider ? modelDefaultLabel : "—"}</option>
-        {value?.model && !selected ? <option value={value.model}>{value.model}</option> : null}
-        {list.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.name}
-          </option>
-        ))}
-      </SelectControl>
-      {value && selected ? (
-        <EffortSlider
-          label={`Raisonnement ${subject}`}
-          efforts={efforts}
-          value={value.effort ?? ""}
-          onChange={(effort) =>
-            onChange({ provider: value.provider, model: value.model, ...(effort ? { effort } : {}) })
+      <div className="model-fields">
+        <SelectControl
+          aria-label={`Harnais ${subject}`}
+          value={provider ?? ""}
+          onChange={(event) => {
+            const next = event.target.value as Provider | "";
+            if (!next) return onChange(null);
+            const first = shown(next)[0];
+            onChange({ provider: next, ...(first ? { model: first.id } : {}) });
+          }}
+        >
+          <option value="">{inheritLabel}</option>
+          {/* Un harnais réglé puis désinstallé reste affiché : le réglage n’est pas perdu en silence. */}
+          {provider && !providers.includes(provider) ? (
+            <option value={provider}>{PROVIDER_LABEL[provider]} (non installé)</option>
+          ) : null}
+          {providers.map((item) => (
+            <option key={item} value={item}>
+              {PROVIDER_LABEL[item]}
+            </option>
+          ))}
+        </SelectControl>
+        <SelectControl
+          aria-label={`Modèle ${subject}`}
+          title={selected?.name ?? value?.model ?? undefined}
+          value={value?.model ?? ""}
+          disabled={!provider}
+          onChange={(event) =>
+            provider && onChange({ provider, ...(event.target.value ? { model: event.target.value } : {}) })
           }
-        />
-      ) : null}
+        >
+          <option value="">{provider ? modelDefaultLabel : "—"}</option>
+          {value?.model && !selected ? <option value={value.model}>{value.model}</option> : null}
+          {list.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </SelectControl>
+        {value && selected ? (
+          <EffortSlider
+            label={`Raisonnement ${subject}`}
+            efforts={efforts}
+            value={value.effort ?? ""}
+            onChange={(effort) =>
+              onChange({ provider: value.provider, model: value.model, ...(effort ? { effort } : {}) })
+            }
+          />
+        ) : (
+          <span className="model-fields__effort" aria-hidden="true" />
+        )}
+      </div>
     </SettingRow>
   );
 }

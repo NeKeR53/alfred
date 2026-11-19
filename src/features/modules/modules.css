@@ -375,3 +375,15 @@
     margin-left: 0;
   }
 }
+
+/* Ce qui reste à configurer, sous la ligne du module ; et la ligne « N modules à configurer » au-dessus de la liste. */
+.module-row__todo {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+.module-list-view__notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

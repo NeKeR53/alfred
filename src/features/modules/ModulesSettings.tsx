@@ -5,7 +5,6 @@ import {
   DataTable,
   type DataTableColumn,
   EmptyState,
-  FeedbackBanner,
   MenuItem,
   OverflowMenu,
   Page,
@@ -498,22 +497,8 @@ export function ModulesSettings() {
   const moduleBody = (module: ModuleSummary) => {
     const hidden = hiddenOf(module);
     const update = updateOf.get(module.id);
-    const setup = setups.of(module.id);
     return (
       <div className="module-page__body">
-        {setup && !setup.ready ? (
-          <FeedbackBanner
-            tone="warning"
-            appearance="contained"
-            action={
-              <Button variant="primary" onClick={() => openOnboarding(module.id)}>
-                Terminer la configuration
-              </Button>
-            }
-          >
-            Ce module n’est pas encore prêt. {remainingSummary(setup)}
-          </FeedbackBanner>
-        ) : null}
         {update?.sourceMissing ? (
           <Text size="meta" tone="muted">
             Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace pour
@@ -620,19 +605,15 @@ export function ModulesSettings() {
         ) : (
           <div className="module-list-view">
             {counts.attention > 0 && filter !== "attention" ? (
-              <FeedbackBanner
-                tone="warning"
-                appearance="contained"
-                action={
-                  <Button variant="secondary" onClick={() => setFilter("attention")}>
-                    Les afficher
-                  </Button>
-                }
-              >
-                {counts.attention > 1
-                  ? `${counts.attention} modules ont une configuration à terminer : connectez et testez les services qui leur manquent.`
-                  : "Un module a une configuration à terminer : connectez et testez le service qui lui manque."}
-              </FeedbackBanner>
+              // Une ligne compacte, sans encadré : pas de bandeau dans une rubrique.
+              <div className="module-list-view__notice">
+                <StatusBadge tone="warning" size="compact">
+                  {counts.attention > 1 ? `${counts.attention} modules à configurer` : "1 module à configurer"}
+                </StatusBadge>
+                <Button onClick={() => setFilter("attention")}>
+                  Les afficher
+                </Button>
+              </div>
             ) : null}
             {modules.length > 5 || filter !== "all" || query ? (
               <div className="module-list-view__tools">
@@ -681,6 +662,7 @@ export function ModulesSettings() {
     </>
   );
 
+  const openedSetup = opened_ ? setups.of(opened_.id) : undefined;
   const moduleScreen = opened_ ? (
     <Section title={opened_.name} description={opened_.description || undefined} actions={back}>
       <div className="module-page" data-module={opened_.id}>
@@ -691,7 +673,15 @@ export function ModulesSettings() {
               <span>{moduleSummary(opened_, true)}</span>
               {moduleBadges(opened_)}
             </p>
+            {openedSetup && !openedSetup.ready ? (
+              <p className="module-row__todo">{remainingSummary(openedSetup)}</p>
+            ) : null}
           </div>
+          {openedSetup && !openedSetup.ready ? (
+            <Button variant="primary" onClick={() => openOnboarding(opened_.id)}>
+              Terminer la configuration
+            </Button>
+          ) : null}
           {moduleActions(opened_)}
         </div>
         {moduleBody(opened_)}
