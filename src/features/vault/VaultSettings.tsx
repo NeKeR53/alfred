@@ -48,7 +48,7 @@ function EntryState({ entry }: { entry: VaultEntry }) {
       Secret enregistré
     </StatusBadge>
   ) : (
-    <StatusBadge tone="warning" size="compact">
+    <StatusBadge tone="pending" size="compact">
       Secret manquant
     </StatusBadge>
   );

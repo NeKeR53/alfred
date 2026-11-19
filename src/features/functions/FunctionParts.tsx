@@ -132,7 +132,7 @@ function TestBadge({ tests }: { tests: FunctionTests | undefined }) {
 
 export function FunctionStatus({ fn }: { fn: ResolvedFunction }) {
   const state = stateOf(fn);
-  if (state === "missing") return <StatusBadge tone="warning">Pas encore écrite</StatusBadge>;
+  if (state === "missing") return <StatusBadge tone="pending">Pas encore écrite</StatusBadge>;
   if (state === "broken")
     return <StatusBadge tone="danger">{isScript(fn) ? "Interpréteur absent" : "Ne compile pas"}</StatusBadge>;
   return <StatusBadge tone="success">Prête</StatusBadge>;

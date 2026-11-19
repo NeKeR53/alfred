@@ -71,11 +71,11 @@ export function useFunctionTests(module: string) {
 
 export const TEST_STATE_LABELS: Record<
   FunctionTestState,
-  { label: string; tone: "neutral" | "success" | "warning" | "danger" }
+  { label: string; tone: "neutral" | "pending" | "success" | "warning" | "danger" }
 > = {
   none: { label: "Sans test", tone: "neutral" },
-  toVerify: { label: "À vérifier", tone: "warning" },
+  toVerify: { label: "À vérifier", tone: "pending" },
   failed: { label: "En échec", tone: "danger" },
-  partial: { label: "Écritures à vérifier", tone: "warning" },
+  partial: { label: "Écritures à vérifier", tone: "pending" },
   passed: { label: "Vérifiée", tone: "success" },
 };

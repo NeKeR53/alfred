@@ -23,7 +23,7 @@ export interface JobItem {
 
 const STATUS = {
   queued: { label: "En attente", tone: "neutral" },
-  running: { label: "En cours", tone: "warning" },
+  running: { label: "En cours", tone: "pending" },
   done: { label: "Terminée", tone: "success" },
   failed: { label: "Échec", tone: "danger" },
   cancelled: { label: "Annulée", tone: "neutral" },

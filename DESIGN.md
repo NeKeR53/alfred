@@ -309,12 +309,12 @@ Le même `type` sert aux colonnes, aux lignes de fiche et aux réglages `info`. 
 | `code` | Identifiant à chasse fixe | 160 px |
 | `tags` | « a, b, c » | Place restante |
 
-`StatusMap` relie chaque valeur enregistrée à son libellé et à son ton : `neutral` (à faire, brouillon), `warning` (en cours, en attente, bientôt dû), `success` (terminé, payé, actif), `danger` (en retard, échec, refusé). Le définir une fois en haut du fichier et le réutiliser dans la colonne, le filtre, le panneau et le formulaire.
+`StatusMap` relie chaque valeur enregistrée à son libellé et à son ton : `neutral` (à faire, brouillon), `pending` (en cours, en attente : pastille neutre à point creux), `warning` (bientôt dû, à surveiller : un vrai avertissement), `success` (terminé, payé, actif), `danger` (en retard, échec, refusé). Le définir une fois en haut du fichier et le réutiliser dans la colonne, le filtre, le panneau et le formulaire.
 
 ```tsx
 const ETATS: StatusMap = {
   a_faire: { label: "À faire", tone: "neutral" },
-  en_cours: { label: "En cours", tone: "warning" },
+  en_cours: { label: "En cours", tone: "pending" },
   terminee: { label: "Terminée", tone: "success" },
 };
 const OPTIONS_ETAT = Object.entries(ETATS).map(([value, etat]) => ({ value, label: etat.label }));
@@ -491,12 +491,14 @@ Le sens passe toujours par une prop, accompagnée d’un texte :
 
 | Ce qu’il faut dire | Comment |
 |---|---|
-| État d’un objet | Valeur de type `status` avec son `StatusMap` (4.5) ; hors gabarit, `<StatusBadge tone="…">Libellé</StatusBadge>` |
+| État d’un objet | Valeur de type `status` avec son `StatusMap` (4.5) ; hors gabarit, `<StatusBadge tone="neutral \| pending \| success \| warning \| danger">Libellé</StatusBadge>` |
 | Pastille devant un libellé d’état | `<StatusDot tone="success \| warning \| danger \| neutral \| pending" />` |
 | Texte secondaire ou d’état | `<Text tone="default \| muted \| success \| warning \| danger">` |
 | Erreur qui empêche d’agir | `<FeedbackBanner tone="danger \| warning">` dans le bloc concerné, avec l’action qui la lève |
 | Notification | `shell.notify({ tone: "info" \| "success" \| "warning" \| "error" })` |
 | Action principale, action destructrice | `Action` avec `primary` ; `Action` avec `danger` |
+
+**Pastilles sobres.** Une pastille dit un état, elle n’alarme pas. Ce qui reste simplement à faire ou attend (« À configurer », « 3 modules à configurer », « À connecter », « Mise à jour v1.2 », « En cours ») est une pastille neutre avec au plus un point de couleur : `tone="pending"`, ou du texte discret (`Text tone="muted"`) quand la ligne le dit déjà. Le fond jaune ou orange (`warning`) est réservé à un vrai avertissement, quelque chose qui peut mal tourner si l’on n’agit pas (« Modifié sur place », « Conflit », « Bloqué ») ; le rouge (`danger`), à un échec ; le vert (`success`), à un résultat obtenu. Jamais deux pastilles colorées côte à côte pour dire la même chose, jamais une pastille colorée pour compter.
 
 L’échec s’écrit `danger` dans tout `@alfred/ui` (`FeedbackBanner` accepte aussi `error`, son synonyme) ; seul `shell.notify` l’écrit `error`. Choisir le ton selon la gravité, jamais selon la couleur souhaitée. Les huit teintes (`steel`, `blue`, `violet`, `pink`, `red`, `orange`, `green`, `teal`) servent à la couleur de chaque entrée du menu, qui ne teinte que son icône, et à l’accent choisi par l’utilisateur, qu’Alfred applique aux jetons primaires avec un contraste d’au moins 4,5:1 : une page ne les nomme jamais.
 
@@ -608,7 +610,7 @@ export interface Tache {
 
 export const ETATS: StatusMap = {
   a_faire: { label: "À faire", tone: "neutral" },
-  en_cours: { label: "En cours", tone: "warning" },
+  en_cours: { label: "En cours", tone: "pending" },
   terminee: { label: "Terminée", tone: "success" },
 };
 

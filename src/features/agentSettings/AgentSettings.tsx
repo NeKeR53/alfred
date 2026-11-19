@@ -113,9 +113,7 @@ function HarnessStatus({
           </Text>
         </Row>
       ) : state.status === "error" ? (
-        <StatusBadge tone="warning" size="compact">
-          État inconnu
-        </StatusBadge>
+        <StatusBadge size="compact">État inconnu</StatusBadge>
       ) : state.value.installed ? (
         <>
           <StatusBadge tone="success" size="compact">
@@ -126,7 +124,7 @@ function HarnessStatus({
               Connecté
             </StatusBadge>
           ) : state.value.loggedIn === false ? (
-            <StatusBadge tone="warning" size="compact">
+            <StatusBadge tone="pending" size="compact">
               Non connecté
             </StatusBadge>
           ) : null}

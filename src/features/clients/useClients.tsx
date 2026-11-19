@@ -26,12 +26,12 @@ import {
 } from "./api";
 
 /** États d’un service ou d’un compte, en mots simples. */
-export const STATUS: Record<ClientItem["status"], { label: string; tone: "success" | "warning" | "danger" }> = {
+export const STATUS: Record<ClientItem["status"], { label: string; tone: "success" | "pending" | "danger" }> = {
   ready: { label: "Prêt", tone: "success" },
-  toValidate: { label: "À approuver", tone: "warning" },
-  noInstance: { label: "Aucun compte", tone: "warning" },
-  missingSecret: { label: "Mot de passe ou clé manquant", tone: "warning" },
-  toConnect: { label: "À connecter", tone: "warning" },
+  toValidate: { label: "À approuver", tone: "pending" },
+  noInstance: { label: "Aucun compte", tone: "pending" },
+  missingSecret: { label: "Mot de passe ou clé manquant", tone: "pending" },
+  toConnect: { label: "À connecter", tone: "pending" },
   invalid: { label: "Mal configuré", tone: "danger" },
 };
 

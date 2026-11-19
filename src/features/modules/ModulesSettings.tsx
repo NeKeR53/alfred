@@ -349,7 +349,7 @@ export function ModulesSettings() {
       <>
         {hiddenOf(module) ? <StatusBadge size="compact">Désactivé</StatusBadge> : null}
         {needsAttention(module) ? (
-          <StatusBadge tone="warning" size="compact">
+          <StatusBadge tone="pending" size="compact">
             À configurer
           </StatusBadge>
         ) : null}
@@ -359,7 +359,7 @@ export function ModulesSettings() {
               v{update.available} bloquée
             </StatusBadge>
           ) : (
-            <StatusBadge tone="warning" size="compact">
+            <StatusBadge tone="pending" size="compact">
               Mise à jour v{update.available}
             </StatusBadge>
           )
@@ -607,12 +607,10 @@ export function ModulesSettings() {
             {counts.attention > 0 && filter !== "attention" ? (
               // Une ligne compacte, sans encadré : pas de bandeau dans une rubrique.
               <div className="module-list-view__notice">
-                <StatusBadge tone="warning" size="compact">
+                <StatusBadge tone="pending" size="compact">
                   {counts.attention > 1 ? `${counts.attention} modules à configurer` : "1 module à configurer"}
                 </StatusBadge>
-                <Button onClick={() => setFilter("attention")}>
-                  Les afficher
-                </Button>
+                <Button onClick={() => setFilter("attention")}>Les afficher</Button>
               </div>
             ) : null}
             {modules.length > 5 || filter !== "all" || query ? (

@@ -124,7 +124,7 @@ export function ServiceBlock({
           <SettingRow
             title={need.label}
             badge={
-              <StatusBadge tone="warning" size="compact">
+              <StatusBadge tone="pending" size="compact">
                 À configurer
               </StatusBadge>
             }

@@ -31,7 +31,7 @@ export type ValueType =
   | "code"
   | "tags";
 
-export type StatusTone = "neutral" | "success" | "warning" | "danger";
+export type StatusTone = "neutral" | "pending" | "success" | "warning" | "danger";
 
 /** Valeur d’état → libellé et ton : `{ a_faire: { label: "À faire", tone: "neutral" } }`. */
 export type StatusMap = Readonly<Record<string, { label: string; tone: StatusTone }>>;
