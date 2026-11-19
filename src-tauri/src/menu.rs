@@ -1469,6 +1469,75 @@ mod tests {
         .unwrap();
         assert_eq!(snapshot["created"], json!("jira/principal@jira-bis"));
     }
+
+    /// Un module à plusieurs sections, chacune avec une seule page du même nom (comme Atlassian : Jira, Bitbucket,
+    /// Confluence, Support), l’une avec son panneau.
+    fn atlassian_module(space: &Space) {
+        let dir = space.module_dir("atlassian");
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        let mut sections = Vec::new();
+        let mut pages = Vec::new();
+        for name in ["jira", "bitbucket", "confluence", "support"] {
+            sections.push(json!({ "id": name, "label": name }));
+            pages.push(json!({ "id": name, "title": name, "placement": { "kind": "tab", "section": name } }));
+            std::fs::write(dir.join(format!("pages/{name}.tsx")), "export default function Page() { return null; }\n").unwrap();
+        }
+        pages.push(json!({ "id": "details", "title": "Détails", "placement": { "kind": "panel", "page": "atlassian/jira" } }));
+        std::fs::write(dir.join("pages/details.tsx"), "export default function Page() { return null; }\n").unwrap();
+        let module = json!({ "id": "atlassian", "name": "Atlassian", "version": "1.0.0", "sections": sections, "pages": pages });
+        std::fs::write(dir.join("module.json"), module.to_string()).unwrap();
+    }
+
+    /// Chaque section d’un tel module : une page de plus alors qu’elle existe, un onglet dans la page existante, la
+    /// page d’origine retirée puis rajoutée. Rien ne manque, et le panneau suit chaque copie.
+    #[tokio::test]
+    async fn each_section_of_a_module_is_added_again_retired_and_added_back() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        atlassian_module(&space);
+        assert!(space.persist_menu().unwrap());
+        for name in ["jira", "bitbucket", "confluence", "support"] {
+            let section = format!("atlassian/{name}");
+            let tab = || vec![NewTab { page: section.clone(), ..NewTab::default() }];
+            let copy = space.add_menu_page(&section, tab(), None, None).unwrap();
+            assert_eq!(copy, format!("{section}@2"));
+            let extra = space
+                .add_menu_tab(&section, NewTab { page: section.clone(), label: Some("Autre".into()), ..NewTab::default() })
+                .unwrap();
+            assert_eq!(extra, format!("{section}@autre"));
+            space.remove_menu_item(&section).unwrap();
+            assert!(!space.snapshot().unwrap().sections.iter().any(|known| known.id == section));
+            assert_eq!(space.add_menu_page(&section, tab(), None, None).unwrap(), section);
+
+            let snapshot = space.snapshot().unwrap();
+            assert!(snapshot.problems.is_empty(), "{:?}", snapshot.problems);
+            let copies: Vec<_> = snapshot.sections.iter().filter(|known| known.id.starts_with(&section)).collect();
+            assert_eq!(copies.len(), 2, "{section}");
+            for copy in copies {
+                assert_eq!(copy.pages.len(), 1);
+                assert_eq!(copy.pages[0].panel.is_some(), name == "jira", "{}", copy.pages[0].reference);
+            }
+        }
+    }
+
+    /// Les écritures du menu disent l’espace que montrait la fenêtre : un autre, ouvert entre-temps ailleurs, les
+    /// refuse sans rien écrire.
+    #[tokio::test]
+    async fn the_menu_is_not_written_into_another_space_than_the_shown_one() {
+        let (state, dir) = test_state();
+        let space = state.space().unwrap();
+        atlassian_module(&space);
+        space.persist_menu().unwrap();
+        let before = space.manifest().unwrap().layout.menu;
+        let other = dir.path().join("autre").to_string_lossy().to_string();
+        let add = |shown: String| json!({ "section": "atlassian/jira", "tabs": [{ "page": "atlassian/jira" }], "space": shown });
+        let refused = invoke(&state, "space.menu.addPage", add(other)).await.unwrap_err();
+        assert!(refused.message.contains("Un autre espace de travail est ouvert"), "{}", refused.message);
+        assert_eq!(space.manifest().unwrap().layout.menu, before);
+        let shown = space.root.to_string_lossy().to_string();
+        let snapshot = invoke(&state, "space.menu.addPage", add(shown)).await.unwrap();
+        assert_eq!(snapshot["created"], json!("atlassian/jira@2"));
+    }
 }
 
 /// Migration d’une copie d’espace réel, à la main : `ALFRED_MIGRATION_COPY=<dossier> cargo test -- --ignored

@@ -10,7 +10,9 @@ import { useShell } from "../../shell/store";
 type MenuResult = Snapshot & { created?: string };
 
 async function run(command: string, args: Record<string, unknown>): Promise<string | undefined> {
-  const next = await invoke<MenuResult>(command, args);
+  // L’espace affiché : Alfred refuse d’écrire si un autre a été ouvert entre-temps.
+  const space = useShell.getState().snapshot?.path;
+  const next = await invoke<MenuResult>(command, space ? { ...args, space } : args);
   const { created, ...snapshot } = next;
   useShell.setState({ snapshot });
   return created;

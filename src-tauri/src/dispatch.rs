@@ -1,7 +1,7 @@
 //! Point d’entrée unique des commandes de l’interface. La fenêtre Tauri et le pont de développement passent tous
 //! deux par ici, si bien qu’un navigateur de test exerce exactement le même code que l’application.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -161,6 +161,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
         "space.menu.addPage" | "space.menu.addTab" | "space.menu.configure" | "space.menu.remove"
         | "space.menu.move" | "space.menu.moveTab" => {
             let space = state.space()?;
+            ensure_shown_space(&space, &args)?;
             let (message, created) = menu_command(&space, command, &args)?;
             // Le compte d’un autre service, choisi ici par l’utilisateur : les fonctions du module y ont accès.
             grant_chosen_accounts(&state, &space, &args)?;
@@ -239,6 +240,19 @@ fn grant_chosen_accounts(state: &AppState, space: &Space, args: &Value) -> AppRe
         app_db::grant(&db, &key, &format!("function:{owner}/*"), &format!("client:{client}"))?;
     }
     Ok(())
+}
+
+/// L’espace que montrait la fenêtre (`space`, son dossier) doit être celui qui est ouvert : un autre, ouvert entre-temps
+/// ailleurs, recevrait sinon une écriture pensée pour le premier.
+pub fn ensure_shown_space(space: &Space, args: &Value) -> AppResult<()> {
+    let Some(shown) = opt_arg::<String>(args, "space")? else { return Ok(()) };
+    if Path::new(&shown) == space.root.as_path() {
+        return Ok(());
+    }
+    Err(AppError::new(format!(
+        "Un autre espace de travail est ouvert ({}) : rien n’a été écrit. Rechargez la fenêtre (Cmd+R).",
+        space.root.display()
+    )))
 }
 
 /// Pages de l’utilisateur : l’opération demandée, le message du commit et, pour un ajout, l’identifiant créé.

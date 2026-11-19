@@ -178,7 +178,9 @@ beforeEach(() => {
     return () => listeners.delete(name);
   });
   vi.mocked(invoke).mockImplementation(async (command, args = {}) => {
-    calls.push({ command, args });
+    // L’espace affiché, joint à chaque écriture du menu, se vérifie dans src/shell/spaceSwitch.test.tsx.
+    const { space: _shown, ...rest } = args;
+    calls.push({ command, args: command.startsWith("space.menu.") ? rest : args });
     switch (command) {
       case "clients.list":
         return {

@@ -127,6 +127,19 @@ export const useShell = create<ShellState>((set, get) => ({
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => void get().refresh(), 150);
       });
+      // Un autre espace ouvert (ou fermé) ailleurs, par le pont de développement par exemple : la fenêtre le suit,
+      // plutôt que de montrer encore l’ancien pendant que ses écritures vont dans le nouveau.
+      onNativeEvent("space:switched", () => {
+        if (pageWindowReference()) return;
+        void invoke<Snapshot>("space.snapshot").then(
+          (snapshot) => {
+            if (snapshot.path === get().snapshot?.path) return;
+            applyTheme(get().theme, snapshot.accent);
+            set((state) => ({ snapshot, revision: state.revision + 1, view: { kind: "agent" } }));
+          },
+          () => set({ snapshot: null, view: { kind: "agent" } }),
+        );
+      });
       // Données d’exemple activées ou quittées ailleurs (fiche du module, autre fenêtre) : la vue est relue, et seules
       // les pages du module se rechargent (leur adresse change).
       onNativeEvent("examples:changed", () => {
