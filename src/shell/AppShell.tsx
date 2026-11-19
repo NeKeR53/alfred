@@ -173,7 +173,58 @@ export function SectionView({
       {/* Colonne de la page : sa barre du haut, puis la page. Le panneau de droite est à côté, sur toute la hauteur. */}
       <div className="shell-column">
         <PageTopBar
-          title={title}
+          className="shell-topbar"
+          title={
+            // Onglets à gauche, juste après le titre, comme les vues d’un produit dans OneApp.
+            <div className="shell-title">
+              <h1>{title}</h1>
+              {tabs.length > 1 && activeId ? (
+                // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
+                <div
+                  className="shell-tabs"
+                  onPointerDown={(event) => {
+                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                    const tab = target?.element.closest<HTMLElement>('[role="tab"]');
+                    if (target && tab && sortable.some((item) => item.id === target.id))
+                      drag.startDrag(event, target.id, tab);
+                  }}
+                  onContextMenu={(event) => {
+                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                    if (!target || !onPageMenu) return;
+                    event.preventDefault();
+                    onPageMenu(target.id, { x: event.clientX, y: event.clientY }, target.element.closest("button"));
+                  }}
+                  onKeyDownCapture={(event) => {
+                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
+                    if (!target) return;
+                    const tab = target.element.closest<HTMLElement>('[role="tab"]');
+                    if (isMenuKey(event) && onPageMenu && tab) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onPageMenu(target.id, anchorOf(tab), tab);
+                      return;
+                    }
+                    if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (!drag.moveItem(target.id, event.key === "ArrowLeft" ? -1 : 1))
+                        announceEdge(event.key === "ArrowLeft" ? "premier" : "dernier");
+                      refocus(`[data-tab-ref="${CSS.escape(target.id)}"]`, (element) => element.closest("button"));
+                    }
+                  }}
+                >
+                  <Tabs
+                    label={`Onglets de ${title}`}
+                    className="shell-tabs__list choice-segmented"
+                    tabClassName="shell-tabs__tab"
+                    items={tabs}
+                    activeId={activeId}
+                    onChange={(id) => setActiveTab(sectionId, id)}
+                  />
+                </div>
+              ) : null}
+            </div>
+          }
           panelToggle={
             hasPanel && page
               ? {
@@ -184,51 +235,6 @@ export function SectionView({
               : undefined
           }
         >
-          {tabs.length > 1 && activeId ? (
-            // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
-            <div
-              className="shell-tabs"
-              onPointerDown={(event) => {
-                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                const tab = target?.element.closest<HTMLElement>('[role="tab"]');
-                if (target && tab && sortable.some((item) => item.id === target.id))
-                  drag.startDrag(event, target.id, tab);
-              }}
-              onContextMenu={(event) => {
-                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                if (!target || !onPageMenu) return;
-                event.preventDefault();
-                onPageMenu(target.id, { x: event.clientX, y: event.clientY }, target.element.closest("button"));
-              }}
-              onKeyDownCapture={(event) => {
-                const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                if (!target) return;
-                const tab = target.element.closest<HTMLElement>('[role="tab"]');
-                if (isMenuKey(event) && onPageMenu && tab) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onPageMenu(target.id, anchorOf(tab), tab);
-                  return;
-                }
-                if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (!drag.moveItem(target.id, event.key === "ArrowLeft" ? -1 : 1))
-                    announceEdge(event.key === "ArrowLeft" ? "premier" : "dernier");
-                  refocus(`[data-tab-ref="${CSS.escape(target.id)}"]`, (element) => element.closest("button"));
-                }
-              }}
-            >
-              <Tabs
-                label={`Onglets de ${title}`}
-                className="shell-tabs__list choice-segmented"
-                tabClassName="shell-tabs__tab"
-                items={tabs}
-                activeId={activeId}
-                onChange={(id) => setActiveTab(sectionId, id)}
-              />
-            </div>
-          ) : null}
           {actions}
           {detachable && inTauri && page && !builtInTab && !waiting ? (
             <IconButton

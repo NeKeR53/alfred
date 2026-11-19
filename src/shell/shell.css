@@ -24,13 +24,29 @@
   background: var(--color-bg);
 }
 /*
- * Onglets de la barre du haut, repris de la barre des Réglages de OneApp : un groupe segmenté calé à droite, qui
- * défile plutôt que de passer à la ligne quand la place manque.
+ * Titre de la section et ses onglets, à gauche de la barre du haut, comme les vues d’un produit dans OneApp : le nom
+ * reste lisible, les onglets le suivent et, quand la place manque (panneau de droite ouvert), ils défilent plutôt que
+ * de passer sous les actions, qui gardent leur largeur à droite.
  */
+.shell-topbar .page-topbar__actions {
+  flex-shrink: 0;
+}
+.shell-title {
+  min-width: 120px;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  align-self: stretch;
+}
+.shell-title h1 {
+  flex: 0 0 auto;
+  max-width: 260px;
+}
 .shell-tabs {
   min-width: 0;
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  margin-left: 14px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -40,7 +56,6 @@
 .shell-tabs > .shell-tabs__list {
   flex: 0 0 auto;
   flex-wrap: nowrap;
-  margin-left: auto;
 }
 .shell-tabs__tab {
   height: 26px;
