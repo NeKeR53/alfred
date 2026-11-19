@@ -127,7 +127,7 @@ function RowActions({
 }
 
 /** Poignée de glissement d’une ligne : un appui la fait glisser ; Alt+Flèche ou les flèches font de même au clavier. */
-function DragHandle({
+export function DragHandle({
   subject,
   onPointerDown,
 }: {

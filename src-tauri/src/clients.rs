@@ -653,6 +653,11 @@ fn require_instance(space: &Space, args: &Value) -> AppResult<Client> {
 }
 
 /// Tous les clients de l’espace ; un fichier illisible est rendu avec son erreur plutôt que de masquer les autres.
+/// Les clients lisibles de l’espace.
+pub fn all(space: &Space) -> Vec<ClientDef> {
+    load_all(space).into_iter().filter_map(|(_, client)| client.ok()).collect()
+}
+
 fn load_all(space: &Space) -> Vec<(String, AppResult<ClientDef>)> {
     let Ok(entries) = std::fs::read_dir(clients_dir(space)) else { return Vec::new() };
     let mut ids: Vec<String> = entries
@@ -1395,12 +1400,26 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
         return Err(crate::examples::blocked(&name));
     }
     let space = state.space()?;
-    let def = resolve(&space, &subject.module, &name)?;
+    let mut def = resolve(&space, &subject.module, &name)?;
     // Une fonction appelée depuis une page appelle le compte que la page a choisi pour ce besoin, sauf si elle en
     // nomme un autre ; à défaut, l’instance de la page, puis celle par défaut.
-    let instance = opt_arg::<String>(args, "instance")?
+    let mut instance = opt_arg::<String>(args, "instance")?
         .or_else(|| subject.accounts.get(&name).cloned())
         .or_else(|| subject.instance.clone());
+    // Un compte d’un autre service du même type (`client/instance`), choisi par l’utilisateur pour la page.
+    let mut borrowed = false;
+    if let Some((other, id)) = instance.clone().as_deref().and_then(|value| value.split_once('/')) {
+        if other != def.id {
+            def = crate::menu::compatible_clients(&space, &subject.module, &name)
+                .into_iter()
+                .find(|candidate| candidate.id == other)
+                .ok_or_else(|| {
+                    AppError::new(format!("Le compte « {other}/{id} » n’est pas un compte du type de « {name} »."))
+                })?;
+            borrowed = true;
+        }
+        instance = Some(id.to_string());
+    }
     let client = def.effective(instance.as_deref())?;
     let path: String = arg(args, "path")?;
     let call = Call {
@@ -1429,7 +1448,7 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     // Le libellé n’est pas dans l’empreinte validée : la question montre aussi l’identifiant et l’adresse validés.
     let label = format!("le client {} (« {} », {})", def.label, client.id, addresses.join(", "));
     // Le client d’une dépendance a été annoncé à l’installation ou déclaré dans `requires` : pas de question.
-    let through_dependency = dependency_reference(&name).is_some();
+    let through_dependency = dependency_reference(&name).is_some() && !borrowed;
     let allowed =
         if through_dependency { Ok(()) } else { permissions::ensure(state, &subject, &resource, &label).await };
     if let Err(error) = allowed {
@@ -1849,8 +1868,6 @@ fn write_client(state: &Arc<AppState>, args: &Value, validated: bool) -> AppResu
             check_entry_kind(state, &client)?;
         }
     }
-    // Le menu est écrit avant que les comptes ne changent : les pages gardent les leurs.
-    space.persist_menu()?;
     store(&space, &def)?;
     if validated {
         for instance in &def.instances {
@@ -1925,10 +1942,6 @@ fn save_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let client = def.resolve_instance(&instance)?;
     client.validate()?;
     check_entry_kind(state, &client)?;
-    // Le menu est écrit avant que les comptes ne changent : un compte nouveau n’entre dans aucune page.
-    if position.is_none() {
-        space.persist_menu()?;
-    }
     store(&space, &def)?;
     record_trust(state, &space, &client)?;
     git::commit_all(&space.root, &format!("Instance {} du client {}", instance.display_label(), def.label))?;
@@ -1951,8 +1964,6 @@ fn delete_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         .iter()
         .position(|instance| instance.id == id)
         .ok_or_else(|| AppError::new(format!("Le client « {} » n’a pas d’instance « {id} ».", def.label)))?;
-    // Le menu est écrit avant : une page qui montrait ce compte l’attend, sans passer à un autre compte.
-    space.persist_menu()?;
     let removed = def.instances.remove(index);
     store(&space, &def)?;
     // Une future instance du même identifiant ne doit pas hériter de cette validation.

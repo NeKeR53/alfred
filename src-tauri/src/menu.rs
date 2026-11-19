@@ -90,6 +90,53 @@ pub struct NewTab {
     pub accounts: BTreeMap<String, String>,
 }
 
+/// Services dont un compte peut servir au besoin `need` du module `module` : le sien d’abord (sa liaison, ou le
+/// client de même nom), puis ceux du même type. Un service est du même type quand il porte l’identifiant du besoin,
+/// quand un autre module le reçoit pour un besoin de même identifiant, ou quand il a l’adresse que le module décrit
+/// pour ce service (`clients[].client.baseUrl`). Un compte Bitbucket connecté pour un module sert ainsi à un autre.
+pub fn compatible_clients(space: &Space, module: &str, need: &str) -> Vec<crate::clients::ClientDef> {
+    let (owner, id) = need.split_once('/').unwrap_or((module, need));
+    let own = crate::clients::client_for(space, module, need).ok();
+    let described = space
+        .module(owner)
+        .ok()
+        .and_then(|manifest| manifest.clients.into_iter().find(|candidate| candidate.id == id))
+        .and_then(|declared| declared.client)
+        .and_then(|client| client.get("baseUrl").and_then(|url| url.as_str()).map(str::to_string))
+        .filter(|url| !url.trim().is_empty());
+    let mut same_need: BTreeSet<String> = BTreeSet::new();
+    for other in space.module_ids() {
+        let Ok(manifest) = space.module(&other) else { continue };
+        for declared in manifest.clients.iter().filter(|declared| declared.id == id) {
+            if let Ok(client) = crate::clients::client_for(space, &other, &declared.id) {
+                same_need.insert(client.id);
+            }
+        }
+    }
+    let mut found: Vec<crate::clients::ClientDef> = own.clone().into_iter().collect();
+    for client in crate::clients::all(space) {
+        if found.iter().any(|known| known.id == client.id) {
+            continue;
+        }
+        let same_type = client.id == id
+            || same_need.contains(&client.id)
+            || described.as_deref().is_some_and(|url| url.trim_end_matches('/') == client.base_url.trim_end_matches('/'));
+        if same_type {
+            found.push(client);
+        }
+    }
+    found
+}
+
+/// Compte choisi pour un besoin : `instance` (un compte de son propre service) ou `client/instance` (le compte d’un
+/// autre service du même type).
+pub fn split_account(value: &str) -> (Option<&str>, &str) {
+    match value.split_once('/') {
+        Some((client, instance)) => (Some(client), instance),
+        None => (None, value),
+    }
+}
+
 /// Référence déclarée, sans le suffixe d’une copie.
 pub fn base(reference: &str) -> &str {
     reference.split('@').next().unwrap_or(reference)
@@ -386,7 +433,8 @@ impl Space {
         for need in needs_of(template) {
             let follows = template.per_instance.as_deref() == Some(need.as_str());
             match crate::clients::client_for(self, &template.module, &need) {
-                Ok(client) if client.instances.is_empty() => {
+                // Sans compte à lui, sauf si l’utilisateur a choisi celui d’un autre service du même type.
+                Ok(client) if client.instances.is_empty() && !tab.accounts.get(&need).is_some_and(|value| value.contains('/')) => {
                     if follows && waiting.is_none() {
                         waiting = Some(format!(
                             "Le service « {} » n’a encore aucun compte. En ajouter un dans Réglages → Modules, fiche du module, puis le choisir pour cette page.",
@@ -395,21 +443,40 @@ impl Space {
                     }
                 }
                 Ok(client) => {
-                    let chosen = match tab.accounts.get(&need) {
-                        Some(instance) if client.instances.iter().any(|known| &known.id == instance) => {
-                            Some(instance.clone())
+                    let chosen = match tab.accounts.get(&need).map(|value| (value, split_account(value))) {
+                        Some((value, (None, instance))) if client.instances.iter().any(|known| known.id == instance) => {
+                            Some((client.id.clone(), value.clone(), instance.to_string()))
                         }
-                        Some(instance) => {
+                        // Le compte d’un autre service du même type.
+                        Some((value, (Some(other), instance)))
+                            if compatible_clients(self, &template.module, &need).iter().any(|candidate| {
+                                candidate.id == other && candidate.instances.iter().any(|known| known.id == instance)
+                            }) =>
+                        {
+                            Some((other.to_string(), value.clone(), instance.to_string()))
+                        }
+                        Some((value, _)) => {
                             if waiting.is_none() {
                                 waiting = Some(format!(
-                                    "Le compte « {instance} » du service « {} » n’existe plus. Choisir un autre compte pour cette page dans Réglages → Modules, fiche du module.",
+                                    "Le compte « {value} » choisi pour cette page n’existe plus. Choisir un autre compte dans Réglages → Modules, fiche du module."
+                                ));
+                            }
+                            None
+                        }
+                        // Pas de choix : le seul compte du service ; s’il en a plusieurs, rien n’est deviné.
+                        None if follows && client.instances.len() == 1 => {
+                            let only = client.instances[0].id.clone();
+                            Some((client.id.clone(), only.clone(), only))
+                        }
+                        None if follows => {
+                            if waiting.is_none() {
+                                waiting = Some(format!(
+                                    "Le service « {} » a plusieurs comptes : choisir celui de cette page dans Réglages → Modules, fiche du module.",
                                     client.label
                                 ));
                             }
                             None
                         }
-                        // Pas de choix : le compte par défaut (le premier) pour une page qui montre un compte.
-                        None if follows => client.instances.first().map(|known| known.id.clone()),
                         // Ailleurs, les fonctions appellent le compte par défaut : la page s’en sert aussi.
                         None => {
                             if let Some(first) = client.instances.first() {
@@ -418,10 +485,9 @@ impl Space {
                             None
                         }
                     };
-                    if let Some(instance) = chosen {
-                        let key = account_key(&client.id, &instance);
-                        usage.entry(key).or_default().push(tab.id.clone());
-                        accounts.insert(need.clone(), instance);
+                    if let Some((owner, value, instance)) = chosen {
+                        usage.entry(account_key(&owner, &instance)).or_default().push(tab.id.clone());
+                        accounts.insert(need.clone(), value);
                     }
                 }
                 Err(error) => {
@@ -468,15 +534,24 @@ impl Space {
 
     /// Vérifie les comptes demandés pour un modèle : des besoins du modèle, des comptes qui existent.
     fn check_accounts(&self, template: &PageTemplate, accounts: &BTreeMap<String, String>) -> AppResult<()> {
-        for (need, instance) in accounts {
+        for (need, value) in accounts {
             if !template.needs.contains(need) {
                 return Err(AppError::new(format!(
                     "La page « {} » n’a pas besoin du service « {need} ».",
                     template.title
                 )));
             }
-            let client = crate::clients::client_for(self, &template.module, need)?;
-            if !client.instances.iter().any(|known| &known.id == instance) {
+            let (other, instance) = split_account(value);
+            let client = match other {
+                None => crate::clients::client_for(self, &template.module, need)?,
+                Some(other) => compatible_clients(self, &template.module, need)
+                    .into_iter()
+                    .find(|candidate| candidate.id == other)
+                    .ok_or_else(|| {
+                        AppError::new(format!("Le service « {other} » ne peut pas servir au besoin « {need} » de cette page."))
+                    })?,
+            };
+            if !client.instances.iter().any(|known| known.id == instance) {
                 return Err(AppError::new(format!(
                     "Le service « {} » n’a pas de compte « {instance} ».",
                     client.label
@@ -989,6 +1064,28 @@ mod tests {
         assert_eq!(desk.pages[0].instance, None);
     }
 
+    /// La migration s’écrit une seule fois, à l’ouverture de l’espace, dans son propre commit ; une autre ouverture
+    /// n’écrit plus rien, et la vue ne fait jamais d’écriture.
+    #[tokio::test]
+    async fn the_migration_is_written_once_at_opening_in_its_own_commit() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        prefect_module(&space, true);
+        write_client(&space, "prefect", &[("prod", "Prod")]);
+        legacy(&space, Some(json!({ "prefect/prod": ["prefect/deploiements"] })), json!({ "sections": [] }));
+        crate::git::commit_all(&space.root, "Espace d’avant").unwrap();
+        let log = |space: &Space| crate::git::run(&space.root, &["log", "--format=%s"]).unwrap();
+        invoke(&state, "space.snapshot", json!({})).await.unwrap();
+        assert!(space.manifest().unwrap().layout.menu.is_none(), "la vue n’écrit rien");
+        let path = space.root.to_string_lossy().to_string();
+        invoke(&state, "space.open", json!({ "path": path, "existing": true })).await.unwrap();
+        let history = log(&space);
+        assert_eq!(history.lines().take(2).collect::<Vec<_>>(), ["Menu repris en pages personnalisables", "Ouverture de l’espace de travail"]);
+        assert!(space.manifest().unwrap().layout.menu.is_some());
+        invoke(&state, "space.open", json!({ "path": path, "existing": true })).await.unwrap();
+        assert_eq!(log(&space).matches("Menu repris").count(), 1);
+    }
+
     /// Comptes en onglets (`instancesAs: "tabs"`) : une seule entrée, un onglet par page de chaque compte, nommé
     /// d’après le compte (« Page — Compte » quand il en a plusieurs) ; le panneau suit le compte de son onglet.
     #[tokio::test]
@@ -1108,9 +1205,15 @@ mod tests {
         let space = state.space().unwrap();
         let (prod, recette) = prefect_with_two_accounts(&state).await;
 
-        // La page d’origine montre le compte par défaut ; le compte Recette n’est dans aucune page.
+        // Deux comptes : rien n’est deviné, la page d’origine attend qu’on choisisse le sien.
         let first = &space.snapshot().unwrap().sections[0];
-        assert_eq!(first.pages[1].instance.as_deref(), Some("prod"));
+        assert_eq!(first.pages[1].instance, None);
+        assert!(first.pages[1].waiting.as_deref().unwrap().contains("plusieurs comptes"), "{:?}", first.pages[1].waiting);
+        let on_prod = || Some(BTreeMap::from([("prefect".to_string(), "prod".to_string())]));
+        space.configure_menu_item("prefect/deploiements", None, None, on_prod()).unwrap();
+        space.configure_menu_item("prefect/files", None, None, on_prod()).unwrap();
+        let first = &space.snapshot().unwrap().sections[0];
+        assert_eq!((first.pages[1].instance.as_deref(), first.pages[1].waiting.is_none()), (Some("prod"), true));
         assert!(!space.snapshot().unwrap().account_usage.contains_key("prefect/recette"));
 
         // Une deuxième page Prefect, pour le compte Recette.
@@ -1212,6 +1315,94 @@ mod tests {
         assert_eq!(ids, ["prefect/principal"]);
         assert!(!space.snapshot().unwrap().sections[0].pages.iter().any(|page| page.template == "prefect/files"));
         assert!(!space.persist_menu().unwrap(), "Files, retirée, ne revient pas");
+    }
+
+    /// Un compte créé pour un module (Bitbucket pour Atlassian) sert à la page d’un autre module qui a besoin de
+    /// Bitbucket, même si ce module a son propre service : le choix de l’utilisateur vaut accord, et la fonction de
+    /// l’autre module joint ce compte-là.
+    #[tokio::test]
+    async fn an_account_made_for_one_module_serves_a_page_of_another() {
+        let (state, _dir) = test_state();
+        let space = state.space().unwrap();
+        let equipe = remote().await;
+        // Module A, Atlassian : le service bitbucket et son compte « Équipe ».
+        let menu = PlaceTarget::Menu { label: "Atlassian".into(), icon: None, color: None };
+        space.place_page("Dépôts", None, "", &menu, None).unwrap();
+        let mut atlassian = space.module("atlassian").unwrap();
+        atlassian.clients.push(ClientNeed { id: "bitbucket".into(), label: "Bitbucket".into(), ..Default::default() });
+        atlassian.pages[0].uses.clients = vec!["bitbucket".into()];
+        space.write_module(&atlassian).unwrap();
+        invoke(
+            &state,
+            "clients.save",
+            json!({ "client": { "id": "bitbucket", "label": "Bitbucket", "methods": [{ "id": "pat", "label": "PAT", "type": "bearer" }] } }),
+        )
+        .await
+        .unwrap();
+        let token = crate::clients::testing::unique("pat");
+        invoke(&state, "vault.save", json!({ "id": token, "label": "PAT", "kind": "token", "secrets": { "value": "jeton" } }))
+            .await
+            .unwrap();
+        invoke(
+            &state,
+            "clients.saveInstance",
+            json!({ "client": "bitbucket", "create": true,
+                "instance": { "id": "equipe", "label": "Équipe", "url": equipe.origin, "method": "pat", "secret": token } }),
+        )
+        .await
+        .unwrap();
+        // Module B, Revues : il a besoin de Bitbucket, relié à un service à lui, sans compte.
+        let menu = PlaceTarget::Menu { label: "Revues".into(), icon: None, color: None };
+        space.place_page("Revues", None, "", &menu, None).unwrap();
+        let mut revues = space.module("revues").unwrap();
+        revues.clients.push(ClientNeed { id: "bitbucket".into(), label: "Bitbucket".into(), ..Default::default() });
+        revues.pages[0].uses.clients = vec!["bitbucket".into()];
+        revues.pages[0].per_instance = Some("bitbucket".into());
+        space.write_module(&revues).unwrap();
+        invoke(
+            &state,
+            "clients.save",
+            json!({ "client": { "id": "bb-revues", "label": "Bitbucket (revues)", "methods": [{ "id": "pat", "label": "PAT", "type": "bearer" }] } }),
+        )
+        .await
+        .unwrap();
+        let mut manifest = space.manifest().unwrap();
+        manifest.bindings.insert("revues/bitbucket".into(), "bb-revues".into());
+        space.write_manifest(&manifest).unwrap();
+        space.persist_menu().unwrap();
+
+        // Le compte d’Atlassian est proposé à Revues, après son propre service.
+        let snapshot = space.snapshot().unwrap();
+        assert_eq!(snapshot.compatible_clients["revues/bitbucket"], ["bb-revues", "bitbucket"]);
+        let waiting = snapshot.sections.iter().find(|section| section.id == "revues/principal").unwrap();
+        assert!(waiting.pages[0].waiting.is_some(), "son propre service n’a aucun compte");
+
+        // L’utilisateur le choisit : la page le montre, la fiche du compte le dit, et l’accord est donné du même geste.
+        invoke(
+            &state,
+            "space.menu.configure",
+            json!({ "target": "revues/revues", "accounts": { "bitbucket": "bitbucket/equipe" } }),
+        )
+        .await
+        .unwrap();
+        let snapshot = space.snapshot().unwrap();
+        let page = &snapshot.sections.iter().find(|section| section.id == "revues/principal").unwrap().pages[0];
+        assert_eq!((page.waiting.as_ref(), page.instance.as_deref()), (None, Some("bitbucket/equipe")));
+        assert!(snapshot.account_usage["bitbucket/equipe"].contains(&"revues/revues".to_string()));
+
+        // La fonction de Revues joint le compte d’Atlassian, sans question.
+        let mut subject = function_subject("revues");
+        subject.accounts = page.accounts.clone();
+        request(&state, &subject, "bitbucket", json!({ "path": "/api/echo" })).await.unwrap();
+        assert_eq!(equipe.seen_paths().len(), 1);
+        // Ou en le nommant, comme le fait une page qui passe son `instance` à la fonction.
+        let plain = function_subject("revues");
+        request(&state, &plain, "bitbucket", json!({ "path": "/api/echo", "instance": "bitbucket/equipe" })).await.unwrap();
+        assert_eq!(equipe.seen_paths().len(), 2);
+
+        // Un service d’un autre type ne s’accepte pas.
+        let foreign = Some(BTreeMap::from([("bitbucket".to_string(), "prefect/prod".to_string())]));
+        assert!(space.configure_menu_item("revues/revues", None, None, foreign).is_err());
     }
 
     /// Un modèle nouveau (une page que l’agent ajoute au module) entre une fois au menu, dans sa section ; un module

@@ -640,7 +640,7 @@ it("configure les comptes service par service, puis montre les pages pré-ajout�
   expect(await within(dialog).findByRole("heading", { name: "Vos pages" })).toBeInTheDocument();
   expect(within(dialog).getByText(/a ajouté 3 pages à votre menu/)).toBeInTheDocument();
   for (const name of ["Jira", "Support", "Dépôts"])
-    expect(within(dialog).getByRole("region", { name: `Page ${name}` })).toBeInTheDocument();
+    expect(within(dialog).getByRole("group", { name: `Page ${name}` })).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Ajouter une page" })).toBeInTheDocument();
 
   // Une page qui manque d’un compte ouvre le parcours sur l’étape de ce service.

@@ -402,8 +402,31 @@
   align-items: center;
   gap: 8px;
 }
-/* Choix du compte d’un onglet : assez large pour un nom de compte, sans pousser les actions à la ligne. */
+/* Vos pages, dans la fiche d’un module : une ligne par page, ses onglets en retrait, sans encadré. */
+.module-pages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.module-pages-list > li {
+  position: relative;
+}
+.module-pages-list .setting-rows > .setting-row:first-child .module-entry--section {
+  font-weight: 600;
+}
+.module-pages-list__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* Choix du compte d’un onglet : assez large pour le compte, son service et son état, sans pousser les actions à la
+   ligne. */
+.module-pages-list [data-slot="native-select-wrapper"],
 .module-groups [data-slot="native-select-wrapper"] {
-  width: 180px;
-  max-width: 180px;
+  width: 240px;
+  max-width: 240px;
 }

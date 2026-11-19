@@ -861,8 +861,8 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
 
   // La page d’abord : l’entrée avec son icône dans sa couleur, comme dans le menu de gauche, ses onglets en retrait,
   // et le panneau de l’onglet qui en a un.
-  const group = screen.getByRole("region", { name: "Page Développement" });
-  const menu = within(group).getByRole("group", { name: "Page Développement" });
+  const group = screen.getByRole("group", { name: "Page Développement" });
+  const menu = group;
   const menuEntry = within(menu).getByText("Développement");
   expect(menuEntry).toHaveClass("module-entry", "product-color--violet");
   expect(menuEntry.querySelector(".module-entry__icon svg")).not.toBeNull();
@@ -991,7 +991,7 @@ it("montre chaque page du module avec ses onglets et le compte de chacun, et les
   const user = userEvent.setup();
   prefectSpace();
   await openModule(user, "Prefect");
-  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  const page = await screen.findByRole("group", { name: "Page Prefect" });
   expect(within(page).getByText("2 onglets.")).toBeInTheDocument();
   expect(within(page).getByRole("combobox", { name: "Compte Prefect de Déploiements" })).toHaveValue("prod");
   expect(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" })).toHaveValue("recette");
@@ -1068,7 +1068,7 @@ it("crée un compte sur place depuis un onglet, qui en devient le compte", async
   const user = userEvent.setup();
   prefectSpace();
   await openModule(user, "Prefect");
-  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  const page = await screen.findByRole("group", { name: "Page Prefect" });
   await user.selectOptions(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" }), "__nouveau__");
   await user.type(await screen.findByLabelText("Adresse de votre compte"), "https://dev.acme.fr");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
@@ -1076,6 +1076,57 @@ it("crée un compte sur place depuis un onglet, qui en devient le compte", async
     expect(lastCall("space.menu.configure")).toEqual({
       target: "prefect/deploiements@recette",
       accounts: { prefect: "compte" },
+    }),
+  );
+});
+
+it("ne devine aucun compte : « Ajouter la page » attend qu’on en choisisse un", async () => {
+  const user = userEvent.setup();
+  prefectSpace();
+  await openModule(user, "Prefect");
+  await user.click(await screen.findByRole("button", { name: "Ajouter une page" }));
+  const dialog = await screen.findByRole("dialog", { name: "Ajouter une page Prefect" });
+  const picker = within(dialog).getByRole("combobox", { name: "Compte Prefect" });
+  expect(picker).toHaveValue("");
+  expect(within(picker).getByRole("option", { name: "Choisir un compte…" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Ajouter la page" })).toBeDisabled();
+  // Chaque compte dit son service et son état ; « Ajouter un compte… » reste en bas.
+  const options = within(picker)
+    .getAllByRole("option")
+    .map((option) => option.textContent);
+  expect(options).toEqual([
+    "Choisir un compte…",
+    "Prod · Prefect · connecté",
+    "Recette · Prefect · connecté",
+    "Ajouter un compte…",
+  ]);
+  await user.selectOptions(picker, "prod");
+  expect(within(dialog).getByRole("button", { name: "Ajouter la page" })).toBeEnabled();
+});
+
+it("propose le compte d’un autre module du même type, et l’enregistre avec son service", async () => {
+  const user = userEvent.setup();
+  prefectSpace({ compatibleClients: { "prefect/prefect": ["prefect", "prefect-equipe"] } });
+  // Un compte créé pour un autre module, sur un service du même type.
+  stored.push({
+    id: "prefect-equipe",
+    label: "Prefect (équipe)",
+    baseUrl: "",
+    methods: [{ id: "web", label: "Web", type: "none" }],
+    instances: [{ id: "partage", label: "Partagé", url: "https://prefect.equipe.fr", method: "web" }],
+  });
+  listeners.get("clients:changed")?.({ client: "prefect-equipe" });
+  await openModule(user, "Prefect");
+  const page = await screen.findByRole("group", { name: "Page Prefect" });
+  const picker = within(page).getByRole("combobox", { name: "Compte Prefect de Recette" });
+  await waitFor(() =>
+    expect(within(picker).getByRole("option", { name: "Partagé · Prefect (équipe) · connecté" })).toBeInTheDocument(),
+  );
+  await user.selectOptions(picker, "prefect-equipe/partage");
+  await waitFor(() =>
+    expect(lastCall("space.menu.configure")).toEqual({
+      target: "prefect/deploiements@recette",
+      accounts: { prefect: "prefect-equipe/partage" },
     }),
   );
 });

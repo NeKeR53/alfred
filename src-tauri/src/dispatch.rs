@@ -15,9 +15,6 @@ const LAST_SPACE: &str = "space.last";
 
 /// Vue de l’espace pour l’interface, avec les réglages du poste qui la complètent (données d’exemple).
 fn ui_snapshot(state: &AppState, space: &Space) -> AppResult<Value> {
-    // Un modèle nouveau (module installé, page écrite par l’agent) entre au menu une fois, et c’est écrit ; le
-    // commit suivant l’emporte avec lui.
-    let _ = space.persist_menu();
     let mut snapshot = space.snapshot()?;
     snapshot.examples = crate::examples::modules(state);
     Ok(serde_json::to_value(snapshot)?)
@@ -165,6 +162,8 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
         | "space.menu.move" | "space.menu.moveTab" => {
             let space = state.space()?;
             let (message, created) = menu_command(&space, command, &args)?;
+            // Le compte d’un autre service, choisi ici par l’utilisateur : les fonctions du module y ont accès.
+            grant_chosen_accounts(&state, &space, &args)?;
             commit(&space, &message)?;
             state.emit("space:changed", Value::Null);
             let mut snapshot = ui_snapshot(&state, &space)?;
@@ -201,6 +200,45 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
         }
         _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
     }
+}
+
+/// Comptes d’un autre service choisis pour une page (`client/instance`) : le choix de l’utilisateur vaut accord pour
+/// les fonctions du module qui sert ce besoin. Seule l’interface passe ici, jamais l’agent.
+fn grant_chosen_accounts(state: &AppState, space: &Space, args: &Value) -> AppResult<()> {
+    let mut chosen: Vec<(String, String, String)> = Vec::new();
+    let mut collect = |page: Option<&str>, accounts: Option<&Value>| {
+        let module = page.and_then(|page| page.split('/').next()).unwrap_or_default().to_string();
+        for (need, value) in accounts.and_then(Value::as_object).into_iter().flatten() {
+            if let Some((client, _)) = value.as_str().and_then(|value| value.split_once('/')) {
+                chosen.push((module.clone(), need.clone(), client.to_string()));
+            }
+        }
+    };
+    for tab in args.get("tabs").and_then(Value::as_array).into_iter().flatten() {
+        collect(tab.get("page").and_then(Value::as_str), tab.get("accounts"));
+    }
+    if let Some(tab) = args.get("tab") {
+        collect(tab.get("page").and_then(Value::as_str), tab.get("accounts"));
+    }
+    if args.get("accounts").is_some() {
+        let target: String = arg(args, "target")?;
+        let template = space
+            .snapshot()?
+            .sections
+            .iter()
+            .flat_map(|section| section.pages.iter())
+            .find(|page| page.reference == target)
+            .map(|page| page.template.clone());
+        collect(template.as_deref(), args.get("accounts"));
+    }
+    let key = space.root.to_string_lossy().to_string();
+    let db = lock_db(state)?;
+    for (module, need, client) in chosen {
+        // Un besoin d’une dépendance (`dép/besoin`) est servi par les fonctions de ce module-là.
+        let owner = need.split_once('/').map(|(owner, _)| owner.to_string()).unwrap_or(module);
+        app_db::grant(&db, &key, &format!("function:{owner}/*"), &format!("client:{client}"))?;
+    }
+    Ok(())
 }
 
 /// Pages de l’utilisateur : l’opération demandée, le message du commit et, pour un ajout, l’identifiant créé.
@@ -274,16 +312,23 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
     if let Err(error) = crate::space_db::apply_migrations(&space) {
         log::error!("migrations non appliquées à l’ouverture : {}", error.message);
     }
-    // Espace d’avant les pages de l’utilisateur : son menu est repris tel qu’il s’affichait, et les modèles
-    // nouveaux y entrent une fois.
-    if let Err(error) = space.persist_menu() {
-        log::error!("menu non repris : {}", error.message);
-    }
     // Les services restés après la suppression de leur module (avant que le retrait ne les emporte) s’en vont.
     if let Err(error) = crate::clients::forget_unused(state, &space) {
         log::error!("services sans module non retirés : {}", error.message);
     }
     git::commit_all(&space.root, "Ouverture de l’espace de travail")?;
+    // Une seule écriture du menu, ici, dans son propre commit : un espace d’avant les pages de l’utilisateur reprend
+    // son menu tel qu’il s’affichait ; ailleurs, les modèles nouveaux y entrent une fois.
+    let migrating = space.manifest().map(|manifest| manifest.layout.menu.is_none()).unwrap_or(false);
+    match space.persist_menu() {
+        Ok(true) => {
+            let message =
+                if migrating { "Menu repris en pages personnalisables" } else { "Pages nouvelles ajoutées au menu" };
+            git::commit_all(&space.root, message)?;
+        }
+        Ok(false) => {}
+        Err(error) => log::error!("menu non repris : {}", error.message),
+    }
     // Les tâches de fond et les livraisons d’événements interrompues à la fermeture reprennent.
     crate::jobs::kick();
     crate::module_events::kick();

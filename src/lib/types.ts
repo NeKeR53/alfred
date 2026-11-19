@@ -202,6 +202,8 @@ export interface Snapshot {
   sectionTemplates?: SectionTemplate[];
   /** Onglets qui se servent de chaque compte : `client/instance` → références. */
   accountUsage?: Record<string, string[]>;
+  /** Services dont les comptes peuvent servir à chaque besoin (`module/besoin` → clients), le sien d’abord. */
+  compatibleClients?: Record<string, string[]>;
 }
 
 export interface Override {

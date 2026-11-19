@@ -561,6 +561,9 @@ pub struct Snapshot {
     pub section_templates: Vec<crate::menu::SectionTemplate>,
     /// Onglets qui se servent de chaque compte (`client/instance` → références).
     pub account_usage: BTreeMap<String, Vec<String>>,
+    /// Services dont les comptes peuvent servir à chaque besoin d’un modèle (`module/besoin` → clients), le sien
+    /// d’abord : le choix d’un compte propose aussi ceux d’un autre service du même type.
+    pub compatible_clients: BTreeMap<String, Vec<String>>,
     /// Menu calculé qui n’est pas encore sur le disque (espace d’avant, modèles nouveaux) : `persist_menu` l’écrit.
     #[serde(skip)]
     pub pending_menu: Option<(Vec<crate::menu::MenuPage>, Vec<String>)>,
@@ -828,8 +831,10 @@ impl Space {
         let space = Self { root: root.to_path_buf() };
         if !root.join(SPACE_FILE).exists() {
             let default_name = root.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default();
+            // Un espace neuf naît avec les pages de l’utilisateur : il n’a pas de menu d’avant à reprendre.
             space.write_manifest(&SpaceManifest {
                 name: name.map(str::to_string).unwrap_or(default_name),
+                layout: Layout { menu: Some(Vec::new()), ..Layout::default() },
                 ..SpaceManifest::default()
             })?;
         }
@@ -1520,6 +1525,15 @@ impl Space {
             }
         }
         let (templates, section_templates) = crate::menu::templates(&sections);
+        let mut compatible_clients = BTreeMap::new();
+        for template in &templates {
+            for need in &template.needs {
+                let key = if need.contains('/') { need.clone() } else { format!("{}/{need}", template.module) };
+                compatible_clients.entry(key).or_insert_with(|| {
+                    crate::menu::compatible_clients(self, &template.module, need).into_iter().map(|client| client.id).collect()
+                });
+            }
+        }
         let (menu, known) = self.effective_menu(&manifest, &sections, &mut problems);
         let pending_menu = (manifest.layout.menu.as_ref() != Some(&menu) || manifest.layout.menu_templates != known)
             .then(|| (menu.clone(), known));
@@ -1623,6 +1637,7 @@ impl Space {
             templates,
             section_templates,
             account_usage: resolved.usage,
+            compatible_clients,
             pending_menu,
         })
     }
