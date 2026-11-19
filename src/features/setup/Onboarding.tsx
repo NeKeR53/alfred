@@ -1,15 +1,13 @@
 /**
  * Onboarding d’un module : un panneau à part, au-dessus de l’app, hors des Réglages. Il s’ouvre juste après l’import
  * d’un module, ou quand l’utilisateur lance la configuration d’un module (sa fiche, la page d’attente d’une page). Il
- * présente le module, laisse nommer ses pages dans le menu, puis guide la connexion de chaque service.
+ * présente le module, laisse choisir ses pages, puis guide, page par page, le choix ou la connexion de leurs comptes.
  */
 import { Dialog } from "@alfred/ui";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { onNativeEvent } from "../../lib/native";
 import { useShell } from "../../shell/store";
-import type { ServiceEditing } from "../clients/ServiceEditor";
-import { ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
 import { SetupFlow } from "./SetupFlow";
 import { useModuleSetup } from "./useModuleSetup";
@@ -62,20 +60,15 @@ function OnboardingPanel({ module, start, step }: { module: string; start: "intr
   const services = useClients();
   const setups = useModuleSetup({ listen: false });
   const reload = setups.load;
-  // Relu avec les services et l’espace de travail : ce sont eux qui font avancer la configuration.
+  // Relu avec les comptes et l’espace de travail : ce sont eux qui font avancer la configuration.
   useEffect(() => {
     if (services.overview || snapshot) void reload();
   }, [services.overview, snapshot, reload]);
-  const [editing, setEditing] = useState<ServiceEditing>();
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current;
     if (element && !element.open) element.showModal();
   }, []);
-
-  const firstSection =
-    snapshot?.sections.find((section) => section.module === module && !section.hidden) ??
-    snapshot?.sections.find((section) => section.module === module);
   const name = modules.find((candidate) => candidate.id === module)?.name ?? module;
 
   return (
@@ -84,42 +77,22 @@ function OnboardingPanel({ module, start, step }: { module: string; start: "intr
       className="onboarding-panel"
       aria-label={`Configurer ${name}`}
       onCancel={(event) => {
-        // Échap ferme le formulaire d’un service d’abord, puis le panneau.
         event.preventDefault();
-        if (editing) setEditing(undefined);
-        else closeOnboarding();
+        closeOnboarding();
       }}
     >
-      {editing ? (
-        <div className="onboarding-panel__editor">
-          <ServiceEditor
-            editing={editing}
-            redirectUri={services.overview?.redirectUri ?? null}
-            onDone={() => {
-              setEditing(undefined);
-              void services.load();
-            }}
-          />
-        </div>
-      ) : (
-        <SetupFlow
-          setup={setups.of(module)}
-          modules={modules}
-          services={services}
-          start={start}
-          step={step}
-          onEdit={setEditing}
-          onClose={closeOnboarding}
-          onOpenModule={
-            firstSection
-              ? () => {
-                  closeOnboarding();
-                  useShell.getState().setView({ kind: "section", id: firstSection.id });
-                }
-              : undefined
-          }
-        />
-      )}
+      <SetupFlow
+        setup={setups.of(module)}
+        modules={modules}
+        services={services}
+        start={start}
+        step={step}
+        onClose={closeOnboarding}
+        onOpenSection={(id) => {
+          closeOnboarding();
+          useShell.getState().setView({ kind: "section", id });
+        }}
+      />
       {services.confirmDialog}
     </Dialog>
   );

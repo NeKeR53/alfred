@@ -121,59 +121,294 @@
 .onboarding-panel .step-list > li.is-current {
   flex: 1 1 auto;
 }
-/* Un compte de la page : son nom et son état, puis ses lignes, séparé du suivant par un filet. */
-.setup-flow__account {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-.setup-flow__account h4 {
-  margin: 0;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-}
 .onboarding-panel__editor {
   min-height: 0;
 }
 
-/* Étape « Vos pages » : une carte par entrée du menu, son nom, puis ses onglets et leurs services. */
-.onboarding-pages {
+/* Une question d’une page qui a besoin de plusieurs comptes. */
+.setup-flow__question {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+.setup-flow__question h4 {
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+.setup-flow__optional {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+
+/* Grandes cartes : un compte chacune, puis « Connecter un nouveau compte ». */
+.setup-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.setup-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setup-card {
+  display: flex;
+  align-items: center;
   gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.setup-card:hover:not(:disabled) {
+  background: var(--color-surface);
+}
+.setup-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.setup-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.setup-card.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.setup-card__mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  color: var(--color-primary-strong);
+}
+.setup-card.is-selected .setup-card__mark {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-bg);
+}
+.setup-card__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.setup-card__text small {
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  overflow-wrap: anywhere;
+}
+.setup-card--new {
+  border-style: dashed;
+}
+.setup-card__problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 0 14px;
+}
+
+/* « Quelles pages voulez-vous ? » : une carte par page, à cocher. */
+.setup-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.onboarding-pages__section {
+.setup-page {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+}
+.setup-page.is-checked {
+  border-color: var(--color-primary);
+}
+.setup-page__check {
+  display: inline-flex;
+  padding-top: 2px;
+  cursor: pointer;
+}
+.setup-page__check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+.setup-page__icon,
+.setup-preview__icon,
+.setup-menu__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--product-color, var(--color-muted));
+}
+.setup-page__icon {
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-control);
+  background: var(--color-surface);
 }
-.onboarding-pages__head {
+.setup-page__text {
   display: flex;
-  align-items: flex-end;
-  gap: 10px;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
-.onboarding-pages__head > :last-child {
-  flex: 0 1 320px;
+.setup-page__text small {
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
 }
-.onboarding-pages__tabs {
+.setup-page__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.setup-page__rename {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.setup-page__rename:hover {
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.setup-page__more {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--font-size-secondary);
+  cursor: pointer;
+}
+.setup-page__more:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+/* Aperçu des pages, dans la présentation. */
+.setup-preview {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin: 0;
-  padding: 0 0 0 38px;
+  padding: 0;
   list-style: none;
 }
-.onboarding-pages__tabs > li {
+.setup-preview li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.setup-preview li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.setup-preview small {
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+
+/* Aperçu du menu de gauche, à la fin. */
+.setup-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  list-style: none;
+}
+.setup-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+}
+.setup-menu .is-new > .setup-menu__row {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.setup-menu__new {
+  margin-left: auto;
+  color: var(--color-primary-strong);
+  font-size: var(--font-size-secondary);
+  font-weight: 500;
+}
+.setup-menu ul {
+  margin: 0;
+  padding: 2px 0 4px 32px;
+  list-style: none;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+
+/* Assistant d’un nouveau compte. */
+.setup-wizard__methods {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 320px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.setup-wizard__methods legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-weight: 500;
+}
+.setup-wizard__token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.setup-wizard__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }

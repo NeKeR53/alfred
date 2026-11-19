@@ -443,7 +443,7 @@ describe("ModulesSettings", () => {
       </>,
     );
     expect(await screen.findByRole("heading", { name: "Configurer Facturation" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Bienvenue dans Facturation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Commencer" })).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: /Terminer plus tard/ })[0]);
     expect(useOnboarding.getState().module).toBeNull();
     expect(await within(moduleList()).findByText("Facturation")).toBeInTheDocument();
