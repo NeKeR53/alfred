@@ -321,49 +321,90 @@ fn refresh(state: &AppState, only: Option<&str>) -> AppResult<Value> {
 /// servent : aucune question au terminal, aucune fenêtre du gestionnaire d’identifiants, aucune phrase secrète
 /// demandée par SSH. Une connexion qui ne répond plus est abandonnée au lieu de bloquer l’interface.
 ///
-/// Les certificats et le proxy du système sont donnés à git quand l’utilisateur ne les a pas réglés lui-même
-/// (`git_network`) : sous Windows, le magasin de Windows d’abord ; partout, les racines du système en PEM si le
-/// premier essai échoue sur un certificat.
+/// Le premier essai est git tel qu’il est réglé sur le poste. Seulement s’il échoue (`git_network`) :
+/// - sur un certificat, les certificats du système (sous Windows le magasin de Windows, puis partout les racines
+///   du système en PEM), sauf si l’utilisateur a réglé les siens ;
+/// - sur la connexion, un nouvel essai deux secondes après (réseau intermittent, VPN), puis le proxy du système
+///   si git n’en a aucun ;
+/// - sur « dubious ownership », ce seul dossier déclaré sûr pour cette commande.
+///
+/// Ce qui a réussi après un échec sert de premier essai la fois suivante.
 pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
     let url = remote_url(dir, args);
     let env = |name: &str| std::env::var(name).ok();
     let user_tls = git_network::user_tls(&http_settings(dir), url.as_deref().unwrap_or_default(), env);
-    let attempts = git_network::tls_attempts(
-        git_network::Platform::current(),
-        user_tls,
-        Some(&git_network::roots_bundle()),
-        git_network::prefer_bundle(),
-    );
-    let git_proxy = git_network::env_proxy(env) || url.as_deref().is_some_and(|url| configured_proxy(dir, url));
-    let system_proxy = if git_proxy { Default::default() } else { git_network::system_proxy() };
-    let no_proxy = env("NO_PROXY").or_else(|| env("no_proxy"));
-    let proxy = url.as_deref().and_then(|url| git_network::proxy_for(url, git_proxy, &system_proxy, no_proxy.as_deref()));
+    let attempts =
+        git_network::tls_attempts(git_network::Platform::current(), user_tls, Some(&git_network::roots_bundle()));
     let host = url.as_deref().and_then(git_network::scheme_and_host).map(|(_, host)| host);
-
-    let mut failure = None;
-    let count = attempts.len();
-    for (index, attempt) in attempts.iter().enumerate() {
-        if attempt.uses_bundle() && !git_network::write_roots(&git_network::roots_bundle()) {
-            continue;
-        }
-        match run_remote(dir, args, attempt, proxy.as_deref()) {
-            Ok(output) => {
-                if count > 1 {
-                    git_network::remember_bundle(attempt.uses_bundle());
+    // Proxy du système, lu seulement au premier besoin.
+    let mut system_proxy: Option<Option<String>> = None;
+    let mut proxy_of_system = || {
+        system_proxy
+            .get_or_insert_with(|| {
+                let url = url.as_deref()?;
+                let git_proxy = git_network::env_proxy(env) || configured_proxy(dir, url);
+                if git_proxy {
+                    return None;
                 }
+                let no_proxy = env("NO_PROXY").or_else(|| env("no_proxy"));
+                git_network::proxy_for(url, false, &git_network::system_proxy(), no_proxy.as_deref())
+            })
+            .clone()
+    };
+
+    let (remembered_tls, remembered_proxy) = git_network::remembered();
+    let mut tls = if remembered_tls < attempts.len() { remembered_tls } else { 0 };
+    let mut use_proxy = remembered_proxy;
+    let mut tried: Vec<(usize, bool)> = Vec::new();
+    let mut waited = false;
+    let mut safe_directory: Option<String> = None;
+    let mut failure: Option<(String, &'static str, Option<String>)> = None;
+    while tried.len() < 2 * attempts.len() + 2 {
+        let proxy = if use_proxy { proxy_of_system() } else { None };
+        let use_proxy_now = proxy.is_some();
+        let attempt = &attempts[tls];
+        tried.push((tls, use_proxy_now));
+        if attempt.uses_bundle() && !git_network::write_roots(&git_network::roots_bundle()) {
+            break;
+        }
+        match run_remote(dir, args, attempt, proxy.as_deref(), safe_directory.as_deref()) {
+            Ok(output) => {
+                git_network::remember(tls, use_proxy_now);
                 return Ok(output);
             }
-            Err(Some(stderr)) => {
-                let retry = index + 1 < count && git_network::certificate_failure(&stderr);
-                failure = Some((stderr, attempt.label));
-                if !retry {
-                    break;
-                }
-            }
             Err(None) => return Err(AppError::new("Git est introuvable sur ce poste.")),
+            Err(Some(stderr)) => {
+                let label = attempt.label;
+                failure = Some((stderr.clone(), label, proxy.clone()));
+                if git_network::certificate_failure(&stderr) {
+                    if let Some(next) = (0..attempts.len()).find(|index| !tried.contains(&(*index, use_proxy_now))) {
+                        tls = next;
+                        continue;
+                    }
+                } else if git_network::connection_failure(&stderr) {
+                    if !waited {
+                        waited = true;
+                        tried.pop();
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        continue;
+                    }
+                    let other = !use_proxy_now;
+                    if !tried.contains(&(tls, other)) && (!other || proxy_of_system().is_some()) {
+                        use_proxy = other;
+                        continue;
+                    }
+                } else if let Some(repository) = git_network::dubious_repository(&stderr) {
+                    if safe_directory.is_none() {
+                        safe_directory = Some(repository);
+                        tried.pop();
+                        continue;
+                    }
+                }
+                break;
+            }
         }
     }
-    let (stderr, certificates) = failure.unwrap_or_default();
+    let (stderr, certificates, proxy) = failure.unwrap_or_default();
     Err(AppError::with_detail(
         format!("Git a refusé l’opération « {} ».", args.first().copied().unwrap_or_default()),
         json!({
@@ -382,6 +423,7 @@ fn run_remote(
     args: &[&str],
     attempt: &git_network::TlsAttempt,
     proxy: Option<&str>,
+    safe_directory: Option<&str>,
 ) -> Result<String, Option<String>> {
     let mut command = Command::new("git");
     command
@@ -398,6 +440,9 @@ fn run_remote(
     }
     if let Some(proxy) = proxy {
         command.arg("-c").arg(format!("http.proxy={proxy}"));
+    }
+    if let Some(directory) = safe_directory {
+        command.arg("-c").arg(format!("safe.directory={directory}"));
     }
     command.args(args);
     if let Some(ssh) = ssh_command(dir) {
@@ -513,26 +558,82 @@ pub(crate) fn clone_into(url: &str, target: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Met le clone d’un marketplace à jour, en le refaisant à neuf s’il est illisible (verrou récent, réf ou objet
+/// cassé, dossier d’un autre propriétaire…) : ce n’est qu’une copie du distant, jamais modifiée à la main, et une
+/// publication interrompue se rejoue depuis l’espace. Une panne du réseau ou du serveur ne fait rien refaire.
 fn sync_clone(clone: &Path, url: &str) -> AppResult<()> {
     if !clone.join(".git").exists() {
         remove_tree(clone)?;
         return clone_into(url, clone);
     }
-    fetch_and_align(clone)
+    match fetch_and_align(clone) {
+        Ok(()) => Ok(()),
+        Err(error) if !git_network::remote_failure(&stderr_of(&error)) => {
+            log::warn!("clone de marketplace illisible, refait à neuf ({}) : {}", error.message, stderr_of(&error));
+            reclone(clone, url)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Clone à côté puis remplace l’ancien : un échec du nouveau clone laisse l’ancien en place.
+fn reclone(clone: &Path, url: &str) -> AppResult<()> {
+    let name = clone.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let fresh = clone.with_file_name(format!(".{name}-repris-{}", uuid::Uuid::new_v4().simple()));
+    clone_into(url, &fresh)?;
+    if let Err(error) = remove_tree(clone) {
+        let _ = remove_tree(&fresh);
+        return Err(error);
+    }
+    rename_dir(&fresh, clone)
 }
 
 fn remote_ref_exists(clone: &Path, name: &str) -> bool {
     git::run(clone, &["rev-parse", "-q", "--verify", &format!("refs/remotes/origin/{name}^{{commit}}")]).is_ok()
 }
 
+/// Âge à partir duquel un verrou de git est tenu pour orphelin : celui d’un git tué en cours de route.
+const STALE_LOCK: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Répare ce qu’un git interrompu laisse dans un clone, d’après son message d’erreur : verrou orphelin (du clone
+/// seulement) et `origin/HEAD` cassée. Rend vrai si quelque chose a été réparé et qu’il faut réessayer.
+fn repair_clone(clone: &Path, stderr: &str) -> bool {
+    let mut repaired = false;
+    let git_dir = clone.join(".git").canonicalize().ok();
+    for lock in git_network::locks_in(stderr) {
+        let inside = lock.canonicalize().ok().zip(git_dir.as_ref()).is_some_and(|(lock, dir)| lock.starts_with(dir));
+        let old = fs::metadata(&lock)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= STALE_LOCK);
+        if inside && old && fs::remove_file(&lock).is_ok() {
+            log::warn!("verrou git orphelin retiré : {}", lock.display());
+            repaired = true;
+        }
+    }
+    if stderr.to_lowercase().contains("refs/remotes/origin/head") {
+        repaired |= git::run(clone, &["update-ref", "-d", "--no-deref", "refs/remotes/origin/HEAD"]).is_ok()
+            || fs::remove_file(clone.join(".git").join("refs").join("remotes").join("origin").join("HEAD")).is_ok();
+    }
+    repaired
+}
+
 pub(crate) fn fetch_and_align(clone: &Path) -> AppResult<()> {
-    remote_git(clone, &["fetch", "--prune", "--quiet", "origin"])
-        .map_err(|error| explain_remote(error, "rafraîchissement"))?;
+    let fetch = ["fetch", "--prune", "--quiet", "origin"];
+    let fetched = match remote_git(clone, &fetch) {
+        Err(error) if repair_clone(clone, &stderr_of(&error)) => remote_git(clone, &fetch),
+        other => other,
+    };
+    fetched.map_err(|error| explain_remote(error, "rafraîchissement"))?;
     if !remote_ref_exists(clone, "HEAD") {
         // Dépôt cloné vide puis alimenté, ou branche par défaut supprimée : on redemande au distant laquelle suivre.
         let _ = remote_git(clone, &["remote", "set-head", "origin", "--auto"]);
     }
-    align(clone)
+    match align(clone) {
+        Err(error) if repair_clone(clone, &stderr_of(&error)) => align(clone),
+        other => other,
+    }
 }
 
 /// Branche du distant que le clone suit : sa branche par défaut, sinon celle du clone si le distant l’a, sinon la
@@ -2519,13 +2620,69 @@ httpd.serve_forever()
         git::run(&clone, &["config", "http.sslCAInfo", &wrong.to_string_lossy()]).ok();
         let respected = fetch_and_align(&clone);
         git_network::TEST_ROOTS.lock().unwrap().clear();
-        git_network::remember_bundle(false);
+        git_network::remember(0, false);
         let _ = server.kill();
         cloned.unwrap();
         fetched.unwrap().unwrap();
         assert!(clone.join("README.md").exists());
         let error = respected.unwrap_err();
         assert_eq!(error.detail.unwrap()["certificates"], "réglage git de l’utilisateur");
+    }
+
+    /// Ce qu’un git tué laisse dans un clone ne bloque plus le rafraîchissement : un verrou ancien est retiré, un
+    /// clone illisible (verrou récent, `HEAD` cassée) est refait à neuf. Un serveur injoignable ne fait rien refaire
+    /// et dit pourquoi, après un second essai.
+    #[test]
+    fn a_clone_left_broken_by_an_interrupted_git_is_repaired() {
+        let root = tempfile::tempdir().unwrap();
+        let d = root.path();
+        let source = d.join("source");
+        fs::create_dir_all(&source).unwrap();
+        git::init(&source).unwrap();
+        let publish = |text: &str| {
+            fs::write(source.join("README.md"), text).unwrap();
+            commit_clone(&source, text).unwrap();
+            git::run(&source, &["push", "-q", "--force", "../remote.git", "HEAD:refs/heads/main"]).unwrap();
+        };
+        git::run(d, &["init", "-q", "--bare", "-b", "main", "remote.git"]).unwrap();
+        publish("un");
+        let url = d.join("remote.git").to_string_lossy().to_string();
+        let clone = d.join("marketplaces").join("equipe");
+        sync_clone(&clone, &url).unwrap();
+        let readme = || fs::read_to_string(clone.join("README.md")).unwrap();
+
+        // Verrou orphelin sur la réf suivie, vieux de dix minutes : retiré, puis le fetch passe.
+        publish("deux");
+        let lock = clone.join(".git").join("refs").join("remotes").join("origin").join("main.lock");
+        fs::write(&lock, "").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        fs::File::options().write(true).open(&lock).unwrap().set_modified(old).unwrap();
+        fetch_and_align(&clone).unwrap();
+        assert_eq!(readme(), "deux");
+        assert!(!lock.exists());
+
+        // Verrou tout frais (git peut-être encore en cours) : jamais retiré, mais le clone d’un marketplace est
+        // refait à côté puis remplace l’ancien.
+        publish("trois");
+        fs::write(&lock, "").unwrap();
+        assert!(fetch_and_align(&clone).is_err(), "un verrou récent n’est pas retiré");
+        sync_clone(&clone, &url).unwrap();
+        assert_eq!(readme(), "trois");
+        assert!(!lock.exists());
+
+        // HEAD du clone cassée : refait à neuf.
+        publish("quatre");
+        fs::write(clone.join(".git").join("HEAD"), "n’importe quoi").unwrap();
+        sync_clone(&clone, &url).unwrap();
+        assert_eq!(readme(), "quatre");
+        let leftovers: Vec<_> = fs::read_dir(clone.parent().unwrap()).unwrap().flatten().map(|entry| entry.file_name()).collect();
+        assert_eq!(leftovers, ["equipe"], "aucun clone intermédiaire laissé");
+
+        // Serveur injoignable : rien n’est refait, et la cause est dite.
+        git::run(&clone, &["remote", "set-url", "origin", "https://127.0.0.1:9/remote.git"]).unwrap();
+        let error = sync_clone(&clone, &url).unwrap_err();
+        assert!(error.message.starts_with("127.0.0.1 est injoignable (rafraîchissement)."), "{}", error.message);
+        assert_eq!(readme(), "quatre", "le clone est gardé");
     }
 
     /// Le vrai marketplace public, par le réseau : `cargo test -- --ignored alfred_place`.

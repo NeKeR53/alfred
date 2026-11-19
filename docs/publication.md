@@ -186,23 +186,27 @@ Sans le jeton, chaque route répond 401 ; sans la fonctionnalité, elles n’exi
 ## Derrière un réseau d’entreprise (marketplaces et partage par git)
 
 Les marketplaces et le partage des données d’équipe passent par git (`remote_git` de `src-tauri/src/marketplace.rs`,
-réglages réseau dans `src-tauri/src/git_network.rs`). Git ne lit ni le magasin de certificats du système ni son proxy ;
-Alfred les lui donne par des `-c` sur la ligne de commande, sans rien écrire dans la configuration git du poste :
+réglages réseau dans `src-tauri/src/git_network.rs`). Le premier essai est toujours git tel qu’il est réglé sur le
+poste : rien ne change là où il fonctionne. Seulement après un échec, Alfred réessaie par des `-c` sur la ligne de
+commande, sans rien écrire dans la configuration git, et garde ce qui a réussi comme premier essai suivant :
 
-- **Certificats.** Sous Windows, git passe d’abord par le magasin de Windows (`http.sslBackend=schannel`), où une
-  entreprise installe son autorité. Si ce Git ne connaît pas schannel, ou si schannel refuse encore (révocation
-  invérifiable, par exemple), Alfred réessaie avec OpenSSL et les racines du système exportées en PEM
-  (`certificats/racines-du-systeme.pem` des données d’Alfred, le fichier de la voix). Sur Mac et Linux, ce même PEM
-  sert de second essai quand le premier échoue sur un certificat. Un `http.sslBackend`, `http.sslCAInfo` ou
-  `http.sslCAPath` réglé par l’utilisateur (configuration globale ou du dépôt), ou `GIT_SSL_CAINFO`, est respecté tel
-  quel. La vérification des certificats n’est jamais désactivée.
-- **Proxy.** Sous Windows, quand ni git (`http.proxy`, toutes configurations) ni l’environnement (`HTTPS_PROXY`,
-  `HTTP_PROXY`, `ALL_PROXY`) n’en donnent, Alfred lit le proxy des Paramètres Internet (`ProxyEnable`, `ProxyServer`,
-  exemptions `ProxyOverride` et `NO_PROXY` respectées). Un fichier PAC (`AutoConfigURL`) n’est suivi que s’il ne nomme
-  qu’un proxy ; la détection automatique (WPAD) et le proxy WinHTTP (`netsh winhttp`) ne sont pas lus.
+- **Échec de certificat.** Sous Windows, le magasin de Windows (`http.sslBackend=schannel`), où une entreprise
+  installe son autorité ; puis, partout, OpenSSL avec les racines du système exportées en PEM
+  (`certificats/racines-du-systeme.pem` des données d’Alfred, le fichier de la voix). Un `http.sslBackend`,
+  `http.sslCAInfo` ou `http.sslCAPath` réglé par l’utilisateur (configuration globale ou du dépôt), ou
+  `GIT_SSL_CAINFO`, est respecté tel quel. La vérification des certificats n’est jamais désactivée.
+- **Échec de connexion.** Un second essai deux secondes après (réseau intermittent, VPN), puis, sous Windows et si
+  ni git (`http.proxy`, toutes configurations) ni l’environnement (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`) n’en
+  donnent, le proxy des Paramètres Internet (`ProxyEnable`, `ProxyServer`, exemptions `ProxyOverride` et `NO_PROXY`
+  respectées). Un fichier PAC (`AutoConfigURL`) n’est suivi que s’il ne nomme qu’un proxy ; la détection automatique
+  (WPAD) et le proxy WinHTTP (`netsh winhttp`) ne sont pas lus.
+- **Clone abîmé.** Un verrou de git (`*.lock`) de plus de deux minutes dans le clone, laissé par un git tué, est
+  retiré ; une réf `origin/HEAD` cassée est effacée ; « dubious ownership » est levé pour ce seul dossier et cette
+  seule commande (`safe.directory`). Si le clone d’un marketplace reste illisible, il est refait à côté puis remplace
+  l’ancien : ce n’est qu’une copie du distant. Une panne du réseau ou du serveur ne fait rien refaire.
 - **Erreurs.** Le message dit la cause (certificat non reconnu, révocation, proxy qui demande une identification ou ne
-  répond pas, hôte injoignable, accès refusé, dépôt introuvable) ; la sortie de git, sans identifiants, se déplie sous
-  le message (« Message de git ») dans Réglages → Marketplace.
+  répond pas, hôte injoignable, accès refusé, dépôt introuvable, verrou, clone abîmé), sinon la dernière ligne de git ;
+  la sortie de git, sans identifiants, se déplie sous le message (« Message de git ») dans Réglages → Marketplace.
 
 Si le rafraîchissement échoue encore, à régler à la main dans un terminal du poste :
 

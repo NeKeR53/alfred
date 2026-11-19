@@ -12,13 +12,15 @@
 //! respecté, et la vérification des certificats n’est jamais désactivée.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 /// Fichier PEM des racines du système, celui qu’Alfred écrit déjà pour la voix (`certificats/` des données).
 static ROOTS_BUNDLE: OnceLock<PathBuf> = OnceLock::new();
-/// Les racines en PEM ont réussi là où le premier essai échouait : on commence par elles la fois suivante.
-static PREFER_BUNDLE: AtomicBool = AtomicBool::new(false);
+/// Réglage de certificats (rang dans `tls_attempts`) et proxy du système qui ont réussi après un échec : on
+/// repart d’eux la fois suivante, sans refaire les essais qui échouent.
+static REMEMBERED_TLS: AtomicUsize = AtomicUsize::new(0);
+static REMEMBERED_PROXY: AtomicBool = AtomicBool::new(false);
 
 /// Dossier des données d’Alfred, pour y écrire les racines du système quand git en a besoin.
 pub fn init(data_dir: &Path) {
@@ -57,12 +59,14 @@ pub(crate) fn write_roots(path: &Path) -> bool {
     }
 }
 
-pub(crate) fn prefer_bundle() -> bool {
-    PREFER_BUNDLE.load(Ordering::Relaxed)
+/// Réglage retenu : rang de l’essai de certificats, et passage par le proxy du système.
+pub(crate) fn remembered() -> (usize, bool) {
+    (REMEMBERED_TLS.load(Ordering::Relaxed), REMEMBERED_PROXY.load(Ordering::Relaxed))
 }
 
-pub(crate) fn remember_bundle(worked: bool) {
-    PREFER_BUNDLE.store(worked, Ordering::Relaxed);
+pub(crate) fn remember(tls: usize, proxy: bool) {
+    REMEMBERED_TLS.store(tls, Ordering::Relaxed);
+    REMEMBERED_PROXY.store(proxy, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -148,33 +152,29 @@ impl TlsAttempt {
 
 /// Essais à faire, dans l’ordre. Le second n’est tenté que si le premier échoue sur un certificat (ou si Git ne
 /// connaît pas schannel). `bundle` est le PEM des racines du système ; sans lui, pas de second essai.
-pub(crate) fn tls_attempts(platform: Platform, user: UserTls, bundle: Option<&Path>, bundle_first: bool) -> Vec<TlsAttempt> {
+pub(crate) fn tls_attempts(platform: Platform, user: UserTls, bundle: Option<&Path>) -> Vec<TlsAttempt> {
     if user.configured {
         return vec![TlsAttempt { options: Vec::new(), label: "réglage git de l’utilisateur" }];
     }
-    let primary = match platform {
-        Platform::Windows => TlsAttempt {
+    // D’abord git tel qu’il est réglé sur le poste : rien ne change là où il fonctionne.
+    let mut attempts = vec![TlsAttempt { options: Vec::new(), label: "certificats de git" }];
+    if platform == Platform::Windows {
+        attempts.push(TlsAttempt {
             options: vec!["http.sslBackend=schannel".to_string()],
             label: "magasin de certificats de Windows",
-        },
-        Platform::Other => TlsAttempt { options: Vec::new(), label: "certificats de git" },
-    };
-    let Some(bundle) = bundle else {
-        return vec![primary];
-    };
-    let path = bundle.to_string_lossy().replace('\\', "/");
-    let mut options = Vec::new();
-    if platform == Platform::Windows {
-        // schannel ne lit pas http.sslCAInfo ; OpenSSL, si.
-        options.push("http.sslBackend=openssl".to_string());
+        });
     }
-    options.push(format!("http.sslCAInfo={path}"));
-    let fallback = TlsAttempt { options, label: "racines du système exportées par Alfred" };
-    if bundle_first {
-        vec![fallback, primary]
-    } else {
-        vec![primary, fallback]
+    if let Some(bundle) = bundle {
+        let path = bundle.to_string_lossy().replace('\\', "/");
+        let mut options = Vec::new();
+        if platform == Platform::Windows {
+            // schannel ne lit pas http.sslCAInfo ; OpenSSL, si.
+            options.push("http.sslBackend=openssl".to_string());
+        }
+        options.push(format!("http.sslCAInfo={path}"));
+        attempts.push(TlsAttempt { options, label: "racines du système exportées par Alfred" });
     }
+    attempts
 }
 
 /// L’échec tient au certificat du serveur (ou à la vérification de sa révocation) : un autre jeu de racines peut
@@ -199,6 +199,74 @@ const CERTIFICATE: [&str; 11] = [
 ];
 const REVOCATION: [&str; 4] = ["crypt_e_no_revocation_check", "crypt_e_revocation_offline", "0x80092012", "revocation"];
 const UNSUPPORTED_BACKEND: [&str; 2] = ["unsupported ssl backend", "could not set ssl backend"];
+
+/// L’échec tient au chemin jusqu’au serveur (hôte introuvable, connexion refusée ou expirée) : réessayer, puis
+/// passer par le proxy du système, peut réussir.
+pub(crate) fn connection_failure(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    CONNECTION.iter().any(|needle| lower.contains(needle)) && !certificate_failure(stderr)
+}
+
+const CONNECTION: [&str; 9] = [
+    "could not resolve host",
+    "failed to connect",
+    "couldn't connect",
+    "connection timed out",
+    "operation timed out",
+    "timed out",
+    "network is unreachable",
+    "connection refused",
+    "connection reset",
+];
+
+/// L’échec vient du serveur ou du réseau (et non du clone lui-même) : refaire le clone n’y changerait rien.
+pub(crate) fn remote_failure(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    certificate_failure(stderr)
+        || connection_failure(stderr)
+        || [
+            "proxy",
+            "authentication failed",
+            "permission denied",
+            "could not read username",
+            "could not read password",
+            "terminal prompts disabled",
+            "access denied",
+            "error: 401",
+            "error: 403",
+            "error: 404",
+            "returned error",
+            "repository not found",
+            "publickey",
+            "unable to access",
+            "rpc failed",
+            "early eof",
+            "remote end hung up",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+/// Verrous nommés par git (« Unable to create '…/index.lock': File exists »), laissés par un git interrompu.
+pub(crate) fn locks_in(stderr: &str) -> Vec<PathBuf> {
+    let mut locks = Vec::new();
+    for line in stderr.lines() {
+        let Some(at) = line.find("Unable to create '") else { continue };
+        let rest = &line[at + "Unable to create '".len()..];
+        if let Some(end) = rest.find(".lock'") {
+            locks.push(PathBuf::from(&rest[..end + ".lock".len()]));
+        }
+    }
+    locks
+}
+
+/// Chemin du dépôt refusé pour « dubious ownership », tel que git l’écrit (c’est ainsi qu’il le compare à
+/// `safe.directory`).
+pub(crate) fn dubious_repository(stderr: &str) -> Option<String> {
+    let line = stderr.lines().find(|line| line.contains("detected dubious ownership in repository at '"))?;
+    let rest = &line[line.find(" at '")? + 5..];
+    rest.rfind('\'').map(|end| rest[..end].to_string())
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Proxy
@@ -474,6 +542,14 @@ pub(crate) fn explain(stderr: &str, action: &str, context: &Context) -> String {
             "Git refuse le dossier du clone ({action}) : il appartient à un autre utilisateur du poste. Retirez puis rebranchez le marketplace."
         );
     }
+    if mentions(&["unable to create '"]) && mentions(&[".lock'"]) {
+        return format!(
+            "Un git interrompu a laissé un verrou dans le clone ({action}). Réessayez dans deux minutes : Alfred le retirera s’il est toujours là."
+        );
+    }
+    if mentions(&["bad object", "is corrupt", "corrupt loose object", "not a git repository", "broken ref", "bad config"]) {
+        return format!("Le clone local est abîmé ({action}). Retirez puis rebranchez le marketplace pour le refaire.");
+    }
     if mentions(&["http code 407", "error: 407", "proxy authentication required"]) {
         return format!(
             "Le proxy demande une identification ({action}).{via} Git ne peut pas la donner seul : indiquez votre identifiant dans le proxy de git (git config --global http.proxy http://identifiant@proxy:port) ou demandez à votre service informatique d’ouvrir {host}."
@@ -578,26 +654,46 @@ mod tests {
     }
 
     #[test]
-    fn windows_tries_its_store_then_the_exported_roots_and_never_skips_verification() {
+    fn git_keeps_its_own_settings_first_and_never_skips_verification() {
         let bundle = Path::new(r"C:\Users\camille\AppData\Roaming\alfred\certificats\racines-du-systeme.pem");
-        let windows = tls_attempts(Platform::Windows, UserTls::default(), Some(bundle), false);
-        assert_eq!(windows[0].options, ["http.sslBackend=schannel"]);
+        let windows = tls_attempts(Platform::Windows, UserTls::default(), Some(bundle));
+        assert!(windows[0].options.is_empty(), "rien ne change là où git fonctionne déjà");
+        assert_eq!(windows[1].options, ["http.sslBackend=schannel"]);
         assert_eq!(
-            windows[1].options,
+            windows[2].options,
             ["http.sslBackend=openssl", "http.sslCAInfo=C:/Users/camille/AppData/Roaming/alfred/certificats/racines-du-systeme.pem"]
         );
-        let unix = tls_attempts(Platform::Other, UserTls::default(), Some(Path::new("/d/racines.pem")), false);
-        assert!(unix[0].options.is_empty(), "Mac et Linux gardent d’abord le réglage de git");
+        let unix = tls_attempts(Platform::Other, UserTls::default(), Some(Path::new("/d/racines.pem")));
+        assert!(unix[0].options.is_empty());
         assert_eq!(unix[1].options, ["http.sslCAInfo=/d/racines.pem"]);
-        let remembered = tls_attempts(Platform::Other, UserTls::default(), Some(Path::new("/d/racines.pem")), true);
-        assert_eq!(remembered[0].options, ["http.sslCAInfo=/d/racines.pem"]);
-        let user = tls_attempts(Platform::Windows, UserTls { configured: true }, Some(bundle), false);
+        assert_eq!(unix.len(), 2);
+        let user = tls_attempts(Platform::Windows, UserTls { configured: true }, Some(bundle));
         assert_eq!(user.len(), 1);
         assert!(user[0].options.is_empty(), "réglage de l’utilisateur respecté");
-        assert_eq!(tls_attempts(Platform::Windows, UserTls::default(), None, false).len(), 1);
+        assert_eq!(tls_attempts(Platform::Windows, UserTls::default(), None).len(), 2);
         for attempt in windows.iter().chain(&unix).chain(&user) {
             assert!(attempt.options.iter().all(|option| !option.to_lowercase().contains("sslverify")));
         }
+    }
+
+    #[test]
+    fn failures_are_sorted_between_the_network_and_the_clone() {
+        let resolve = "fatal: unable to access 'https://github.com/x/': Could not resolve host: github.com";
+        assert!(connection_failure(resolve) && remote_failure(resolve));
+        let cert = "fatal: unable to access 'x': SSL certificate problem: unable to get local issuer certificate";
+        assert!(!connection_failure(cert) && remote_failure(cert));
+        assert!(remote_failure("remote: Repository not found.\nfatal: repository 'x' not found"));
+        let lock = "error: cannot lock ref 'refs/remotes/origin/main': Unable to create 'C:/Users/Camille Noël/AppData/Roaming/app.alfred.desktop/marketplaces/alfred-place/.git/refs/remotes/origin/main.lock': File exists.";
+        assert!(!remote_failure(lock));
+        assert_eq!(
+            locks_in(lock),
+            [PathBuf::from("C:/Users/Camille Noël/AppData/Roaming/app.alfred.desktop/marketplaces/alfred-place/.git/refs/remotes/origin/main.lock")]
+        );
+        assert!(locks_in("fatal: Unable to create '/d/.git/shallow.lock': File exists.")[0].ends_with("shallow.lock"));
+        assert!(!remote_failure("fatal: bad object refs/remotes/origin/HEAD"));
+        let dubious = "fatal: detected dubious ownership in repository at 'C:/Users/camille/AppData/Roaming/app.alfred.desktop/marketplaces/x'\n'C:/Users/...' is owned by:\n";
+        assert!(!remote_failure(dubious));
+        assert_eq!(dubious_repository(dubious).as_deref(), Some("C:/Users/camille/AppData/Roaming/app.alfred.desktop/marketplaces/x"));
     }
 
     #[test]
@@ -707,6 +803,8 @@ mod tests {
         assert!(missing.starts_with("Dépôt introuvable (clonage)"), "{missing}");
         let owner = explain("fatal: detected dubious ownership in repository at 'C:/x'", "rafraîchissement", &github);
         assert!(owner.starts_with("Git refuse le dossier"), "{owner}");
+        let lock = explain("error: cannot lock ref 'refs/remotes/origin/main': Unable to create '/d/.git/refs/remotes/origin/main.lock': File exists.", "envoi des données", &github);
+        assert!(lock.starts_with("Un git interrompu a laissé un verrou"), "{lock}");
         let other = explain("warning: quelque chose\nfatal: early EOF", "rafraîchissement", &github);
         assert_eq!(other, "Git a échoué (rafraîchissement) : early EOF");
     }
