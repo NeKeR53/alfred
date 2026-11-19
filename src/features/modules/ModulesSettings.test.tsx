@@ -521,8 +521,9 @@ describe("ModulesSettings", () => {
     fireEvent.click(within(moduleList()).getByText("Suivi"));
     expect(screen.getByRole("heading", { name: "Suivi" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
-    // Une section d’une seule page tient sur une ligne, qui nomme la page.
-    expect(await screen.findByText("Page « Tâches ».")).toBeInTheDocument();
+    // La page du menu, avec son onglet en retrait.
+    const entry = await screen.findByRole("region", { name: "Page Suivi" });
+    expect(within(entry).getByText("Tâches").closest(".setting-row--nested")).not.toBeNull();
     // Rien de vide : ni comptes, ni fonctions pour un module qui n’en a pas.
     expect(screen.queryByRole("heading", { name: /Comptes/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /fonctions/i })).not.toBeInTheDocument();

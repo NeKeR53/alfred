@@ -23,8 +23,30 @@ const MAX_ACTIVE_CALLS = 40;
 let active = 0;
 let sequence = 0;
 
-/** `examples` : cadre à part, dont tout ce que demandent les fonctions reste en mode « données d’exemple ». */
-function createHost(module: string, examples: boolean): Host {
+/**
+ * Comptes qu’une page passe aux fonctions du module `module` : ceux de ses besoins, nommés comme la fonction les
+ * appelle. Pour une fonction de son propre module, tels quels (`jira`, `dep/jira`) ; pour une fonction d’un module
+ * dont elle dépend, ceux qu’elle a choisis pour ses besoins (`dep/jira` devient `jira`).
+ */
+export function accountsFor(
+  module: string,
+  caller: string,
+  accounts: Record<string, string> | undefined,
+): Record<string, string> {
+  const chosen: Record<string, string> = {};
+  for (const [need, instance] of Object.entries(accounts ?? {})) {
+    if (module === caller) chosen[need] = instance;
+    else if (need.startsWith(`${module}/`)) chosen[need.slice(module.length + 1)] = instance;
+  }
+  return chosen;
+}
+
+/**
+ * `examples` : cadre à part, dont tout ce que demandent les fonctions reste en mode « données d’exemple ».
+ * `accounts` : comptes de la page qui appelle ; un cadre par jeu de comptes, pour que `client(besoin)` vise d’office
+ * le compte de la page.
+ */
+function createHost(module: string, examples: boolean, accounts: Record<string, string> = {}): Host {
   const { info, theme, revision } = useShell.getState();
   if (!info) throw new AlfredError({ message: "Alfred n’a pas fini de démarrer." });
   const frame = document.createElement("iframe");
@@ -40,6 +62,7 @@ function createHost(module: string, examples: boolean): Host {
     kind: "function",
     module,
     reference: `${module}/*`,
+    ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
     ...(examples ? { examples: true } : {}),
   };
   let markReady: () => void = () => undefined;
@@ -91,7 +114,7 @@ function createHost(module: string, examples: boolean): Host {
   });
   document.body.append(frame);
   // Clé refusée (Alfred redémarré, module invalide) : le prochain appel recrée le cadre.
-  const key = hostKey(module, examples);
+  const key = hostKey(module, examples, accounts);
   host.ready.catch(() => {
     if (hosts.get(key) === host) hosts.delete(key);
     frame.remove();
@@ -99,15 +122,19 @@ function createHost(module: string, examples: boolean): Host {
   return host;
 }
 
-function hostKey(module: string, examples: boolean): string {
-  return examples ? `${module}#exemples` : module;
+function hostKey(module: string, examples: boolean, accounts: Record<string, string> = {}): string {
+  const chosen = Object.entries(accounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([need, instance]) => `${need}=${instance}`)
+    .join(",");
+  return `${module}${examples ? "#exemples" : ""}${chosen ? `#${chosen}` : ""}`;
 }
 
-function hostFor(module: string, examples: boolean): Host {
-  const key = hostKey(module, examples);
+function hostFor(module: string, examples: boolean, accounts: Record<string, string> = {}): Host {
+  const key = hostKey(module, examples, accounts);
   let host = hosts.get(key);
   if (!host) {
-    host = createHost(module, examples);
+    host = createHost(module, examples, accounts);
     hosts.set(key, host);
   }
   return host;
@@ -133,6 +160,8 @@ export async function callFunction(
   input: unknown,
   caller: string,
   examples = false,
+  /** Comptes de la page qui appelle, par besoin du module de la fonction. */
+  accounts: Record<string, string> = {},
 ): Promise<unknown> {
   const [module, name] = reference.split("/");
   const { snapshot } = useShell.getState();
@@ -150,7 +179,7 @@ export async function callFunction(
     throw new AlfredError({
       message: "Trop d’appels de fonctions en cours : une fonction s’appelle peut-être en boucle.",
     });
-  const host = hostFor(module, sample);
+  const host = hostFor(module, sample, accounts);
   const callId = `c${++sequence}`;
   const started = performance.now();
   active += 1;
@@ -188,7 +217,13 @@ export async function callFunction(
 }
 
 frameServices.callFunction = (identity, reference, input) =>
-  callFunction(reference, input, identity.reference, identity.examples === true);
+  callFunction(
+    reference,
+    input,
+    identity.reference,
+    identity.examples === true,
+    accountsFor(reference.split("/")[0] ?? "", identity.module, identity.accounts),
+  );
 
 function record(reference: string, caller: string, started: number, ok: boolean, error?: unknown) {
   const message = error instanceof Error ? error.message : error ? String(error) : undefined;

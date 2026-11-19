@@ -654,10 +654,15 @@ export interface PageContext {
   /** Pour un panneau : la sélection publiée par la page hôte (`shell.publish`). */
   selection: unknown;
   /**
-   * Dans une page pour chaque compte (`perInstance` de la page ou de sa section) : l’instance du client que montre la page. `client()` l’appelle
-   * alors sans qu’on la nomme. `null` ailleurs.
+   * Compte que montre la page : celui choisi pour le besoin qu’elle suit (`perInstance`), ou son seul compte. Passez-le
+   * aux fonctions dans leur `input` (`{ instance }`). `null` quand la page n’a pas de compte, ou en a plusieurs.
    */
   instance: string | null;
+  /**
+   * Compte choisi pour chaque besoin de la page (`{ jira: "acme", confluence: "wiki" }`). Une fonction appelée par la
+   * page vise d’office ces comptes : `client("jira")` y appelle `acme`.
+   */
+  accounts: Record<string, string>;
 }
 
 export const shell = {
@@ -668,7 +673,7 @@ export const shell = {
   notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }) {
     return request<void>("shell.notify", options);
   },
-  /** Ouvre une autre page de l’espace (« module/page », ou « module/page@instance » dans une section par instance). */
+  /** Ouvre une autre page de l’espace (« module/page », ou « module/page@suffixe » pour l’une de ses copies). */
   navigate(reference: string) {
     return request<void>("shell.navigate", { reference });
   },
@@ -784,8 +789,7 @@ export function declareTopBarSearch(
       if (!declaredSearches.includes(entry)) return;
       entry.query = query;
       onQuery(query);
-      if (declaredSearches.at(-1) === entry)
-        void request("shell.search.set", { query }).catch(() => undefined);
+      if (declaredSearches.at(-1) === entry) void request("shell.search.set", { query }).catch(() => undefined);
     },
     dispose() {
       const index = declaredSearches.indexOf(entry);

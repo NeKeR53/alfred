@@ -264,7 +264,7 @@ export function movePage(snapshot: Snapshot, reference: string, destination: Pag
   };
 }
 
-/** Référence d’une page sans l’instance qu’elle montre (`module/page@instance` → `module/page`). */
+/** Référence d’une page sans le suffixe de sa copie (`module/page@recette` → `module/page`). */
 export function baseReference(reference: string): string {
   return reference.split("@")[0];
 }
@@ -314,14 +314,15 @@ export function project(snapshot: Snapshot, layout: FullLayout): Snapshot {
   const settingsPages: ResolvedPage[] = [];
   for (const { page, at } of located) {
     const override = overrideOf(pageKey(page.reference));
-    const declared = page.instance ? overrideOf(pageKey(baseReference(page.reference))) : undefined;
+    const copy = page.reference.includes("@");
+    const declared = copy ? overrideOf(pageKey(baseReference(page.reference))) : undefined;
     const next: ResolvedPage = {
       ...page,
       title: override?.label ?? page.title,
       hidden: Boolean(override?.hidden) || Boolean(declared?.hidden) || moduleHidden(page.module),
     };
-    // Une page d’une copie par instance reste dans sa copie : elle ne se déplace pas seule.
-    const placement = page.instance ? undefined : override?.placement;
+    // Une copie (`…@suffixe`) se déplace d’une page à l’autre, jamais dans les Réglages.
+    const placement = copy && override?.placement?.kind === "settings" ? undefined : override?.placement;
     let target = at;
     if (placement?.kind === "settings") target = SETTINGS_SECTION;
     else if (placement?.kind === "tab" && sections.some((section) => section.id === placement.section))

@@ -46,6 +46,8 @@ export function PageFrame({
   const accent = useShell((state) => state.snapshot?.accent ?? null);
   const frame = useRef<HTMLIFrameElement>(null);
   const examples = useExampleMode(page.module) || forced;
+  // Les comptes changent d’identité (pas de valeur) à chaque snapshot : le cadre suit leur valeur, en chaîne.
+  const accountsKey = JSON.stringify(page.accounts ?? {});
   const identity = useMemo<FrameIdentity>(
     () => ({
       kind,
@@ -53,10 +55,11 @@ export function PageFrame({
       reference: page.reference,
       host,
       instance: page.instance ?? undefined,
+      ...(accountsKey !== "{}" ? { accounts: JSON.parse(accountsKey) as Record<string, string> } : {}),
       ...(examples ? { examples: true } : {}),
       ...(capture ? { capture: true } : {}),
     }),
-    [kind, page.module, page.reference, host, page.instance, examples, capture],
+    [kind, page.module, page.reference, host, page.instance, accountsKey, examples, capture],
   );
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.

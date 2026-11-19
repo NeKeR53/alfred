@@ -25,8 +25,13 @@ export interface FrameIdentity {
   reference: string;
   /** Pour un panneau : la page hôte. */
   host?: string;
-  /** Instance du client que montre la page (section par instance) ; `reference` porte alors `@instance`. */
+  /** Compte que montre la page quand elle n’en a qu’un (ou celui qu’elle suit) : `usePageContext().instance`. */
   instance?: string;
+  /**
+   * Comptes choisis pour la page, par besoin (`jira` → `acme`) ; pour un cadre de fonctions, ceux de la page qui l’a
+   * appelé. `client(besoin)` y vise d’office le compte choisi.
+   */
+  accounts?: Record<string, string>;
   /**
    * Le cadre montre des données d’exemple : ses fonctions de connecteur rendent leurs exemples et aucune requête ne
    * part vers un service. La coquille le fixe, jamais le cadre.
@@ -36,9 +41,14 @@ export interface FrameIdentity {
   capture?: boolean;
 }
 
-/** Référence déclarée de la page, sans l’instance qu’elle montre. */
+/** Référence déclarée de la page (son modèle), sans le suffixe de sa copie (`module/page@recette`). */
 export function declaredReference(identity: FrameIdentity): string {
-  return identity.instance ? identity.reference.replace(new RegExp(`@${identity.instance}$`), "") : identity.reference;
+  return identity.reference.replace(/@[^@/]*$/, "");
+}
+
+/** Suffixe de la copie que montre le cadre (`recette` pour `module/page@recette`), s’il en a un. */
+function copySuffix(identity: FrameIdentity): string | undefined {
+  return /@([^@/]*)$/.exec(identity.host ?? identity.reference)?.[1];
 }
 
 const selections = new Map<string, unknown>();
@@ -64,6 +74,7 @@ export function frameContext(identity: FrameIdentity) {
     module,
     page,
     instance: identity.instance ?? null,
+    accounts: identity.accounts ?? {},
     kind: identity.kind,
     surface: snapshot?.settingsPages.some((page) => page.reference === identity.reference) ? "settings" : "section",
     theme,
@@ -119,8 +130,9 @@ function badgeTarget(identity: FrameIdentity, page: unknown): string {
   let reference: string;
   if (typeof page === "string" && page) {
     const named = `${identity.module}/${page}`;
-    // Depuis une section par instance, une page sœur sans instance nommée est celle de la même instance.
-    const sibling = identity.instance && !page.includes("@") ? `${named}@${identity.instance}` : named;
+    // Depuis une copie (`…@recette`), une page sœur sans suffixe nommé est la copie de même suffixe, si elle existe.
+    const suffix = copySuffix(identity);
+    const sibling = suffix && !page.includes("@") ? `${named}@${suffix}` : named;
     reference = isKnownPage(useShell.getState().snapshot, sibling) ? sibling : named;
   } else if (identity.kind === "function") {
     throw new AlfredError({
@@ -149,6 +161,7 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     module: identity.module,
     reference: declaredReference(identity),
     ...(identity.instance ? { instance: identity.instance } : {}),
+    ...(identity.accounts && Object.keys(identity.accounts).length > 0 ? { accounts: identity.accounts } : {}),
     ...(identity.examples ? { examples: true } : {}),
   };
   switch (method) {

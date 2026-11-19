@@ -159,7 +159,8 @@ export function SectionView({
   const builtInTab = builtIn.find((tab) => tab.id === activeId);
   const page = visible.find((candidate) => candidate.reference === activeId);
   const panel = page?.panel && !page.panel.hidden ? page.panel : null;
-  const waiting = sectionWaiting && page?.perInstance !== null ? sectionWaiting : null;
+  // La page attend un compte (le sien, ou à défaut celui de sa section) : ce qu’il faut faire, à sa place.
+  const waiting = page?.waiting ?? (sectionWaiting && page?.perInstance !== null ? sectionWaiting : null);
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.
   const agentConversation = useShell((state) => (page ? state.agentPanel[page.reference] : undefined));
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);

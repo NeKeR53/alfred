@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/native");
 vi.hoisted(() => {
@@ -88,5 +88,16 @@ it("en données d’exemple, un script sans service est lancé avec l’indicate
     input: {},
     caller: "outils/accueil",
     examples: true,
+  });
+});
+
+describe("comptes de la page qui appelle", () => {
+  it("vont aux fonctions de son module tels quels, et à celles d’une dépendance sous leur propre nom", async () => {
+    const { accountsFor } = await import("./functionHost");
+    const accounts = { jira: "acme", "atlassian/confluence": "wiki" };
+    expect(accountsFor("suivi", "suivi", accounts)).toEqual({ jira: "acme", "atlassian/confluence": "wiki" });
+    expect(accountsFor("atlassian", "suivi", accounts)).toEqual({ confluence: "wiki" });
+    expect(accountsFor("autre", "suivi", accounts)).toEqual({});
+    expect(accountsFor("suivi", "suivi", undefined)).toEqual({});
   });
 });

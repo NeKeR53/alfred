@@ -233,10 +233,12 @@ beforeEach(() => {
         delete pending[`${client}#${instance.id}`];
         return describe(owner);
       }
-      case "clients.setAccountPages": {
-        const { client, instance, pages } = args as { client: string; instance: string; pages: string[] };
-        return { accounts: { [`${client}/${instance}`]: pages } };
-      }
+      case "space.menu.addPage":
+      case "space.menu.addTab":
+      case "space.menu.configure":
+      case "space.menu.remove":
+      case "space.menu.move":
+        return { ...useShell.getState().snapshot, created: "prefect/principal@prefect-recette" };
       case "clients.deleteInstance": {
         const { client, instance } = args as { client: string; instance: string };
         const owner = stored.find((known) => known.id === client) as Stored;
@@ -643,12 +645,7 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
       },
     ],
     [],
-    {
-      accountPages: [
-        { reference: "suivi/liste", module: "suivi", title: "Liste", section: "Tickets", need: "jira", client: "jira" },
-      ],
-      accounts: { "jira/compte": ["suivi/liste"] },
-    },
+    { accountUsage: { "jira/compte": ["suivi/liste@compte"] } },
   );
   await openModule(user, "Suivi");
   await user.click(await screen.findByRole("button", { name: "Ajouter un compte à Jira" }));
@@ -678,8 +675,8 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   // La fiche montre les comptes du seul service du module, avec l’entrée du menu que chacun alimente.
   const accounts = await screen.findByRole("group", { name: "Comptes Jira" });
   expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Compte Jira" })).toBeInTheDocument();
-  expect(within(accounts).getByText("Entrée « Tickets — Acme » dans le menu")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Comptes" })).toBeInTheDocument();
+  expect(within(accounts).getByText("Utilisé par « Tickets — Acme ».")).toBeInTheDocument();
 
   // Un deuxième compte, par l’autre façon de se connecter : identifiant et mot de passe.
   await user.click(screen.getByRole("button", { name: "Ajouter un compte à Jira" }));
@@ -735,188 +732,6 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "compte" }));
   expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
-});
-
-it("dit, pour des comptes en onglets, l’onglet que chaque compte alimente dans l’entrée commune", async () => {
-  const user = userEvent.setup();
-  stored = [
-    {
-      id: "prefect",
-      label: "Prefect",
-      baseUrl: "",
-      methods: [{ id: "web", label: "Web", type: "none" }],
-      instances: [
-        { id: "prod", label: "Prod", url: "https://prefect.acme.fr", method: "web" },
-        { id: "recette", label: "Recette", url: "https://prefect.acme.fr", method: "web" },
-      ],
-    },
-  ];
-  needs = [
-    {
-      key: "prefect/prefect",
-      module: "prefect",
-      moduleName: "Prefect",
-      id: "prefect",
-      label: "Prefect",
-      baseUrl: null,
-      auth: null,
-      binding: null,
-      client: "prefect",
-    },
-  ];
-  const tab = (instance: string, title: string): ResolvedPage => ({
-    reference: `prefect/deploiements@${instance}`,
-    module: "prefect",
-    id: "deploiements",
-    title,
-    icon: null,
-    description: "",
-    hidden: false,
-    readOnly: false,
-    missing: false,
-    errors: [],
-    uses: { clients: [], functions: [] },
-    panel: null,
-    instance,
-    perInstance: "prefect",
-  });
-  const accountPages = [
-    {
-      reference: "prefect/deploiements",
-      module: "prefect",
-      title: "Déploiements",
-      section: "Prefect",
-      need: "prefect",
-      client: "prefect",
-    },
-  ];
-  renderModules(
-    [
-      {
-        id: "prefect/principal",
-        module: "prefect",
-        label: "Prefect",
-        icon: null,
-        color: null,
-        hidden: false,
-        pages: [tab("prod", "Prod"), tab("recette", "Recette")],
-        perInstance: "prefect",
-        instancesAs: "tabs",
-      },
-    ],
-    [],
-    {
-      accountPages,
-      accounts: { "prefect/prod": ["prefect/deploiements"], "prefect/recette": ["prefect/deploiements"] },
-    },
-  );
-  await openModule(user, "Prefect");
-
-  const accounts = await screen.findByRole("group", { name: "Comptes Prefect" });
-  expect(within(accounts).getByText("Onglet « Prod » dans « Prefect »")).toBeInTheDocument();
-  expect(within(accounts).getByText("Onglet « Recette » dans « Prefect »")).toBeInTheDocument();
-  // La page des comptes en onglets le dit, sous son nom, et ne parle pas d’entrées du menu.
-  expect(screen.getByText(/Un onglet par compte : ajoutez un compte pour qu’il ait sa page\./)).toBeInTheDocument();
-  expect(screen.queryByText(/Une entrée du menu par compte/)).not.toBeInTheDocument();
-  // La page n’apparaît qu’une fois, sous son nom déclaré, même si chaque compte en a un onglet.
-  expect(screen.getAllByRole("region", { name: "Page Prefect" })).toHaveLength(1);
-});
-
-it("fait ajouter et retirer, compte par compte, les pages du module qui sont pour ses comptes", async () => {
-  const user = userEvent.setup();
-  stored = [
-    {
-      id: "jira",
-      label: "Jira",
-      baseUrl: "",
-      methods: [{ id: "pat", label: "PAT", type: "bearer" }],
-      instances: [],
-    },
-  ];
-  needs = [
-    {
-      key: "suivi/jira",
-      module: "suivi",
-      moduleName: "Suivi",
-      id: "jira",
-      label: "Jira",
-      baseUrl: null,
-      auth: null,
-      binding: null,
-      client: "jira",
-    },
-  ];
-  // Deux pages sont pour chaque compte Jira : Tickets (X) et Sprints (Y).
-  const accountPages = [
-    { reference: "suivi/tickets", module: "suivi", title: "Tickets", section: "Suivi", need: "jira", client: "jira" },
-    { reference: "suivi/sprints", module: "suivi", title: "Sprints", section: "Suivi", need: "jira", client: "jira" },
-  ];
-  renderModules([], [], { accountPages, accounts: {} });
-  await openModule(user, "Suivi");
-
-  /** Ajoute un compte : sa fiche reste ouverte, sans page, et invite à en ajouter. */
-  const addAccount = async (url: string) => {
-    await user.click(await screen.findByRole("button", { name: "Ajouter un compte à Jira" }));
-    expect(screen.queryByRole("heading", { name: "Pages de ce compte" })).not.toBeInTheDocument();
-    await user.type(await screen.findByLabelText("Adresse de votre compte"), url);
-    await user.type(screen.getByLabelText("Jeton d’accès"), "pat-123");
-    await user.click(screen.getByRole("button", { name: "Ajouter" }));
-    expect(await screen.findByRole("heading", { name: "Pages de ce compte" })).toBeInTheDocument();
-    expect(
-      screen.getByText("Votre compte est ajouté. Choisissez les pages à montrer pour lui dans le menu."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Aucune page pour ce compte pour l’instant.")).toBeInTheDocument();
-  };
-  const addPage = async (title: string) => {
-    await user.click(screen.getByRole("button", { name: "Ajouter une page" }));
-    await user.click(await screen.findByRole("menuitem", { name: title }));
-    await screen.findByRole("button", { name: `Retirer la page ${title}` });
-  };
-
-  // Le compte « Jira » reçoit X et Y : rien d’office, puis une page après l’autre.
-  await addAccount("https://jira.acme.fr");
-  expect(lastCall("clients.saveInstance")).not.toHaveProperty("pages");
-  await addPage("Tickets");
-  expect(lastCall("clients.setAccountPages")).toEqual({ client: "jira", instance: "compte", pages: ["suivi/tickets"] });
-  await addPage("Sprints");
-  expect(lastCall("clients.setAccountPages")).toEqual({
-    client: "jira",
-    instance: "compte",
-    pages: ["suivi/tickets", "suivi/sprints"],
-  });
-  // Toutes les pages sont là : plus rien à ajouter.
-  expect(screen.queryByRole("button", { name: "Ajouter une page" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Terminer" }));
-
-  // Le compte « Jira Desk » ne reçoit que X ; le premier compte n’est pas touché.
-  await addAccount("https://desk.acme.fr");
-  await addPage("Tickets");
-  expect(lastCall("clients.setAccountPages")).toEqual({
-    client: "jira",
-    instance: "compte-2",
-    pages: ["suivi/tickets"],
-  });
-  const chosen = calls.filter((call) => call.command === "clients.setAccountPages");
-  expect(chosen.filter((call) => call.args.instance === "compte")).toHaveLength(2);
-  await user.click(screen.getByRole("button", { name: "Terminer" }));
-
-  // La fiche d’un compte existant liste ses pages, et chacune se retire.
-  useShell.setState((state) => ({
-    snapshot: state.snapshot && { ...state.snapshot, accounts: { "jira/compte": ["suivi/tickets", "suivi/sprints"] } },
-  }));
-  await user.click(await menuItem(user, "Jira — jira.acme.fr", "Modifier le compte…"));
-  const pages = await screen.findByRole("group", { name: "Pages de Jira — jira.acme.fr" });
-  expect(within(pages).getByText("Tickets")).toBeInTheDocument();
-  expect(within(pages).getByText("Sprints")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Retirer la page Sprints" }));
-  await waitFor(() =>
-    expect(lastCall("clients.setAccountPages")).toEqual({
-      client: "jira",
-      instance: "compte",
-      pages: ["suivi/tickets"],
-    }),
-  );
-  expect(await screen.findByRole("button", { name: "Ajouter une page" })).toBeInTheDocument();
 });
 
 it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs", async () => {
@@ -1036,14 +851,13 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
 
   // Chaque groupe est un titre de section, avec sa phrase d’explication, au-dessus de ses éléments.
   for (const [title, explanation] of [
-    ["Pages", /Les pages que ce module ajoute au menu, et sous chacune les comptes/],
+    ["Pages", /Vos pages faites à partir de ce module/],
+    ["Comptes", /partagés par les pages qui s’en servent/],
     ["Fonctions", /rangé par service/],
   ] as const) {
     const heading = screen.getByRole("heading", { name: title, level: 2 });
     expect(within(heading.closest("section") as HTMLElement).getByText(explanation)).toBeInTheDocument();
   }
-  // Les services ne sont plus une rubrique à part : tous servent une page.
-  expect(screen.queryByRole("heading", { name: /^(Services|Autres comptes|Comptes)$/ })).not.toBeInTheDocument();
 
   // La page d’abord : l’entrée avec son icône dans sa couleur, comme dans le menu de gauche, ses onglets en retrait,
   // et le panneau de l’onglet qui en a un.
@@ -1056,11 +870,9 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
   expect(within(menu).getByText("2 onglets.")).toBeInTheDocument();
   expect(within(menu).getByText("Avec le panneau « Ticket » à droite.")).toBeInTheDocument();
 
-  // Puis ses comptes, sous elle : un bloc par service dont ses onglets se servent.
-  expect(await within(group).findByRole("heading", { name: "Compte Jira" })).toBeInTheDocument();
-  expect(within(group).getByRole("heading", { name: "Compte Bitbucket" })).toBeInTheDocument();
-  expect(within(group).getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
-  expect(within(group).getByRole("group", { name: "Comptes Bitbucket" })).toBeInTheDocument();
+  // Puis les comptes, un bloc par service, partagés par les pages.
+  expect(await screen.findByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Comptes Bitbucket" })).toBeInTheDocument();
 
   // Les fonctions sont rangées par service, à part des pages.
   const functions = document.querySelector('[data-part="functions"]') as HTMLElement;
@@ -1080,69 +892,12 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
   expect(within(others).getByText("resumer")).toBeInTheDocument();
 
   // Les actions restent là : tester un compte d’un bouton visible, agir sur une fonction.
-  expect(within(group).getByRole("button", { name: "Tester Jira" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Tester Jira" })).toBeVisible();
   expect(await menuItem(user, "la fonction commenter", "Essayer…")).toBeInTheDocument();
 });
 
-it("montre un compte partagé par deux pages sous chacune, comme un seul compte", async () => {
-  const user = userEvent.setup();
-  vault = [entry("jeton-jira", "Jeton Jira", "token")];
-  stored = [
-    { id: "jira", label: "Jira", baseUrl: "https://jira.exemple.com", auth: { type: "bearer", secret: "jeton-jira" } },
-  ];
-  needs = [
-    {
-      key: "atlassian/jira",
-      module: "atlassian",
-      moduleName: "Atlassian",
-      id: "jira",
-      label: "Jira",
-      baseUrl: null,
-      auth: null,
-      binding: null,
-      client: "jira",
-    },
-  ];
-  const section = (id: string, label: string): ResolvedSection => ({
-    id: `atlassian/${id}`,
-    module: "atlassian",
-    label,
-    icon: null,
-    color: null,
-    hidden: false,
-    pages: [
-      {
-        reference: `atlassian/${id}`,
-        module: "atlassian",
-        id,
-        title: label,
-        icon: null,
-        description: "",
-        hidden: false,
-        readOnly: false,
-        missing: false,
-        errors: [],
-        uses: { clients: ["jira"] },
-        panel: null,
-      },
-    ],
-  });
-  renderModules([section("jira", "Jira"), section("support", "Support")]);
-  await openModule(user, "Atlassian");
-
-  const jira = await screen.findByRole("region", { name: "Page Jira" });
-  const support = screen.getByRole("region", { name: "Page Support" });
-  // Le même compte sous chaque page, avec la mention de l’autre : on ne le configure qu’une fois.
-  expect(await within(jira).findByText("Le même compte sert aussi à la page « Support ».")).toBeInTheDocument();
-  expect(within(support).getByText("Le même compte sert aussi à la page « Jira ».")).toBeInTheDocument();
-  expect(within(jira).getByRole("button", { name: "Tester Jira" })).toBeInTheDocument();
-  expect(within(support).getByRole("button", { name: "Tester Jira" })).toBeInTheDocument();
-  // Un seul service enregistré : rien n’a été dupliqué.
-  expect(stored).toHaveLength(1);
-});
-
-it("ajoute une page par compte à un compte existant, depuis sa ligne ou par « Ajouter une page »", async () => {
-  const user = userEvent.setup();
+/** Un module Prefect : un modèle « Déploiements » qui montre un compte, et deux comptes. */
+function prefectSpace(extra: Partial<Snapshot> = {}) {
   stored = [
     {
       id: "prefect",
@@ -1168,8 +923,8 @@ it("ajoute une page par compte à un compte existant, depuis sa ligne ou par « 
       client: "prefect",
     },
   ];
-  const tab = (instance: string, title: string): ResolvedPage => ({
-    reference: `prefect/deploiements@${instance}`,
+  const tab = (reference: string, title: string, instance: string): ResolvedPage => ({
+    reference,
     module: "prefect",
     id: "deploiements",
     title,
@@ -1179,12 +934,14 @@ it("ajoute une page par compte à un compte existant, depuis sa ligne ou par « 
     readOnly: false,
     missing: false,
     errors: [],
-    uses: { clients: [], functions: [] },
+    uses: { clients: ["prefect"] },
     panel: null,
     instance,
     perInstance: "prefect",
+    template: "prefect/deploiements",
+    accounts: { prefect: instance },
   });
-  renderModules(
+  return renderModules(
     [
       {
         id: "prefect/principal",
@@ -1193,64 +950,132 @@ it("ajoute une page par compte à un compte existant, depuis sa ligne ou par « 
         icon: null,
         color: null,
         hidden: false,
-        pages: [tab("prod", "Prod")],
-        perInstance: "prefect",
-        instancesAs: "tabs",
+        pages: [
+          tab("prefect/deploiements", "Déploiements", "prod"),
+          tab("prefect/deploiements@recette", "Recette", "recette"),
+        ],
       },
     ],
     [],
     {
-      accountPages: [
+      templates: [
         {
           reference: "prefect/deploiements",
           module: "prefect",
           title: "Déploiements",
-          section: "Prefect",
-          need: "prefect",
-          client: "prefect",
+          icon: null,
+          description: "",
+          section: "prefect/principal",
+          needs: ["prefect"],
+          perInstance: "prefect",
         },
       ],
-      accounts: { "prefect/prod": ["prefect/deploiements"] },
+      sectionTemplates: [
+        {
+          id: "prefect/principal",
+          module: "prefect",
+          label: "Prefect",
+          icon: null,
+          iconUrl: null,
+          color: null,
+          pages: ["prefect/deploiements"],
+        },
+      ],
+      accountUsage: { "prefect/prod": ["prefect/deploiements"], "prefect/recette": ["prefect/deploiements@recette"] },
+      ...extra,
     },
   );
-  await openModule(user, "Prefect");
+}
 
-  // Les deux comptes sont là ; celui qui n’a pas la page se la voit proposer sur sa ligne.
+it("montre chaque page du module avec ses onglets et le compte de chacun, et les comptes avec les pages qui s’en servent", async () => {
+  const user = userEvent.setup();
+  prefectSpace();
+  await openModule(user, "Prefect");
+  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  expect(within(page).getByText("2 onglets.")).toBeInTheDocument();
+  expect(within(page).getByRole("combobox", { name: "Compte Prefect de Déploiements" })).toHaveValue("prod");
+  expect(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" })).toHaveValue("recette");
   const accounts = await screen.findByRole("group", { name: "Comptes Prefect" });
-  expect(within(accounts).getByText("Onglet « Prod » dans « Prefect »")).toBeInTheDocument();
-  expect(within(accounts).getByText("N’a pas encore la page « Déploiements ».")).toBeInTheDocument();
-  await user.click(within(accounts).getByRole("button", { name: "Ajouter la page Déploiements à Recette" }));
+  expect(within(accounts).getByText("Utilisé par « Prefect › Déploiements ».")).toBeInTheDocument();
+  expect(within(accounts).getByText("Utilisé par « Prefect › Recette ».")).toBeInTheDocument();
+
+  // Changer le compte d’un onglet.
+  await user.selectOptions(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" }), "prod");
   await waitFor(() =>
-    expect(lastCall("clients.setAccountPages")).toEqual({
-      client: "prefect",
-      instance: "recette",
-      pages: ["prefect/deploiements"],
+    expect(lastCall("space.menu.configure")).toEqual({
+      target: "prefect/deploiements@recette",
+      accounts: { prefect: "prod" },
     }),
   );
 
-  // « Ajouter une page » fait choisir le compte : un compte existant sans la page, ou un nouveau compte.
-  await user.click(screen.getByRole("button", { name: "Ajouter une page" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Déploiements pour un autre compte…" }));
-  const dialog = await screen.findByRole("dialog", { name: "Ajouter « Déploiements » pour un compte" });
-  expect(within(dialog).getByRole("radio", { name: "Recette" })).toBeChecked();
-  expect(within(dialog).queryByRole("radio", { name: "Prod" })).not.toBeInTheDocument();
-  await user.click(within(dialog).getByRole("radio", { name: "Un nouveau compte Prefect…" }));
-  await user.click(within(dialog).getByRole("button", { name: "Continuer" }));
-  // Le nouveau compte reçoit la page dès sa création.
+  // Renommer, ranger et retirer un onglet ; retirer la page.
+  await user.click(await menuItem(user, "l’onglet Recette", "Renommer…"));
+  const rename = await screen.findByRole("dialog", { name: "Renommer l’onglet « Recette »" });
+  const field = within(rename).getByLabelText("Nom");
+  await user.clear(field);
+  await user.type(field, "Rec");
+  await user.click(within(rename).getByRole("button", { name: "Renommer" }));
+  await waitFor(() =>
+    expect(lastCall("space.menu.configure")).toEqual({ target: "prefect/deploiements@recette", label: "Rec" }),
+  );
+  await user.click(await menuItem(user, "l’onglet Recette", "Monter"));
+  await waitFor(() =>
+    expect(lastCall("space.menu.move")).toEqual({ target: "prefect/deploiements@recette", delta: -1 }),
+  );
+  await user.click(await menuItem(user, "l’onglet Recette", "Retirer l’onglet"));
+  await waitFor(() => expect(lastCall("space.menu.remove")).toEqual({ target: "prefect/deploiements@recette" }));
+  await user.click(await menuItem(user, "la page Prefect", "Retirer du menu"));
+  await waitFor(() => expect(lastCall("space.menu.remove")).toEqual({ target: "prefect/principal" }));
+  expect(calls.some((call) => call.command === "clients.deleteInstance")).toBe(false);
+});
+
+it("ajoute une deuxième page Prefect pour un autre compte, puis un onglet à une page", async () => {
+  const user = userEvent.setup();
+  prefectSpace();
+  await openModule(user, "Prefect");
+  await user.click(await screen.findByRole("button", { name: "Ajouter une page" }));
+  const dialog = await screen.findByRole("dialog", { name: "Ajouter une page Prefect" });
+  expect(within(dialog).getByRole("radio", { name: "Prefect" })).toBeChecked();
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Compte Prefect" }), "recette");
+  // Une page Prefect existe déjà : le nom proposé dit le compte.
+  expect(within(dialog).getByLabelText("Nom")).toHaveValue("Prefect Recette");
+  await user.type(within(dialog).getByLabelText("Icône"), "flask-conical");
+  await user.click(within(dialog).getByRole("button", { name: "Ajouter la page" }));
+  await waitFor(() =>
+    expect(lastCall("space.menu.addPage")).toEqual({
+      section: "prefect/principal",
+      label: "Prefect Recette",
+      icon: "flask-conical",
+      tabs: [{ page: "prefect/deploiements", accounts: { prefect: "recette" } }],
+    }),
+  );
+  expect(notifications()).toContain("Page « Prefect Recette » ajoutée au menu");
+
+  await user.click(await menuItem(user, "la page Prefect", "Ajouter un onglet…"));
+  const tab = await screen.findByRole("dialog", { name: "Ajouter un onglet à « Prefect »" });
+  expect(within(tab).getByRole("radio", { name: "Déploiements" })).toBeChecked();
+  await user.selectOptions(within(tab).getByRole("combobox", { name: "Compte Prefect" }), "prod");
+  await user.click(within(tab).getByRole("button", { name: "Ajouter l’onglet" }));
+  await waitFor(() =>
+    expect(lastCall("space.menu.addTab")).toEqual({
+      page: "prefect/principal",
+      tab: { page: "prefect/deploiements", label: "Déploiements Prod", accounts: { prefect: "prod" } },
+    }),
+  );
+});
+
+it("crée un compte sur place depuis un onglet, qui en devient le compte", async () => {
+  const user = userEvent.setup();
+  prefectSpace();
+  await openModule(user, "Prefect");
+  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  await user.selectOptions(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" }), "__nouveau__");
   await user.type(await screen.findByLabelText("Adresse de votre compte"), "https://dev.acme.fr");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
   await waitFor(() =>
-    expect(lastCall("clients.setAccountPages")).toEqual({
-      client: "prefect",
-      instance: "compte",
-      pages: ["prefect/deploiements"],
+    expect(lastCall("space.menu.configure")).toEqual({
+      target: "prefect/deploiements@recette",
+      accounts: { prefect: "compte" },
     }),
   );
-
-  // Retirer la page d’un compte passe par son menu, sans supprimer le compte.
-  await user.click(await menuItem(user, "Prefect — Prod", "Retirer de cette page"));
-  await waitFor(() =>
-    expect(lastCall("clients.setAccountPages")).toEqual({ client: "prefect", instance: "prod", pages: [] }),
-  );
-  expect(calls.some((call) => call.command === "clients.deleteInstance")).toBe(false);
 });

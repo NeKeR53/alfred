@@ -477,14 +477,15 @@ describe("sections par instance", () => {
     ]);
   });
 
-  it("ne propose pas de déplacer la page d’une copie", () => {
+  it("déplace la page d’une copie vers une autre page, jamais dans les Réglages", () => {
     useShell.setState({ view: { kind: "section", id: "jira/principal@acme" } });
     renderShell();
     fireEvent.contextMenu(screen.getByRole("tab", { name: "Tickets" }));
     const menu = screen.getByRole("menu");
-    expect(within(menu).queryByText("Déplacer vers")).not.toBeInTheDocument();
+    expect(within(menu).getByText("Déplacer vers")).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Réglages" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: /Masquer l’onglet/ })).toBeInTheDocument();
-    // Ouvrir la copie seule dans sa fenêtre garde son instance.
+    // Ouvrir la copie seule dans sa fenêtre garde sa référence.
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Ouvrir dans une nouvelle fenêtre/ }));
     expect(vi.mocked(openPageWindow)).toHaveBeenCalledWith("jira/tickets@acme");
   });

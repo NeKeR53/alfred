@@ -187,9 +187,6 @@ export const disconnectClient = (id: string, instance?: string) =>
   invoke<null>("clients.disconnect", target(id, instance));
 export const saveInstance = (client: string, instance: ClientInstanceConfig, create: boolean) =>
   invoke<ClientItem>("clients.saveInstance", { client, instance, create });
-/** Pages ajoutées au compte (`module/page`) ; renvoie les pages de chaque compte (`client/instance` → pages). */
-export const setAccountPages = (client: string, instance: string, pages: string[]) =>
-  invoke<{ accounts: Record<string, string[]> }>("clients.setAccountPages", { client, instance, pages });
 export const deleteInstance = (client: string, instance: string) =>
   invoke<ClientItem>("clients.deleteInstance", { client, instance });
 export const makeDefaultInstance = (client: string, instance: string) =>

@@ -1,8 +1,8 @@
 /**
- * Parcours de configuration d’un module, pas à pas et page d’abord : ce qu’il fait, le nom de ses pages, puis une
- * étape par page qui se sert de comptes (ajouter le compte, saisir la clé, approuver, se connecter, tester), puis
- * les comptes qu’aucune page n’utilise, puis un récapitulatif. Un compte partagé par deux pages se configure sous la
- * première ; la seconde le montre, déjà prêt.
+ * Parcours de configuration d’un module, pas à pas : ce qu’il fait, puis une étape par service (ajouter le compte,
+ * saisir la clé, approuver, se connecter, tester), puis ses pages : chaque modèle du module y est déjà ajouté une
+ * fois ; l’utilisateur en retire, en ajoute, les nomme et choisit leurs comptes page par page. Puis un récapitulatif.
+ * Un compte est créé une fois par service ; plusieurs pages peuvent s’en servir.
  *
  * Rien n’est mémorisé : chaque étape se lit dans l’état réel des services (`modules.setup`), si bien qu’on peut
  * quitter le parcours à tout moment et le reprendre là où il en était.
@@ -13,40 +13,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { type ClientInstanceItem, type ClientItem, setAccountPages, testClient } from "../clients/api";
+import { type ClientInstanceItem, type ClientItem, testClient } from "../clients/api";
 import { createFromTemplate, templateNeedsAccount, templateOf } from "../clients/fromTemplate";
 import { UNDESCRIBED } from "../clients/ServiceBlock";
 import type { ServiceEditing } from "../clients/ServiceEditor";
 import type { ClientsController } from "../clients/useClients";
-import { accountsWithPage, type PageEntry, type PageGroup, pageGroups } from "../modules/pageGroups";
+import { userPagesOf } from "../modules/menuApi";
 import { errorMessage } from "../vault/api";
 import type { ModuleSetup, SetupStep, SetupStepState } from "./api";
-import { ModuleNaming, moduleSections } from "./ModuleNaming";
+import { ModulePagesStep } from "./ModulePagesStep";
 import "./setup.css";
 
 const INTRO = "intro";
 const PAGES = "pages";
 const DONE = "fin";
-/** Étape d’une page : `page:<groupe>`. */
-const PAGE = "page:";
-
-/** Pages du module qui se servent d’au moins un compte, dans l’ordre du menu. */
-export function pagesWithAccounts(groups: PageGroup[], setup: ModuleSetup): PageGroup[] {
-  const known = new Set(setup.steps.map((step) => step.key));
-  return groups.filter((group) => group.needs.some((need) => known.has(need)));
-}
-
-/** Étape du parcours où se configure un besoin : la première page qui s’en sert, sinon le besoin lui-même. */
-export function stepOfNeed(groups: PageGroup[], need: string): string {
-  const group = groups.find((candidate) => candidate.needs.includes(need));
-  return group ? `${PAGE}${group.key}` : need;
-}
-
 /** État d’une étape, en mots simples. */
-export const STEP_STATE: Record<SetupStepState, { label: string; tone: "success" | "warning" | "danger" }> = {
-  missing: { label: "À configurer", tone: "warning" },
-  incomplete: { label: "À terminer", tone: "warning" },
-  untested: { label: "À tester", tone: "warning" },
+export const STEP_STATE: Record<SetupStepState, { label: string; tone: "success" | "pending" | "danger" }> = {
+  missing: { label: "À configurer", tone: "pending" },
+  incomplete: { label: "À terminer", tone: "pending" },
+  untested: { label: "À tester", tone: "pending" },
   failed: { label: "Le test a échoué", tone: "danger" },
   ready: { label: "Prêt", tone: "success" },
 };
@@ -90,42 +75,25 @@ export function SetupFlow({
   const autoTested = useRef(new Set<string>());
 
   const snapshot = useShell((state) => state.snapshot);
-  const sections = setup && snapshot ? moduleSections(snapshot.sections, setup.module) : [];
   const owner = setup ? modules.find((candidate) => candidate.id === setup.module) : undefined;
-  /** L’étape « Vos pages » n’a lieu que si le module ajoute quelque chose au menu. */
-  const naming = sections.length > 0 && owner !== undefined;
-  const groups = useMemo(
-    () => (setup && snapshot ? pagesWithAccounts(pageGroups(snapshot, setup.module), setup) : []),
-    [setup, snapshot],
-  );
-  /** Besoins qu’aucune page ne configure : une étape chacun, après les pages. */
-  const loose = useMemo(
-    () => setup?.steps.filter((item) => !groups.some((group) => group.needs.includes(item.key))) ?? [],
-    [setup, groups],
-  );
+  const templates = (snapshot?.templates ?? []).filter((template) => template.module === setup?.module);
+  const entries = setup && snapshot ? userPagesOf(snapshot, setup.module) : [];
+  /** L’étape « Vos pages » n’a lieu que si le module a des modèles de pages. */
+  const naming = (templates.length > 0 || entries.length > 0) && owner !== undefined;
   const ids = useMemo(
-    () => [
-      INTRO,
-      ...(naming ? [PAGES] : []),
-      ...groups.map((group) => `${PAGE}${group.key}`),
-      ...loose.map((item) => item.key),
-      DONE,
-    ],
-    [naming, groups, loose],
+    () => [INTRO, ...(setup?.steps.map((item) => item.key) ?? []), ...(naming ? [PAGES] : []), DONE],
+    [naming, setup],
   );
 
   useEffect(() => {
     if (current || !setup) return;
-    const wanted = first && setup.steps.some((item) => item.key === first) ? stepOfNeed(groups, first) : undefined;
-    const resumed = resumeStep(setup);
-    setCurrent(wanted ?? (start === "intro" ? INTRO : resumed === DONE ? DONE : stepOfNeed(groups, resumed)));
-  }, [current, setup, start, first, groups]);
+    const wanted = first && setup.steps.some((item) => item.key === first) ? first : undefined;
+    setCurrent(wanted ?? (start === "intro" ? INTRO : resumeStep(setup)));
+  }, [current, setup, start, first]);
 
   const clients = services.overview?.clients ?? [];
   const step = setup?.steps.find((candidate) => candidate.key === current);
-  const page = current?.startsWith(PAGE) ? groups.find((group) => `${PAGE}${group.key}` === current) : undefined;
-  /** Besoins configurés à l’étape affichée : ceux de la page, ou le besoin seul. */
-  const stepNeeds = page ? (setup?.steps.filter((item) => page.needs.includes(item.key)) ?? []) : step ? [step] : [];
+  const stepNeeds = step ? [step] : [];
   const stepClients = stepNeeds.flatMap((item) => clients.filter((candidate) => candidate.id === item.client));
 
   // Un compte prêt qui n’a jamais été testé l’est d’office, une fois : la plupart des gens n’y penseraient pas.
@@ -149,13 +117,8 @@ export function SetupFlow({
   const index = Math.max(0, ids.indexOf(current));
   const go = (offset: number) => setCurrent(ids[Math.min(ids.length - 1, Math.max(0, index + offset))]);
   const total = setup.steps.length;
-  /** Étapes entre la présentation et la fin : nommer les pages, une par page, puis un service chacune. */
+  /** Étapes entre la présentation et la fin : un service chacune, puis les pages. */
   const stepCount = ids.length - 2;
-  /** Une page est prête quand tous ses comptes essentiels le sont. */
-  const pageState = (group: PageGroup): SetupStepState => {
-    const own = setup.steps.filter((item) => group.needs.includes(item.key) && !item.optional);
-    return own.find((item) => item.state !== "ready")?.state ?? "ready";
-  };
 
   async function runTest(target: ClientItem, instance: ClientInstanceItem) {
     const key = `${target.id}#${instance.id}`;
@@ -172,14 +135,13 @@ export function SetupFlow({
   }
 
   /** Crée le service d’une étape d’après le modèle du module, puis ouvre l’ajout du premier compte. */
-  async function createService(item: SetupStep, page?: string) {
+  async function createService(item: SetupStep) {
     const template = templateOf(modules, item.module, item.need);
     if (!template) return;
     setCreating(item.key);
     try {
       const saved = await createFromTemplate(template, { key: item.key, id: item.need, label: item.label }, services);
-      if (templateNeedsAccount(template))
-        onEdit({ kind: "account", client: saved, help: item.help || undefined, page });
+      if (templateNeedsAccount(template)) onEdit({ kind: "account", client: saved, help: item.help || undefined });
     } catch (failure) {
       notify({ title: `${item.label} n’a pas pu être ajouté`, description: errorMessage(failure), tone: "error" });
     } finally {
@@ -211,17 +173,12 @@ export function SetupFlow({
       label={`Étapes de la configuration de ${setup.name}`}
       steps={[
         { id: INTRO, title: "Présentation" },
-        ...(naming ? [{ id: PAGES, title: "Vos pages", hint: "Les nommer" }] : []),
-        ...groups.map((group) => ({
-          id: `${PAGE}${group.key}`,
-          title: group.title,
-          hint: STEP_STATE[pageState(group)].label,
-        })),
-        ...loose.map((item) => ({
+        ...setup.steps.map((item) => ({
           id: item.key,
           title: item.label,
           hint: item.optional && item.state !== "ready" ? "Facultatif" : STEP_STATE[item.state].label,
         })),
+        ...(naming ? [{ id: PAGES, title: "Vos pages", hint: `${entries.length} dans le menu` }] : []),
         { id: DONE, title: "Terminé" },
       ]}
       current={current}
@@ -236,8 +193,9 @@ export function SetupFlow({
       {setup.welcome ? <Text>{setup.welcome}</Text> : null}
       {naming ? (
         <Text>
-          Vous allez d’abord nommer {sections.length > 1 ? "ses pages" : "sa page"} dans le menu de gauche
-          {total > 0 ? ", puis, page par page, ajouter et tester les comptes dont chacune se sert." : "."}
+          {total > 0
+            ? "Vous allez d’abord ajouter et tester vos comptes, puis choisir vos pages dans le menu de gauche, et le compte de chacune."
+            : "Vous allez choisir ses pages dans le menu de gauche et leur donner le nom qui vous parle."}
         </Text>
       ) : null}
       {total === 0 ? (
@@ -367,33 +325,14 @@ export function SetupFlow({
     const known = item.client ? clients.find((candidate) => candidate.id === item.client) : undefined;
     const template = templateOf(modules, item.module, item.need);
     const several = known ? !known.simple : Boolean(template?.methods?.length);
-    const pagePerAccount =
-      sections.some((section) => section.perInstance === item.need || section.instance) ||
-      Boolean(snapshot?.accountPages?.some((page) => page.module === item.module && page.need === item.need));
     if (!several) return "Un seul compte suffit pour ce service.";
-    return pagePerAccount
-      ? "Vous pouvez connecter plusieurs comptes : chacun aura sa propre page dans le menu."
-      : "Vous pouvez connecter plusieurs comptes, et en ajouter d’autres plus tard.";
+    return "Vous pouvez connecter plusieurs comptes : chaque page choisit ensuite le sien.";
   };
 
-  /** Ajoute à un compte existant une page qui existe pour chaque compte. */
-  async function addPageTo(client: ClientItem, instance: ClientInstanceItem, entry: PageEntry) {
-    const key = `${client.id}/${instance.id}`;
-    try {
-      await setAccountPages(client.id, instance.id, [...(snapshot?.accounts?.[key] ?? []), entry.reference]);
-    } catch (failure) {
-      notify({ title: "La page n’a pas été ajoutée", description: errorMessage(failure), tone: "error" });
-    }
-  }
-
-  /**
-   * Les comptes d’un besoin, et de quoi les ajouter et les tester. `entry` : la page existe pour chaque compte ; on
-   * ne montre que les comptes qui l’ont, les autres se la voient proposer, et un compte ajouté la reçoit d’office.
-   */
-  const accountsOf = (item: SetupStep, entry?: PageEntry) => {
+  /** Les comptes d’un besoin, et de quoi les ajouter et les tester. */
+  const accountsOf = (item: SetupStep) => {
     const template = templateOf(modules, item.module, item.need);
     const client = item.client ? clients.find((candidate) => candidate.id === item.client) : undefined;
-    const page = entry?.reference;
     if (services.overview === undefined) return <Spinner label="Chargement des services" />;
     if (!client)
       return template ? (
@@ -411,7 +350,7 @@ export function SetupFlow({
               loading={creating === item.key}
               disabled={creating !== undefined}
               aria-label={`Ajouter votre compte ${item.label}`}
-              onClick={() => void createService(item, page)}
+              onClick={() => void createService(item)}
             >
               {templateNeedsAccount(template) ? "Ajouter votre compte" : "Activer"}
             </Button>
@@ -420,9 +359,7 @@ export function SetupFlow({
       ) : (
         <Text tone="warning">{UNDESCRIBED}</Text>
       );
-    const chosen = entry ? accountsWithPage(snapshot?.accounts, client.id, entry) : null;
-    const shown = client.instances.filter((instance) => !chosen || chosen.has(instance.id));
-    const others = chosen ? client.instances.filter((instance) => !chosen.has(instance.id)) : [];
+    const shown = client.instances;
     return (
       <>
         {client.status === "invalid" && client.instances.length === 0 ? (
@@ -431,31 +368,12 @@ export function SetupFlow({
         <SettingRows label={`Comptes ${client.label}`}>
           {shown.map((instance) => accountRow(client, instance))}
         </SettingRows>
-        {others.length > 0 && entry ? (
-          <SettingRows label={`Autres comptes ${client.label}`}>
-            {others.map((instance) => (
-              <SettingRow
-                key={instance.id}
-                title={instance.label}
-                description={`N’a pas encore la page « ${entry.title} ».`}
-              >
-                <Button
-                  variant="secondary"
-                  aria-label={`Ajouter la page ${entry.title} à ${instance.label}`}
-                  onClick={() => void addPageTo(client, instance, entry)}
-                >
-                  Ajouter la page
-                </Button>
-              </SettingRow>
-            ))}
-          </SettingRows>
-        ) : null}
         {client.simple ? null : (
           <div className="setup-flow__inline-actions">
             <Button
               variant={shown.length === 0 ? "primary" : "secondary"}
               aria-label={`Ajouter un compte à ${client.label}`}
-              onClick={() => onEdit({ kind: "account", client, help: item.help || undefined, page })}
+              onClick={() => onEdit({ kind: "account", client, help: item.help || undefined })}
             >
               {shown.length === 0 ? "Ajouter votre compte" : "Ajouter un autre compte"}
             </Button>
@@ -491,47 +409,6 @@ export function SetupFlow({
     </div>
   );
 
-  /** Étape d’une page : les comptes dont elle se sert, un bloc par service. */
-  const pageStep = (group: PageGroup) => {
-    const items = setup.steps.filter((item) => group.needs.includes(item.key));
-    const earlier = groups.slice(0, groups.indexOf(group));
-    return (
-      <div className="setup-flow__body">
-        <h3>Page « {group.title} »</h3>
-        <Text>
-          {items.length > 1
-            ? `Cette page se sert de ${items.length} comptes : ${items.map((item) => item.label).join(", ")}.`
-            : `Cette page se sert de votre compte ${items[0]?.label ?? ""}.`}
-        </Text>
-        {items.map((item) => {
-          const before = earlier.find((other) => other.needs.includes(item.key));
-          const entry = group.pages.find((candidate) => candidate.perInstance === item.key);
-          return (
-            <section key={item.key} className="setup-flow__account" aria-label={`Compte ${item.label}`}>
-              <div className="setup-flow__step-head">
-                <h4>Compte {item.label}</h4>
-                {stepBadges(item)}
-              </div>
-              {before ? (
-                <Text tone="muted">{`Le même compte que pour la page « ${before.title} » : rien à refaire s’il est prêt.`}</Text>
-              ) : item.help ? (
-                <Text tone="muted">{item.help}</Text>
-              ) : null}
-              {entry ? (
-                <Text tone="muted">
-                  {group.instancesAs === "tabs"
-                    ? `La page « ${entry.title} » a un onglet par compte : chaque compte ajouté ici a le sien.`
-                    : `La page « ${entry.title} » a une entrée du menu par compte : chaque compte ajouté ici a la sienne.`}
-                </Text>
-              ) : null}
-              {accountsOf(item, entry)}
-            </section>
-          );
-        })}
-      </div>
-    );
-  };
-
   const left = setup.steps.filter((item) => !item.optional && item.state !== "ready");
   /** Un service au moins est prêt : le module sert déjà, le reste peut attendre. */
   const usable = setup.steps.some((item) => item.state === "ready");
@@ -553,11 +430,7 @@ export function SetupFlow({
           <ul className="setup-flow__needs">
             {left.map((item) => (
               <li key={item.key}>
-                <button
-                  type="button"
-                  className="setup-flow__link"
-                  onClick={() => setCurrent(stepOfNeed(groups, item.key))}
-                >
+                <button type="button" className="setup-flow__link" onClick={() => setCurrent(item.key)}>
                   {item.label}
                 </button>{" "}
                 — {STEP_STATE[item.state].label.toLowerCase()}
@@ -573,7 +446,7 @@ export function SetupFlow({
   );
 
   const last = current === DONE;
-  const ready = page ? pageState(page) === "ready" : !step || step.state === "ready" || step.optional;
+  const ready = !step || step.state === "ready" || step.optional;
   return (
     <div className="setup-flow">
       {header}
@@ -582,32 +455,29 @@ export function SetupFlow({
         <section
           className="setup-flow__main"
           aria-label={
-            page
-              ? `Page ${page.title}`
-              : step
-                ? step.label
-                : current === INTRO
-                  ? "Présentation"
-                  : current === PAGES
-                    ? "Vos pages"
-                    : "Terminé"
+            step ? step.label : current === INTRO ? "Présentation" : current === PAGES ? "Vos pages" : "Terminé"
           }
         >
           {current === INTRO ? (
             intro
-          ) : current === PAGES && owner ? (
-            <ModuleNaming module={owner} />
+          ) : current === PAGES && owner && snapshot ? (
+            <ModulePagesStep
+              module={owner}
+              modules={modules}
+              snapshot={snapshot}
+              entries={entries}
+              services={services}
+              onEdit={onEdit}
+            />
           ) : last ? (
             done
-          ) : page ? (
-            pageStep(page)
           ) : step ? (
             serviceStep(step)
           ) : null}
           <div className="setup-flow__footer">
             {index > 0 ? <Button onClick={() => go(-1)}>Précédent</Button> : null}
             <span className="setup-flow__spacer" />
-            {!last && (page ? pageState(page) === "ready" : step?.state === "ready") && !setup.ready && onOpenModule ? (
+            {!last && step?.state === "ready" && !setup.ready && onOpenModule ? (
               <Button onClick={onOpenModule}>Utiliser maintenant</Button>
             ) : null}
             {last ? (

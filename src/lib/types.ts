@@ -29,19 +29,46 @@ export interface ResolvedPage {
   instance?: string | null;
   /** Besoin client dont la page suit les instances : le sien (`perInstance` de la page), sinon celui de sa section. */
   perInstance?: string | null;
+  /** Modèle dont la page est la copie (`module/page`) ; `reference` est la sienne, ou porte un suffixe `@…`. */
+  template?: string;
+  /** Compte choisi pour chaque besoin (`jira` → `acme`). */
+  accounts?: Record<string, string>;
+  /** La page attend un compte : ce qu’il faut faire, montré à sa place. */
+  waiting?: string | null;
 }
 
-/** Page qui est pour chaque compte d’un client : la fiche d’un compte propose de l’ajouter. */
-export interface AccountPage {
-  /** `module/page` ; la page d’un compte est `module/page@instance`. */
+/** Modèle de page d’un module : l’utilisateur en fait des pages et des onglets. */
+export interface PageTemplate {
+  /** `module/page`. */
   reference: string;
   module: string;
   title: string;
-  /** Nom de la section où elle se range. */
+  icon: string | null;
+  description: string;
+  /** Section déclarée où le module le range (`module/section`). */
   section: string;
-  need: string;
-  /** Client de l’espace qui répond au besoin ; `null` s’il n’y en a pas encore. */
-  client: string | null;
+  /** Besoins clients du modèle et de son panneau. */
+  needs: string[];
+  /** Besoin dont la page montre un compte : sans compte, elle attend. */
+  perInstance: string | null;
+}
+
+/** Section déclarée par un module : l’apparence d’une page et ses onglets par défaut. */
+export interface SectionTemplate {
+  id: string;
+  module: string;
+  label: string;
+  icon: string | null;
+  iconUrl: string | null;
+  color: string | null;
+  pages: string[];
+}
+
+/** Onglet demandé à la création d’une page ou d’un onglet. */
+export interface NewTab {
+  page: string;
+  label?: string;
+  accounts?: Record<string, string>;
 }
 
 export interface ResolvedSection {
@@ -169,10 +196,12 @@ export interface Snapshot {
   layout?: Layout;
   /** Modules affichés avec leurs données d’exemple (réglage du poste, hors de l’espace). */
   examples?: string[];
-  /** Pages qui sont pour chaque compte d’un client, que l’utilisateur peut ajouter à un compte. */
-  accountPages?: AccountPage[];
-  /** Pages ajoutées à chaque compte : `client/instance` → `module/page`. */
-  accounts?: Record<string, string[]>;
+  /** Modèles de pages des modules. */
+  templates?: PageTemplate[];
+  /** Sections déclarées par les modules. */
+  sectionTemplates?: SectionTemplate[];
+  /** Onglets qui se servent de chaque compte : `client/instance` → références. */
+  accountUsage?: Record<string, string[]>;
 }
 
 export interface Override {

@@ -131,9 +131,38 @@ describe("page d’une section par instance", () => {
     });
   });
 
+  it("une copie dont le suffixe n’est pas un compte reçoit ses comptes par besoin, et `instance` reste rempli", async () => {
+    const tab: FrameIdentity = {
+      kind: "page",
+      module: "prefect",
+      reference: "prefect/deploiements@prefect-recette",
+      instance: "recette",
+      accounts: { prefect: "recette" },
+    };
+    const context = (await handleFrameRequest(tab, "shell.context", {})) as Record<string, unknown>;
+    expect(context).toMatchObject({
+      reference: "prefect/deploiements",
+      page: "deploiements",
+      instance: "recette",
+      accounts: { prefect: "recette" },
+    });
+    await handleFrameRequest(tab, "clients.instances", { client: "prefect" });
+    expect(native.invoke).toHaveBeenCalledWith("frame.clients.instances", {
+      subject: {
+        kind: "page",
+        module: "prefect",
+        reference: "prefect/deploiements",
+        instance: "recette",
+        accounts: { prefect: "recette" },
+      },
+      client: "prefect",
+    });
+  });
+
   it("n’a pas d’instance hors d’une section par instance", async () => {
     const context = (await handleFrameRequest(page, "shell.context", {})) as Record<string, unknown>;
     expect(context.instance).toBeNull();
+    expect(context.accounts).toEqual({});
   });
 });
 

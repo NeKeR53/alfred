@@ -1,10 +1,11 @@
 /**
- * Contenu d’un module dans sa fiche (Réglages → Modules), page d’abord : ses pages, chacune avec les comptes dont
- * elle se sert ; puis les comptes qu’aucune page n’utilise (fonctions, automatismes) ; puis ses fonctions, rangées
- * par service. Rien de vide ne s’affiche.
+ * Contenu d’un module dans sa fiche (Réglages → Modules), page d’abord : vos pages qui viennent du module, chacune
+ * avec ses onglets et leurs comptes, et de quoi en ajouter ; puis les comptes de ses services, chacun avec les pages
+ * qui s’en servent ; puis ses fonctions, rangées par service. Rien de vide ne s’affiche.
  */
 import { Spinner, Text } from "@alfred/ui";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../../lib/types";
+import { accountUsers, usageSentence } from "../clients/AccountPages";
 import type { ClientNeedItem } from "../clients/api";
 import { templateOf } from "../clients/fromTemplate";
 import { ServiceBlock } from "../clients/ServiceBlock";
@@ -13,10 +14,10 @@ import type { ClientsController } from "../clients/useClients";
 import { FunctionGroup } from "../functions/ModuleFunctions";
 import { useFunctionTests } from "../functions/tests";
 import { ExampleModePart } from "./ExampleModePart";
-import { ModulePageGroups } from "./ModulePageGroups";
 import { listing } from "./ModulePages";
 import { ModulePart } from "./ModulePart";
-import { needsWithoutPage, pageGroups } from "./pageGroups";
+import { ModuleUserPages, needKey } from "./ModuleUserPages";
+import { userPagesOf } from "./menuApi";
 
 /**
  * Range les fonctions du module sous ses services : chacune sous ceux qu’elle déclare (`uses.clients`) ; sans
@@ -65,12 +66,20 @@ export function ModuleContents({
     functions,
     overview ? needs.map((need) => need.id) : module.clients.map((need) => need.id),
   );
-  const groups = snapshot ? pageGroups(snapshot, module.id) : [];
-  // Les besoins du module qu’aucune page n’utilise, et ceux de ses dépendances dont une page se sert.
-  const withoutPage = needsWithoutPage(
-    groups,
-    needs.map((need) => need.key),
-  );
+  const entries = snapshot ? userPagesOf(snapshot, module.id) : [];
+  const templates = (snapshot?.templates ?? []).filter((template) => template.module === module.id);
+  // Les services du module, puis ceux de ses dépendances dont un de ses modèles se sert.
+  const dependencyNeeds = [
+    ...new Set(
+      templates.flatMap((template) =>
+        template.needs.filter((need) => need.includes("/")).map((need) => needKey(module.id, need)),
+      ),
+    ),
+  ];
+  const shownNeeds = [
+    ...needs.map((need) => need.key),
+    ...dependencyNeeds.filter((key) => !needs.some((need) => need.key === key)),
+  ];
   const loading =
     overview === undefined ? (
       services.error ? (
@@ -89,17 +98,17 @@ export function ModuleContents({
 
   return (
     <>
-      {groups.length > 0 && snapshot ? (
+      {(entries.length > 0 || templates.length > 0) && snapshot ? (
         <ModulePart
           part="pages"
           title="Pages"
-          description="Les pages que ce module ajoute au menu, et sous chacune les comptes dont elle se sert. Décochez une page pour la retirer du menu."
+          description="Vos pages faites à partir de ce module, chacune avec ses onglets et leurs comptes. Ajoutez-en autant que vous voulez, avec d’autres comptes."
         >
-          <ModulePageGroups
+          <ModuleUserPages
             module={module}
             modules={modules}
             snapshot={snapshot}
-            groups={groups}
+            entries={entries}
             services={services}
             onEdit={onEditService}
             disabled={hidden}
@@ -107,32 +116,39 @@ export function ModuleContents({
           />
         </ModulePart>
       ) : null}
-      {(overview === undefined && groups.length === 0 && module.clients.length > 0) || withoutPage.length > 0 ? (
+      {shownNeeds.length > 0 || (overview === undefined && module.clients.length > 0) ? (
         <ModulePart
           part="services"
-          title={groups.length > 0 ? "Autres comptes" : "Comptes"}
-          description={
-            groups.length > 0
-              ? "Les comptes dont se servent les fonctions et les automatismes du module, sans page à eux."
-              : "Les comptes dont ce module se sert, et de quoi les ajouter et les tester."
-          }
+          title="Comptes"
+          description="Les comptes de chaque service, créés une fois et partagés par les pages qui s’en servent."
         >
           {loading ?? (
             <div className="service-list">
-              {withoutPage.map((key) => {
-                const need = needs.find((candidate) => candidate.key === key);
+              {shownNeeds.map((key) => {
+                const need = overview?.needs.find((candidate) => candidate.key === key);
                 if (!need || !overview) return null;
+                const client = overview.clients.find((candidate) => candidate.id === need.client);
                 return (
                   <ServiceBlock
                     key={need.key}
                     need={need}
-                    client={overview.clients.find((client) => client.id === need.client)}
+                    client={client}
                     template={templateOf(modules, need.module, need.id)}
-                    help={module.clients.find((item) => item.id === need.id)?.help || undefined}
+                    help={
+                      modules.find((item) => item.id === need.module)?.clients.find((item) => item.id === need.id)
+                        ?.help || undefined
+                    }
                     controller={services}
                     onEdit={onEditService}
                     titled
-                    purpose={usedBy}
+                    purpose={
+                      need.module !== module.id ? `Service de ${need.moduleName}, installé avec ce module.` : usedBy
+                    }
+                    describeInstance={
+                      client && !client.simple
+                        ? (instance) => usageSentence(accountUsers(snapshot, client.id, instance))
+                        : undefined
+                    }
                   />
                 );
               })}

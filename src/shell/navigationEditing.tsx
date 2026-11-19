@@ -517,10 +517,9 @@ export function useNavigationEditor() {
     const found = findPage(snapshot, menu.reference);
     if (found) {
       const { page, section } = found;
-      // Les copies par instance se remplissent seules : on ne déplace ni vers elles, ni une page qui en vient.
-      const targets = page.instance
-        ? []
-        : snapshot.sections.filter((candidate) => candidate.id !== section?.id && !candidate.instanceOf);
+      // Un onglet va dans n’importe quelle autre page du menu ; une copie (`…@suffixe`) ne va pas dans les Réglages.
+      const copy = page.reference.includes("@");
+      const targets = snapshot.sections.filter((candidate) => candidate.id !== section?.id);
       menuElement = (
         <ContextMenu
           label={`Actions de l’onglet ${page.title}`}
@@ -548,7 +547,7 @@ export function useNavigationEditor() {
               Ouvrir dans une nouvelle fenêtre
             </MenuItem>
           ) : null}
-          {page.instance ? null : (
+          {targets.length === 0 && (copy || !section) ? null : (
             <MenuGroup label="Déplacer vers">
               {targets.map((target) => (
                 <MenuItem
@@ -564,7 +563,7 @@ export function useNavigationEditor() {
                   {target.hidden ? " (masquée)" : ""}
                 </MenuItem>
               ))}
-              {section ? (
+              {section && !copy ? (
                 <MenuItem
                   onClick={() =>
                     void applyLayoutChange((state) => movePage(state, page.reference, { kind: "settings" }))

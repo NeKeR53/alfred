@@ -566,7 +566,7 @@ it("l’agent ouvre l’onboarding d’un module : le panneau s’ouvre sur sa p
   expect(useOnboarding.getState()).toEqual({ module: "boite", start: "intro" });
 });
 
-it("guide la configuration page par page : chaque page avec ses comptes, un compte partagé configuré une fois", async () => {
+it("configure les comptes service par service, puis montre les pages pré-ajoutées avec le compte de chacune", async () => {
   const user = userEvent.setup();
   const JIRA: ClientNeed = { id: "jira", label: "Jira", help: "Votre jeton personnel Jira.", client: GMAIL.client };
   const BITBUCKET: ClientNeed = { id: "bitbucket", label: "Bitbucket", client: GMAIL.client };
@@ -592,8 +592,19 @@ it("guide la configuration page par page : chaque page avec ses comptes, un comp
         errors: [],
         uses: { clients },
         panel: null,
+        template: `atlassian/${id}`,
       },
     ],
+  });
+  const template = (id: string, title: string, needs: string[]) => ({
+    reference: `atlassian/${id}`,
+    module: "atlassian",
+    title,
+    icon: null,
+    description: "",
+    section: `atlassian/${id}`,
+    needs,
+    perInstance: null,
   });
   renderModules();
   useShell.setState((state) => ({
@@ -604,34 +615,40 @@ it("guide la configuration page par page : chaque page avec ses comptes, un comp
         section("support", "Support", ["jira"]),
         section("depots", "Dépôts", ["bitbucket"]),
       ],
+      templates: [
+        template("jira", "Jira", ["jira"]),
+        template("support", "Support", ["jira"]),
+        template("depots", "Dépôts", ["bitbucket"]),
+      ],
     },
   }));
   act(() => openOnboarding("atlassian"));
   const dialog = await screen.findByRole("dialog", { name: "Configurer Atlassian" });
 
-  // Les étapes suivent les pages : les nommer, puis une étape par page qui se sert d’un compte.
+  // Une étape par service (un compte partagé par deux pages ne se configure qu’une fois), puis les pages.
   const steps = within(dialog).getByRole("list", { name: "Étapes de la configuration de Atlassian" });
   expect(
     within(steps)
       .getAllByRole("button")
       .map((step) => step.getAttribute("aria-label")),
-  ).toEqual(["Présentation", "Vos pages", "Jira", "Support", "Dépôts", "Terminé"]);
-  // La reprise ouvre la première page qui attend un compte.
-  expect(await within(dialog).findByRole("heading", { name: "Page « Jira »" })).toBeInTheDocument();
-  expect(within(dialog).getByRole("heading", { name: "Compte Jira" })).toBeInTheDocument();
+  ).toEqual(["Présentation", "Jira", "Bitbucket", "Vos pages", "Terminé"]);
+  expect(await within(dialog).findByRole("heading", { name: "Jira" })).toBeInTheDocument();
   expect(within(dialog).getByText("Votre jeton personnel Jira.")).toBeInTheDocument();
 
-  // Support se sert du même compte Jira : il le dit au lieu de faire tout refaire.
-  await user.click(within(steps).getByRole("button", { name: "Support" }));
-  expect(await within(dialog).findByRole("heading", { name: "Page « Support »" })).toBeInTheDocument();
-  expect(within(dialog).getByText(/Le même compte que pour la page « Jira »/)).toBeInTheDocument();
+  // Vos pages : chaque modèle déjà ajouté une fois, à garder, retirer ou compléter.
+  await user.click(within(steps).getByRole("button", { name: "Vos pages" }));
+  expect(await within(dialog).findByRole("heading", { name: "Vos pages" })).toBeInTheDocument();
+  expect(within(dialog).getByText(/a ajouté 3 pages à votre menu/)).toBeInTheDocument();
+  for (const name of ["Jira", "Support", "Dépôts"])
+    expect(within(dialog).getByRole("region", { name: `Page ${name}` })).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Ajouter une page" })).toBeInTheDocument();
 
-  // Une page qui manque d’un compte ouvre le parcours sur cette page.
+  // Une page qui manque d’un compte ouvre le parcours sur l’étape de ce service.
   act(() => useOnboarding.setState({ module: null }));
   act(() => openOnboarding("atlassian", "resume", "atlassian/bitbucket"));
   expect(
     await within(await screen.findByRole("dialog", { name: "Configurer Atlassian" })).findByRole("heading", {
-      name: "Page « Dépôts »",
+      name: "Bitbucket",
     }),
   ).toBeInTheDocument();
 });
