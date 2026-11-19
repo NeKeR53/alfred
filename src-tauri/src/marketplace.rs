@@ -18,7 +18,7 @@ use serde_json::{json, Map, Value};
 use crate::error::{arg, opt_arg, AppError, AppResult};
 use crate::space::{self, ModuleManifest, Origin, Space, MODULE_FILE, MODULES_DIR};
 use crate::state::AppState;
-use crate::{app_db, git, transpile};
+use crate::{app_db, git, git_network, transpile};
 
 const SETTING: &str = "marketplaces";
 const CHANGELOG: &str = "CHANGELOG.md";
@@ -121,6 +121,9 @@ struct Marketplace {
     /// Dernier échec de rafraîchissement, effacé au rafraîchissement réussi suivant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// Sortie de git de ce dernier échec, sans identifiants, montrée repliée sous le message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error_detail: Option<String>,
 }
 
 fn load(state: &AppState) -> AppResult<Vec<Marketplace>> {
@@ -225,6 +228,7 @@ fn add(state: &AppState, url: &str, name: Option<String>) -> AppResult<Value> {
         added_at: app_db::now(),
         last_checked: Some(app_db::now()),
         error: None,
+        error_detail: None,
     };
     marketplaces.push(marketplace.clone());
     save(state, &marketplaces)?;
@@ -290,9 +294,13 @@ fn refresh(state: &AppState, only: Option<&str>) -> AppResult<Value> {
     let mut failure = None;
     for marketplace in marketplaces.iter_mut().filter(|marketplace| only.is_none_or(|id| marketplace.id == id)) {
         match sync_clone(&clone_dir(state, &marketplace.id), &marketplace.url) {
-            Ok(()) => marketplace.error = None,
+            Ok(()) => {
+                marketplace.error = None;
+                marketplace.error_detail = None;
+            }
             Err(error) => {
                 marketplace.error = Some(error.message.clone());
+                marketplace.error_detail = Some(git_network::redact(&stderr_of(&error))).filter(|text| !text.is_empty());
                 failure = Some(error);
             }
         }
@@ -312,7 +320,69 @@ fn refresh(state: &AppState, only: Option<&str>) -> AppResult<Value> {
 /// Git pour les opérations réseau (clone, fetch, push). Seuls les identifiants déjà configurés sur le poste
 /// servent : aucune question au terminal, aucune fenêtre du gestionnaire d’identifiants, aucune phrase secrète
 /// demandée par SSH. Une connexion qui ne répond plus est abandonnée au lieu de bloquer l’interface.
+///
+/// Les certificats et le proxy du système sont donnés à git quand l’utilisateur ne les a pas réglés lui-même
+/// (`git_network`) : sous Windows, le magasin de Windows d’abord ; partout, les racines du système en PEM si le
+/// premier essai échoue sur un certificat.
 pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
+    let url = remote_url(dir, args);
+    let env = |name: &str| std::env::var(name).ok();
+    let user_tls = git_network::user_tls(&http_settings(dir), url.as_deref().unwrap_or_default(), env);
+    let attempts = git_network::tls_attempts(
+        git_network::Platform::current(),
+        user_tls,
+        Some(&git_network::roots_bundle()),
+        git_network::prefer_bundle(),
+    );
+    let git_proxy = git_network::env_proxy(env) || url.as_deref().is_some_and(|url| configured_proxy(dir, url));
+    let system_proxy = if git_proxy { Default::default() } else { git_network::system_proxy() };
+    let no_proxy = env("NO_PROXY").or_else(|| env("no_proxy"));
+    let proxy = url.as_deref().and_then(|url| git_network::proxy_for(url, git_proxy, &system_proxy, no_proxy.as_deref()));
+    let host = url.as_deref().and_then(git_network::scheme_and_host).map(|(_, host)| host);
+
+    let mut failure = None;
+    let count = attempts.len();
+    for (index, attempt) in attempts.iter().enumerate() {
+        if attempt.uses_bundle() && !git_network::write_roots(&git_network::roots_bundle()) {
+            continue;
+        }
+        match run_remote(dir, args, attempt, proxy.as_deref()) {
+            Ok(output) => {
+                if count > 1 {
+                    git_network::remember_bundle(attempt.uses_bundle());
+                }
+                return Ok(output);
+            }
+            Err(Some(stderr)) => {
+                let retry = index + 1 < count && git_network::certificate_failure(&stderr);
+                failure = Some((stderr, attempt.label));
+                if !retry {
+                    break;
+                }
+            }
+            Err(None) => return Err(AppError::new("Git est introuvable sur ce poste.")),
+        }
+    }
+    let (stderr, certificates) = failure.unwrap_or_default();
+    Err(AppError::with_detail(
+        format!("Git a refusé l’opération « {} ».", args.first().copied().unwrap_or_default()),
+        json!({
+            "stderr": git_network::redact(&stderr),
+            "host": host,
+            "proxy": proxy.as_deref().map(git_network::redact),
+            "systemProxy": proxy.is_some(),
+            "certificates": certificates,
+        }),
+    ))
+}
+
+/// Un essai de git distant ; l’erreur porte sa sortie d’erreur (`None` : git introuvable).
+fn run_remote(
+    dir: &Path,
+    args: &[&str],
+    attempt: &git_network::TlsAttempt,
+    proxy: Option<&str>,
+) -> Result<String, Option<String>> {
     let mut command = Command::new("git");
     command
         .current_dir(dir)
@@ -322,8 +392,14 @@ pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
         .env("LC_ALL", "C")
         .args(["-c", "credential.interactive=false", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30"])
         // Un clone garde les fins de ligne du dépôt, même avec le `core.autocrlf=true` de Git for Windows.
-        .args(["-c", "core.autocrlf=false"])
-        .args(args);
+        .args(["-c", "core.autocrlf=false"]);
+    for option in &attempt.options {
+        command.args(["-c", option]);
+    }
+    if let Some(proxy) = proxy {
+        command.arg("-c").arg(format!("http.proxy={proxy}"));
+    }
+    command.args(args);
     if let Some(ssh) = ssh_command(dir) {
         command.env("GIT_SSH_COMMAND", ssh);
     }
@@ -332,17 +408,51 @@ pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let output =
-        command.output().map_err(|error| AppError::new(format!("Git est introuvable sur ce poste : {error}")))?;
+    let output = command.output().map_err(|error| {
+        log::warn!("git introuvable : {error}");
+        None
+    })?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(AppError::with_detail(
-            format!("Git a refusé l’opération « {} ».", args.first().copied().unwrap_or_default()),
-            json!({ "stderr": stderr }),
-        ))
+        Err(Some(String::from_utf8_lossy(&output.stderr).trim().to_string()))
     }
+}
+
+/// Adresse visée : celle d’un `git clone … -- <adresse> <dossier>`, sinon celle du distant `origin` du dépôt.
+fn remote_url(dir: &Path, args: &[&str]) -> Option<String> {
+    if args.first() == Some(&"clone") {
+        let after = args.iter().position(|arg| *arg == "--").map_or(1, |at| at + 1);
+        return args.get(after).map(|url| url.to_string());
+    }
+    plain_git(dir, &["config", "--get", "remote.origin.url"])
+}
+
+/// Réglages `http.*` de l’utilisateur (configuration globale et du dépôt), une ligne « clé valeur » chacun.
+fn http_settings(dir: &Path) -> String {
+    ["--global", "--local"]
+        .iter()
+        .filter_map(|scope| plain_git(dir, &["config", scope, "--get-regexp", r"^http\."]))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `http.proxy` réglé pour cette adresse, dans n’importe quelle configuration git (y compris celle du système).
+fn configured_proxy(dir: &Path, url: &str) -> bool {
+    plain_git(dir, &["config", "--get-urlmatch", "http.proxy", url]).is_some_and(|proxy| !proxy.trim().is_empty())
+}
+
+/// Lecture de configuration : rien n’est exécuté, une absence vaut `None`.
+fn plain_git(dir: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    command.current_dir(dir).stdin(Stdio::null()).args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().ok().filter(|output| output.status.success())?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|text| !text.is_empty())
 }
 
 /// Commande SSH du poste, complétée pour ne jamais attendre de saisie. Celle que l’utilisateur a configurée (clé
@@ -364,44 +474,29 @@ pub(crate) fn stderr_of(error: &AppError) -> String {
     error.detail.as_ref().and_then(|detail| detail.get("stderr")).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
-/// Traduit l’échec d’une opération distante en une phrase qui dit quoi vérifier ; la sortie de git reste en détail.
+/// Traduit l’échec d’une opération distante en une phrase qui dit quoi vérifier ; la sortie de git, sans
+/// identifiants, reste en détail.
 pub(crate) fn explain_remote(error: AppError, action: &str) -> AppError {
     let stderr = stderr_of(&error);
     if stderr.is_empty() {
         return error;
     }
-    let lower = stderr.to_lowercase();
-    let mentions = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
-    let message = if mentions(&[
-        "authentication failed",
-        "permission denied",
-        "could not read username",
-        "could not read password",
-        "terminal prompts disabled",
-        "access denied",
-        "error: 401",
-        "error: 403",
-        "publickey",
-    ]) {
-        format!(
-            "Accès refusé ({action}). Les identifiants git configurés sur ce poste ne donnent pas accès à ce dépôt."
-        )
-    } else if mentions(&["repository not found", "does not appear to be a git repository", "does not exist", "error: 404"]) {
-        format!("Dépôt introuvable ({action}). Vérifier l’adresse.")
-    } else if mentions(&[
-        "could not resolve host",
-        "failed to connect",
-        "connection timed out",
-        "operation timed out",
-        "network is unreachable",
-        "connection refused",
-        "unable to access",
-    ]) {
-        format!("Dépôt injoignable ({action}). Vérifier le réseau ou l’adresse.")
-    } else {
-        format!("Git a échoué ({action}).")
+    let detail = error.detail.clone().unwrap_or_default();
+    let text = |key: &str| detail.get(key).and_then(Value::as_str).map(str::to_string);
+    let context = git_network::Context {
+        host: text("host"),
+        proxy: text("proxy"),
+        system_proxy: detail.get("systemProxy").and_then(Value::as_bool).unwrap_or(false),
     };
-    AppError::with_detail(message, json!({ "stderr": stderr }))
+    let stderr = git_network::redact(&stderr);
+    let message = git_network::explain(&stderr, action, &context);
+    let mut detail = detail;
+    if let Some(object) = detail.as_object_mut() {
+        object.insert("stderr".into(), Value::String(stderr));
+    } else {
+        detail = json!({ "stderr": stderr });
+    }
+    AppError::with_detail(message, detail)
 }
 
 /// Clone dans un dossier voisin puis le renomme : un clone interrompu ne laisse jamais un marketplace à moitié là.
@@ -2359,6 +2454,89 @@ mod tests {
         let leftovers = fs::read_dir(state.data_dir.join("marketplaces")).map(|entries| entries.count()).unwrap_or(0);
         assert_eq!(leftovers, 0, "aucun clone partiel");
         assert!(handle(&state, "space.snapshot", &json!({})).await.is_none(), "les autres commandes ne sont pas les siennes");
+    }
+
+    /// Un marketplace servi en HTTPS sous un certificat d’autorité privée (celle d’une entreprise) : git le refuse
+    /// avec ses propres certificats, Alfred dit pourquoi, puis le clone passe dès que l’autorité est parmi les
+    /// racines du système. Un `http.sslCAInfo` réglé par l’utilisateur est respecté, même s’il échoue. Demande
+    /// openssl et python3.
+    #[cfg(unix)]
+    #[test]
+    fn a_marketplace_behind_a_private_authority_goes_through_the_system_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let run = |program: &str, args: &[&str]| {
+            Command::new(program).args(args).current_dir(d).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+        };
+        fs::write(d.join("ext.cnf"), "subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n").unwrap();
+        let made = run("openssl", &["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2", "-subj", "/CN=Autorite privee de test", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign"])
+            && run("openssl", &["req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr", "-subj", "/CN=127.0.0.1"])
+            && run("openssl", &["x509", "-req", "-in", "server.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "server.pem", "-days", "2", "-extfile", "ext.cnf"])
+            && run("openssl", &["x509", "-in", "ca.pem", "-outform", "DER", "-out", "ca.der"]);
+        if !made {
+            eprintln!("openssl indisponible : test sauté");
+            return;
+        }
+        // Le dépôt, servi en HTTP « simple » (fichiers statiques) : pas besoin de git http-backend.
+        let source = d.join("source");
+        fs::create_dir_all(&source).unwrap();
+        git::init(&source).unwrap();
+        fs::write(source.join("README.md"), "Marketplace\n").unwrap();
+        commit_clone(&source, "Premier commit").unwrap();
+        assert!(run("git", &["clone", "--quiet", "--bare", "source", "depot.git"]) && run("git", &["-C", "depot.git", "update-server-info"]));
+        let server_script = r#"
+import http.server, ssl, functools
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=".")
+handler.log_message = lambda self, *a: None
+httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("server.pem", "server.key")
+httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+print(httpd.server_address[1], flush=True)
+httpd.serve_forever()
+"#;
+        let Ok(mut server) = Command::new("python3").args(["-c", server_script]).current_dir(d).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+            eprintln!("python3 indisponible : test sauté");
+            return;
+        };
+        let mut port = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(server.stdout.take().unwrap()), &mut port).unwrap();
+        let url = format!("https://127.0.0.1:{}/depot.git", port.trim());
+
+        // Racines du système sans l’autorité : refus, dit en français, après l’essai des racines exportées.
+        let refused = clone_into(&url, &d.join("refuse")).unwrap_err();
+        assert!(refused.message.starts_with("Le certificat de 127.0.0.1 n’est pas reconnu (clonage)"), "{}", refused.message);
+        assert!(!d.join("refuse").exists());
+
+        // L’entreprise a installé son autorité sur le poste : les racines exportées suffisent.
+        git_network::TEST_ROOTS.lock().unwrap().push(fs::read(d.join("ca.der")).unwrap());
+        let clone = d.join("clone");
+        let cloned = clone_into(&url, &clone);
+        let fetched = cloned.as_ref().ok().map(|_| fetch_and_align(&clone));
+        // Un réglage de l’utilisateur l’emporte, même faux : Alfred n’essaie pas ses racines par-dessus.
+        let wrong = d.join("autre.pem");
+        assert!(run("openssl", &["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "autre.key", "-out", "autre.pem", "-days", "2", "-subj", "/CN=Autre autorite"]));
+        git::run(&clone, &["config", "http.sslCAInfo", &wrong.to_string_lossy()]).ok();
+        let respected = fetch_and_align(&clone);
+        git_network::TEST_ROOTS.lock().unwrap().clear();
+        git_network::remember_bundle(false);
+        let _ = server.kill();
+        cloned.unwrap();
+        fetched.unwrap().unwrap();
+        assert!(clone.join("README.md").exists());
+        let error = respected.unwrap_err();
+        assert_eq!(error.detail.unwrap()["certificates"], "réglage git de l’utilisateur");
+    }
+
+    /// Le vrai marketplace public, par le réseau : `cargo test -- --ignored alfred_place`.
+    #[test]
+    #[ignore = "réseau"]
+    fn alfred_place_is_cloned_and_refreshed() {
+        let dir = tempfile::tempdir().unwrap();
+        let clone = dir.path().join("alfred.place");
+        clone_into("https://github.com/NeKeR53/alfred.place", &clone).unwrap();
+        fetch_and_align(&clone).unwrap();
+        assert!(remote_branch(&clone).is_some());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import {
   Button,
+  Disclosure,
   EmptyState,
   FormControlGroup,
   FormField,
@@ -210,6 +211,11 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
                     {used ? <p className="modules-list__meta">{used}</p> : null}
                     {marketplace.error ? (
                       <p className="modules-list__meta modules-list__meta--danger">{marketplace.error}</p>
+                    ) : null}
+                    {marketplace.error && marketplace.errorDetail ? (
+                      <Disclosure appearance="subtle" label="Message de git" className="modules-list__git-output">
+                        <pre>{marketplace.errorDetail}</pre>
+                      </Disclosure>
                     ) : null}
                   </div>
                   <div className="modules-list__actions">

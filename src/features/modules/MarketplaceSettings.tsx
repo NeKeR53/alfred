@@ -115,7 +115,7 @@ export function MarketplaceSettings() {
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
   const [marketplaces, setMarketplaces] = useState<Marketplace[] | null>(null);
   const [offers, setOffers] = useState<Offer[] | null>(null);
-  const [failures, setFailures] = useState<Array<{ marketplace: Marketplace; message: string }>>([]);
+  const [failures, setFailures] = useState<Array<{ marketplace: Marketplace; message: string; detail?: string }>>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [screen, setScreen] = useState<Screen>({ kind: "catalog" });
   const [query, setQuery] = useState("");
@@ -286,14 +286,20 @@ export function MarketplaceSettings() {
             ...failures,
             ...marketplaces
               .filter((m) => m.error)
-              .map((marketplace) => ({ marketplace, message: marketplace.error ?? "" })),
+              .map((marketplace) => ({
+                marketplace,
+                message: marketplace.error ?? "",
+                detail: marketplace.errorDetail,
+              })),
           ]
             .filter(
               (item, index, all) => all.findIndex((other) => other.marketplace.id === item.marketplace.id) === index,
             )
             .map((item) => (
               <FeedbackBanner key={item.marketplace.id} tone="error" appearance="contained">
-                {item.marketplace.name} : {item.message}
+                <span title={item.detail}>
+                  {item.marketplace.name} : {item.message}
+                </span>
               </FeedbackBanner>
             ))}
           <div className="module-list-view__tools">

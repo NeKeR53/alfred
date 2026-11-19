@@ -44,6 +44,16 @@
 .modules-list__meta--danger {
   color: var(--color-danger-ink);
 }
+.modules-list__git-output pre {
+  margin: 4px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .modules-list__actions {
   flex: none;
   display: flex;

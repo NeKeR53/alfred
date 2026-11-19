@@ -10,6 +10,8 @@ export interface Marketplace {
   lastChecked: string | null;
   /** Dernier échec de rafraîchissement, ou clone local absent. */
   error?: string;
+  /** Sortie de git de ce dernier échec, sans identifiants. */
+  errorDetail?: string;
 }
 
 export type AccessKind = "module" | "tables" | "client" | "tool" | "webhook" | "schedule";

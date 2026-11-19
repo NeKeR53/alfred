@@ -561,6 +561,22 @@ describe("MarketplacesSettings", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.remove", { id: "equipe" }));
     await waitFor(() => expect(within(marketplaces).queryByText("Équipe")).not.toBeInTheDocument());
   });
+
+  it("dit la cause d’un rafraîchissement échoué et garde le message de git replié", async () => {
+    const state = desk();
+    state.marketplaces[0] = {
+      ...state.marketplaces[0],
+      error: "Le certificat de github.com n’est pas reconnu (rafraîchissement).",
+      errorDetail: "fatal: unable to access 'https://***@github.com/x/': SSL certificate problem",
+    };
+    render(<MarketplaceSources />);
+    const marketplaces = await screen.findByRole("list", { name: "Marketplaces" });
+    const row = rowOf(marketplaces, "Équipe");
+    expect(within(row).getByText(/Le certificat de github\.com n’est pas reconnu/)).toBeInTheDocument();
+    const output = within(row).getByText("Message de git").closest("details") as HTMLDetailsElement;
+    expect(output.open).toBe(false);
+    expect(within(output).getByText(/SSL certificate problem/)).toBeInTheDocument();
+  });
 });
 
 describe("useModuleUpdates", () => {

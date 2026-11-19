@@ -20,6 +20,7 @@ mod examples;
 mod function_tests;
 mod functions;
 mod git;
+mod git_network;
 mod jobs;
 mod libraries;
 mod marketplace;
@@ -162,6 +163,7 @@ pub fn run() {
             }
             let data_dir = app.path().app_data_dir()?;
             vault::init(&data_dir);
+            git_network::init(&data_dir);
             let state = AppState::new(&data_dir)?;
             app.manage(state.clone());
             // La voix d’Alfred se charge pendant que la fenêtre s’ouvre.

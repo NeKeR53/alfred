@@ -182,3 +182,42 @@ Sans le jeton, chaque route répond 401 ; sans la fonctionnalité, elles n’exi
 - La version vient de `package.json` (`"version": "../package.json"` dans `tauri.conf.json`).
 - Pas encore de mise à jour automatique : il faudrait le module `updater` de Tauri et une clé de signature des mises à jour
   (`pnpm tauri signer generate`), distincte des certificats ci-dessus.
+
+## Derrière un réseau d’entreprise (marketplaces et partage par git)
+
+Les marketplaces et le partage des données d’équipe passent par git (`remote_git` de `src-tauri/src/marketplace.rs`,
+réglages réseau dans `src-tauri/src/git_network.rs`). Git ne lit ni le magasin de certificats du système ni son proxy ;
+Alfred les lui donne par des `-c` sur la ligne de commande, sans rien écrire dans la configuration git du poste :
+
+- **Certificats.** Sous Windows, git passe d’abord par le magasin de Windows (`http.sslBackend=schannel`), où une
+  entreprise installe son autorité. Si ce Git ne connaît pas schannel, ou si schannel refuse encore (révocation
+  invérifiable, par exemple), Alfred réessaie avec OpenSSL et les racines du système exportées en PEM
+  (`certificats/racines-du-systeme.pem` des données d’Alfred, le fichier de la voix). Sur Mac et Linux, ce même PEM
+  sert de second essai quand le premier échoue sur un certificat. Un `http.sslBackend`, `http.sslCAInfo` ou
+  `http.sslCAPath` réglé par l’utilisateur (configuration globale ou du dépôt), ou `GIT_SSL_CAINFO`, est respecté tel
+  quel. La vérification des certificats n’est jamais désactivée.
+- **Proxy.** Sous Windows, quand ni git (`http.proxy`, toutes configurations) ni l’environnement (`HTTPS_PROXY`,
+  `HTTP_PROXY`, `ALL_PROXY`) n’en donnent, Alfred lit le proxy des Paramètres Internet (`ProxyEnable`, `ProxyServer`,
+  exemptions `ProxyOverride` et `NO_PROXY` respectées). Un fichier PAC (`AutoConfigURL`) n’est suivi que s’il ne nomme
+  qu’un proxy ; la détection automatique (WPAD) et le proxy WinHTTP (`netsh winhttp`) ne sont pas lus.
+- **Erreurs.** Le message dit la cause (certificat non reconnu, révocation, proxy qui demande une identification ou ne
+  répond pas, hôte injoignable, accès refusé, dépôt introuvable) ; la sortie de git, sans identifiants, se déplie sous
+  le message (« Message de git ») dans Réglages → Marketplace.
+
+Si le rafraîchissement échoue encore, à régler à la main dans un terminal du poste :
+
+```bash
+git config --global http.sslBackend schannel
+```
+
+```bash
+git config --global http.proxy http://proxy.entreprise.fr:8080
+```
+
+- Proxy qui demande une identification (erreur 407) : `http://identifiant@proxy.entreprise.fr:8080`, le mot de passe
+  étant alors demandé une fois et gardé par le gestionnaire d’identifiants de Git.
+- Autorité d’entreprise absente du magasin du système : demander son certificat racine au service informatique, puis
+  `git config --global http.sslCAInfo C:/chemin/autorite.pem` (avec OpenSSL, `http.sslBackend openssl`).
+- Révocation invérifiable avec schannel (`CRYPT_E_NO_REVOCATION_CHECK`, `0x80092012`) : c’est un choix de sécurité du
+  poste ; `git config --global http.schannelCheckRevoke false` lève cette seule vérification, la chaîne de certificats
+  restant vérifiée.
