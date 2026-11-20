@@ -50,6 +50,51 @@ const TEMPLATE_PARTS: [(&str, &str); 9] = [
     ("ObjectHeader", "`DetailPanel`, ou la prop `header` de `Page` (`{ title, subtitle, status, actions }`)"),
 ];
 
+/// Librairies qu’un composant de `@alfred/ui` remplace : la page l’emploie au lieu de la déclarer.
+const REPLACED_LIBRARIES: [(&str, &str); 7] = [
+    ("@xterm/xterm", "`<Terminal label channel={useChannel(id)} onResize={…} />` (xterm.js, aux thèmes d’Alfred)"),
+    ("xterm", "`<Terminal label channel={useChannel(id)} onResize={…} />` (xterm.js, aux thèmes d’Alfred)"),
+    ("@xterm/addon-fit", "`<Terminal>`, qui s’ajuste seul à sa place et dit sa taille par `onResize`"),
+    ("ansi-to-html", "`<LogViewer label lines={…} />`, qui lit les couleurs ANSI sans produire de HTML"),
+    ("ansi_up", "`<LogViewer label lines={…} />`, qui lit les couleurs ANSI sans produire de HTML"),
+    ("anser", "`<LogViewer label lines={…} />`, qui lit les couleurs ANSI sans produire de HTML"),
+    ("react-window", "`<LogViewer>` pour un journal (liste virtualisée), `DataTable` pour un tableau"),
+];
+
+/// Librairies de diff et d’éditeur Markdown que `DiffView` et `MarkdownEditor` remplacent.
+const DIFF_MARKDOWN_LIBRARIES: [(&str, &str); 12] = [
+    ("diff", "`<DiffView label before={…} after={…} />` (ou `patch={git.diff(…).text}`)"),
+    ("diff2html", "`<DiffView label patch={…} />`, qui lit le diff unifié de `git.diff`"),
+    ("react-diff-viewer", "`<DiffView label before={…} after={…} />`"),
+    ("react-diff-viewer-continued", "`<DiffView label before={…} after={…} />`"),
+    ("@codemirror/merge", "`<DiffView label before={…} after={…} />`"),
+    ("@codemirror/lang-markdown", "`<MarkdownEditor label value onChange />` (CodeMirror 6, avec l’aperçu d’Alfred)"),
+    ("@uiw/react-md-editor", "`<MarkdownEditor label value onChange />`"),
+    ("@uiw/react-markdown-editor", "`<MarkdownEditor label value onChange />`"),
+    ("@mdxeditor/editor", "`<MarkdownEditor label value onChange />`"),
+    ("easymde", "`<MarkdownEditor label value onChange />`"),
+    ("react-simplemde-editor", "`<MarkdownEditor label value onChange />`"),
+    ("react-markdown-editor-lite", "`<MarkdownEditor label value onChange />`"),
+];
+
+/// Librairies d’arbre et de grille que `TreeView` et `DataTable variant="grid"` remplacent.
+const TREE_GRID_LIBRARIES: [(&str, &str); 14] = [
+    ("react-arborist", "`<TreeView label nodes loadChildren />` (arbre ARIA, chargement à la demande, virtualisé)"),
+    ("react-complex-tree", "`<TreeView label nodes loadChildren />`"),
+    ("rc-tree", "`<TreeView label nodes loadChildren />`"),
+    ("react-accessible-treeview", "`<TreeView label nodes loadChildren />`"),
+    ("@tanstack/react-table", "`<DataTable>` (tris cumulables, filtres par colonne), ou `variant=\"grid\"` pour une grille éditable"),
+    ("@tanstack/react-virtual", "`<DataTable variant=\"grid\">` ou `<TreeView>`, qui virtualisent déjà leurs lignes"),
+    ("ag-grid-react", "`<DataTable variant=\"grid\">` (colonnes figées, édition dans la cellule, virtualisation)"),
+    ("ag-grid-community", "`<DataTable variant=\"grid\">`"),
+    ("react-data-grid", "`<DataTable variant=\"grid\">`"),
+    ("@glideapps/glide-data-grid", "`<DataTable variant=\"grid\">`"),
+    ("handsontable", "`<DataTable variant=\"grid\">` (édition texte, choix, case, avec validation)"),
+    ("@handsontable/react", "`<DataTable variant=\"grid\">`"),
+    ("@mui/x-data-grid", "`<DataTable variant=\"grid\">`"),
+    ("@mui/x-tree-view", "`<TreeView label nodes loadChildren />`"),
+];
+
 /// Où se trouve l’élément visité : élément parent, ou attribut d’un élément (`actions` de `Section`…).
 enum Frame {
     Element(String),
@@ -179,7 +224,7 @@ impl Lint<'_> {
                 "ul" | "ol" | "li" => "`List` et `ListItem`",
                 "dl" | "dt" | "dd" => "`KeyValueList`",
                 "hr" => "`Divider`",
-                "pre" | "code" => "`Code`",
+                "pre" | "code" => "`Code` (un journal : `LogViewer` ; une console : `Terminal`)",
                 _ => "un composant de `@alfred/ui`",
             };
             self.report(start, format!("Balise HTML `<{name}>` dans une page : utiliser {instead} (DESIGN.md, section 1)."));
@@ -191,6 +236,52 @@ impl Lint<'_> {
                 format!(
                     "`<{name}>` est posé par les gabarits : utiliser {instead} (DESIGN.md, section 2). La page décrit ses données et ses actions, Alfred les dispose."
                 ),
+            );
+        }
+
+        if matches!(name.as_str(), "LogViewer" | "Terminal") && attribute(opening, "label").is_none() {
+            self.report(
+                start,
+                format!(
+                    "`<{name}>` sans `label` : nommer ce qu’il montre (« Journal du build #42 », « Console du conteneur web »), lu par les lecteurs d’écran (DESIGN.md, section 5)."
+                ),
+            );
+        }
+        if name == "Terminal" && attribute(opening, "channel").is_none() && attribute(opening, "connection").is_none() {
+            self.report(
+                start,
+                "`<Terminal>` sans source : `channel={useChannel(id)}` pour un WebSocket ouvert par une fonction (`client(id).socket`), ou `connection={{ send, subscribe }}` (DESIGN.md, section 5).".to_string(),
+            );
+        }
+
+        if matches!(name.as_str(), "DiffView" | "MarkdownEditor") && attribute(opening, "label").is_none() {
+            self.report(
+                start,
+                format!(
+                    "`<{name}>` sans `label` : nommer ce qu’il montre (« Modifications de README.md », « Contenu de la note »), lu par les lecteurs d’écran (DESIGN.md, section 5)."
+                ),
+            );
+        }
+        if name == "DiffView"
+            && attribute(opening, "patch").is_none()
+            && (attribute(opening, "before").is_none() || attribute(opening, "after").is_none())
+        {
+            self.report(
+                start,
+                "`<DiffView>` sans contenu : `before` et `after` (deux textes, par exemple `git.show` à deux révisions) ou `patch` (le `text` de `git.diff`) (DESIGN.md, section 5).".to_string(),
+            );
+        }
+        if name == "MarkdownEditor" && (attribute(opening, "value").is_none() || attribute(opening, "onChange").is_none()) {
+            self.report(
+                start,
+                "`<MarkdownEditor>` tient son texte dans la page : `value={texte}` et `onChange={setTexte}`, plus `savedValue` après chaque enregistrement pour le compte des modifications (DESIGN.md, section 5).".to_string(),
+            );
+        }
+
+        if name == "TreeView" && attribute(opening, "label").is_none() {
+            self.report(
+                start,
+                "`<TreeView>` sans `label` : nommer l’arbre (« Dossiers », « Secrets de production »), lu par les lecteurs d’écran (DESIGN.md, section 5).".to_string(),
             );
         }
 
@@ -332,6 +423,34 @@ pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
     // Cloisonnement : une page n’appelle jamais un client, elle passe par les fonctions du connecteur.
     for statement in &parsed.program.body {
         let oxc::ast::ast::Statement::ImportDeclaration(import) = statement else { continue };
+        let source_name = import.source.value.as_str();
+        if let Some((library, instead)) = REPLACED_LIBRARIES
+            .iter()
+            .find(|(library, _)| source_name == *library || source_name.starts_with(&format!("{library}/")))
+        {
+            lint.report(
+                import.span.start,
+                format!("`{library}` est déjà dans `@alfred/ui` : utiliser {instead} (DESIGN.md, section 5)."),
+            );
+        }
+        if let Some((library, instead)) = DIFF_MARKDOWN_LIBRARIES
+            .iter()
+            .find(|(library, _)| source_name == *library || source_name.starts_with(&format!("{library}/")))
+        {
+            lint.report(
+                import.span.start,
+                format!("`{library}` est déjà dans `@alfred/ui` : utiliser {instead} (DESIGN.md, section 5)."),
+            );
+        }
+        if let Some((library, instead)) = TREE_GRID_LIBRARIES
+            .iter()
+            .find(|(library, _)| source_name == *library || source_name.starts_with(&format!("{library}/")))
+        {
+            lint.report(
+                import.span.start,
+                format!("`{library}` est déjà dans `@alfred/ui` : utiliser {instead} (DESIGN.md, section 5)."),
+            );
+        }
         if import.source.value.as_str() != "@alfred/sdk" {
             continue;
         }
@@ -367,6 +486,110 @@ mod tests {
 
     fn messages(source: &str) -> Vec<String> {
         lint(source, false).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+    }
+
+    #[test]
+    fn un_diff_et_un_editeur_markdown_passent_par_diff_view_et_markdown_editor() {
+        let page = r#"
+import { createTwoFilesPatch } from "diff";
+import { DiffView, MarkdownEditor, Page } from "@alfred/ui";
+export default function Revue() {
+  return (
+    <Page>
+      <DiffView label="Modifications" before="a" />
+      <MarkdownEditor value="" />
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("2: `diff` est déjà dans `@alfred/ui`") && m.contains("<DiffView")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: `<DiffView>` sans contenu")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("8: `<MarkdownEditor>` sans `label`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("8: `<MarkdownEditor>` tient son texte")), "{found:?}");
+
+        let good = r#"
+import { useState } from "react";
+import { DiffView, MarkdownEditor, Page } from "@alfred/ui";
+export default function Revue({ patch }: { patch: string }) {
+  const [texte, setTexte] = useState("");
+  return (
+    <Page>
+      <DiffView label="Modifications" patch={patch} />
+      <MarkdownEditor label="Note" value={texte} onChange={setTexte} />
+    </Page>
+  );
+}
+"#;
+        assert!(messages(good).is_empty(), "{:?}", messages(good));
+    }
+
+    #[test]
+    fn un_journal_et_une_console_passent_par_log_viewer_et_terminal() {
+        let page = r#"
+import { Terminal as XTerm } from "@xterm/xterm";
+import { LogViewer, Page, Terminal } from "@alfred/ui";
+export default function Console() {
+  return (
+    <Page>
+      <LogViewer lines={[]} />
+      <Terminal label="Console" />
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("2: `@xterm/xterm` est déjà dans `@alfred/ui`") && m.contains("<Terminal")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: `<LogViewer>` sans `label`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("8: `<Terminal>` sans source")), "{found:?}");
+
+        let good = r#"
+import { useChannel } from "@alfred/sdk";
+import { LogViewer, Page, Terminal } from "@alfred/ui";
+export default function Console({ canal }: { canal: string }) {
+  const console = useChannel(canal);
+  return (
+    <Page>
+      <LogViewer label="Journal" lines={[]} />
+      <Terminal label="Console" channel={console} />
+    </Page>
+  );
+}
+"#;
+        assert!(messages(good).is_empty(), "{:?}", messages(good));
+    }
+
+    #[test]
+    fn un_arbre_et_une_grille_passent_par_tree_view_et_data_table() {
+        let page = r#"
+import { Tree } from "react-arborist";
+import { useReactTable } from "@tanstack/react-table";
+import { Page, TreeView } from "@alfred/ui";
+export default function Dossiers() {
+  return (
+    <Page>
+      <TreeView nodes={[]} />
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("2: `react-arborist` est déjà dans `@alfred/ui`") && m.contains("<TreeView")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("3: `@tanstack/react-table` est déjà dans `@alfred/ui`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("8: `<TreeView>` sans `label`")), "{found:?}");
+
+        let good = r#"
+import { DataTable, Page, TreeView } from "@alfred/ui";
+export default function Dossiers({ racines, lignes }: { racines: []; lignes: [] }) {
+  return (
+    <Page>
+      <TreeView label="Dossiers" nodes={racines} />
+      <DataTable variant="grid" label="Secrets" columns={[]} rows={lignes} rowKey={(ligne) => ligne} />
+    </Page>
+  );
+}
+"#;
+        assert!(messages(good).is_empty(), "{:?}", messages(good));
     }
 
     #[test]

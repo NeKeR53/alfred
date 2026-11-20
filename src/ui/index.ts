@@ -12,8 +12,17 @@ export { ChoiceButton, type ChoiceButtonProps, ChoiceGroup } from "./components/
 export { Combobox, MultiSelectCombobox, SearchCombobox } from "./components/Combobox";
 export { ConfirmDialog, type ConfirmOptions, useConfirm } from "./components/ConfirmDialog";
 export { Code, Divider, Image } from "./components/Content";
-export { DataTable, type DataTableColumn } from "./components/DataTable";
+export {
+  DataTable,
+  type DataTableColumn,
+  type DataTableEditor,
+  type DataTableFilter,
+  type DataTableFilters,
+  type DataTableProps,
+  type DataTableSort,
+} from "./components/DataTable";
 export { Dialog } from "./components/Dialog";
+export { DiffView, type DiffViewMode, type DiffViewProps } from "./components/DiffView";
 export { Disclosure } from "./components/Disclosure";
 export { DocumentViewer, type DocumentViewerProps } from "./components/DocumentViewer";
 export { EmptyState } from "./components/EmptyState";
@@ -39,7 +48,13 @@ export { InlineEdit } from "./components/InlineEdit";
 export { Link } from "./components/Link";
 export { List, ListItem } from "./components/List";
 export { LoadingSkeleton } from "./components/LoadingSkeleton";
+export { type LogChannel, type LogLine, LogViewer, type LogViewerProps } from "./components/LogViewer";
 export { Markdown } from "./components/Markdown";
+export {
+  MarkdownEditor,
+  type MarkdownEditorLayout,
+  type MarkdownEditorProps,
+} from "./components/MarkdownEditor";
 export { Menu, MenuGroup, MenuItem, type MenuItemProps } from "./components/Menu";
 export { MenuButton } from "./components/MenuButton";
 export { Modal } from "./components/Modal";
@@ -70,6 +85,13 @@ export { StatusDot, type StatusDotTone } from "./components/StatusDot";
 export { StepList } from "./components/StepList";
 export { type TabItem, Tabs } from "./components/Tabs";
 export { TagSearchField, type TagSearchFieldProps } from "./components/TagSearchField";
+export {
+  Terminal,
+  type TerminalChannel,
+  type TerminalConnection,
+  type TerminalProps,
+} from "./components/Terminal";
+export { type TreeAction, type TreeNode, TreeView } from "./components/TreeView";
 export { type Action, ActionBar, type ActionIcon, type ActionPlace } from "./templates/actions";
 export { type CollectionFilter, CollectionPage, type Column } from "./templates/CollectionPage";
 export { type DetailField, DetailPanel, type DetailSection } from "./templates/DetailPanel";

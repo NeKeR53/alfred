@@ -383,7 +383,9 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Besoin | Composant | Props essentielles |
 |---|---|---|
 | Collection principale d’une page (tri, recherche, filtres, sélection) | `CollectionPage` (4.1) | `columns`, `load`, `search`, `filters` |
-| Tableau secondaire dans un bloc | `DataTable` | `label`, `columns` (`key`, `header`, `align?`, `render?`, `sortable?`), `rows`, `rowKey`, `onRowClick?`, `selectedKey?`, `loading?`, `emptyTitle?`, `fill?` (sous `Page fill` : seules les lignes défilent, l’en-tête reste fixe) |
+| Tableau secondaire dans un bloc | `DataTable` | `label`, `columns` (`key`, `header`, `align?`, `render?`, `sortable?`, `filter?`), `rows`, `rowKey`, `onRowClick?`, `selectedKey?`, `loading?`, `emptyTitle?`, `fill?` (sous `Page fill` : seules les lignes défilent, l’en-tête reste fixe), `defaultSort?` ; Maj+clic sur un en-tête ajoute une clé de tri |
+| Grille éditable, matrice (éléments × environnements, droits d’accès), grande table parcourue au clavier | `DataTable variant="grid"` (« Arbre et grille » ci-dessous) | colonnes avec `frozen?`, `rowHeader?`, `editor?` (`text`, `choice`, `check`), `filter?` ; `virtualizeFrom?` (200) |
+| Hiérarchie : dossiers d’un poste, chemins de secrets, dépôts et branches | `TreeView` (« Arbre et grille » ci-dessous) | `label`, `nodes` (`id`, `label`, `icon?`, `meta?`, `children?`, `hasChildren?`), `loadChildren?`, `selection?`, `onActivate?`, `actions?`, `fill?` |
 | Découper une longue liste | `Pagination` dans `Page footer`, et `pageOf(rows, page, pageSize)` | `page` (dès 1), `pageSize`, `total`, `onChange` |
 | Quelques éléments hétérogènes (personnes, fichiers, résultats) | `List` + `ListItem` | `title`, `description?`, `leading?` (un `Avatar`, une icône), `trailing?` (un `StatusBadge`, une date), `onClick?`, `selected?` |
 | Fiche « libellé : valeur » d’un objet | `KeyValueList` | `items: { label, value }[]` |
@@ -391,10 +393,13 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Un état | `StatusBadge` (`tone`, `size="compact"`), `StatusDot` | — |
 | Une personne | `Avatar` | `name`, `src?` (`data:`/`blob:`), `size?` (`sm`, `md`, `lg`) |
 | Avancement, quota | `ProgressBar` | `label`, `value`, `max?` (100), `showValue?`, `tone?` |
+| Journal d’un build, d’un conteneur, d’un service : long, en direct, en couleurs ANSI | `LogViewer` (ci-dessous) | `label`, `lines` ou `channel` (`useChannel(id, { keep: 5000 })`), `live?`, `wrap?`, `timestamps?`, `fill?` |
+| Console interactive d’un service (shell d’un conteneur, SSH) | `Terminal` (ci-dessous) | `label`, `channel` (`useChannel(id)`) ou `connection` (`{ send, subscribe }`), `onResize`, `readOnly?`, `fill?` |
+| Ce qui a changé dans un fichier ou un dépôt (deux versions, un diff `git.diff`) | `DiffView` (ci-dessous) | `label`, `before` et `after`, ou `patch` (`text` de `git.diff`) et `truncated?`, `mode?`, `context?`, `fill?` |
 
 **Lire un contenu** (section « Texte et contenus venus des données » ci-dessous)
 
-`Text`, `Heading`, `Code` (identifiant, extrait), `Link`, `Image` (`data:`/`blob:`), `Markdown` (texte riche venu des données), `HtmlContent` (corps d’un courriel, nettoyé et isolé), `DocumentViewer` (un document entier : PDF, image, texte, Markdown, avec page x/y, zoom et ouverture dans l’application du système).
+`Text`, `Heading`, `Code` (identifiant, extrait), `Link`, `Image` (`data:`/`blob:`), `Markdown` (texte riche venu des données), `HtmlContent` (corps d’un courriel, nettoyé et isolé), `DocumentViewer` (un document entier : PDF, image, texte, Markdown, avec page x/y, zoom et ouverture dans l’application du système), `LogViewer` (un journal long ou en direct, en couleurs ANSI), `Terminal` (une console interactive), `DiffView` (les différences entre deux versions).
 
 **Organiser et naviguer**
 
@@ -431,6 +436,8 @@ Hiérarchie des boutons texte, du plus au moins appuyé. Tous se voient comme de
 
 `FormField` (`label`, `hint?`, `error?`) autour de `TextInput`, `TextArea`, `SelectControl`, `CheckboxControl`, `RadioControl`, `SwitchControl` ; `Combobox` (saisie libre avec suggestions : `value`, `options`, `onChange`) ; `SearchCombobox` (choisir une entité dans une recherche distante : `value`, `options`, `onChange`, `onSelect`, `getOptionKey`, `getOptionLabel`, `loading?`).
 
+Un texte long en Markdown (note, compte rendu, fichier `.md` d’un dossier) s’écrit dans un `MarkdownEditor`, hors formulaire : `label`, `value`, `onChange`, `savedValue` (le texte enregistré, redonné après chaque enregistrement), `onSave?` (Ctrl+S), `onPasteImage?`, `layout?` (`split`, `tabs`, `preview`). Détail ci-dessous, avec `DiffView`.
+
 **Dire ce qui se passe** (section 9)
 
 `FeedbackBanner` (`tone`: `"danger" \| "warning"`, `action?` : une erreur qui empêche d’agir, dans le bloc concerné), `EmptyState` (`title`, `description?`, `size="compact"` dans un bloc), `LoadingSkeleton` (premier chargement), `Spinner` (opération de fond, à côté d’un `Text`), `ProgressBar` (opération longue mesurable), `shell.notify` (événement ponctuel).
@@ -450,6 +457,10 @@ Hiérarchie des boutons texte, du plus au moins appuyé. Tous se voient comme de
 | `Markdown` | Affiche un texte Markdown venu des données (note, réponse d’un agent) : titres, listes, tableaux, code. Pas pour composer la page elle-même | `children: string`, `onLink?: (href: string) => void` |
 | `HtmlContent` | Affiche un HTML venu de l’extérieur, le corps d’un courriel (Outlook, Gmail…) : nettoyé par liste blanche (ni script, ni gestionnaire `on…`, ni formulaire, ni cadre) et isolé dans une racine fantôme, ses styles ne débordent pas. Le seul moyen d’afficher du HTML : jamais `dangerouslySetInnerHTML` ni `innerHTML` | `html: string`, `onLink?: (url) => void`, `resolveImage?: (source) => Promise<string \| null>` (image jointe `cid:` ou distante → adresse `data:`/`blob:` ; sans, elle reste masquée), `label?: string` |
 | `DocumentViewer` | Affiche un document en entier dans la page : PDF (dessiné par pdf.js, chargé à la première demande), image, texte brut (`.txt`, `.log`, `.csv`, `.json`…) ou Markdown (`.md`). Barre : page x/y, zoom (aussi Ctrl+molette), ajuster à la largeur, et pour un fichier du module « Ouvrir avec l’application du système » (`files.open`). États chargement, « Document illisible » (message) et « Format non pris en charge » (avec l’ouverture dans l’application du système). Un PDF a une hauteur fixe ; le reste prend celle de son contenu | Une source : `file` (id d’un fichier du module, lu par `files.read`), `src` (adresse `data:` ; `blob:` pour une image seulement, la page ne pouvant pas lire une adresse `blob:`) ou `blob: Blob` (un `File` déposé) ; `label: string` (obligatoire), `name?` (nom affiché, reconnaît le format), `type?` (MIME forcé), `fill?` (`false` ; occupe la hauteur restante d’une `Page fill`) |
+| `LogViewer` | Affiche un journal de 100 000 lignes et plus : seules les lignes visibles sont dans la page. Chasse fixe, numéros de ligne dans la marge ; couleurs et styles ANSI lus sans HTML (une couleur 256 ou RVB prend la plus proche des 16 de la palette du thème ; curseur, titre, liens OSC et caractères de contrôle retirés ; `\r` ne garde que la dernière réécriture). **Suivi de la fin** : actif au départ, en pause dès qu’on remonte (molette, ↑, Page précédente, Début), repris en bas, par Fin ou par « Revenir à la fin » dans la barre d’état, qui compte les nouvelles lignes. Barre : recherche sans casse ligne à ligne (« 2 sur 12 », Entrée et F3 vont à la suivante, Maj+Entrée et Maj+F3 à la précédente, Échap efface), Retour à la ligne, Horodatage (si les lignes ont une heure, ou une heure ISO 8601 en tête, retirée du texte) et « Copier la sélection » (ou « Copier le journal » sans sélection). Une ligne `stderr` porte une marque dans la marge et « Erreur : » pour les lecteurs d’écran. Barre d’état : nombre de lignes, « En direct », « Flux terminé : raison » ou l’erreur de lecture. Hauteur fixe (360 à 720 px) | Une source : `lines` (textes, ou `{ text, time?, stream? }` ; un nouveau tableau remplace le précédent : le mémoriser) ou `channel` (le résultat de `useChannel(id, { keep: 5000 })` : les lignes s’ajoutent, les morceaux bruts base64 sont recousus) ; `label: string` (obligatoire), `live?` (la source d’un tableau écrit encore), `wrap?`, `timestamps?` (état de départ), `maxLines?` (500 000 lignes gardées d’un canal), `loading?`, `emptyTitle?` (« Journal vide »), `fill?`. Changer de source : `key` |
+| `Terminal` | Console interactive (xterm.js, chargé à la première ouverture) : ce que tape ou colle l’utilisateur part au service, ce que le service écrit s’affiche, couleurs ANSI de la palette du thème (clair, sombre, contraste élevé suivis en direct). Il s’ajuste à sa place et dit sa taille (colonnes × lignes) à l’ouverture puis à la fin de chaque redimensionnement. Raccourcis de Windows Terminal : Ctrl+C copie s’il y a une sélection (sinon il interrompt le programme), Ctrl+Maj+C copie, Ctrl+V colle ; Cmd+C et Cmd+V sur macOS. Il garde Tab : **F6** (Maj+F6) en sort. Un cadre d’accent dit qu’il a le clavier. Barre d’état : « Connecté », « Session terminée : raison » ou l’erreur, et la taille. Hauteur fixe (280 à 560 px) | Une source : `channel` (le résultat de `useChannel(id)` d’un canal `client(id).socket` : texte et base64 lus, saisie écrite par `write`) ou `connection` (`{ send(data), subscribe(write) }`, à mémoriser, quand le protocole du service encadre les messages) ; `label: string` (obligatoire), `onResize?: ({ cols, rows }) => …` (la page l’envoie au service : message de son protocole ou fonction du connecteur), `readOnly?`, `fill?`. Changer de session : `key` |
+| `DiffView` | Différences entre deux textes (`before`, `after` : deux révisions lues par `git.show`) ou d’un diff unifié (`patch` : le `text` de `git.diff`, plusieurs fichiers avec leur en-tête, renommage et état). Vue **Côte à côte** ou **En ligne** (choix dans sa barre), numéros de ligne avant et après, mots changés surlignés dans une ligne remplacée, lignes inchangées repliées (« Afficher 19 lignes inchangées », ou toutes par l’icône de la barre). Seules les rangées visibles sont dessinées : fluide sur 100 000 lignes. Au clavier dans le diff : **F7** ou **Alt+↓** au changement suivant, **Maj+F7** ou **Alt+↑** au précédent (aussi par les flèches de la barre), le changement courant marqué et annoncé (« Changement 2 sur 7 : avant, ligne 41 ; après, lignes 41 à 43 »). Un fichier binaire est dit sans être comparé ; une conversion de tout le fichier (CRLF → LF) est dite une fois ; une ligne dont seule la fin change, ou qui n’a plus de fin de ligne, porte sa marque (`CRLF`, `LF`, « sans fin de ligne »). Hauteur fixe (360 à 720 px) | `label: string` (obligatoire, nom de la zone de défilement) ; `before` et `after`, ou `patch` avec `truncated?` (celui de `git.diff` : la fin le dit) ; `mode?` (`"split"` \| `"unified"`, avec `onModeChange?` ; sans, la vue reste celle choisie dans la barre) ; `context?` (`3` lignes autour d’un changement) ; `fill?` |
+| `MarkdownEditor` | Éditeur de texte Markdown (CodeMirror 6, chargé à la première ouverture) avec l’aperçu de `Markdown`. `layout` : `split` (éditeur et aperçu côte à côte, l’un sous l’autre sous 560 px), `tabs` (onglets Écrire et Aperçu) ou `preview` (aperçu seul ; l’éditeur reste ouvert derrière, son historique est gardé). Barre de mise en forme, chaque bouton avec son raccourci dans l’infobulle : Titre 1 à 3 (Ctrl+Alt+1 à 3), Gras (Ctrl+B), Italique (Ctrl+I), Code (Ctrl+E), Lien (Ctrl+K, le texte à remplacer sélectionné), Liste à puces (Ctrl+Maj+8), Liste numérotée (Ctrl+Maj+7), Citation (Ctrl+Maj+9) ; Cmd au lieu de Ctrl sur macOS. Entrée continue une liste. Annuler et rétablir : Ctrl+Z, Ctrl+Maj+Z ou Ctrl+Y. La barre dit « 2 modifications non enregistrées ». Une image collée ou déposée va à `onPasteImage`, un texte d’attente prend sa place, remplacé par `![nom](adresse)` ; un échec retire l’attente et le dit dans la barre. Tab sort de l’éditeur. Hauteur fixe (320 à 720 px) | `label: string` (obligatoire), `value`, `onChange: (texte) => void` ; `savedValue?` (texte enregistré, à redonner après chaque enregistrement ; sans, celui de l’ouverture) et `onUnsavedChange?: (nombre) => void` ; `onSave?` (Ctrl+S) ; `onPasteImage?: (file) => Promise<string \| { src, alt? }>` (le module range l’image et rend une adresse que l’aperçu sait afficher) et `onPasteImageError?` ; `layout?` (`"split"`) ; `placeholder?`, `readOnly?` ; `onLink?`, `renderImage?` (comme `Markdown`) ; `fill?`. Un autre `value` que celui de l’éditeur (autre fichier) repart d’un historique vide |
 
 Utiliser `as="span"` quand le texte est dans une `Row`, à côté d’une icône ou d’une pastille. Dans `Markdown` comme dans `Link`, un lien ne navigue jamais seul : `onLink` ou `onNavigate` reçoit l’adresse et décide quoi en faire.
 
@@ -466,6 +477,39 @@ Utiliser `as="span"` quand le texte est dans une `Row`, à côté d’une icône
 </Link>
 ```
 
+Revue d’un fichier d’un dossier accordé, puis sa note en Markdown, enregistrée avec Ctrl+S ou l’`Action` « Enregistrer » :
+
+```tsx
+const { data: diff } = useAsync(() => git.diff(dossier, { file: "README.md" }), [dossier]);
+const [note, setNote] = useState(lue);
+const [enregistree, setEnregistree] = useState(lue);
+const enregistrer = async () => {
+  await folders.writeText(dossier, "NOTES.md", note);
+  setEnregistree(note);
+};
+
+<DiffView label="Modifications de README.md" patch={diff?.text ?? ""} truncated={diff?.truncated} />
+<MarkdownEditor
+  label="Notes de revue"
+  value={note}
+  onChange={setNote}
+  savedValue={enregistree}
+  onSave={() => void enregistrer()}
+  onPasteImage={async (image) => {
+    // L’image est rangée à côté de la note ; l’aperçu en montre le lien (ou l’image, avec `renderImage`).
+    const adresse = await new Promise<string>((resolve, reject) => {
+      const lecteur = new FileReader();
+      lecteur.onload = () => resolve(String(lecteur.result));
+      lecteur.onerror = () => reject(lecteur.error);
+      lecteur.readAsDataURL(image);
+    });
+    const chemin = `images/${Date.now()}-${image.name}`;
+    await folders.writeFile(dossier, chemin, adresse.slice(adresse.indexOf(",") + 1));
+    return chemin;
+  }}
+/>
+```
+
 Corps HTML d’un courriel Outlook (Microsoft Graph : `body.contentType === "html"`) ; les images jointes `cid:` se
 chargent par la pièce jointe du message, les images distantes restent masquées :
 
@@ -480,6 +524,44 @@ chargent par la pièce jointe du message, les images distantes restent masquées
     return attachment ? `data:${attachment.contentType};base64,${attachment.contentBytes}` : null;
   }}
 />
+```
+
+### Arbre et grille
+
+**`TreeView`** suit le motif « tree » de l’ARIA : une seule tabulation pour tout l’arbre, puis ↑ ↓ (Maj pour étendre une sélection multiple), → ouvre puis descend au premier enfant, ← ferme puis remonte au parent, Début, Fin, Page précédente et suivante, `*` ouvre les nœuds voisins, une lettre (ou quelques-unes tapées vite) va au nœud suivant qui commence par elle. Entrée ou double clic appellent `onActivate` (ouvrir le fichier, le secret), Espace sélectionne. Un nœud `hasChildren` sans `children` demande les siens à `loadChildren` à son ouverture : « Chargement… » sous lui, puis ses enfants, ou le message de la promesse rejetée et « Réessayer » (→ relance aussi). Les actions d’un nœud (`actions(node)` → `{ label, icon, onClick, danger? }[]`) sont des boutons icônes en bout de ligne, visibles au survol et sur la ligne active, que Tab atteint juste après elle. Lignes de 28 px ; au-delà de `virtualizeFrom` (1 000) lignes visibles, seules celles à l’écran sont rendues, et l’arbre défile dans 480 px ou dans sa place avec `fill`. Pour un dossier accordé (`folders`) : `hasChildren` sur chaque dossier, `loadChildren` qui lit `folders.list`, `icon: Folder`, `openIcon: FolderOpen`, `meta` pour la taille ou l’état Git.
+
+**`DataTable variant="grid"`** est une grille de cellules (rôle `grid`) : une seule tabulation, puis les flèches de cellule en cellule, Début et Fin dans la ligne, Ctrl+Début et Ctrl+Fin aux coins, Page précédente et suivante ; ↑ depuis la première ligne atteint les en-têtes, où Entrée trie. L’en-tête et les colonnes `frozen` (les premières) restent en place quand la grille défile ; `rowHeader` fait de la cellule le nom de sa ligne, lu avant chaque case. Lignes de 36 px sur une ligne de texte ; au-delà de `virtualizeFrom` lignes (200), seules celles à l’écran sont rendues. La grille défile dans 480 px, ou dans sa place avec `fill`. Édition, par colonne (`editor`, avec `disabled?(row)` pour une cellule en lecture seule) :
+
+| `type` | Ouvrir | Valider | Props |
+|---|---|---|---|
+| `text` | Entrée, F2, double clic, ou une lettre tapée | Entrée ou Tab (vers la cellule suivante), quitter la cellule ; Échap annule. Un refus de `validate` garde la saisie ouverte et s’écrit sous la grille | `onCommit(row, value)`, `validate?(value, row)` → message ou rien, `value?(row)`, `placeholder?` |
+| `choice` | Entrée, F2, double clic | Le choix s’enregistre aussitôt ; Échap annule | `options: { value, label }[]`, `onCommit`, `value?` |
+| `check` | — | Clic, Espace ou Entrée basculent la case (V ou X, jamais la couleur seule) | `onCommit(row, present)`, `value?(row)`, `labels?: { on, off }` (« Présent », « Absent ») |
+
+`onCommit` peut rendre une promesse : la cellule attend, puis porte l’erreur (contour et message lu) si elle est rejetée. La page garde les données et les met à jour dans `onCommit` ; la grille ne modifie rien elle-même.
+
+**Filtres et tris**, en liste comme en grille : `filter: { type: "text" }` (chaque mot exigé, sans accents) ou `{ type: "choice", options }` pose un champ par colonne dans une ligne sous l’en-tête, et les filtres se cumulent ; quand ils ne laissent rien, « Aucun résultat » et « Effacer les filtres ». Un clic sur un en-tête trie par cette colonne seule, Maj+clic l’ajoute en clé suivante (son rang suit la flèche). `defaultSort`, ou `sort`/`onSortChange` et `filters`/`onFiltersChange` pour les garder ailleurs (`usePageState`).
+
+La **matrice** (secrets par environnement, droits par rôle) n’est pas un composant à part : une ligne par élément, une colonne `check` par environnement.
+
+```tsx
+const environnements = ["dev", "recette", "prod"];
+const colonnes: DataTableColumn<Secret>[] = [
+  { key: "nom", header: "Secret", frozen: true, rowHeader: true, width: "220px", filter: { type: "text" } },
+  ...environnements.map((env): DataTableColumn<Secret> => ({
+    key: env,
+    header: env,
+    width: "96px",
+    sortValue: (secret) => (secret.presents.includes(env) ? 1 : 0),
+    editor: {
+      type: "check",
+      labels: { on: "Présent", off: "Absent" },
+      value: (secret) => secret.presents.includes(env),
+      onCommit: (secret, present) => basculer(secret.nom, env, present), // appelle la fonction du module, puis recharge
+    },
+  })),
+];
+<DataTable variant="grid" label="Secrets par environnement" columns={colonnes} rows={secrets} rowKey={(secret) => secret.nom} />
 ```
 
 ## 6. Couleurs et thèmes

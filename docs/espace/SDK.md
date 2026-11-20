@@ -480,6 +480,34 @@ export default function Journal() {
 
 Une console (`client("portainer").socket("/api/websocket/exec", { query: { id, endpointId } })`) se lit de même, et la page écrit ce que tape l’utilisateur par `journal.write(texte)`.
 
+**Afficher un canal.** Une page ne dessine ni journal ni console elle-même : `LogViewer` et `Terminal` de `@alfred/ui` lisent le résultat de `useChannel` tel quel (DESIGN.md, section 5).
+
+```tsx
+// pages/journal.tsx : 100 000 lignes et plus, couleurs ANSI, suivi de la fin, recherche.
+const journal = useChannel(ouvert.data?.canal, { keep: 5000 }); // un lot entier, jusqu’à 5 000 événements
+return (
+  <Page fill>
+    <LogViewer label="Journal du conteneur web" channel={journal} fill />
+  </Page>
+);
+
+// pages/console.tsx : saisie, copier-coller, taille envoyée au service.
+const session = useChannel(ouverte.data?.canal);
+return (
+  <Page fill>
+    <Terminal
+      key={ouverte.data?.canal}
+      label="Console du conteneur web"
+      channel={session}
+      onResize={({ cols, rows }) => functions.call("redimensionner-console", { exec: ouverte.data?.exec, cols, rows })}
+      fill
+    />
+  </Page>
+);
+```
+
+`LogViewer` garde lui-même ses lignes (500 000 au plus, `maxLines`) : `keep` n’a qu’à couvrir un lot. Quand le protocole du service encadre ses messages (Kubernetes : un octet de canal en tête ; ttyd : un préfixe), `Terminal` reçoit à la place du canal une paire écriture/lecture, mémorisée avec `useMemo` : `connection={{ send(texte), subscribe(ecrire) }}`. `send` encadre la saisie et l’écrit par `channels.write` ; `subscribe` est appelé une fois, reçoit la fonction qui écrit à l’écran (texte ou `Uint8Array`) et rend le désabonnement ; la page y passe ce qu’elle a décodé des événements du canal.
+
 ## 7. IA
 
 `ai.oneShot` et `ai.startAgent` utilisent le modèle que l’utilisateur a réglé pour les pages dans Réglages → Agent, section « Dans les pages » (harnais, modèle et raisonnement) ; par défaut, « Comme l’agent », celui des conversations. Si ce harnais n’est plus installé, ou si `ai.oneShot` n’obtient pas de réponse de ce modèle, Alfred se sert de celui de l’agent et le note au journal des appels IA (`read_journal`), qui dit pour chaque appel quel harnais et quel modèle ont répondu. `ai.decide` n’est pas concerné : il tourne toujours sur l’ordinateur.
@@ -1264,6 +1292,7 @@ interface GitCommit { id: string; message: string; date: string; author: string;
 - `git.clone` : https, http, ssh ou `utilisateur@hôte:chemin`, dans un sous-dossier neuf du dossier accordé.
 - Aucun crochet ne tourne (husky compris), ni filtre, éditeur ou aide d’identification réglé dans le dépôt : un `.git/config` qui ferait lancer un programme est refusé avec la clé en cause. Les fins de ligne restent celles du poste (`core.autocrlf`). Le réseau passe par les identifiants git, le proxy et les certificats du poste ; un échec dit quoi vérifier (`error.message`), la sortie de git restant dans `error.detail.stderr`.
 - Une opération à la fois par dépôt ; les écritures et les opérations réseau vont au journal (`kind: "git"`).
+- Pour montrer un diff : `<DiffView label="…" patch={diff.text} truncated={diff.truncated} />` de `@alfred/ui` lit le texte de `git.diff` tel quel (plusieurs fichiers, binaires, CRLF) ; pour comparer deux révisions d’un fichier, `before={await git.show(dossier, "HEAD", fichier)}` et `after={…}` (DESIGN.md, section 5).
 
 ```tsx
 import { folders, git, shell } from "@alfred/sdk";

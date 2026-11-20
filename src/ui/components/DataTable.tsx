@@ -1,8 +1,16 @@
-import { type KeyboardEvent, type MouseEvent, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { DataGrid, type DataTableEditor } from "./DataGrid";
+import { ariaSort, FilterControl, fromInnerControl, HeaderContent, NoMatch, SortHeader } from "./dataTableParts";
+import {
+  cellValue,
+  type DataTableFilter,
+  type DataTableFilters,
+  type DataTableSort,
+  type SortValue,
+  useTableView,
+} from "./dataTableView";
 import { EmptyState } from "./EmptyState";
 import "./data-table.css";
-
-type SortValue = string | number | null | undefined;
 
 export interface DataTableColumn<Row> {
   /** Identifiant stable de la colonne ; sert aussi de clé de lecture par défaut dans la ligne. */
@@ -21,43 +29,19 @@ export interface DataTableColumn<Row> {
    */
   sortable?: boolean;
   align?: "start" | "end";
-  /** Largeur CSS (`120px`, `20%`) ; sans elle la colonne partage la place restante. */
+  /** Largeur CSS (`120px`, `20%`) ; sans elle la colonne partage la place restante (160 px dans une grille). */
   width?: string;
+  /** Filtre de la colonne, dans une ligne sous l’en-tête ; les filtres des colonnes se cumulent. */
+  filter?: DataTableFilter<Row>;
+  /** Grille seulement : colonne figée à gauche pendant le défilement horizontal (les premières colonnes). */
+  frozen?: boolean;
+  /** Grille seulement : la cellule nomme sa ligne (`rowheader`), comme le nom de l’élément d’une matrice. */
+  rowHeader?: boolean;
+  /** Grille seulement : édition dans la cellule (texte, choix, case). */
+  editor?: DataTableEditor<Row>;
 }
 
-type SortState = { key: string; direction: "asc" | "desc" } | null;
-
-function cellValue<Row>(row: Row, key: string): unknown {
-  return (row as Record<string, unknown>)[key];
-}
-
-const isSimple = (value: unknown) =>
-  value == null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
-
-/** Clic ou touche venus d’un contrôle placé dans une cellule : ils appartiennent à ce contrôle, pas à la ligne. */
-function fromInnerControl(event: MouseEvent | KeyboardEvent) {
-  const target = event.target;
-  if (!(target instanceof Element) || target === event.currentTarget) return false;
-  return Boolean(
-    target.closest(
-      "button, a, input, select, textarea, summary, label, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link'], [role='checkbox'], [role='switch'], [role='menuitem'], [role='combobox']",
-    ),
-  );
-}
-
-function columnLabel<Row>(column: DataTableColumn<Row>) {
-  return typeof column.header === "string" ? column.header : (column.headerLabel ?? column.key);
-}
-
-function HeaderContent<Row>({ column }: { column: DataTableColumn<Row> }) {
-  if (typeof column.header === "string" || !column.headerLabel) return <>{column.header}</>;
-  return (
-    <>
-      <span aria-hidden="true">{column.header}</span>
-      <span className="sr-only">{column.headerLabel}</span>
-    </>
-  );
-}
+export type { DataTableEditor, DataTableFilter, DataTableFilters, DataTableSort };
 
 /** Largeurs relevées dans le tableau des lignes, recopiées sur l’en-tête fixe pour que les colonnes s’alignent. */
 interface Measure {
@@ -77,25 +61,7 @@ function sameMeasure(left: Measure | null, right: Measure) {
   );
 }
 
-/**
- * Tableau de données dense : en-tête fixe, hors de la zone qui défile (sa barre de défilement ne longe que les
- * lignes), tri par clic sur l’en-tête des colonnes triables, ligne activable au clavier comme à la souris (sans voler
- * les clics des boutons, liens et champs placés dans ses cellules), état vide intégré. Avec `fill`, il occupe la
- * hauteur restante de la page et fait défiler ses lignes seules.
- */
-export function DataTable<Row>({
-  columns,
-  rows,
-  rowKey,
-  label,
-  onRowClick,
-  selectedKey,
-  emptyTitle = "Aucune donnée",
-  emptyDescription,
-  emptyAction,
-  loading = false,
-  fill = false,
-}: {
+export interface DataTableProps<Row> {
   columns: ReadonlyArray<DataTableColumn<Row>>;
   rows: ReadonlyArray<Row>;
   rowKey: (row: Row) => string | number;
@@ -110,41 +76,57 @@ export function DataTable<Row>({
   loading?: boolean;
   /** Occupe la hauteur restante (sous `Page fill`) : seules les lignes défilent, sous l’en-tête. */
   fill?: boolean;
-}) {
-  const [sort, setSort] = useState<SortState>(null);
+  /**
+   * `"list"` (par défaut) : une ligne activable par élément. `"grid"` : une grille de cellules (rôle `grid`),
+   * parcourue au clavier cellule par cellule, avec colonnes figées (`frozen`), édition dans la cellule (`editor`)
+   * et lignes virtualisées au-delà de `virtualizeFrom`.
+   */
+  variant?: "list" | "grid";
+  /** Tris en cours (contrôlé) ; sans lui, le tableau garde les siens. */
+  sort?: ReadonlyArray<DataTableSort>;
+  defaultSort?: ReadonlyArray<DataTableSort>;
+  onSortChange?: (sort: DataTableSort[]) => void;
+  /** Valeur du filtre de chaque colonne (contrôlé) ; sans lui, le tableau garde les siennes. */
+  filters?: DataTableFilters;
+  onFiltersChange?: (filters: Record<string, string>) => void;
+  /** Grille seulement : nombre de lignes à partir duquel seules celles à l’écran sont rendues (200). */
+  virtualizeFrom?: number;
+}
+
+/**
+ * Tableau de données dense : en-tête fixe, hors de la zone qui défile (sa barre de défilement ne longe que les
+ * lignes), tris cumulables par clic sur l’en-tête des colonnes triables (Maj+clic ajoute une clé), filtres par
+ * colonne, ligne activable au clavier comme à la souris (sans voler les clics des boutons, liens et champs placés
+ * dans ses cellules), état vide intégré. Avec `fill`, il occupe la hauteur restante de la page et fait défiler ses
+ * lignes seules. Avec `variant="grid"`, c’est une grille de cellules (voir `DataGrid`).
+ */
+export function DataTable<Row>(props: DataTableProps<Row>) {
+  return props.variant === "grid" ? <DataGrid {...props} /> : <ListTable {...props} />;
+}
+
+function ListTable<Row>({
+  columns,
+  rows,
+  rowKey,
+  label,
+  onRowClick,
+  selectedKey,
+  emptyTitle = "Aucune donnée",
+  emptyDescription,
+  emptyAction,
+  loading = false,
+  fill = false,
+  sort,
+  defaultSort,
+  onSortChange,
+  filters,
+  onFiltersChange,
+}: DataTableProps<Row>) {
+  const view = useTableView({ columns, rows, sort, defaultSort, onSortChange, filters, onFiltersChange });
   const head = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const sizer = useRef<HTMLTableRowElement>(null);
   const [measure, setMeasure] = useState<Measure | null>(null);
-
-  const sortable = useMemo(() => {
-    const result = new Map<string, boolean>();
-    for (const column of columns) {
-      const automatic =
-        column.sortValue !== undefined ||
-        (rows.some((row) => cellValue(row, column.key) != null) &&
-          rows.every((row) => isSimple(cellValue(row, column.key))));
-      result.set(column.key, column.sortable ?? automatic);
-    }
-    return result;
-  }, [columns, rows]);
-
-  const sorted = useMemo(() => {
-    if (!sort || !sortable.get(sort.key)) return rows;
-    const column = columns.find((candidate) => candidate.key === sort.key);
-    if (!column) return rows;
-    const read = column.sortValue ?? ((row: Row) => cellValue(row, column.key) as SortValue);
-    const factor = sort.direction === "asc" ? 1 : -1;
-    return [...rows].sort((left, right) => {
-      const a = read(left);
-      const b = read(right);
-      if (a == null && b == null) return 0;
-      if (a == null) return 1;
-      if (b == null) return -1;
-      if (typeof a === "number" && typeof b === "number") return (a - b) * factor;
-      return String(a).localeCompare(String(b), "fr", { numeric: true, sensitivity: "base" }) * factor;
-    });
-  }, [rows, columns, sort, sortable]);
 
   const empty = !loading && rows.length === 0;
 
@@ -170,13 +152,7 @@ export function DataTable<Row>({
     observer.observe(scroller);
     for (const cell of Array.from(row.cells)) observer.observe(cell);
     return () => observer.disconnect();
-  }, [empty, columns]);
-
-  const toggleSort = (key: string) =>
-    setSort((current) => {
-      if (current?.key !== key) return { key, direction: "asc" };
-      return current.direction === "asc" ? { key, direction: "desc" } : null;
-    });
+  }, [empty, columns, view.filteredOut]);
 
   if (empty) {
     return (
@@ -215,39 +191,27 @@ export function DataTable<Row>({
           </colgroup>
           <thead role="rowgroup">
             <tr role="row">
-              {columns.map((column) => {
-                const canSort = sortable.get(column.key);
-                const active = canSort && sort?.key === column.key ? sort.direction : undefined;
-                return (
-                  <th
-                    key={column.key}
-                    role="columnheader"
-                    scope="col"
-                    className={column.align === "end" ? "al-table__end" : undefined}
-                    aria-sort={
-                      active === "asc" ? "ascending" : active === "desc" ? "descending" : canSort ? "none" : undefined
-                    }
-                  >
-                    {canSort ? (
-                      <button
-                        type="button"
-                        title={`Trier par ${columnLabel(column).toLocaleLowerCase("fr")}`}
-                        onClick={() => toggleSort(column.key)}
-                      >
-                        <HeaderContent column={column} />
-                        <span aria-hidden="true" className="al-table__sort">
-                          {active === "asc" ? "↑" : active === "desc" ? "↓" : ""}
-                        </span>
-                      </button>
-                    ) : (
-                      <span className="al-table__header">
-                        <HeaderContent column={column} />
-                      </span>
-                    )}
-                  </th>
-                );
-              })}
+              {columns.map((column) => (
+                <th
+                  key={column.key}
+                  role="columnheader"
+                  scope="col"
+                  className={column.align === "end" ? "al-table__end" : undefined}
+                  aria-sort={ariaSort(view, column.key)}
+                >
+                  <SortHeader column={column} view={view} />
+                </th>
+              ))}
             </tr>
+            {view.filtering ? (
+              <tr className="al-table__filters">
+                {columns.map((column) => (
+                  <td key={column.key}>
+                    <FilterControl column={column} view={view} />
+                  </td>
+                ))}
+              </tr>
+            ) : null}
           </thead>
         </table>
       </div>
@@ -270,14 +234,21 @@ export function DataTable<Row>({
                 <th key={column.key}>
                   <span className="al-table__header">
                     <HeaderContent column={column} />
-                    {sortable.get(column.key) ? <span className="al-table__sort" /> : null}
+                    {view.sortable.get(column.key) ? <span className="al-table__sort" /> : null}
                   </span>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody role="rowgroup">
-            {sorted.map((row) => {
+            {view.filteredOut ? (
+              <tr role="row">
+                <td role="cell" colSpan={columns.length}>
+                  <NoMatch onClear={view.clearFilters} />
+                </td>
+              </tr>
+            ) : null}
+            {view.view.map((row) => {
               const key = rowKey(row);
               return (
                 <tr

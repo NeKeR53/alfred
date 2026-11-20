@@ -73,7 +73,9 @@
   justify-content: flex-end;
 }
 .al-table__sort {
-  width: 10px;
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 10px;
 }
 .al-table td {
   min-height: 36px;
@@ -109,4 +111,33 @@
 .al-table__sizer th > .al-table__header {
   min-height: 0;
   height: 0;
+}
+
+/* Tris cumulés : le rang de la clé suit sa flèche. */
+.al-table__sort-rank {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+/* Ligne de filtres sous l’en-tête. */
+.al-table .al-table__filters > td {
+  padding: 0 8px 6px;
+  border-bottom: 0;
+}
+/* Champs de filtre : le soulignement des champs natifs (styles.css), en plus compact. */
+.al-table__filter {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 6px;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: 400;
+}
+.al-table__no-match {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-muted);
 }
