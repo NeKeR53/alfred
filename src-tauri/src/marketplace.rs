@@ -330,6 +330,11 @@ fn refresh(state: &AppState, only: Option<&str>) -> AppResult<Value> {
 ///
 /// Ce qui a réussi après un échec sert de premier essai la fois suivante.
 pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
+    remote_git_with(dir, args, &[])
+}
+
+/// `remote_git` avec des variables d’environnement en plus (borne de recherche du dépôt pour un dossier du poste).
+pub(crate) fn remote_git_with(dir: &Path, args: &[&str], extra_env: &[(&str, String)]) -> AppResult<String> {
     let url = remote_url(dir, args);
     let env = |name: &str| std::env::var(name).ok();
     let user_tls = git_network::user_tls(&http_settings(dir), url.as_deref().unwrap_or_default(), env);
@@ -367,7 +372,7 @@ pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
         if attempt.uses_bundle() && !git_network::write_roots(&git_network::roots_bundle()) {
             break;
         }
-        match run_remote(dir, args, attempt, proxy.as_deref(), safe_directory.as_deref()) {
+        match run_remote(dir, args, extra_env, attempt, proxy.as_deref(), safe_directory.as_deref()) {
             Ok(output) => {
                 git_network::remember(tls, use_proxy_now);
                 return Ok(output);
@@ -421,6 +426,7 @@ pub(crate) fn remote_git(dir: &Path, args: &[&str]) -> AppResult<String> {
 fn run_remote(
     dir: &Path,
     args: &[&str],
+    env: &[(&str, String)],
     attempt: &git_network::TlsAttempt,
     proxy: Option<&str>,
     safe_directory: Option<&str>,
@@ -434,7 +440,13 @@ fn run_remote(
         .env("LC_ALL", "C")
         .args(["-c", "credential.interactive=false", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30"])
         // Un clone garde les fins de ligne du dépôt, même avec le `core.autocrlf=true` de Git for Windows.
-        .args(["-c", "core.autocrlf=false"]);
+        .args(["-c", "core.autocrlf=false"])
+        // Ni crochet (`pre-push`, `post-merge`, `post-checkout`) ni surveillance du dossier : rien d’autre que git ne
+        // tourne pendant une opération distante.
+        .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]);
+    for (name, value) in env {
+        command.env(name, value);
+    }
     for option in &attempt.options {
         command.args(["-c", option]);
     }
@@ -466,6 +478,11 @@ fn run_remote(
 
 /// Adresse visée : celle d’un `git clone … -- <adresse> <dossier>`, sinon celle du distant `origin` du dépôt.
 fn remote_url(dir: &Path, args: &[&str]) -> Option<String> {
+    // Les réglages `-c clé=valeur` placés devant la commande ne la changent pas.
+    let mut args = args;
+    while args.first() == Some(&"-c") && args.len() >= 2 {
+        args = &args[2..];
+    }
     if args.first() == Some(&"clone") {
         let after = args.iter().position(|arg| *arg == "--").map_or(1, |at| at + 1);
         return args.get(after).map(|url| url.to_string());
@@ -690,11 +707,7 @@ pub(crate) fn commit_clone(clone: &Path, message: &str) -> AppResult<Option<Stri
     if !git::has_changes(clone)? {
         return Ok(None);
     }
-    let configured = |key: &str| git::run(clone, &["config", "--get", key]).is_ok_and(|value| !value.is_empty());
-    let mut args = vec!["-c", "commit.gpgsign=false"];
-    if !(configured("user.name") && configured("user.email")) {
-        args.extend(["-c", "user.name=Alfred", "-c", "user.email=alfred@localhost"]);
-    }
+    let mut args = git::user_identity_args(clone);
     args.extend(["commit", "-q", "--no-verify", "-m", message]);
     git::run(clone, &args)?;
     git::run(clone, &["rev-parse", "HEAD"]).map(Some)
@@ -969,10 +982,11 @@ fn accesses(manifest: &ModuleManifest) -> Vec<Access> {
         accesses.push(Access { kind: "webhook", id: webhook.id.clone(), label: label(&webhook.description, &webhook.id) });
     }
     for schedule in &manifest.schedules {
-        let cadence = match (&schedule.every_minutes, &schedule.at) {
-            (Some(minutes), _) => format!(" (toutes les {minutes} min)"),
-            (None, Some(at)) => format!(" (chaque jour à {at})"),
-            (None, None) => String::new(),
+        let cadence = match (&schedule.every_minutes, &schedule.every_seconds, &schedule.at) {
+            (Some(minutes), _, _) => format!(" (toutes les {minutes} min)"),
+            (None, Some(seconds), _) => format!(" (toutes les {seconds} s)"),
+            (None, None, Some(at)) => format!(" (chaque jour à {at})"),
+            (None, None, None) => String::new(),
         };
         accesses.push(Access {
             kind: "schedule",

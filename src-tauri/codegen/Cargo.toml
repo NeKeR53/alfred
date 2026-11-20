@@ -1,0 +1,20 @@
+# Générateur des types des harnais d’agents (pilotage depuis Rust). Crate autonome : il n’est pas compilé avec
+# l’application. `cargo run --manifest-path src-tauri/codegen/Cargo.toml` réécrit `src/agents/opencode/generated.rs`
+# et `src/agents/codex/generated.rs`, committés ; `-- --check` échoue si l’un d’eux n’est plus à jour.
+[workspace]
+
+[package]
+name = "alfred-agents-codegen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+schemars = "0.8"
+typify = "0.8"
+progenitor = { version = "0.16", default-features = false }
+openapiv3 = "2"
+prettyplease = "0.2"
+syn = "2"

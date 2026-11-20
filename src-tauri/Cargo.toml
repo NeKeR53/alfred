@@ -36,7 +36,13 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "net", "fs"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "json"] }
+# Transport des comptes : réponses lues en flux (téléchargements, journaux, SSE), envois multipart, proxy du système
+# (macOS, « Paramètres Internet » de Windows) en plus des variables d’environnement.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "gzip", "brotli", "json", "stream", "multipart", "system-proxy"] }
+# WebSocket des comptes (console d’un conteneur) : la poignée de main passe par reqwest (proxy, certificats, origine),
+# tungstenite ne fait que le protocole sur la connexion obtenue.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+tokio-util = { version = "0.7", features = ["io"] }
 rusqlite = { version = "0.37", features = ["bundled", "serde_json", "hooks", "backup", "functions"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 oxc = { version = "=0.152.0", features = ["transformer", "codegen", "semantic", "ast_visit"] }
@@ -51,6 +57,11 @@ log = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Agents pilotés depuis Rust : client `opencode serve` généré par progenitor (src/agents/opencode/generated.rs), qui
+# utilise reqwest 0.13, à côté de la 0.12 du reste d’Alfred ; motifs des types générés (regress).
+progenitor-client = "0.16"
+reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["json", "query", "stream"] }
+regress = "0.10"
 # Voix : capture du micro, réglages repris d’Argos.
 cpal = "0.18"
 toml = "1"

@@ -8,12 +8,14 @@ import { create } from "zustand";
 import { invoke, onNativeEvent } from "../../lib/native";
 import type { Commit } from "../../lib/types";
 import { notify } from "../../shell/notifications";
+import { pageWindowReference } from "../../shell/pageWindowMode";
 import { useShell } from "../../shell/store";
 import { bindMainWindowClose } from "../../shell/windowClose";
 import { useVoice } from "../voice/store";
 import {
   type ApprovalRequest,
   type Autonomy,
+  CODEX_FILE_TOOLS,
   createSession,
   type HarnessEvent,
   type HarnessSession,
@@ -21,7 +23,6 @@ import {
   type Provider,
   usableProvider,
 } from "./harness";
-import { CODEX_FILE_TOOLS } from "./harness/codex";
 import { finishReading, readAlong } from "./liveReading";
 import {
   type AgentQuestion,
@@ -63,6 +64,8 @@ const DEFAULTS: AgentDefaults = { provider: "claude", autonomy: "ask", models: {
 const idleRuntime: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
 export interface NewConversation {
+  /** Identifiant choisi d’avance : la fenêtre Agent détachée crée la conversation chez elle et dans la principale. */
+  id?: string;
   provider?: Provider;
   model?: string;
   effort?: string;
@@ -889,7 +892,6 @@ export const useAgents = create<AgentState>((set, get) => {
         cwd: conversation.cwd,
         spaceDir: shell.snapshot?.path,
         conversation: conversation.id,
-        toolsUrl: shell.info ? `http://127.0.0.1:${shell.info.serverPort}/mcp` : undefined,
         model: conversation.model,
         effort: conversation.effort,
         instructions: sessionInstructions(conversation, currentTurnId, !resumeSessionId),
@@ -971,6 +973,16 @@ export const useAgents = create<AgentState>((set, get) => {
     backgroundStarted = true;
     // Une conversation qui a fini depuis longtemps libère son CLI ; son prochain message rouvre une session.
     setInterval(() => void releaseIdleSessions(IDLE_SESSION_MS).catch(() => undefined), 60_000);
+    // Seule la fenêtre principale relance les suivis, lance les délégués et sert la fenêtre Agent détachée : une
+    // fenêtre de page a son propre magasin, et deux fenêtres relanceraient deux fois.
+    if (!pageWindowReference()) {
+      // Suivis : une conversation qui attendait un événement de module est relancée quand il arrive.
+      void import("./watches").then(({ bindAgentWatches }) => bindAgentWatches());
+      // Délégation : les tâches prêtes des coordinatrices partent dans leurs propres conversations.
+      void import("./delegation").then(({ bindDelegation }) => bindDelegation());
+      // Fenêtre Agent détachée : elle affiche et pilote les conversations de celle-ci.
+      void import("./agentsWindow").then(({ serveAgentsWindow }) => serveAgentsWindow()).catch(() => undefined);
+    }
     watchConversationTitles(
       {
         candidates: () =>
@@ -1185,7 +1197,7 @@ export const useAgents = create<AgentState>((set, get) => {
       const preset = defaults.models[provider] ?? {};
       const now = Date.now();
       const conversation: Conversation = {
-        id: newId(),
+        id: options.id ?? newId(),
         title: (options.title && cleanConversationTitle(options.title)) || "Nouvelle conversation",
         provider,
         model: options.model ?? preset.model,
@@ -1227,6 +1239,9 @@ export const useAgents = create<AgentState>((set, get) => {
 
     async archive(id) {
       await get().ensureLoaded(id);
+      // Archivée, elle n’attend plus rien : ses suivis sont arrêtés, et une coordinatrice arrête ses délégués.
+      void invoke("agents.watches.cancelConversation", { conversation: id }).catch(() => undefined);
+      if (current(id)?.coordinator) void import("./delegation").then(({ stopDelegates }) => stopDelegates(id));
       const busy = (get().runtime[id]?.status ?? "idle") !== "idle" || current(id)?.turns.at(-1)?.status === "running";
       // Comme OneApp, elle est masquée avant l’arrêt : un tour arrêté par l’archivage n’est pas annoncé. Archivée,
       // elle n’est plus « à consulter » ; sa file reste, figée, et une session au repos libère son CLI.
@@ -1414,6 +1429,7 @@ export const useAgents = create<AgentState>((set, get) => {
     },
 
     async remove(id) {
+      void invoke("agents.watches.cancelConversation", { conversation: id }).catch(() => undefined);
       patchRuntime(id, (runtime) => ({ ...runtime, queued: [] }));
       await dropSession(id);
       pendingStream.delete(id);

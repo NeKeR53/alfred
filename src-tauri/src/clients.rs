@@ -26,7 +26,7 @@ use crate::{git, oauth, vault};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Taille maximale d’une réponse : au-delà, la page recevrait plus qu’elle ne peut raisonnablement traiter.
 const MAX_BODY: usize = 20 * 1024 * 1024;
-const MASK: &str = "[secret masqué]";
+pub(crate) const MASK: &str = "[secret masqué]";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Modèle
@@ -42,6 +42,11 @@ pub enum AuthKind {
     Basic,
     Oauth2,
     ClientCredentials,
+    /// Connexion par identifiant et mot de passe qui rend un jeton (Portainer, OpenBao userpass) : Alfred fait la
+    /// requête de connexion, garde le jeton au trousseau et le pose sur chaque requête (voir `sessions`).
+    Session,
+    /// Toute l’adresse du compte est secrète (agenda publié dont l’adresse porte un jeton) : elle vit au trousseau.
+    SecretUrl,
 }
 
 impl AuthKind {
@@ -49,8 +54,8 @@ impl AuthKind {
     pub fn vault_kind(self) -> Option<&'static str> {
         match self {
             Self::None => None,
-            Self::Bearer | Self::ApiKey => Some(vault::KIND_TOKEN),
-            Self::Basic => Some(vault::KIND_BASIC),
+            Self::Bearer | Self::ApiKey | Self::SecretUrl => Some(vault::KIND_TOKEN),
+            Self::Basic | Self::Session => Some(vault::KIND_BASIC),
             Self::Oauth2 => Some(vault::KIND_OAUTH2),
             Self::ClientCredentials => Some(vault::KIND_CLIENT_CREDENTIALS),
         }
@@ -85,6 +90,77 @@ pub struct Auth {
     pub token_url: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
+    /// `session` : requête de connexion qui rend le jeton.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login: Option<SessionLogin>,
+    /// `session` : où poser le jeton obtenu ; à défaut, `Authorization: Bearer <jeton>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply: Option<SessionApply>,
+}
+
+/// Requête de connexion d’une méthode `session`. Dans `path` et dans les textes de `body`, `{username}`,
+/// `{password}` et les paramètres du compte (`{realm}`…) sont remplacés au moment de la connexion, jamais ailleurs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionLogin {
+    /// `POST` par défaut.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub method: String,
+    /// Chemin sous l’adresse du compte (`/api/auth`, `/v1/auth/userpass/login/{username}`).
+    pub path: String,
+    /// Corps envoyé en JSON (ou en formulaire avec `form`), modèle des champs à remplir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub form: bool,
+    /// Où lire le jeton : chemin pointé dans la réponse JSON (`jwt`, `auth.client_token`), ou `header:<nom>`.
+    pub token: String,
+    /// Chemin pointé de la durée de vie du jeton, en secondes (`auth.lease_duration`) ; 0 ou absent : sans échéance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionApply {
+    pub header: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+}
+
+/// Paramètre non secret d’un compte, déclaré par sa méthode (royaume Keycloak, montage OpenBao, endpoint
+/// Portainer) : saisi avec le compte, gardé dans son fichier, lu par les fonctions par `client(id).params()`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ParamDef {
+    pub id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub help: String,
+    /// Valeur proposée quand l’utilisateur ne saisit rien.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
+}
+
+/// Réponses scellées : les champs déclarés d’une réponse dont le chemin correspond ne parviennent à la fonction que
+/// sous forme de références (voir `secret_refs`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SealedRule {
+    /// Chemin sous l’adresse du compte : `*` vaut un segment, `**` la suite du chemin, `{param}` un paramètre du
+    /// compte (ou un segment quelconque s’il n’en a pas).
+    pub path: String,
+    /// Méthodes HTTP concernées ; toutes à défaut.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<String>,
+    /// Champs scellés, en chemins pointés avec `*` (`data.data.*`) ; sans champ, toute la réponse.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
 }
 
 /// Ce qu’Alfred utilise pour une requête : une instance d’un client, son adresse et son authentification résolues.
@@ -107,6 +183,15 @@ pub struct Client {
     /// Le certificat du serveur est accepté sans vérification (option avancée du compte).
     #[serde(skip)]
     pub insecure_tls: bool,
+    /// Paramètres non secrets du compte (`realm`, `mount`…), déjà complétés de leurs valeurs par défaut.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+    /// Réponses scellées du service (voir `SealedRule`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sealed: Vec<SealedRule>,
+    /// Paramètres obligatoires que le compte n’a pas encore (leurs noms) : le compte reste invalide.
+    #[serde(skip)]
+    pub missing_params: Vec<String>,
 }
 
 /// Instance d’un client écrit sous sa forme simple (une adresse, une authentification), et méthode qu’elle utilise.
@@ -137,6 +222,11 @@ pub struct AuthMethod {
     /// parcours propose « Se connecter avec… » sans rien faire saisir : la connexion se fait par PKCE.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Paramètres non secrets que l’utilisateur saisit avec le compte (`{ "id": "realm", "label": "Royaume" }`).
+    /// `{realm}` se remplace ensuite dans `authorizationUrl`, `tokenUrl`, la connexion `session`, les règles
+    /// `sealed` et le chemin d’une requête.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ParamDef>,
 }
 
 /// Compte ou installation du service : son adresse, la méthode choisie et l’entrée du coffre qui la sert. Seul
@@ -161,6 +251,9 @@ pub struct Instance {
     /// … et certificat du serveur accepté sans vérification (serveur interne à certificat auto-signé).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub insecure_tls: bool,
+    /// Valeurs des paramètres déclarés par la méthode (`realm` → `equipe`). Jamais de secret : elles sont versionnées.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
 }
 
 /// Fichier `clients/<id>.json`, sous l’une de ses deux formes : un client à une seule instance (`baseUrl`, `auth`
@@ -186,6 +279,10 @@ pub struct ClientDef {
     /// Beaucoup d’API n’ont rien à la racine : un chemin qui demande l’authentification vérifie aussi le secret.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_path: Option<String>,
+    /// Réponses scellées : chemins dont certains champs (valeurs d’un coffre, jetons émis) ne parviennent aux
+    /// fonctions que sous forme de références.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sealed: Vec<SealedRule>,
 }
 
 fn clean(value: &mut Option<String>) {
@@ -292,6 +389,11 @@ impl Auth {
         if self.kind == AuthKind::None {
             self.secret = None;
         }
+        if self.kind == AuthKind::Session {
+            crate::sessions::normalize(self);
+        } else {
+            (self.login, self.apply) = (None, None);
+        }
     }
 
     fn validate(&self) -> AppResult<()> {
@@ -321,6 +423,7 @@ impl Auth {
                     .ok_or_else(|| AppError::new("Saisir l’adresse d’autorisation."))?;
                 check_url(url, "L’adresse d’autorisation", true)?;
             }
+            AuthKind::Session => crate::sessions::validate(self)?,
             _ => {}
         }
         if self.kind.uses_token_endpoint() {
@@ -332,13 +435,27 @@ impl Auth {
     }
 
     /// `{url}` remplacé par l’adresse de l’instance dans les adresses d’autorisation et de jetons.
-    fn for_instance(&self, root: &str) -> Auth {
+    fn for_instance(&self, root: &str, params: &BTreeMap<String, String>) -> Auth {
         let mut auth = self.clone();
         for value in [&mut auth.authorization_url, &mut auth.token_url].into_iter().flatten() {
-            *value = value.replace("{url}", root);
+            *value = fill_params(&value.replace("{url}", root), params);
         }
         auth
     }
+}
+
+/// Remplace `{param}` par la valeur du paramètre du compte, encodée comme un segment de chemin : une valeur ne peut
+/// ni ajouter de segment ni sortir de l’adresse. Un nom inconnu reste tel quel.
+pub fn fill_params(text: &str, params: &BTreeMap<String, String>) -> String {
+    let mut text = text.to_string();
+    for (name, value) in params {
+        let pattern = format!("{{{name}}}");
+        if text.contains(&pattern) {
+            let encoded: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+            text = text.replace(&pattern, &encoded.replace('+', "%20"));
+        }
+    }
+    text
 }
 
 impl Client {
@@ -356,10 +473,20 @@ impl Client {
         if self.label.trim().is_empty() {
             return Err(AppError::new("Le client doit avoir un libellé."));
         }
-        if self.base_url.trim().is_empty() {
-            return Err(AppError::new(format!("Saisir l’adresse de « {} ».", self.label)));
+        if let Some(first) = self.missing_params.first() {
+            return Err(AppError::new(format!("Saisir « {first} » pour ce compte.")));
         }
-        self.base()?;
+        // L’adresse d’un compte `secretUrl` est au trousseau : celle du fichier peut rester vide.
+        if self.auth.kind == AuthKind::SecretUrl {
+            if !self.base_url.trim().is_empty() {
+                self.base()?;
+            }
+        } else {
+            if self.base_url.trim().is_empty() {
+                return Err(AppError::new(format!("Saisir l’adresse de « {} ».", self.label)));
+            }
+            self.base()?;
+        }
         valid_headers(&self.headers)?;
         self.auth.validate()
     }
@@ -390,6 +517,11 @@ impl Instance {
         clean(&mut self.url);
         clean(&mut self.secret);
         clean_headers(&mut self.headers);
+        self.params = std::mem::take(&mut self.params)
+            .into_iter()
+            .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+            .filter(|(name, value)| !name.is_empty() && !value.is_empty())
+            .collect();
     }
 
     /// Nom affiché : l’instance d’un client à une seule instance n’en a pas toujours.
@@ -439,6 +571,8 @@ impl ClientDef {
             && instance.url.is_none()
             && instance.headers.is_empty()
             && !instance.insecure_tls
+            && instance.params.is_empty()
+            && method.params.is_empty()
             && !self.base_url.is_empty()
     }
 
@@ -476,12 +610,24 @@ impl ClientDef {
             if method.auth.kind != AuthKind::Oauth2 {
                 method.client_id = None;
             }
+            for param in &mut method.params {
+                param.id = param.id.trim().to_string();
+                param.label = param.label.trim().to_string();
+                param.help = param.help.trim().to_string();
+                clean(&mut param.example);
+                clean(&mut param.default);
+            }
             method.auth.normalize();
             // Le secret appartient à l’instance, jamais à la méthode.
             method.auth.secret = None;
         }
         for instance in &mut self.instances {
             instance.normalize();
+        }
+        for rule in &mut self.sealed {
+            rule.path = rule.path.trim().to_string();
+            rule.methods = rule.methods.iter().map(|method| method.trim().to_ascii_uppercase()).filter(|m| !m.is_empty()).collect();
+            rule.fields = rule.fields.iter().map(|field| field.trim().to_string()).filter(|f| !f.is_empty()).collect();
         }
     }
 
@@ -520,8 +666,25 @@ impl ClientDef {
                     method.id
                 )));
             }
+            let mut names = std::collections::HashSet::new();
+            for param in &method.params {
+                if !valid_param(&param.id) || !names.insert(param.id.as_str()) {
+                    return Err(AppError::new(format!(
+                        "Méthode « {} » : identifiant de paramètre invalide ou répété : « {} » (lettres, chiffres et _).",
+                        method_label(method),
+                        param.id
+                    )));
+                }
+                if matches!(param.id.as_str(), "url" | "username" | "password") {
+                    return Err(AppError::new(format!(
+                        "Méthode « {} » : le paramètre « {} » est réservé par Alfred.",
+                        method_label(method),
+                        param.id
+                    )));
+                }
+            }
             // Les adresses relatives à l’instance sont vérifiées avec une adresse d’exemple.
-            let mut auth = method.auth.for_instance("https://instance.exemple");
+            let mut auth = method.auth.for_instance("https://instance.exemple", &BTreeMap::new());
             auth.secret = None;
             auth.validate().map_err(|error| {
                 AppError::new(format!("Méthode « {} » : {}", method_label(method), error.message))
@@ -541,6 +704,7 @@ impl ClientDef {
                 )));
             }
         }
+        crate::secret_refs::validate_rules(&self.sealed)?;
         Ok(())
     }
 
@@ -583,7 +747,22 @@ impl ClientDef {
             ))
         })?;
         let base_url = instance.url.clone().unwrap_or_else(|| self.base_url.clone());
-        let mut auth = method.auth.for_instance(base_url.trim_end_matches('/'));
+        // Paramètres de la méthode : la valeur du compte, sinon celle par défaut ; ceux qui manquent rendent le
+        // compte invalide (`Client::validate`), ceux que la méthode ne déclare pas sont ignorés.
+        let mut params = BTreeMap::new();
+        let mut missing_params = Vec::new();
+        for param in &method.params {
+            match instance.params.get(&param.id).or(param.default.as_ref()).filter(|value| !value.is_empty()) {
+                Some(value) => {
+                    params.insert(param.id.clone(), value.clone());
+                }
+                None if !param.optional => {
+                    missing_params.push(if param.label.is_empty() { param.id.clone() } else { param.label.clone() })
+                }
+                None => {}
+            }
+        }
+        let mut auth = method.auth.for_instance(base_url.trim_end_matches('/'), &params);
         auth.secret = instance.secret.clone().filter(|_| auth.kind != AuthKind::None);
         let label = if self.instances.len() > 1 {
             format!("{} — {}", self.label, instance.display_label())
@@ -607,6 +786,9 @@ impl ClientDef {
             },
             test_path: self.test_path.clone(),
             insecure_tls: instance.insecure_tls,
+            params,
+            missing_params,
+            sealed: self.sealed.clone(),
         })
     }
 
@@ -632,7 +814,16 @@ pub fn auth_label(kind: AuthKind) -> &'static str {
         AuthKind::Basic => "Identifiant et mot de passe",
         AuthKind::Oauth2 => "OAuth 2",
         AuthKind::ClientCredentials => "Identifiants d’application",
+        AuthKind::Session => "Identifiant et mot de passe (session)",
+        AuthKind::SecretUrl => "Adresse secrète",
     }
+}
+
+/// Identifiant d’un paramètre de compte : lettres, chiffres et `_`, sans commencer par un chiffre.
+fn valid_param(id: &str) -> bool {
+    let mut chars = id.chars();
+    chars.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -757,7 +948,7 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
 
 /// Champs de l’empreinte : tout ce qui décide où part le secret et ce qu’il permet d’obtenir. Chaque valeur est un
 /// texte ou `null`, pour pouvoir montrer l’avant et l’après à l’utilisateur.
-const TRUST_FIELDS: [(&str, &str); 11] = [
+const TRUST_FIELDS: [(&str, &str); 14] = [
     ("authType", "Authentification"),
     ("secret", "Entrée du coffre"),
     ("baseUrl", "Adresse de base"),
@@ -769,6 +960,9 @@ const TRUST_FIELDS: [(&str, &str); 11] = [
     ("prefix", "Préfixe de la clé"),
     ("headers", "En-têtes fixes"),
     ("insecureTls", "Certificat accepté sans vérification"),
+    ("params", "Paramètres du compte"),
+    ("login", "Connexion"),
+    ("sealed", "Champs scellés"),
 ];
 
 /// Forme canonique d’une adresse : deux écritures de la même adresse donnent la même empreinte. Pour l’adresse de
@@ -806,6 +1000,18 @@ pub fn fingerprint(client: &Client) -> Value {
     // Absente tant qu’elle est désactivée : les validations déjà données restent valables.
     if client.insecure_tls {
         print["insecureTls"] = json!("oui");
+    }
+    // Ajoutés seulement quand ils servent, pour la même raison. Retirer une règle scellée change l’empreinte : la
+    // fonction recevrait alors des valeurs en clair, ce que l’utilisateur doit approuver.
+    if !client.params.is_empty() {
+        let params: Vec<String> = client.params.iter().map(|(name, value)| format!("{name} = {value}")).collect();
+        print["params"] = json!(params.join(", "));
+    }
+    if auth.kind == AuthKind::Session {
+        print["login"] = json!(crate::sessions::describe(auth));
+    }
+    if !client.sealed.is_empty() {
+        print["sealed"] = json!(crate::secret_refs::describe_rules(&client.sealed));
     }
     print
 }
@@ -963,6 +1169,8 @@ struct Credential {
     secrets: Vec<String>,
     /// Jeton renouvelable utilisé pour cette requête : s’il est refusé (401), il est redemandé une fois.
     renewable: Option<String>,
+    /// `secretUrl` : adresse complète du compte, lue au trousseau (paramètres compris).
+    base: Option<Url>,
 }
 
 fn missing_secret(client: &Client) -> AppError {
@@ -976,6 +1184,15 @@ async fn credential(state: &Arc<AppState>, client: &Client, stale: Option<&str>)
     let auth = &client.auth;
     if auth.kind == AuthKind::None {
         return Ok(Credential::default());
+    }
+    if auth.kind == AuthKind::Session {
+        let session = crate::sessions::token(state, client, stale).await?;
+        return Ok(Credential {
+            headers: vec![(session.header, session.value)],
+            secrets: session.secrets,
+            renewable: Some(session.token),
+            ..Credential::default()
+        });
     }
     if auth.kind.uses_token_endpoint() {
         let token = oauth::access_token(state, client, stale).await?;
@@ -1017,6 +1234,11 @@ async fn credential(state: &Arc<AppState>, client: &Client, stale: Option<&str>)
             }
             Ok(credential)
         }
+        AuthKind::SecretUrl => {
+            let value = vault::field(secret, "value").ok_or_else(|| missing_secret(client))?;
+            let url = check_url(value, "L’adresse secrète du compte", true)?;
+            Ok(Credential { secrets: crate::sessions::url_secrets(&url), base: Some(url), ..Credential::default() })
+        }
         _ => {
             let username = entry.meta_text("username").ok_or_else(|| missing_secret(client))?;
             let password = vault::field(secret, "password").ok_or_else(|| missing_secret(client))?;
@@ -1046,7 +1268,7 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
 
 /// Écritures sous lesquelles un service renvoie couramment une valeur : telle quelle, encodée dans une adresse,
 /// échappée dans du JSON, en base64. Les plus longues d’abord, pour qu’une forme n’en coupe pas une autre.
-fn written_forms(secret: &str) -> Vec<String> {
+pub(crate) fn written_forms(secret: &str) -> Vec<String> {
     let engine = &base64::engine::general_purpose::STANDARD;
     let form = url::form_urlencoded::byte_serialize(secret.as_bytes()).collect::<String>();
     let json = serde_json::to_string(secret).unwrap_or_default();
@@ -1069,22 +1291,40 @@ fn written_forms(secret: &str) -> Vec<String> {
 // Requête
 // ---------------------------------------------------------------------------------------------------------------
 
+/// Usage d’un client HTTP : chacun a ses délais.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Profile {
+    /// Requête ordinaire : 60 s en tout.
+    Request,
+    /// Téléchargement : pas de limite totale, mais un service muet plus de deux minutes est abandonné.
+    Download,
+    /// Flux et WebSocket : connexion longue, qui peut rester silencieuse (journal suivi, console au repos).
+    Stream,
+}
+
+/// Délai d’établissement de la connexion, pour les connexions longues.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Silence au-delà duquel un téléchargement est abandonné.
+const DOWNLOAD_STALL: Duration = Duration::from_secs(120);
+
 /// Client HTTP partagé. Une redirection n’est suivie que vers la même origine : l’authentification ajoutée par
 /// Alfred ne doit jamais partir vers un autre hôte que celui que l’utilisateur a déclaré.
 pub fn http() -> AppResult<reqwest::Client> {
-    shared_http(false)
+    shared_http(false, Profile::Request)
 }
 
 /// Client HTTP d’un compte : celui qui accepte un certificat non vérifié si le compte le demande.
 pub fn http_for(client: &Client) -> AppResult<reqwest::Client> {
-    shared_http(client.insecure_tls)
+    shared_http(client.insecure_tls, Profile::Request)
 }
 
-fn shared_http(insecure: bool) -> AppResult<reqwest::Client> {
+/// Réseau d’entreprise : les certificats viennent du magasin du système (Trousseau, magasin de Windows), le proxy
+/// des variables d’environnement puis des réglages du système (macOS, « Paramètres Internet » de Windows). Sous
+/// Windows, un fichier PAC qui ne nomme qu’un proxy est suivi comme pour git (`git_network.rs`).
+fn shared_http(insecure: bool, profile: Profile) -> AppResult<reqwest::Client> {
     let build = || -> AppResult<reqwest::Client> {
-        reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .danger_accept_invalid_certs(insecure)
-            .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("Alfred/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
                 let same_origin =
@@ -1094,22 +1334,52 @@ fn shared_http(insecure: bool) -> AppResult<reqwest::Client> {
                 } else {
                     attempt.stop()
                 }
-            }))
-            .build()
-            .map_err(|error| AppError::new(format!("Le client HTTP d’Alfred n’a pas pu démarrer : {error}")))
+            }));
+        builder = match profile {
+            Profile::Request => builder.timeout(REQUEST_TIMEOUT),
+            Profile::Download => builder.connect_timeout(CONNECT_TIMEOUT).read_timeout(DOWNLOAD_STALL),
+            // Une connexion qui passe en WebSocket sort du pool : HTTP/1.1 seulement, aucune limite de durée.
+            Profile::Stream => builder.connect_timeout(CONNECT_TIMEOUT).http1_only(),
+        };
+        builder = windows_pac_proxy(builder);
+        builder.build().map_err(|error| AppError::new(format!("Le client HTTP d’Alfred n’a pas pu démarrer : {error}")))
     };
     // Chaque test a son propre exécuteur : un client partagé y garderait des connexions d’un exécuteur arrêté.
     if cfg!(test) {
         return build();
     }
-    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
-    static INSECURE: OnceLock<reqwest::Client> = OnceLock::new();
-    let shared = if insecure { &INSECURE } else { &HTTP };
+    static SHARED: [[OnceLock<reqwest::Client>; 3]; 2] =
+        [[OnceLock::new(), OnceLock::new(), OnceLock::new()], [OnceLock::new(), OnceLock::new(), OnceLock::new()]];
+    let shared = &SHARED[usize::from(insecure)][profile as usize];
     if let Some(client) = shared.get() {
         return Ok(client.clone());
     }
     let client = build()?;
     Ok(shared.get_or_init(|| client).clone())
+}
+
+/// Sous Windows, le proxy d’un fichier PAC (`AutoConfigURL`) que reqwest ne lit pas, quand l’environnement et les
+/// « Paramètres Internet » n’en donnent pas d’autre. Ailleurs, rien ne change (`system_proxy` est vide).
+fn windows_pac_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    if crate::git_network::env_proxy(|name| std::env::var(name).ok()) {
+        return builder;
+    }
+    let system = crate::git_network::system_proxy();
+    let Some(pac) = system.pac_proxy.filter(|_| !system.enabled) else { return builder };
+    let address = if pac.contains("://") { pac } else { format!("http://{pac}") };
+    let Ok(proxy) = reqwest::Proxy::all(&address) else { return builder };
+    // `ProxyOverride` : « a;b;<local> » ; reqwest attend « a,b ».
+    let bypass: Vec<&str> = system
+        .bypass
+        .as_deref()
+        .unwrap_or_default()
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty() && *entry != "<local>")
+        .collect();
+    let mut exempt = vec!["localhost", "127.0.0.1", "::1"];
+    exempt.extend(bypass);
+    builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_string(&exempt.join(","))))
 }
 
 /// Message d’un échec réseau, sans l’adresse complète : elle peut porter une clé d’API en paramètre.
@@ -1157,7 +1427,7 @@ pub fn network_error(error: reqwest::Error, secrets: &[String]) -> AppError {
 async fn probe(args: &Value) -> AppResult<Value> {
     let url = check_url(&arg::<String>(args, "url")?, "L’adresse", false)?;
     let insecure = opt_arg::<bool>(args, "insecureTls")?.unwrap_or(false);
-    match shared_http(insecure)?.get(url).send().await {
+    match shared_http(insecure, Profile::Request)?.get(url).send().await {
         Ok(response) => {
             let status = response.status().as_u16();
             Ok(json!({ "ok": true, "status": status, "reason": null, "message": format!("L’adresse répond ({status}).") }))
@@ -1198,7 +1468,7 @@ fn outside() -> AppError {
 
 /// Adresse appelée = adresse de base + chemin. Le chemin vient d’une page : il ne doit pouvoir atteindre ni un
 /// autre hôte ni une autre partie du service que celle déclarée par l’utilisateur.
-fn build_url(
+pub(crate) fn build_url(
     base: &Url,
     path: &str,
     query: Option<&Map<String, Value>>,
@@ -1256,12 +1526,218 @@ fn build_url(
     Ok(url)
 }
 
-struct Call<'a> {
-    method: Method,
-    path: &'a str,
-    query: Option<&'a Map<String, Value>>,
-    headers: Option<&'a Map<String, Value>>,
-    body: Option<&'a Value>,
+/// Requête d’une fonction vers un compte, lue de ses arguments. Le transport (`transport.rs`) s’en sert aussi pour
+/// les téléchargements, les flux et les WebSocket.
+pub(crate) struct Call {
+    pub method: Method,
+    pub path: String,
+    pub query: Option<Map<String, Value>>,
+    pub headers: Option<Map<String, Value>>,
+    pub payload: Payload,
+    pub response_type: ResponseType,
+    /// Clé de la poignée de main d’un WebSocket (`Sec-WebSocket-Key`) : la requête demande alors le passage au
+    /// protocole WebSocket, en HTTP/1.1.
+    pub handshake: Option<String>,
+    /// Module de la fonction et accord explicite (`sealed: true`) pour que les références de secret du corps soient
+    /// remplacées par leurs valeurs (voir `secret_refs`). Par défaut : aucune référence acceptée.
+    pub sealed: crate::secret_refs::SealedUse,
+}
+
+/// Forme sous laquelle la réponse est rendue à la fonction.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ResponseType {
+    /// JSON décodé si la réponse en est, sinon le texte.
+    Auto,
+    /// Le texte, même si c’est du JSON.
+    Text,
+    /// Le contenu brut en base64, pour un petit binaire (`MAX_BASE64` au plus).
+    Base64,
+}
+
+impl ResponseType {
+    fn parse(name: Option<&str>) -> AppResult<Self> {
+        match name.unwrap_or("auto") {
+            "auto" | "json" => Ok(Self::Auto),
+            "text" => Ok(Self::Text),
+            "base64" => Ok(Self::Base64),
+            other => Err(AppError::new(format!(
+                "`responseType` « {other} » inconnu : « auto », « text » ou « base64 » (pour un gros fichier, `download`)."
+            ))),
+        }
+    }
+}
+
+/// Plus gros contenu rendu en base64 (`responseType: "base64"`) : au-delà, `download` le range dans les fichiers.
+pub(crate) const MAX_BASE64: usize = 5 * 1024 * 1024;
+/// Plus gros fichier envoyé (`file`, partie d’un `multipart`) ou téléchargé (`download`).
+pub(crate) const MAX_TRANSFER: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Corps d’une requête. Un fichier est désigné par l’identifiant d’un fichier du module : la fonction ne nomme jamais
+/// un chemin du disque, et un module n’envoie que ses propres fichiers.
+pub(crate) enum Payload {
+    None,
+    /// JSON (`body` objet) ou texte (`body` chaîne), avec le type posé à défaut d’en-tête.
+    Bytes(Vec<u8>, Option<&'static str>),
+    /// `form` : formulaire `application/x-www-form-urlencoded`.
+    Form(Vec<(String, String)>),
+    /// `file` : un fichier du module, envoyé tel quel (dépôt d’un artefact par `PUT`).
+    File(FilePart),
+    /// `multipart` : formulaire `multipart/form-data` (pièces jointes).
+    Multipart(Vec<(String, MultipartValue)>),
+}
+
+pub(crate) struct FilePart {
+    pub path: PathBuf,
+    pub name: String,
+    pub mime: String,
+    pub size: u64,
+}
+
+pub(crate) enum MultipartValue {
+    Text(String),
+    File(FilePart),
+}
+
+fn module_file(space: &Space, module: &str, id: &str, filename: Option<String>, mime: Option<String>) -> AppResult<FilePart> {
+    let info = crate::module_files::info(space, module, id)?;
+    if info.size > MAX_TRANSFER {
+        return Err(AppError::new("Fichier trop gros pour être envoyé : 2 Go au plus."));
+    }
+    Ok(FilePart {
+        path: crate::module_files::path_of(space, module, id)?,
+        name: filename.filter(|name| !name.trim().is_empty()).unwrap_or(info.name),
+        mime: mime.filter(|mime| !mime.trim().is_empty()).unwrap_or(info.mime),
+        size: info.size,
+    })
+}
+
+fn scalar_text(value: &Value, what: &str) -> AppResult<String> {
+    match value {
+        Value::String(text) => Ok(text.clone()),
+        Value::Number(_) | Value::Bool(_) => Ok(value.to_string()),
+        _ => Err(AppError::new(format!("{what} : texte, nombre ou booléen attendu."))),
+    }
+}
+
+/// Corps décrit par les arguments : `body`, `form`, `multipart` ou `file`, un seul à la fois.
+pub(crate) fn payload_of(space: &Space, module: &str, args: &Value) -> AppResult<Payload> {
+    let given: Vec<&str> = ["body", "form", "multipart", "file"]
+        .into_iter()
+        .filter(|name| args.get(*name).is_some_and(|value| !value.is_null()))
+        .collect();
+    if given.len() > 1 {
+        return Err(AppError::new(format!(
+            "Un seul corps par requête : `{}` sont donnés ensemble.",
+            given.join("` et `")
+        )));
+    }
+    Ok(match given.first().copied() {
+        None => Payload::None,
+        Some("body") => match &args["body"] {
+            Value::String(text) => Payload::Bytes(text.clone().into_bytes(), None),
+            value => Payload::Bytes(serde_json::to_vec(value)?, Some("application/json")),
+        },
+        Some("form") => {
+            let fields = object(args, "form")?.into_iter().flatten();
+            let pairs = fields
+                .filter(|(_, value)| !value.is_null())
+                .map(|(name, value)| Ok((name.clone(), scalar_text(value, &format!("Champ « {name} » du formulaire"))?)))
+                .collect::<AppResult<Vec<_>>>()?;
+            Payload::Form(pairs)
+        }
+        Some("file") => Payload::File(module_file(space, module, &arg::<String>(args, "file")?, None, None)?),
+        _ => {
+            let Some(parts) = args["multipart"].as_array() else {
+                return Err(AppError::new("`multipart` : une liste de parties `{ name, value }` ou `{ name, file }` est attendue."));
+            };
+            let mut values = Vec::new();
+            let mut total = 0u64;
+            for part in parts {
+                let name = part.get("name").and_then(Value::as_str).filter(|name| !name.is_empty()).ok_or_else(|| {
+                    AppError::new("Chaque partie de `multipart` a un `name`.")
+                })?;
+                let value = match (part.get("file").and_then(Value::as_str), part.get("value")) {
+                    (Some(id), _) => {
+                        let filename = part.get("filename").and_then(Value::as_str).map(str::to_string);
+                        let mime = part.get("mime").and_then(Value::as_str).map(str::to_string);
+                        let file = module_file(space, module, id, filename, mime)?;
+                        total += file.size;
+                        MultipartValue::File(file)
+                    }
+                    (None, Some(value)) if !value.is_null() => {
+                        MultipartValue::Text(scalar_text(value, &format!("Partie « {name} »"))?)
+                    }
+                    _ => {
+                        return Err(AppError::new(format!(
+                            "La partie « {name} » de `multipart` porte `value` (texte) ou `file` (identifiant d’un fichier du module)."
+                        )))
+                    }
+                };
+                values.push((name.to_string(), value));
+            }
+            if total > MAX_TRANSFER {
+                return Err(AppError::new("Envoi trop gros : 2 Go au plus pour tous les fichiers."));
+            }
+            Payload::Multipart(values)
+        }
+    })
+}
+
+/// Corps d’un fichier lu en flux, jamais chargé en mémoire.
+async fn file_body(file: &FilePart) -> AppResult<reqwest::Body> {
+    let opened = tokio::fs::File::open(&file.path)
+        .await
+        .map_err(|error| AppError::new(format!("Le fichier « {} » n’a pas pu être lu : {error}", file.name)))?;
+    Ok(reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::with_capacity(opened, 64 * 1024)))
+}
+
+impl Payload {
+    /// Pose le corps sur la requête. Rappelée à chaque essai : un corps lu en flux ne se relit pas.
+    async fn apply(&self, mut request: reqwest::RequestBuilder, headers: &mut HeaderMap) -> AppResult<reqwest::RequestBuilder> {
+        match self {
+            Payload::None => {}
+            Payload::Bytes(bytes, kind) => {
+                if let Some(kind) = kind {
+                    headers.entry(CONTENT_TYPE).or_insert(HeaderValue::from_static(kind));
+                }
+                request = request.body(bytes.clone());
+            }
+            Payload::Form(pairs) => {
+                let encoded = url::form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish();
+                headers.entry(CONTENT_TYPE).or_insert(HeaderValue::from_static("application/x-www-form-urlencoded"));
+                request = request.body(encoded);
+            }
+            Payload::File(file) => {
+                if !headers.contains_key(CONTENT_TYPE) {
+                    if let Ok(mime) = HeaderValue::from_str(&file.mime) {
+                        headers.insert(CONTENT_TYPE, mime);
+                    }
+                }
+                // Longueur annoncée : certains dépôts (Artifactory, Nexus) refusent un envoi par morceaux.
+                headers.insert(reqwest::header::CONTENT_LENGTH, HeaderValue::from(file.size));
+                request = request.body(file_body(file).await?);
+            }
+            Payload::Multipart(parts) => {
+                // La frontière du formulaire est choisie par Alfred : un type posé par la fonction la contredirait.
+                headers.remove(CONTENT_TYPE);
+                let mut form = reqwest::multipart::Form::new();
+                for (name, value) in parts {
+                    form = match value {
+                        MultipartValue::Text(text) => form.text(name.clone(), text.clone()),
+                        MultipartValue::File(file) => {
+                            let part = reqwest::multipart::Part::stream_with_length(file_body(file).await?, file.size)
+                                .file_name(file.name.clone())
+                                .mime_str(&file.mime)
+                                .map_err(|_| AppError::new(format!("Type « {} » invalide pour « {} ».", file.mime, file.name)))?;
+                            form.part(name.clone(), part)
+                        }
+                    };
+                }
+                request = request.multipart(form);
+            }
+        }
+        Ok(request)
+    }
 }
 
 fn method_of(name: Option<&str>) -> AppResult<Method> {
@@ -1276,14 +1752,19 @@ fn method_of(name: Option<&str>) -> AppResult<Method> {
     }
 }
 
-async fn read_limited(response: &mut reqwest::Response, secrets: &[String]) -> AppResult<Vec<u8>> {
-    let too_large = || AppError::new("Réponse trop volumineuse : plus de 20 Mo.");
-    if response.content_length().is_some_and(|length| length > MAX_BODY as u64) {
+pub(crate) async fn read_limited(response: &mut reqwest::Response, secrets: &[String], limit: usize) -> AppResult<Vec<u8>> {
+    let too_large = || {
+        AppError::new(format!(
+            "Réponse trop volumineuse : plus de {} Mo. Pour un fichier, `client(id).download(...)` le range dans les fichiers du module.",
+            limit / 1024 / 1024
+        ))
+    };
+    if response.content_length().is_some_and(|length| length > limit as u64) {
         return Err(too_large());
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|error| network_error(error, secrets))? {
-        if bytes.len() + chunk.len() > MAX_BODY {
+        if bytes.len() + chunk.len() > limit {
             return Err(too_large());
         }
         bytes.extend_from_slice(&chunk);
@@ -1291,12 +1772,71 @@ async fn read_limited(response: &mut reqwest::Response, secrets: &[String]) -> A
     Ok(bytes)
 }
 
-/// Exécute la requête d’un client et renvoie `{status, ok, headers, body}`.
-async fn perform(state: &Arc<AppState>, client: &Client, call: &Call<'_>) -> AppResult<Value> {
+/// Retire d’un contenu brut les secrets qui s’y trouvent tels quels (un binaire qui renverrait la requête en écho).
+pub(crate) fn redact_bytes(bytes: &mut Vec<u8>, secrets: &[String]) {
+    *bytes = crate::transport::Redactor::all(secrets, bytes);
+}
+
+/// En-têtes d’une réponse pour la fonction : secrets masqués, cookies retirés.
+pub(crate) fn response_headers(response: &reqwest::Response, secrets: &[String]) -> Map<String, Value> {
+    let mut received = Map::new();
+    for (name, value) in response.headers() {
+        // Alfred ne gère pas de session par cookie : une page n’a pas à en récolter.
+        if name == SET_COOKIE {
+            continue;
+        }
+        let text = redact(&String::from_utf8_lossy(value.as_bytes()), secrets);
+        match received.get_mut(name.as_str()) {
+            Some(Value::String(existing)) => {
+                existing.push_str(", ");
+                existing.push_str(&text);
+            }
+            _ => {
+                received.insert(name.as_str().to_string(), Value::String(text));
+            }
+        }
+    }
+    received
+}
+
+/// Réponse reçue d’un compte, et les valeurs à masquer dans tout ce qui en sera lu.
+pub(crate) struct Sent {
+    pub response: reqwest::Response,
+    pub secrets: Vec<String>,
+}
+
+/// Envoie la requête d’un compte et rend la réponse, corps non lu. C’est le **seul point de sortie** vers un
+/// service : l’adresse est bornée à celle du compte (`build_url`), les en-têtes de la fonction sont filtrés,
+/// l’authentification est posée en dernier, en natif, à chaque essai (un jeton refusé est redemandé une fois).
+///
+/// Point d’extension : un remplacement de références de secret dans les en-têtes, l’adresse ou le corps sortants
+/// se ferait ici, entre `credential` et l’envoi, en ajoutant les valeurs remplacées à `secrets` pour qu’elles
+/// soient masquées dans la réponse.
+pub(crate) async fn send(state: &Arc<AppState>, client: &Client, call: &Call, profile: Profile) -> AppResult<Sent> {
     client.validate()?;
     ensure_trusted(state, client)?;
+    // Références de secret : jamais dans l’adresse ni les en-têtes ; un chemin scellé ne se lit que par une requête
+    // ordinaire, dont `perform` scelle la réponse (un téléchargement, un flux, un WebSocket ou une réponse en base64
+    // livreraient les valeurs en clair).
+    crate::secret_refs::refuse_outside_body(&call.path, call.query.as_ref(), call.headers.as_ref())?;
+    let sealed_rule = crate::secret_refs::matching_rule(client, &call.method, &call.path);
+    if sealed_rule.is_some()
+        && (profile != Profile::Request || call.handshake.is_some() || call.response_type == ResponseType::Base64)
+    {
+        return Err(AppError::new(format!(
+            "« {} » est un chemin scellé du service « {} » : il se lit par une requête ordinaire (`client(id).get`), dont Alfred remplace les valeurs secrètes par des références.",
+            call.path.split('?').next().unwrap_or_default(),
+            client.label
+        )));
+    }
+    let (substituted, placed) = substituted_payload(&call.payload, &call.sealed, sealed_rule, client)?;
+    let payload = substituted.as_ref().unwrap_or(&call.payload);
     let reserved_param = client.auth.query_param.as_deref().filter(|_| client.auth.kind == AuthKind::ApiKey);
-    let url = build_url(&client.base()?, call.path, call.query, reserved_param)?;
+    // Sans adresse déclarée (`secretUrl`), l’adresse vient du trousseau à chaque essai.
+    let url = match client.base() {
+        Ok(base) => Ok(build_url(&base, &call.path, call.query.as_ref(), reserved_param)?),
+        Err(error) => Err(error),
+    };
 
     let invalid_header = |name: &str| AppError::new(format!("L’en-tête « {name} » n’est pas valide."));
     let mut headers = HeaderMap::new();
@@ -1305,9 +1845,10 @@ async fn perform(state: &Arc<AppState>, client: &Client, call: &Call<'_>) -> App
         headers.insert(header, HeaderValue::from_str(value).map_err(|_| invalid_header(name))?);
     }
     let api_header = client.auth.header.as_deref().filter(|_| client.auth.kind == AuthKind::ApiKey);
-    for (name, value) in call.headers.into_iter().flatten() {
+    for (name, value) in call.headers.iter().flatten() {
         let lower = name.to_ascii_lowercase();
         if RESERVED_HEADERS.contains(&lower.as_str())
+            || lower.starts_with("sec-websocket-") && lower != "sec-websocket-protocol"
             || api_header.is_some_and(|header| header.eq_ignore_ascii_case(name))
         {
             return Err(AppError::new(format!(
@@ -1322,24 +1863,33 @@ async fn perform(state: &Arc<AppState>, client: &Client, call: &Call<'_>) -> App
         let header = HeaderName::from_bytes(name.as_bytes()).map_err(|_| invalid_header(name))?;
         headers.insert(header, HeaderValue::from_str(&text).map_err(|_| invalid_header(name))?);
     }
-    let body = match call.body {
-        None | Some(Value::Null) => None,
-        Some(Value::String(text)) => Some(text.clone().into_bytes()),
-        Some(value) => {
-            headers.entry(CONTENT_TYPE).or_insert(HeaderValue::from_static("application/json"));
-            Some(serde_json::to_vec(value)?)
-        }
-    };
+    if let Some(key) = &call.handshake {
+        use reqwest::header::{CONNECTION, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE};
+        headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+        headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
+        headers.insert(SEC_WEBSOCKET_VERSION, HeaderValue::from_static("13"));
+        headers.insert(SEC_WEBSOCKET_KEY, HeaderValue::from_str(key).map_err(|_| invalid_header("Sec-WebSocket-Key"))?);
+    }
 
-    let http = http_for(client)?;
+    let http = shared_http(client.insecure_tls, profile)?;
     let mut stale: Option<String> = None;
     loop {
         let credential = credential(state, client, stale.as_deref()).await?;
-        let mut target = url.clone();
+        // `secretUrl` : l’adresse complète vient du trousseau ; le chemin y reste borné de la même façon.
+        let mut target = match &credential.base {
+            // La query de l’adresse secrète (souvent le jeton) est gardée devant celle de la requête.
+            Some(base) => crate::sessions::secret_target(base, &call.path, call.query.as_ref())?,
+            None => url.clone()?,
+        };
         for (name, value) in &credential.query {
             target.query_pairs_mut().append_pair(name, value);
         }
         let mut sent = headers.clone();
+        let mut request = http.request(call.method.clone(), target);
+        if call.handshake.is_some() {
+            request = request.version(reqwest::Version::HTTP_11);
+        }
+        request = payload.apply(request, &mut sent).await?;
         for (name, value) in &credential.headers {
             let mut value = HeaderValue::from_str(value).map_err(|_| {
                 AppError::new(format!(
@@ -1351,49 +1901,92 @@ async fn perform(state: &Arc<AppState>, client: &Client, call: &Call<'_>) -> App
             // Posé en dernier : rien de ce qui précède ne peut remplacer l’authentification.
             sent.insert(name.clone(), value);
         }
-        let mut request = http.request(call.method.clone(), target).headers(sent);
-        if let Some(body) = &body {
-            request = request.body(body.clone());
-        }
-        let mut response = request.send().await.map_err(|error| network_error(error, &credential.secrets))?;
+        let response = request.headers(sent).send().await.map_err(|error| network_error(error, &credential.secrets))?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED && stale.is_none() && credential.renewable.is_some() {
             // Jeton refusé avant l’heure (révoqué, horloge décalée) : on en redemande un, une seule fois.
             stale = credential.renewable;
             continue;
         }
-
-        let status = response.status();
-        let mut received = Map::new();
-        for (name, value) in response.headers() {
-            // Alfred ne gère pas de session par cookie : une page n’a pas à en récolter.
-            if name == SET_COOKIE {
-                continue;
-            }
-            let text = redact(&String::from_utf8_lossy(value.as_bytes()), &credential.secrets);
-            match received.get_mut(name.as_str()) {
-                Some(Value::String(existing)) => {
-                    existing.push_str(", ");
-                    existing.push_str(&text);
-                }
-                _ => {
-                    received.insert(name.as_str().to_string(), Value::String(text));
-                }
-            }
-        }
-        let is_json = received.get("content-type").and_then(Value::as_str).is_some_and(|kind| kind.contains("json"));
-        let bytes = read_limited(&mut response, &credential.secrets).await?;
-        // Un service qui renvoie la requête en écho ne doit pas livrer le secret à la page.
-        let text = redact(&String::from_utf8_lossy(&bytes), &credential.secrets);
-        let body = match serde_json::from_str::<Value>(&text) {
-            Ok(value) if is_json => value,
-            _ => Value::String(text),
-        };
-        return Ok(json!({ "status": status.as_u16(), "ok": status.is_success(), "headers": received, "body": body }));
+        let mut secrets = credential.secrets;
+        secrets.extend(placed.iter().cloned());
+        return Ok(Sent { response, secrets });
     }
 }
 
+/// Corps dont les références de secret ont été remplacées (requête `sealed: true` vers un chemin scellé du même
+/// service), et les valeurs placées ; `None` quand le corps n’en porte pas. Refusé partout ailleurs.
+fn substituted_payload(
+    payload: &Payload,
+    sealed: &crate::secret_refs::SealedUse,
+    rule: Option<&SealedRule>,
+    client: &Client,
+) -> AppResult<(Option<Payload>, Vec<String>)> {
+    use crate::secret_refs::{refuse_in_text, substitute_body, substitute_pairs};
+    Ok(match payload {
+        Payload::Bytes(bytes, kind) => match substitute_body(bytes, kind.is_some(), sealed, rule, client)? {
+            Some((bytes, placed)) => (Some(Payload::Bytes(bytes, *kind)), placed),
+            None => (None, Vec::new()),
+        },
+        Payload::Form(pairs) => match substitute_pairs(pairs, sealed, rule, client)? {
+            Some((pairs, placed)) => (Some(Payload::Form(pairs)), placed),
+            None => (None, Vec::new()),
+        },
+        Payload::Multipart(parts) => {
+            for (name, value) in parts {
+                refuse_in_text(name)?;
+                if let MultipartValue::Text(text) = value {
+                    refuse_in_text(text)?;
+                }
+            }
+            (None, Vec::new())
+        }
+        Payload::None | Payload::File(_) => (None, Vec::new()),
+    })
+}
+
+/// Exécute la requête d’un client et renvoie `{status, ok, headers, body}`.
+async fn perform(state: &Arc<AppState>, client: &Client, call: &Call) -> AppResult<Value> {
+    let Sent { mut response, secrets } = send(state, client, call, Profile::Request).await?;
+    let status = response.status();
+    let received = response_headers(&response, &secrets);
+    let body = match call.response_type {
+        ResponseType::Base64 => {
+            let mut bytes = read_limited(&mut response, &secrets, MAX_BASE64).await?;
+            redact_bytes(&mut bytes, &secrets);
+            Value::String(base64::engine::general_purpose::STANDARD.encode(bytes))
+        }
+        kind => {
+            let is_json = kind == ResponseType::Auto
+                && received.get("content-type").and_then(Value::as_str).is_some_and(|kind| kind.contains("json"));
+            let bytes = read_limited(&mut response, &secrets, MAX_BODY).await?;
+            // Un service qui renvoie la requête en écho ne doit pas livrer le secret à la page.
+            let text = redact(&String::from_utf8_lossy(&bytes), &secrets);
+            match serde_json::from_str::<Value>(&text) {
+                Ok(value) if is_json => value,
+                _ => Value::String(text),
+            }
+        }
+    };
+    // Chemin scellé : les champs déclarés ne repartent que sous forme de références, et leurs valeurs sont masquées
+    // dans le reste de la réponse (un champ non déclaré, un en-tête qui les répéterait).
+    let (body, received) = match crate::secret_refs::matching_rule(client, &call.method, &call.path) {
+        Some(rule) => {
+            let (body, values) = crate::secret_refs::seal_body(body, rule, &call.sealed.module, client);
+            let text = redact(&body.to_string(), &values);
+            let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
+            let received: Map<String, Value> = received
+                .into_iter()
+                .map(|(name, value)| (name, Value::String(redact(&crate::secret_refs::value_text(&value), &values))))
+                .collect();
+            (body, received)
+        }
+        None => (body, received),
+    };
+    Ok(json!({ "status": status.as_u16(), "ok": status.is_success(), "headers": received, "body": body }))
+}
+
 /// Issue d’une requête pour le journal : le statut HTTP s’il y en a un, et le texte du résumé.
-fn outcome_of(result: &AppResult<Value>) -> (Option<u64>, String) {
+pub(crate) fn outcome_of(result: &AppResult<Value>) -> (Option<u64>, String) {
     match result {
         Ok(value) => match value.get("status").and_then(Value::as_u64) {
             Some(status) => (Some(status), status.to_string()),
@@ -1404,11 +1997,11 @@ fn outcome_of(result: &AppResult<Value>) -> (Option<u64>, String) {
 }
 
 /// Trace d’une requête au journal : qui, quoi, combien de temps. Ni paramètres, ni en-têtes, ni corps.
-fn journal(
+pub(crate) fn journal(
     state: &AppState,
     space: &Space,
     client: &Client,
-    call: &Call<'_>,
+    call: &Call,
     requester: (&str, &str),
     started: Instant,
     (status, outcome): (Option<u64>, String),
@@ -1416,7 +2009,8 @@ fn journal(
     let duration = started.elapsed().as_millis() as u64;
     let path: String = call.path.split('?').next().unwrap_or_default().chars().take(200).collect();
     let path = if path.is_empty() { "/".to_string() } else { path };
-    let summary = format!("{} {path} → {outcome}", call.method);
+    let verb = if call.handshake.is_some() { "WS" } else { call.method.as_str() };
+    let summary = format!("{verb} {path} → {outcome}");
     let detail =
         json!({ "requester": requester.1, "requesterKind": requester.0, "durationMs": duration, "status": status });
     let root = space.root.to_string_lossy();
@@ -1445,7 +2039,24 @@ fn object<'a>(args: &'a Value, name: &str) -> AppResult<Option<&'a Map<String, V
     }
 }
 
-async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+/// Appel accordé : la fonction, son compte et sa requête, une fois toutes les vérifications passées.
+pub(crate) struct Granted {
+    pub space: Space,
+    pub subject: Subject,
+    pub client: Client,
+    pub call: Call,
+}
+
+impl Granted {
+    pub fn requester(&self) -> (&str, &str) {
+        (self.subject.kind.as_str(), self.subject.reference.as_str())
+    }
+}
+
+/// Vérifications communes à tout appel d’un compte (requête, téléchargement, flux, WebSocket) : seule une fonction
+/// appelle, jamais en mode exemple ; le compte est celui de la page ou celui nommé ; il est validé et accordé. Un
+/// refus est noté au journal.
+pub(crate) async fn grant_call(state: &Arc<AppState>, args: &Value, method: Option<Method>) -> AppResult<Granted> {
     let subject: Subject = arg(args, "subject")?;
     let name: String = arg(args, "client")?;
     // Cloisonnement : un service ne se joint que par une fonction de son connecteur. Une page ou un panneau appelle
@@ -1484,13 +2095,22 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
         instance = Some(id.to_string());
     }
     let client = def.effective(instance.as_deref())?;
-    let path: String = arg(args, "path")?;
     let call = Call {
-        method: method_of(opt_arg::<String>(args, "method")?.as_deref())?,
-        path: &path,
-        query: object(args, "query")?,
-        headers: object(args, "headers")?,
-        body: args.get("body"),
+        method: match method {
+            Some(method) => method,
+            None => method_of(opt_arg::<String>(args, "method")?.as_deref())?,
+        },
+        // `{realm}`, `{mount}`… : les paramètres du compte, encodés comme un segment.
+        path: fill_params(&arg::<String>(args, "path")?, &client.params),
+        query: object(args, "query")?.cloned(),
+        headers: object(args, "headers")?.cloned(),
+        payload: payload_of(&space, &subject.module, args)?,
+        response_type: ResponseType::parse(opt_arg::<String>(args, "responseType")?.as_deref())?,
+        handshake: None,
+        sealed: crate::secret_refs::SealedUse {
+            module: subject.module.clone(),
+            substitute: opt_arg::<bool>(args, "sealed")?.unwrap_or(false),
+        },
     };
     let requester = (subject.kind.as_str(), subject.reference.as_str());
     let started = Instant::now();
@@ -1519,6 +2139,13 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
         journal(state, &space, &client, &call, requester, started, (None, "accès refusé".to_string()));
         return Err(error);
     }
+    Ok(Granted { space, subject, client, call })
+}
+
+async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let granted = grant_call(state, args, None).await?;
+    let Granted { space, subject, client, call } = &granted;
+    let name: String = arg(args, "client")?;
     // Cache demandé par la requête (`cache`, en secondes) ou par le besoin du module : lectures seulement.
     let ttl = match opt_arg::<u64>(args, "cache")? {
         Some(ttl) => ttl,
@@ -1529,22 +2156,37 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             .unwrap_or(0),
     }
     .min(crate::client_cache::MAX_TTL);
-    let cache_key = (ttl > 0 && matches!(call.method, Method::GET | Method::HEAD)).then(|| {
+    // Une réponse scellée ne se garde pas : ses références expirent en cinq minutes.
+    let sealed = crate::secret_refs::matching_rule(client, &call.method, &call.path).is_some();
+    let cache_key = (ttl > 0 && !sealed && matches!(call.method, Method::GET | Method::HEAD)).then(|| {
         let fingerprint = format!("{}#{}", serde_json::to_string(&client).unwrap_or_default(), client.instance);
-        crate::client_cache::key(&subject.module, &fingerprint, call.method.as_str(), call.path, call.query, call.headers)
+        // Un contenu rendu en base64 n’est pas la même réponse que son texte.
+        let path = match call.response_type {
+            ResponseType::Auto => call.path.clone(),
+            kind => format!("{}#{kind:?}", call.path),
+        };
+        crate::client_cache::key(
+            &subject.module,
+            &fingerprint,
+            call.method.as_str(),
+            &path,
+            call.query.as_ref(),
+            call.headers.as_ref(),
+        )
     });
+    let requester = granted.requester();
     let started = Instant::now();
     if let Some(key) = &cache_key {
-        if let Some(cached) = crate::client_cache::get(&space, key)? {
+        if let Some(cached) = crate::client_cache::get(space, key)? {
             let status = cached.get("status").and_then(Value::as_u64);
-            journal(state, &space, &client, &call, requester, started, (status, "réponse en cache".to_string()));
+            journal(state, space, client, call, requester, started, (status, "réponse en cache".to_string()));
             return Ok(cached);
         }
     }
-    let result = perform(state, &client, &call).await;
-    journal(state, &space, &client, &call, requester, started, outcome_of(&result));
+    let result = perform(state, client, call).await;
+    journal(state, space, client, call, requester, started, outcome_of(&result));
     if let (Some(key), Ok(response)) = (&cache_key, &result) {
-        if let Err(error) = crate::client_cache::put(&space, key, &subject.module, &client.id, ttl, response) {
+        if let Err(error) = crate::client_cache::put(space, key, &subject.module, &client.id, ttl, response) {
             log::error!("cache du client {} : {}", client.id, error.message);
         }
     }
@@ -1576,6 +2218,31 @@ fn frame_instances(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             })
             .collect(),
     ))
+}
+
+/// Paramètres non secrets du compte que viserait une requête (`client(id, { instance }).params()`) : même choix du
+/// compte que pour une requête, sans accord à demander puisque rien ne part vers le service ni ne sort du coffre.
+fn frame_params(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let subject: Subject = arg(args, "subject")?;
+    let name: String = arg(args, "client")?;
+    let space = state.space()?;
+    let mut def = resolve(&space, &subject.module, &name)?;
+    let mut instance = opt_arg::<String>(args, "instance")?
+        .or_else(|| subject.accounts.get(&name).cloned())
+        .or_else(|| subject.instance.clone());
+    if let Some((other, id)) = instance.clone().as_deref().and_then(|value| value.split_once('/')) {
+        if other != def.id {
+            def = crate::menu::compatible_clients(&space, &subject.module, &name)
+                .into_iter()
+                .find(|candidate| candidate.id == other)
+                .ok_or_else(|| {
+                    AppError::new(format!("Le compte « {other}/{id} » n’est pas un compte du type de « {name} »."))
+                })?;
+        }
+        instance = Some(id.to_string());
+    }
+    let client = def.effective(instance.as_deref())?;
+    Ok(json!({ "instance": client.instance, "params": client.params }))
 }
 
 /// `dépendance/besoin`, quand les deux sont des identifiants valides ; tout autre nom est cherché tel quel.
@@ -1672,6 +2339,7 @@ fn describe_instance(state: &AppState, def: &ClientDef, index: usize, instance: 
         "secret": instance.secret,
         "headers": instance.headers,
         "insecureTls": instance.insecure_tls,
+        "params": instance.params,
         "default": index == 0,
     });
     let mut item = base;
@@ -1987,8 +2655,14 @@ fn save_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             instance.id
         )));
     }
-    if def.method(&instance.method).is_none() {
+    let Some(method) = def.method(&instance.method) else {
         return Err(AppError::new(format!("Le client « {} » n’a pas de méthode « {} ».", def.label, instance.method)));
+    };
+    // Seuls les paramètres que la méthode déclare sont gardés ; leur valeur reste du texte simple.
+    let declared: Vec<&str> = method.params.iter().map(|param| param.id.as_str()).collect();
+    instance.params.retain(|name, _| declared.contains(&name.as_str()));
+    if let Some((name, _)) = instance.params.iter().find(|(_, value)| value.len() > 200 || value.contains(char::is_control)) {
+        return Err(AppError::new(format!("Valeur invalide pour le paramètre « {name} » : un texte court, sur une ligne.")));
     }
     let position = def.instances.iter().position(|known| known.id == instance.id);
     let create = opt_arg::<bool>(args, "create")?.unwrap_or(false);
@@ -2219,7 +2893,16 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
     let client = require_instance(&space, args)?;
     let path = opt_arg::<String>(args, "path")?.or_else(|| client.test_path.clone()).unwrap_or_default();
-    let call = Call { method: Method::GET, path: &path, query: None, headers: None, body: None };
+    let call = Call {
+        method: Method::GET,
+        path: path.clone(),
+        query: None,
+        headers: None,
+        payload: Payload::None,
+        response_type: ResponseType::Auto,
+        handshake: None,
+        sealed: Default::default(),
+    };
     let started = Instant::now();
     let result = perform(state, &client, &call).await;
     journal(state, &space, &client, &call, ("settings", "Réglages"), started, outcome_of(&result));
@@ -2284,10 +2967,18 @@ fn test_outcome(result: AppResult<Value>, path: &str, duration: u64) -> Value {
 
 /// Traite les commandes de ce module ; `None` quand la commande ne le concerne pas.
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
+    // Canaux ouverts par `client(id).stream` ou `client(id).socket` (`channels.rs`).
+    if command.starts_with("frame.channels.") {
+        return crate::channels::handle(state, command, args).await;
+    }
     let result = match command {
         "frame.clients.request" => frame_request(state, args).await,
+        "frame.clients.download" => crate::transport::download(state, args).await,
+        "frame.clients.stream" => crate::transport::stream(state, args).await,
+        "frame.clients.socket" => crate::transport::socket(state, args).await,
         "frame.clients.clearCache" => frame_clear_cache(state, args),
         "frame.clients.instances" => frame_instances(state, args),
+        "frame.clients.params" => frame_params(state, args),
         "clients.test" => test_client(state, args).await,
         "clients.probe" => probe(args).await,
         "clients.connect" => match state.space().and_then(|space| require_instance(&space, args)) {

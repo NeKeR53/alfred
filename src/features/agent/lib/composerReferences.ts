@@ -7,7 +7,6 @@
 
 import { invoke } from "../../../lib/native";
 import type { Provider } from "../harness";
-import { spawnProcess } from "../harness/process";
 
 export type ReferenceKind = "file" | "skill" | "command";
 export interface ComposerReference {
@@ -191,75 +190,12 @@ function cached(key: string, load: () => Promise<ComposerReference[]>): Promise<
   return entry.result;
 }
 
-const CODEX_CLIENT = { name: "alfred", title: "Alfred", version: "0.1.0" };
-
 /**
- * Skills que Codex propose vraiment, comme OneApp : `codex app-server` répond à `skills/list` avec les skills de son
- * dossier et de son compte. Les skills désactivés sont écartés.
+ * Skills que Codex propose vraiment, comme OneApp : Rust interroge `codex app-server` (`skills/list`), qui répond
+ * avec les skills de son dossier et de son compte. Les skills désactivés sont écartés.
  */
-export async function codexSkills(cwd: string): Promise<ComposerReference[]> {
-  const process = await spawnProcess("codex", { cwd });
-  const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-  let buffer = "";
-  let next = 0;
-  const stopOutput = process.onStdout((chunk) => {
-    buffer += chunk;
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      let message: { id?: number; result?: unknown; error?: { message?: string } };
-      try {
-        message = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const waiting = typeof message.id === "number" ? pending.get(message.id) : undefined;
-      if (!waiting || message.id === undefined) continue;
-      pending.delete(message.id);
-      if (message.error) waiting.reject(new Error(message.error.message ?? "Codex a refusé la demande."));
-      else waiting.resolve(message.result);
-    }
-  });
-  const stopClose = process.onClose(() => {
-    for (const waiting of pending.values()) waiting.reject(new Error("Codex s’est arrêté."));
-    pending.clear();
-  });
-  const request = (method: string, params: unknown) => {
-    const id = ++next;
-    const answer = new Promise<unknown>((resolve, reject) => pending.set(id, { resolve, reject }));
-    void process.write(`${JSON.stringify({ id, method, params })}\n`).catch((error: unknown) => {
-      pending.get(id)?.reject(error instanceof Error ? error : new Error(String(error)));
-      pending.delete(id);
-    });
-    return answer;
-  };
-  const record = (value: unknown): Record<string, unknown> =>
-    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-  try {
-    await request("initialize", { clientInfo: CODEX_CLIENT, capabilities: null });
-    await process.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
-    const result = record(await request("skills/list", { cwds: [cwd], forceReload: true }));
-    return (Array.isArray(result.data) ? result.data : []).flatMap((entry) => {
-      const skills = record(entry).skills;
-      return (Array.isArray(skills) ? skills : []).flatMap((raw): ComposerReference[] => {
-        const skill = record(raw);
-        return skill.enabled !== false && typeof skill.name === "string" && typeof skill.path === "string"
-          ? [
-              {
-                kind: "skill",
-                name: skill.name,
-                path: skill.path,
-                ...(typeof skill.description === "string" ? { description: skill.description } : {}),
-              },
-            ]
-          : [];
-      });
-    });
-  } finally {
-    stopOutput();
-    stopClose();
-    await process.kill().catch(() => undefined);
-  }
+export function codexSkills(cwd: string): Promise<ComposerReference[]> {
+  return invoke<ComposerReference[]>("agents.skills", { cwd });
 }
 
 function skillCatalog(cwd: string, provider: Provider): Promise<ComposerReference[]> {

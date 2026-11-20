@@ -15,6 +15,7 @@ import {
 import { frameErrors, sanitizeFrameError } from "./frameErrors";
 import { frameKey } from "./frameKeys";
 import { addFrameConsole, addFrameErrorLog, addFrameLog } from "./frameLogs";
+import { registerEntryActions } from "./menuZones";
 import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
 import { onTopBarQuery } from "./topBarSearchStore";
@@ -160,10 +161,34 @@ export function PageFrame({
     const stopSelection = onSelectionChange((changed) => {
       if (changed === identity.host) pushContext();
     });
+    const entryPage = identity.host ?? identity.reference;
     const stopTheme = useShell.subscribe((state, previous) => {
-      if (state.theme !== previous.theme || state.snapshot?.accent !== previous.snapshot?.accent) pushContext();
+      if (
+        state.theme !== previous.theme ||
+        state.snapshot?.accent !== previous.snapshot?.accent ||
+        state.activeEntry[entryPage] !== previous.activeEntry[entryPage]
+      )
+        pushContext();
     });
+    // Action d’une entrée de la zone du menu de la page : la page la lit (`useMenuEntryAction`).
+    const stopEntryActions =
+      kind === "page" && !capture
+        ? registerEntryActions(identity.reference, () =>
+            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "menuEntryAction", payload: null }),
+          )
+        : () => undefined;
     // Des données du module ont changé hors de la page (partage en équipe) : la page relit ce qu’elle affiche.
+    // Un dossier du poste surveillé par le module a changé (`folders.watch`).
+    const stopFolders = onNativeEvent("folders:changed", (payload) => {
+      const change = payload as { module?: string; folder?: string; paths?: string[] } | null;
+      if (change?.module === identity.module)
+        post({
+          alfred: ALFRED_MESSAGE,
+          kind: "event",
+          name: "folderChanged",
+          payload: { folder: change.folder, paths: change.paths ?? [] },
+        });
+    });
     const stopData = onNativeEvent("space:dataChanged", (payload) => {
       if ((payload as { module?: string } | null)?.module === identity.module)
         post({ alfred: ALFRED_MESSAGE, kind: "event", name: "dataChanged", payload: null });
@@ -186,8 +211,10 @@ export function PageFrame({
       stopPeer();
       stopSearch();
       stopData();
+      stopFolders();
       stopSelection();
       stopTheme();
+      stopEntryActions();
       if (!capture) releaseFrame(identity);
     };
   }, [identity, capture, kind]);

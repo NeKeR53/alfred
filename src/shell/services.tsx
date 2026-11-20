@@ -5,6 +5,7 @@
 
 import { ConfirmDialog } from "@alfred/ui";
 import { useEffect, useState } from "react";
+import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
@@ -179,6 +180,7 @@ export function ShellServices() {
   return (
     <>
       <SnapshotFrames />
+      <SecretRevealHost />
       <ConfirmDialog
         open={request !== undefined}
         title={request ? `Autoriser l’accès ${toResource(request.label)} ?` : ""}

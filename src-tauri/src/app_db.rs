@@ -183,17 +183,19 @@ fn like_escape(text: &str) -> String {
 
 /// Périmètre d’une conversation lancée par une page ou par les fonctions d’un module : l’agent n’agit que sur ce
 /// module, et sur les fonctions d’autres modules que l’utilisateur a accordées au demandeur.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct AgentScope {
     pub module: String,
     pub functions: Vec<String>,
+    /// Entrées imposées par le demandeur, par fonction (« module/fonction ») : le modèle ne peut pas les changer.
+    pub inputs: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 pub fn set_agent_scope(db: &Connection, conversation: &str, scope: &AgentScope) -> AppResult<()> {
     db.execute(
         "INSERT INTO agent_scopes (conversation, module, functions) VALUES (?1, ?2, ?3)
          ON CONFLICT (conversation) DO UPDATE SET module = excluded.module, functions = excluded.functions",
-        params![conversation, scope.module, serde_json::to_string(&scope.functions)?],
+        params![conversation, scope.module, scoped_functions(scope).to_string()],
     )?;
     Ok(())
 }
@@ -204,10 +206,39 @@ pub fn agent_scope(db: &Connection, conversation: &str) -> AppResult<Option<Agen
             Ok((row.get(0)?, row.get(1)?))
         })
         .optional()?;
-    Ok(row.map(|(module, functions)| AgentScope {
-        module,
-        functions: serde_json::from_str(&functions).unwrap_or_default(),
+    Ok(row.map(|(module, functions)| {
+        let mut scope = AgentScope { module, ..AgentScope::default() };
+        // Chaque fonction est son nom, ou `{ name, input }` quand le demandeur impose des entrées.
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&functions).unwrap_or_default();
+        for item in listed {
+            match item {
+                serde_json::Value::String(name) => scope.functions.push(name),
+                serde_json::Value::Object(mut object) => {
+                    let Some(serde_json::Value::String(name)) = object.remove("name") else { continue };
+                    if let Some(input) = object.remove("input").filter(serde_json::Value::is_object) {
+                        scope.inputs.insert(name.clone(), input);
+                    }
+                    scope.functions.push(name);
+                }
+                _ => {}
+            }
+        }
+        scope
     }))
+}
+
+/// Colonne `functions` d’un périmètre : les noms, avec leurs entrées imposées.
+fn scoped_functions(scope: &AgentScope) -> serde_json::Value {
+    serde_json::Value::Array(
+        scope
+            .functions
+            .iter()
+            .map(|name| match scope.inputs.get(name) {
+                Some(input) => serde_json::json!({ "name": name, "input": input }),
+                None => serde_json::Value::String(name.clone()),
+            })
+            .collect(),
+    )
 }
 
 pub fn list_grants(db: &Connection, space: &str) -> AppResult<Vec<Value>> {

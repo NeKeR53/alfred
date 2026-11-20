@@ -83,7 +83,31 @@ pub fn publish(space: &Space, module: &str, id: &str, payload: &Value) -> AppRes
         "DELETE FROM _alfred_event_deliveries WHERE status != 'pending' AND id <= (SELECT max(id) FROM _alfred_event_deliveries) - ?1",
         [KEEP],
     )?;
+    // Les conversations d’agent qui attendent cet événement sont relancées (suivis, `ai.watch`).
+    crate::agents::watches::published(space, &event, payload);
     Ok(json!({ "event": event, "subscribers": targets.len() }))
+}
+
+/// Occurrences publiées, pour la règle « une fois par occurrence observée » : la première publication d’un
+/// identifiant d’occurrence rend vrai, les suivantes faux. Les 10 000 dernières sont gardées.
+pub fn first_occurrence(space: &Space, event: &str, occurrence: &str) -> AppResult<bool> {
+    if occurrence.is_empty() || occurrence.len() > 200 {
+        return Err(AppError::new("L’identifiant d’occurrence fait de 1 à 200 caractères."));
+    }
+    let db = open(space)?;
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS _alfred_event_occurrences (
+           id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, occurrence TEXT NOT NULL, UNIQUE (event, occurrence));",
+    )?;
+    let inserted = db.execute(
+        "INSERT OR IGNORE INTO _alfred_event_occurrences (event, occurrence) VALUES (?1, ?2)",
+        params![event, occurrence],
+    )?;
+    db.execute(
+        "DELETE FROM _alfred_event_occurrences WHERE id <= (SELECT max(id) FROM _alfred_event_occurrences) - 10000",
+        [],
+    )?;
+    Ok(inserted > 0)
 }
 
 /// Dernières livraisons, les plus récentes d’abord.
@@ -311,7 +335,14 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         "frame.events.publish" => (|| {
             let subject: Subject = arg(args, "subject")?;
             let id: String = arg(args, "event")?;
-            let result = publish(&state.space()?, &subject.module, &id, args.get("payload").unwrap_or(&Value::Null))?;
+            let space = state.space()?;
+            // Une occurrence déjà publiée (même identifiant pour cet événement) ne l’est pas une seconde fois.
+            if let Some(occurrence) = opt_arg::<String>(args, "occurrence")? {
+                if !first_occurrence(&space, &format!("{}/{id}", subject.module), &occurrence)? {
+                    return Ok(json!({ "event": format!("{}/{id}", subject.module), "subscribers": 0, "duplicate": true }));
+                }
+            }
+            let result = publish(&space, &subject.module, &id, args.get("payload").unwrap_or(&Value::Null))?;
             kick();
             Ok(result)
         })(),

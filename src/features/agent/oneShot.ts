@@ -8,9 +8,7 @@
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
 import { useShell } from "../../shell/store";
-import { createClaudeSession } from "./harness/claude";
-import { createCodexSession } from "./harness/codex";
-import { createOpenCodeSession } from "./harness/opencode";
+import { createSession } from "./harness/native";
 import type { HarnessEvent, HarnessSession, Provider } from "./harness/types";
 import { modelSummary, type PageModel, resolvePageModel, sameModel } from "./pageModel";
 
@@ -74,24 +72,15 @@ async function turn(
   let session: HarnessSession | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    session =
-      provider === "claude"
-        ? await createClaudeSession({
-            ...common,
-            oneShot: true,
-            ...(schema ? { outputSchema: schema } : {}),
-            onStructuredResult: (value) => {
-              structured = value;
-            },
-          })
-        : provider === "codex"
-          ? await createCodexSession({
-              ...common,
-              readOnly: true,
-              ephemeral: true,
-              ...(schema ? { outputSchema: schema } : {}),
-            })
-          : await createOpenCodeSession({ ...common, ephemeral: true, withoutTools: true });
+    session = await createSession({
+      ...common,
+      provider,
+      oneShot: true,
+      ...(schema ? { outputSchema: schema } : {}),
+      onStructuredResult: (value) => {
+        structured = value;
+      },
+    });
     await session.send(text);
     await Promise.race([
       done,

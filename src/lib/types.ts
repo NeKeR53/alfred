@@ -143,7 +143,14 @@ export interface ModuleSummary {
   functions: number;
   clients: ClientNeed[];
   webhooks: Array<{ id: string; description: string; function: string }>;
-  schedules: Array<{ id: string; description: string; function: string; everyMinutes?: number; at?: string }>;
+  schedules: Array<{
+    id: string;
+    description: string;
+    function: string;
+    everyMinutes?: number;
+    everySeconds?: number;
+    at?: string;
+  }>;
   /** Parcours de configuration : texte d’accueil (`setup` du manifeste). */
   setup?: { welcome?: string } | null;
   /** Tables partagées entre les membres d’une équipe par un dépôt git (`sync.tables` du manifeste). */

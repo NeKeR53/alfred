@@ -49,7 +49,7 @@ fn flows() -> MutexGuard<'static, HashMap<String, Flow>> {
 
 /// Un seul rafraîchissement à la fois par entrée du coffre : deux requêtes simultanées ne doivent pas présenter
 /// le même jeton de rafraîchissement, que beaucoup de serveurs invalident à sa première utilisation.
-fn entry_lock(secret: &str) -> Arc<tokio::sync::Mutex<()>> {
+pub(crate) fn entry_lock(secret: &str) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
     let mut locks = LOCKS.get_or_init(Mutex::default).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     locks.entry(secret.to_string()).or_default().clone()
@@ -293,6 +293,9 @@ pub async fn access_token(state: &Arc<AppState>, client: &Client, stale: Option<
 
 /// Oublie les jetons obtenus ; le secret saisi par l’utilisateur reste en place.
 pub async fn disconnect(state: &Arc<AppState>, client: &Client) -> AppResult<Value> {
+    if client.auth.kind == AuthKind::Session {
+        return crate::sessions::forget(state, client).await;
+    }
     if !client.auth.kind.uses_token_endpoint() {
         return Err(AppError::new(format!("Le client « {} » n’a pas de connexion à fermer.", client.label)));
     }

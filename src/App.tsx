@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { AgentPage } from "./features/agent/AgentPage";
+import { isAgentsWindow, mirrorAgents } from "./features/agent/agentsWindow";
 import { checkHarnesses, useInstalledProviders } from "./features/agent/harness";
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
 import { useAgentSummary } from "./features/agent/summary";
@@ -9,6 +10,7 @@ import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
 import { OnboardingHost } from "./features/setup/Onboarding";
 import { AppShell } from "./shell/AppShell";
+import { useAgentZone } from "./shell/agentZone";
 import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
 import { useShell } from "./shell/store";
@@ -33,6 +35,7 @@ export function App() {
   // Les mises à jour de modules disponibles se lisent sur l’onglet, sans ouvrir les Réglages.
   const updates = useModuleUpdates();
   const agentSummary = useAgentSummary();
+  const agentZone = useAgentZone();
   const tabs = useMemo(
     () =>
       settingsTabs.map((tab) =>
@@ -42,6 +45,16 @@ export function App() {
   );
 
   if (snapshot === undefined) return null;
+  // Fenêtre Agent détachée : la page Agent seule ; ses conversations sont celles de la fenêtre principale.
+  if (isAgentsWindow()) {
+    mirrorAgents();
+    return (
+      <>
+        <AgentPage detached />
+        <ShellServices />
+      </>
+    );
+  }
   // Fenêtre de page : la page seule, avec les demandes du backend (accès, fonctions) traitées ici aussi.
   const windowPage = pageWindowReference();
   if (windowPage) {
@@ -65,6 +78,7 @@ export function App() {
       <AppShell
         agent={<AgentPage />}
         agentSummary={agentSummary}
+        agentZone={agentZone}
         agentAvailable={agentAvailable}
         settingsTabs={tabs}
         renderAgentPanel={(conversation, close) => <AgentPanel conversationId={conversation} onClose={close} />}

@@ -22,6 +22,14 @@ const quietly = <T>(run: () => Promise<T>): Promise<T | null> =>
 export type View = { kind: "agent" } | { kind: "section"; id: string } | { kind: "settings" };
 export type Theme = "light" | "dark";
 
+/** Entrée d’une zone du menu ouverte dans une page. */
+export interface OpenedEntry {
+  id: string;
+  label: string;
+  /** Page dont la zone porte l’entrée (`module/page`). */
+  zone: string;
+}
+
 interface ShellState {
   info: AppInfo | null;
   /** `undefined` tant que le backend n’a pas répondu ; `null` quand aucun espace n’est ouvert. */
@@ -37,6 +45,11 @@ interface ShellState {
   panelHidden: Record<string, boolean>;
   /** Conversation d’agent affichée dans le panneau de droite d’une page (`module/page` → conversation). */
   agentPanel: Record<string, string>;
+  /**
+   * Entrée du menu ouverte dans une page (`module/page` → entrée) : la page la lit dans `usePageContext().entry`.
+   * Ouvrir la section par son entrée l’efface.
+   */
+  activeEntry: Record<string, OpenedEntry>;
   sidebarCollapsed: boolean;
   /** Espaces ouverts récemment, le plus récent d’abord (celui ouvert compris). */
   recentSpaces: RecentSpace[];
@@ -57,6 +70,10 @@ interface ShellState {
   closeSettings: () => void;
   setActiveTab: (section: string, page: string) => void;
   openPage: (reference: string) => void;
+  /** Ouvre `page` avec l’entrée du menu `entry` (venue de la zone de la page `zone`). */
+  openEntry: (page: string, entry: OpenedEntry) => void;
+  /** Efface l’entrée ouverte des pages d’une section (ouverte par son entrée du menu). */
+  clearEntries: (pages: string[]) => void;
   togglePanel: (page: string) => void;
   setPanelVisible: (page: string, visible: boolean) => void;
   showAgentPanel: (page: string, conversation: string) => void;
@@ -88,6 +105,7 @@ export const useShell = create<ShellState>((set, get) => ({
   activeTab: {},
   panelHidden: {},
   agentPanel: {},
+  activeEntry: {},
   sidebarCollapsed: false,
   recentSpaces: [],
   theme: systemTheme(),
@@ -228,6 +246,18 @@ export const useShell = create<ShellState>((set, get) => ({
       }));
     }
   },
+
+  openEntry(page, entry) {
+    get().openPage(page);
+    set((state) => ({ activeEntry: { ...state.activeEntry, [page]: entry } }));
+  },
+  clearEntries: (pages) =>
+    set((state) => {
+      if (!pages.some((page) => state.activeEntry[page])) return {};
+      const activeEntry = { ...state.activeEntry };
+      for (const page of pages) delete activeEntry[page];
+      return { activeEntry };
+    }),
 
   togglePanel: (page) => set((state) => ({ panelHidden: { ...state.panelHidden, [page]: !state.panelHidden[page] } })),
   setPanelVisible: (page, visible) => set((state) => ({ panelHidden: { ...state.panelHidden, [page]: !visible } })),

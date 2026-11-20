@@ -172,7 +172,18 @@ describe("fenêtres de page", () => {
     await handleFrameRequest(page, "shell.openWindow", {});
     const panel: FrameIdentity = { kind: "panel", module: "notes", reference: "notes/detail", host: "notes/liste" };
     await handleFrameRequest(panel, "shell.openWindow", {});
-    expect(native.openPageWindow.mock.calls).toEqual([["jira/tickets@acme"], ["notes/liste"], ["notes/liste"]]);
+    await handleFrameRequest(page, "shell.openWindow", {
+      reference: "liste",
+      params: { id: 7 },
+      key: "7",
+      title: "N° 7",
+    });
+    expect(native.openPageWindow.mock.calls).toEqual([
+      ["jira/tickets@acme", {}],
+      ["notes/liste", {}],
+      ["notes/liste", {}],
+      ["notes/liste", { params: { id: 7 }, key: "7", title: "N° 7" }],
+    ]);
   });
 });
 
@@ -225,13 +236,92 @@ describe("documents", () => {
       payload: { id: 1 },
       to: "x",
     });
-    await handleFrameRequest(page, "commands.run", { program: "git", args: ["status"], cwd: "/", env: { X: "1" } });
+    await handleFrameRequest(page, "commands.run", {
+      program: "git",
+      args: ["status"],
+      cwd: { folder: "api" },
+      env: { X: "1" },
+    });
     expect(native.invoke.mock.calls).toEqual([
       ["frame.documents.pdf", { subject: own, name: "r", title: "T", blocks: [] }],
       ["frame.documents.extractText", { subject: own, id: "abc" }],
       ["frame.search.query", { subject: own, index: "notes", text: "été", limit: 5 }],
       ["frame.events.publish", { subject: own, event: "note-creee", payload: { id: 1 } }],
-      ["frame.commands.run", { subject: own, program: "git", args: ["status"] }],
+      // `cwd` passe (un dossier accordé, vérifié par Alfred) ; `env` non.
+      ["frame.commands.run", { subject: own, program: "git", args: ["status"], cwd: { folder: "api" } }],
+    ]);
+  });
+});
+
+describe("dossiers du poste et git", () => {
+  it("transmettent les seuls champs prévus, et seule une page fait choisir un dossier", async () => {
+    const page: FrameIdentity = { kind: "page", module: "produits", reference: "produits/liste" };
+    const own = { kind: "page", module: "produits", reference: "produits/liste" };
+    await handleFrameRequest(page, "folders.writeText", {
+      folder: "api",
+      path: "a.json",
+      text: "{}",
+      subject: { module: "autre" },
+    });
+    await handleFrameRequest(page, "git.commit", {
+      folder: "api",
+      repo: "web",
+      message: "m",
+      paths: ["a"],
+      force: true,
+    });
+    await expect(
+      handleFrameRequest({ kind: "function", module: "produits", reference: "produits/f" }, "folders.pick", {}),
+    ).rejects.toThrow(/depuis une page/);
+    expect(native.invoke.mock.calls).toEqual([
+      ["frame.folders.writeText", { subject: own, folder: "api", path: "a.json", text: "{}" }],
+      ["frame.git.commit", { subject: own, folder: "api", repo: "web", message: "m", paths: ["a"] }],
+    ]);
+  });
+});
+
+describe("transport des comptes et canaux", () => {
+  it("transmet téléchargements, envois, flux et WebSocket sans champ de plus", async () => {
+    const fn: FrameIdentity = { kind: "function", module: "ci", reference: "ci/suivre" };
+    const subject = { kind: "function", module: "ci", reference: "ci/suivre" };
+    await handleFrameRequest(fn, "clients.download", { client: "art", path: "/a.zip", name: "a.zip", autre: 1 });
+    await handleFrameRequest(fn, "clients.request", {
+      client: "jira",
+      method: "POST",
+      path: "/pj",
+      multipart: [{ name: "file", file: "f1" }],
+      responseType: "base64",
+      subject: forged,
+    });
+    await handleFrameRequest(fn, "clients.stream", { client: "p", path: "/logs", format: "docker" });
+    await handleFrameRequest(fn, "clients.socket", { client: "p", path: "/ws", body: "ignoré", query: { id: "x" } });
+    expect(native.invoke.mock.calls).toEqual([
+      ["frame.clients.download", { subject, client: "art", path: "/a.zip", name: "a.zip" }],
+      [
+        "frame.clients.request",
+        {
+          subject,
+          client: "jira",
+          method: "POST",
+          path: "/pj",
+          multipart: [{ name: "file", file: "f1" }],
+          responseType: "base64",
+        },
+      ],
+      ["frame.clients.stream", { subject, client: "p", path: "/logs", format: "docker" }],
+      ["frame.clients.socket", { subject, client: "p", path: "/ws", query: { id: "x" } }],
+    ]);
+  });
+
+  it("lit un canal au nom du cadre, copie comprise, et le ferme avec lui", async () => {
+    const copy: FrameIdentity = { kind: "page", module: "notes", reference: "notes/liste@recette" };
+    await handleFrameRequest(copy, "channels.read", { channel: "c1", after: 3, wait: 20, holder: "forgé" });
+    await handleFrameRequest(copy, "channels.write", { channel: "c1", text: "ls" });
+    await handleFrameRequest(copy, "channels.release", {});
+    expect(native.invoke.mock.calls).toEqual([
+      ["frame.channels.read", { subject: own, channel: "c1", after: 3, wait: 20, holder: "page:notes/liste@recette" }],
+      ["frame.channels.write", { subject: own, channel: "c1", text: "ls" }],
+      ["frame.channels.release", { subject: own, holder: "page:notes/liste@recette" }],
     ]);
   });
 });

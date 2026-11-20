@@ -70,6 +70,12 @@ fn runs_a_program(key: &str) -> bool {
 
 /// Refuse un dépôt dont la configuration locale ferait exécuter un programme. Lire la configuration n’exécute rien.
 fn ensure_safe_config(dir: &Path) -> AppResult<()> {
+    ensure_safe_config_allowing(dir, &[])
+}
+
+/// Comme `ensure_safe_config`, en laissant passer les clés que l’appelant neutralise lui-même (par `-c` ou par
+/// l’environnement) : un dépôt du poste réglé par husky (`core.hooksPath`) reste utilisable.
+pub(crate) fn ensure_safe_config_allowing(dir: &Path, allowed: &[&str]) -> AppResult<()> {
     let Ok(output) = command(dir).args(["config", "--local", "--no-includes", "--name-only", "--list"]).output() else {
         return Ok(());
     };
@@ -78,7 +84,8 @@ fn ensure_safe_config(dir: &Path) -> AppResult<()> {
         return Ok(());
     }
     let listed = String::from_utf8_lossy(&output.stdout);
-    if let Some(key) = listed.lines().map(str::trim).find(|key| runs_a_program(key)) {
+    let allowed = |key: &str| allowed.iter().any(|item| item.eq_ignore_ascii_case(key));
+    if let Some(key) = listed.lines().map(str::trim).find(|key| runs_a_program(key) && !allowed(key)) {
         return Err(AppError::new(format!(
             "La configuration git de « {} » contient « {key} », qui ferait exécuter un programme : Alfred refuse de s’en servir. La retirer de .git/config.",
             dir.display()
@@ -90,12 +97,22 @@ fn ensure_safe_config(dir: &Path) -> AppResult<()> {
 /// Exécute git et renvoie sa sortie standard ; l’erreur porte la sortie d’erreur de git.
 pub fn run(dir: &Path, args: &[&str]) -> AppResult<String> {
     ensure_safe_config(dir)?;
-    let output = command(dir)
+    run_unchecked(dir, args, &[]).map(|bytes| String::from_utf8_lossy(&bytes).trim_end().to_string())
+}
+
+/// Exécute git avec des variables d’environnement en plus et rend sa sortie standard telle quelle (octets). La
+/// configuration n’est pas vérifiée ici : c’est à l’appelant de l’avoir fait (`ensure_safe_config_allowing`).
+pub(crate) fn run_unchecked(dir: &Path, args: &[&str], env: &[(&str, String)]) -> AppResult<Vec<u8>> {
+    let mut command = command(dir);
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let output = command
         .args(args)
         .output()
         .map_err(|error| AppError::new(format!("Git est introuvable sur ce poste : {error}")))?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim_end().to_string())
+        Ok(output.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(AppError::with_detail(
@@ -103,6 +120,18 @@ pub fn run(dir: &Path, args: &[&str]) -> AppResult<String> {
             serde_json::json!({ "stderr": stderr }),
         ))
     }
+}
+
+/// Identité git de l’utilisateur pour un commit fait en son nom (on veut voir qui a publié) ; celle d’Alfred si le
+/// poste n’en a pas. La signature est désactivée : elle pourrait demander une phrase secrète.
+pub(crate) fn user_identity_args(dir: &Path) -> Vec<&'static str> {
+    // Lire la configuration n’exécute rien : pas besoin de la vérifier pour ça.
+    let configured = |key: &str| run_unchecked(dir, &["config", "--get", key], &[]).is_ok_and(|value| !value.trim_ascii().is_empty());
+    let mut args = vec!["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+    if !(configured("user.name") && configured("user.email")) {
+        args.extend(IDENTITY);
+    }
+    args
 }
 
 /// Identité neutre pour les commits qu’Alfred crée lui-même, sans dépendre de la configuration du poste.
@@ -137,6 +166,8 @@ pub struct Commit {
     pub id: String,
     pub message: String,
     pub date: String,
+    /// Nom de l’auteur.
+    pub author: String,
     pub files: Vec<String>,
     /// Lignes ajoutées et retirées par fichier, dans l’ordre de `files` ; `None` pour un fichier binaire.
     pub lines: Vec<Option<FileLines>>,
@@ -150,7 +181,7 @@ pub struct FileLines {
 
 pub fn log(dir: &Path, limit: usize, path: Option<&str>) -> AppResult<Vec<Commit>> {
     let limit = format!("-{limit}");
-    let mut args = vec!["log", limit.as_str(), "--numstat", "--no-renames", "--format=%x1e%H%x1f%s%x1f%cI"];
+    let mut args = vec!["log", limit.as_str(), "--numstat", "--no-renames", LOG_FORMAT];
     if let Some(path) = path {
         args.extend(["--", path]);
     }
@@ -161,6 +192,9 @@ pub fn log(dir: &Path, limit: usize, path: Option<&str>) -> AppResult<Vec<Commit
     }
 }
 
+/// Format d’une entrée de `git log` lue par `parse_log` : identifiant, sujet, date, auteur.
+pub(crate) const LOG_FORMAT: &str = "--format=%x1e%H%x1f%s%x1f%cI%x1f%an";
+
 /// Commits désignés par leur identifiant, dans l’ordre demandé ; un identifiant inconnu ou invalide est ignoré.
 pub fn commits(dir: &Path, ids: &[String]) -> AppResult<Vec<Commit>> {
     let mut found = Vec::new();
@@ -169,7 +203,7 @@ pub fn commits(dir: &Path, ids: &[String]) -> AppResult<Vec<Commit>> {
         if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
             continue;
         }
-        let args = ["log", "-1", "--no-walk", "--numstat", "--no-renames", "--format=%x1e%H%x1f%s%x1f%cI", id.as_str()];
+        let args = ["log", "-1", "--no-walk", "--numstat", "--no-renames", LOG_FORMAT, id.as_str()];
         if let Ok(output) = run(dir, &args) {
             found.extend(parse_log(&output));
         }
@@ -177,7 +211,7 @@ pub fn commits(dir: &Path, ids: &[String]) -> AppResult<Vec<Commit>> {
     Ok(found)
 }
 
-fn parse_log(output: &str) -> Vec<Commit> {
+pub(crate) fn parse_log(output: &str) -> Vec<Commit> {
     output
         .split('\u{1e}')
         .filter(|entry| !entry.trim().is_empty())
@@ -185,6 +219,7 @@ fn parse_log(output: &str) -> Vec<Commit> {
             let mut lines = entry.lines();
             let mut header = lines.next()?.split('\u{1f}');
             let (id, message, date) = (header.next()?, header.next()?, header.next()?);
+            let author = header.next().unwrap_or_default().to_string();
             // Chaque ligne de `--numstat` : ajoutées, retirées, chemin ; `-` à la place des nombres pour un binaire.
             let (files, lines) = lines
                 .filter(|line| !line.trim().is_empty())
@@ -195,7 +230,7 @@ fn parse_log(output: &str) -> Vec<Commit> {
                     Some((path.to_string(), counts.map(|(added, removed)| FileLines { added, removed })))
                 })
                 .unzip();
-            Some(Commit { id: id.to_string(), message: message.to_string(), date: date.to_string(), files, lines })
+            Some(Commit { id: id.to_string(), message: message.to_string(), date: date.to_string(), author, files, lines })
         })
         .collect()
 }

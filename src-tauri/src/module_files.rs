@@ -123,6 +123,57 @@ pub fn save(space: &Space, module: &str, name: &str, mime: Option<&str>, bytes: 
     Ok(info)
 }
 
+/// Fichier en cours d’écriture (téléchargement d’un compte, `transport.rs`) : son contenu s’écrit en flux dans
+/// `path`, et il reste invisible du module tant que `finish` n’a pas posé ses métadonnées. Abandonné, son dossier
+/// est supprimé.
+pub struct Incoming {
+    dir: PathBuf,
+    pub path: PathBuf,
+    id: String,
+    name: String,
+    mime: String,
+    done: bool,
+}
+
+/// Réserve la place d’un fichier du module, à remplir en flux.
+pub fn begin(space: &Space, module: &str, name: &str, mime: Option<&str>) -> AppResult<Incoming> {
+    let name = crate::conversations::safe_name(name);
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let dir = module_dir(space, module)?.join(&id);
+    std::fs::create_dir_all(&dir)?;
+    let mime = mime
+        .map(|mime| mime.split(';').next().unwrap_or_default().trim())
+        .filter(|mime| !mime.is_empty() && mime.len() < 128 && *mime != "application/octet-stream")
+        .map(str::to_string)
+        .unwrap_or_else(|| mime_for(&name).to_string());
+    Ok(Incoming { path: dir.join(&name), dir, id, name, mime, done: false })
+}
+
+impl Incoming {
+    /// Rend le fichier visible, avec la taille et l’empreinte calculées pendant l’écriture.
+    pub fn finish(mut self, size: u64, sha256: String) -> AppResult<FileInfo> {
+        let info = FileInfo {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            mime: self.mime.clone(),
+            size,
+            sha256,
+            created_at: crate::app_db::now(),
+        };
+        std::fs::write(self.dir.join(META), serde_json::to_vec_pretty(&info).unwrap_or_default())?;
+        self.done = true;
+        Ok(info)
+    }
+}
+
+impl Drop for Incoming {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+
 /// Fichiers du module, du plus récent au plus ancien ; `prefix` filtre sur le nom.
 pub fn list(space: &Space, module: &str, prefix: Option<&str>, limit: usize) -> AppResult<Vec<FileInfo>> {
     let Ok(entries) = std::fs::read_dir(module_dir(space, module)?) else { return Ok(Vec::new()) };

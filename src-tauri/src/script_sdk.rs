@@ -20,8 +20,8 @@ use crate::state::AppState;
 type Shared = Arc<AppState>;
 
 /// Méthodes ouvertes aux scripts : la commande qui les traite et les seuls champs transmis (comme le pont des
-/// cadres, `src/shell/frameBridge.ts`). Ce qui demande un geste de l’utilisateur (choisir un fichier, l’ouvrir,
-/// l’enregistrer ailleurs) n’y est pas.
+/// cadres, `src/shell/frameBridge.ts`). Ce qui demande un geste de l’utilisateur (choisir un fichier ou un dossier,
+/// l’ouvrir, l’enregistrer ailleurs) n’y est pas.
 const METHODS: &[(&str, &str, &[&str])] = &[
     ("db.query", "frame.db.query", &["sql", "params"]),
     ("db.execute", "frame.db.execute", &["sql", "params"]),
@@ -41,7 +41,7 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     ("ai.decide", "frame.ai.decide", &["text", "question", "type", "choices", "questions", "preset"]),
     ("history.list", "frame.history.list", &["table", "key", "limit"]),
     ("history.revert", "frame.history.revert", &["id"]),
-    ("events.publish", "frame.events.publish", &["event", "payload"]),
+    ("events.publish", "frame.events.publish", &["event", "payload", "occurrence"]),
     ("jobs.start", "frame.jobs.start", &["function", "input", "title"]),
     ("jobs.get", "frame.jobs.get", &["id"]),
     ("jobs.list", "frame.jobs.list", &["status", "limit"]),
@@ -50,9 +50,53 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     (
         "clients.request",
         "frame.clients.request",
-        &["client", "instance", "method", "path", "query", "headers", "body", "cache"],
+        &[
+            "client", "instance", "method", "path", "query", "headers", "body", "form", "multipart", "file",
+            "responseType", "cache", "sealed",
+        ],
     ),
+    (
+        "clients.download",
+        "frame.clients.download",
+        &["client", "instance", "method", "path", "query", "headers", "body", "form", "multipart", "file", "name"],
+    ),
+    (
+        "clients.stream",
+        "frame.clients.stream",
+        &["client", "instance", "method", "path", "query", "headers", "body", "form", "multipart", "file", "format"],
+    ),
+    ("clients.socket", "frame.clients.socket", &["client", "instance", "path", "query", "headers"]),
+    ("channels.read", "frame.channels.read", &["channel", "after", "wait"]),
+    ("channels.write", "frame.channels.write", &["channel", "text", "data"]),
+    ("channels.close", "frame.channels.close", &["channel"]),
     ("clients.instances", "frame.clients.instances", &["client"]),
+    ("clients.params", "frame.clients.params", &["client", "instance"]),
+    ("folders.list", "frame.folders.list", &[]),
+    ("folders.get", "frame.folders.get", &["folder"]),
+    ("folders.entries", "frame.folders.entries", &["folder", "path", "recursive", "glob"]),
+    ("folders.stat", "frame.folders.stat", &["folder", "path"]),
+    ("folders.readText", "frame.folders.readText", &["folder", "path"]),
+    ("folders.readFile", "frame.folders.readFile", &["folder", "path"]),
+    ("folders.writeText", "frame.folders.writeText", &["folder", "path", "text"]),
+    ("folders.writeFile", "frame.folders.writeFile", &["folder", "path", "data"]),
+    ("folders.mkdir", "frame.folders.mkdir", &["folder", "path"]),
+    ("folders.remove", "frame.folders.remove", &["folder", "path"]),
+    ("folders.rename", "frame.folders.rename", &["folder", "path", "to"]),
+    ("git.repositories", "frame.git.repositories", &["folder"]),
+    ("git.status", "frame.git.status", &["folder", "repo"]),
+    ("git.branches", "frame.git.branches", &["folder", "repo"]),
+    ("git.tags", "frame.git.tags", &["folder", "repo"]),
+    ("git.log", "frame.git.log", &["folder", "repo", "ref", "file", "since", "limit"]),
+    ("git.compare", "frame.git.compare", &["folder", "repo", "base", "head"]),
+    ("git.diff", "frame.git.diff", &["folder", "repo", "from", "to", "file", "staged"]),
+    ("git.show", "frame.git.show", &["folder", "repo", "ref", "file"]),
+    ("git.fetch", "frame.git.fetch", &["folder", "repo", "remote"]),
+    ("git.pull", "frame.git.pull", &["folder", "repo", "rebase"]),
+    ("git.push", "frame.git.push", &["folder", "repo", "remote", "branch", "tag"]),
+    ("git.commit", "frame.git.commit", &["folder", "repo", "message", "paths"]),
+    ("git.switch", "frame.git.switch", &["folder", "repo", "branch", "create", "start"]),
+    ("git.createTag", "frame.git.createTag", &["folder", "repo", "name", "ref", "message"]),
+    ("git.clone", "frame.git.clone", &["folder", "url", "path"]),
     ("clients.clearCache", "frame.clients.clearCache", &["client"]),
 ];
 

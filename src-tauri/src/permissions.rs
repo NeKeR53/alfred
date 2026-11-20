@@ -121,6 +121,7 @@ pub fn forget_page(state: &AppState, reference: &str) -> AppResult<()> {
 
 /// Oublie les accords d’un module désinstallé : un module installé ensuite sous le même identifiant n’en hérite pas.
 pub fn forget_module(state: &AppState, module: &str) -> AppResult<()> {
+    crate::folders::forget_module(state, module)?;
     let space = state.space()?.root.to_string_lossy().to_string();
     let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
     app_db::revoke_module(&db, &space, module)

@@ -3,6 +3,8 @@
  * du cadre qui a émis le message, jamais par le contenu du message : une page ne peut pas se faire passer pour une
  * autre.
  */
+
+import { requestReveal } from "../features/vault/SecretReveal";
 import {
   AlfredError,
   invoke,
@@ -10,11 +12,14 @@ import {
   openExternal,
   openPageWindow,
   pickFiles,
+  pickFolder,
   pickSaveFile,
 } from "../lib/native";
 import { isKnownPage } from "./badges";
-import { notify } from "./notifications";
+import { takePendingEntryActions, useMenuZones } from "./menuZones";
+import { type NotificationAction, notify } from "./notifications";
 import { loadDurablePageMemory, pageMemoryOf, rememberPageValue } from "./pageMemory";
+import { pageWindowParams, pageWindowReference } from "./pageWindowMode";
 import { useShell } from "./store";
 import { declareTopBarSearch, removeTopBarSearch, setTopBarQuery, topBarQueryOf } from "./topBarSearchStore";
 
@@ -65,6 +70,104 @@ export function onSelectionChange(listener: (page: string) => void): () => void 
   };
 }
 
+/** Entrée du menu ouverte dans la page (ou dans la page d’un panneau) : `usePageContext().entry`. */
+function entryOf(identity: FrameIdentity): { id: string; label: string } | null {
+  if (identity.kind === "function") return null;
+  const opened = useShell.getState().activeEntry[identity.host ?? identity.reference];
+  return opened ? { id: opened.id, label: opened.label } : null;
+}
+
+/** Paramètres de la fenêtre ouverte sur un élément précis, pour sa page et son panneau ; ailleurs `null`. */
+function paramsOf(identity: FrameIdentity): Record<string, unknown> | null {
+  if (identity.kind === "function") return null;
+  const shown = pageWindowReference();
+  return shown && shown === (identity.host ?? identity.reference) ? pageWindowParams() : null;
+}
+
+/** Page de l’espace nommée par une page : « module/page », ou « page » de son propre module. */
+function namedPage(identity: FrameIdentity, page: unknown): string {
+  const name = String(page ?? "");
+  const reference = name.includes("/") ? name : `${identity.module}/${name}`;
+  if (!isKnownPage(useShell.getState().snapshot, reference))
+    throw new AlfredError({ message: `La page « ${reference} » n’existe pas dans l’espace de travail.` });
+  return reference;
+}
+
+/** Options d’une fenêtre ouverte sur un élément : `params` (objet), `key` et `title`, vérifiés. */
+function windowOptions(params: Params) {
+  const value = params.params;
+  if (value !== undefined && value !== null && (typeof value !== "object" || Array.isArray(value)))
+    throw new AlfredError({ message: "Les paramètres d’une fenêtre sont un objet : { params: { build: 42 } }." });
+  return {
+    ...(value ? { params: value as Record<string, unknown> } : {}),
+    ...(params.key !== undefined && params.key !== null ? { key: String(params.key) } : {}),
+    ...(params.title ? { title: String(params.title) } : {}),
+  };
+}
+
+const failed = (title: string) => (error: unknown) =>
+  notify({ title, description: error instanceof Error ? error.message : String(error), tone: "error" });
+
+/**
+ * Actions d’une notification (`shell.notify({ actions })`), deux au plus, vérifiées au moment de la notification :
+ * ouvrir une page (avec une entrée de sa zone), ouvrir une fenêtre sur un élément, ou appeler une fonction du module.
+ */
+function notificationActions(identity: FrameIdentity, raw: unknown): NotificationAction[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new AlfredError({ message: "Les actions d’une notification sont une liste." });
+  if (raw.length > 2) throw new AlfredError({ message: "Une notification porte au plus deux actions." });
+  return raw.map((item: Params) => {
+    const label = String(item?.label ?? "").trim();
+    if (!label) throw new AlfredError({ message: "Une action de notification a un libellé : « Journal »." });
+    if (item.navigate) {
+      const page = namedPage(identity, item.navigate);
+      const entry = item.entry === undefined || item.entry === null ? undefined : String(item.entry);
+      return {
+        label,
+        run: () => {
+          if (!entry) return useShell.getState().openPage(page);
+          // Le libellé de l’entrée est celui de la zone qui la porte, s’il est connu.
+          const zones = useMenuZones.getState().zones;
+          const zone = Object.keys(zones).find(
+            (candidate) =>
+              candidate.startsWith(`${identity.module}/`) &&
+              zones[candidate].entries.some((known) => known.id === entry),
+          );
+          const known = zone ? zones[zone].entries.find((candidate) => candidate.id === entry) : undefined;
+          useShell.getState().openEntry(page, { id: entry, label: known?.label ?? entry, zone: zone ?? page });
+        },
+      };
+    }
+    if (item.window && typeof item.window === "object") {
+      const target = item.window as Params;
+      const page = namedPage(identity, target.page);
+      const options = windowOptions(target);
+      return {
+        label,
+        run: () => void openPageWindow(page, options).catch(failed("La fenêtre n’a pas pu s’ouvrir")),
+      };
+    }
+    if (item.function && typeof item.function === "object") {
+      const call = item.function as Params;
+      const name = String(call.id ?? "");
+      const reference = name.includes("/") ? name : `${identity.module}/${name}`;
+      if (reference.split("/")[0] !== identity.module)
+        throw new AlfredError({ message: "Une notification n’appelle qu’une fonction de son propre module." });
+      const input = call.input ?? {};
+      return {
+        label,
+        run: () => {
+          if (!frameServices.callFunction) return;
+          void frameServices.callFunction(identity, reference, input).catch(failed(`« ${label} » n’a pas abouti`));
+        },
+      };
+    }
+    throw new AlfredError({
+      message: "Une action de notification ouvre une page (navigate), une fenêtre (window) ou appelle une fonction.",
+    });
+  });
+}
+
 export function frameContext(identity: FrameIdentity) {
   const { theme, snapshot } = useShell.getState();
   const reference = declaredReference(identity);
@@ -80,10 +183,26 @@ export function frameContext(identity: FrameIdentity) {
     theme,
     accent: snapshot?.accent ?? null,
     selection: identity.host ? selectionOf(identity.host) : null,
+    entry: entryOf(identity),
+    params: paramsOf(identity),
   };
 }
 
 type Params = Record<string, unknown>;
+
+/** Champs d’un appel de compte, communs à la requête, au téléchargement et au flux. */
+const CLIENT_CALL = [
+  "client",
+  "instance",
+  "method",
+  "path",
+  "query",
+  "headers",
+  "body",
+  "form",
+  "multipart",
+  "file",
+] as const;
 
 /** Garde de `params` les seuls champs nommés, et seulement ceux qui sont présents. */
 function pick(params: Params, names: readonly string[]): Params {
@@ -96,6 +215,7 @@ function pick(params: Params, names: readonly string[]): Params {
 export const frameServices: {
   callFunction?: (identity: FrameIdentity, reference: string, input: unknown) => Promise<unknown>;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
+  sendToAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;
   /** Lit une notification à voix haute, si l’utilisateur l’a permis (Réglages › Voix). */
   announce?: (text: string) => void;
@@ -120,13 +240,24 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
 export function releaseFrame(identity: FrameIdentity) {
   if (identity.kind === "page" && !identity.capture) removeTopBarSearch(identity.reference);
   void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
+  // Les flux et WebSocket que ce cadre était seul à lire se ferment avec lui.
+  if (identity.kind !== "function") void handleFrameRequest(identity, "channels.release", {}).catch(() => undefined);
 }
+
+const BADGE_TARGET = {
+  unnamed: 'Une fonction règle le compteur d’une page nommée : badge.set(3, { page: "boite" }).',
+  refused: "Compteur refusé",
+};
+const MENU_TARGET = {
+  unnamed: 'Une fonction règle la zone du menu d’une page nommée : menu.setEntries([…], { page: "produits" }).',
+  refused: "Menu refusé",
+};
 
 /**
  * Page dont un cadre règle le compteur : la sienne (un panneau, celle de sa page), ou une autre page de son module
  * nommée par `page` (« boite », ou « boite@instance »). Une fonction doit toujours nommer la page.
  */
-function badgeTarget(identity: FrameIdentity, page: unknown): string {
+function badgeTarget(identity: FrameIdentity, page: unknown, what = BADGE_TARGET): string {
   let reference: string;
   if (typeof page === "string" && page) {
     const named = `${identity.module}/${page}`;
@@ -135,15 +266,13 @@ function badgeTarget(identity: FrameIdentity, page: unknown): string {
     const sibling = suffix && !page.includes("@") ? `${named}@${suffix}` : named;
     reference = isKnownPage(useShell.getState().snapshot, sibling) ? sibling : named;
   } else if (identity.kind === "function") {
-    throw new AlfredError({
-      message: 'Une fonction règle le compteur d’une page nommée : badge.set(3, { page: "boite" }).',
-    });
+    throw new AlfredError({ message: what.unnamed });
   } else {
     reference = identity.host ?? identity.reference;
   }
   if (!isKnownPage(useShell.getState().snapshot, reference))
     throw new AlfredError({
-      message: `Compteur refusé : la page « ${reference} » n’existe pas dans l’espace de travail.`,
+      message: `${what.refused} : la page « ${reference} » n’existe pas dans l’espace de travail.`,
     });
   return reference;
 }
@@ -152,6 +281,20 @@ function badgeValue(value: unknown): number {
   const number = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(number)) throw new AlfredError({ message: "Le compteur attend un nombre." });
   return Math.trunc(number);
+}
+
+/** « La page « Titre » » de la page (ou de la page hôte d’un panneau), pour la boîte de révélation. */
+function pageTitle(identity: FrameIdentity): string {
+  const reference = declaredReference(identity);
+  const snapshot = useShell.getState().snapshot;
+  const pages = [
+    ...(snapshot?.sections.flatMap((section) =>
+      section.pages.flatMap((page) => [page, ...(page.panel ? [page.panel] : [])]),
+    ) ?? []),
+    ...(snapshot?.settingsPages ?? []),
+  ];
+  const title = pages.find((page) => page.reference === identity.reference || page.reference === reference)?.title;
+  return `La page « ${title ?? reference} »`;
 }
 
 export async function handleFrameRequest(identity: FrameIdentity, method: string, params: Params): Promise<unknown> {
@@ -177,11 +320,14 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "shell.notify": {
       const title = String(params.title ?? "");
       const description = params.description ? String(params.description) : undefined;
+      const actions = notificationActions(identity, params.actions);
       notify({
         title,
         description,
         tone: (params.tone as "info" | "success" | "warning" | "error") ?? "info",
         source: identity.reference,
+        ...(actions.length ? { actions } : {}),
+        ...(params.persistent ? { persistent: true } : {}),
       });
       frameServices.announce?.(description ? `${title}. ${description}` : title);
       // Alfred en arrière-plan : la notification part aussi au système (Rust vérifie le focus des fenêtres).
@@ -209,13 +355,29 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
         op: params.op === "increment" ? "increment" : "set",
         value: badgeValue(params.value),
       });
+    // Zone du menu de la page (`menu.*`) : Rust vérifie chaque entrée et la garde pour l’espace.
+    case "menu.update":
+      return invoke("frame.menuZones.update", {
+        ...pick(params, ["op", "title", "order", "visible", "entries", "id", "patch"]),
+        subject,
+        page: badgeTarget(identity, params.page, MENU_TARGET),
+      });
+    case "menu.takeActions":
+      if (identity.kind !== "page" || identity.capture) return [];
+      return takePendingEntryActions(identity.reference);
     case "shell.navigate":
       useShell.getState().openPage(String(params.reference ?? ""));
       return null;
     case "shell.openWindow": {
       // Sans référence, la page s’ouvre elle-même dans sa fenêtre ; une page inconnue est refusée par Rust.
-      const reference = params.reference ? String(params.reference) : (identity.host ?? identity.reference);
-      await openPageWindow(reference);
+      // Une page inconnue est refusée par Rust ; « journal » désigne une page du module du cadre.
+      const named = params.reference ? String(params.reference) : "";
+      const reference = named
+        ? named.includes("/")
+          ? named
+          : `${identity.module}/${named}`
+        : (identity.host ?? identity.reference);
+      await openPageWindow(reference, windowOptions(params));
       return null;
     }
     case "shell.setPanelVisible":
@@ -256,6 +418,16 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "ai.startAgent":
       if (!frameServices.startAgent) throw new AlfredError({ message: "Les agents ne sont pas prêts." });
       return frameServices.startAgent(identity, params);
+    case "ai.sendToAgent":
+      if (!frameServices.sendToAgent) throw new AlfredError({ message: "Les agents ne sont pas prêts." });
+      return frameServices.sendToAgent(identity, params);
+    case "ai.watch":
+      return invoke("frame.agents.watch", {
+        ...pick(params, ["conversationId", "event", "match", "timeoutMinutes", "label"]),
+        subject,
+      });
+    case "ai.cancelWatch":
+      return invoke("frame.agents.cancelWatch", { ...pick(params, ["id"]), subject });
     case "voice.speak":
       return invoke("frame.voice.speak", { text: String(params.text ?? ""), subject });
     case "voice.stopSpeaking":
@@ -273,9 +445,32 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
     case "clients.request":
       return invoke("frame.clients.request", {
-        ...pick(params, ["client", "instance", "method", "path", "query", "headers", "body", "cache"]),
+        ...pick(params, [...CLIENT_CALL, "responseType", "cache", "sealed"]),
         subject,
       });
+    case "clients.download":
+      return invoke("frame.clients.download", { ...pick(params, [...CLIENT_CALL, "name"]), subject });
+    case "clients.stream":
+      return invoke("frame.clients.stream", { ...pick(params, [...CLIENT_CALL, "format"]), subject });
+    case "clients.socket":
+      return invoke("frame.clients.socket", {
+        ...pick(params, ["client", "instance", "path", "query", "headers"]),
+        subject,
+      });
+    // Canaux ouverts par une fonction du connecteur : la page du même module les lit et les écrit.
+    // `holder` : le cadre lui-même (copie de page comprise), pour fermer ses canaux quand il disparaît.
+    case "channels.read":
+      return invoke("frame.channels.read", {
+        ...pick(params, ["channel", "after", "wait"]),
+        holder: `${identity.kind}:${identity.reference}`,
+        subject,
+      });
+    case "channels.release":
+      return invoke("frame.channels.release", { holder: `${identity.kind}:${identity.reference}`, subject });
+    case "channels.write":
+      return invoke("frame.channels.write", { ...pick(params, ["channel", "text", "data"]), subject });
+    case "channels.close":
+      return invoke("frame.channels.close", { ...pick(params, ["channel"]), subject });
     case "files.save":
       return invoke("frame.files.save", { ...pick(params, ["name", "data", "text", "mime"]), subject });
     case "files.list":
@@ -292,9 +487,9 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "history.revert":
       return invoke("frame.history.revert", { ...pick(params, ["id"]), subject });
     case "events.publish":
-      return invoke("frame.events.publish", { ...pick(params, ["event", "payload"]), subject });
+      return invoke("frame.events.publish", { ...pick(params, ["event", "payload", "occurrence"]), subject });
     case "commands.run":
-      return invoke("frame.commands.run", { ...pick(params, ["program", "args", "input", "timeout"]), subject });
+      return invoke("frame.commands.run", { ...pick(params, ["program", "args", "input", "timeout", "cwd"]), subject });
     case "semantic.search":
       return invoke("frame.semantic.search", { ...pick(params, ["index", "text", "limit"]), subject });
     case "semantic.status":
@@ -347,8 +542,108 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     }
     case "clients.clearCache":
       return invoke("frame.clients.clearCache", { ...pick(params, ["client"]), subject });
+    case "folders.pick": {
+      // Le sélecteur est montré par la coquille : choisir le dossier, c’est l’accorder au module.
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction ne peut pas ouvrir de fenêtre : faites-le depuis une page." });
+      const path = await pickFolder(typeof params.title === "string" ? params.title : "Choisir un dossier");
+      if (!path) return null;
+      return invoke("frame.folders.grantPicked", { path, ...pick(params, ["label"]), subject });
+    }
+    case "folders.list":
+      return invoke("frame.folders.list", { subject });
+    case "folders.get":
+    case "folders.forget":
+    case "folders.watch":
+      return invoke(`frame.${method}`, { ...pick(params, ["folder"]), subject });
+    case "folders.entries":
+      return invoke("frame.folders.entries", { ...pick(params, ["folder", "path", "recursive", "glob"]), subject });
+    case "folders.stat":
+    case "folders.readText":
+    case "folders.readFile":
+    case "folders.mkdir":
+    case "folders.remove":
+      return invoke(`frame.${method}`, { ...pick(params, ["folder", "path"]), subject });
+    case "folders.writeText":
+      return invoke("frame.folders.writeText", { ...pick(params, ["folder", "path", "text"]), subject });
+    case "folders.writeFile":
+      return invoke("frame.folders.writeFile", { ...pick(params, ["folder", "path", "data"]), subject });
+    case "folders.rename":
+      return invoke("frame.folders.rename", { ...pick(params, ["folder", "path", "to"]), subject });
+    case "folders.open":
+      return invoke("frame.folders.open", { ...pick(params, ["folder", "path", "app"]), subject });
+    case "git.repositories":
+    case "git.status":
+    case "git.branches":
+    case "git.tags":
+    case "git.log":
+    case "git.compare":
+    case "git.diff":
+    case "git.show":
+    case "git.fetch":
+    case "git.pull":
+    case "git.push":
+    case "git.commit":
+    case "git.switch":
+    case "git.createTag":
+    case "git.clone":
+      return invoke(`frame.${method}`, {
+        ...pick(params, [
+          "folder",
+          "repo",
+          "ref",
+          "file",
+          "since",
+          "limit",
+          "base",
+          "head",
+          "from",
+          "to",
+          "staged",
+          "remote",
+          "rebase",
+          "branch",
+          "tag",
+          "message",
+          "paths",
+          "create",
+          "start",
+          "name",
+          "url",
+          "path",
+        ]),
+        subject,
+      });
     case "clients.instances":
       return invoke("frame.clients.instances", { ...pick(params, ["client"]), subject });
+    case "clients.params":
+      return invoke("frame.clients.params", { ...pick(params, ["client", "instance"]), subject });
+    // Valeurs scellées : la page ne reçoit jamais la valeur. La coquille l’affiche dans sa propre boîte, ou fait
+    // choisir où écrire le `.env` ; une fonction n’a ni l’une ni l’autre.
+    case "secrets.reveal": {
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction n’affiche pas de secret : sa page appelle secrets.reveal." });
+      const shown = await requestReveal({
+        subject,
+        ref: String(params.ref ?? ""),
+        label: typeof params.label === "string" ? params.label : undefined,
+        from: pageTitle(identity),
+      });
+      return { shown };
+    }
+    case "secrets.writeEnvFile": {
+      if (identity.kind === "function")
+        throw new AlfredError({ message: "Une fonction n’écrit pas de .env : sa page appelle secrets.writeEnvFile." });
+      const name = typeof params.name === "string" && params.name ? params.name : ".env";
+      const path = await pickSaveFile("Enregistrer les variables d’environnement", name);
+      if (!path) return { saved: false };
+      const result = await invoke<{ written: number }>("secrets.writeEnvFile", {
+        subject,
+        path,
+        entries: params.entries,
+      });
+      return { saved: true, written: result.written };
+    }
     default:
       throw new AlfredError({ message: `Appel inconnu : ${method}` });
   }

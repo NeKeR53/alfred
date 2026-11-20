@@ -5,7 +5,6 @@ import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import { resetComposerDrafts } from "./drafts";
-import { fakeSpawn } from "./harness/fakeProcess.test-helper";
 import {
   type ComposerReference,
   type ComposerReferenceMention,
@@ -33,7 +32,6 @@ vi.mock("../../lib/native", async (importOriginal) => ({
   invoke: native.invoke,
   onNativeEvent: vi.fn(() => () => undefined),
 }));
-vi.mock("./harness/process", () => ({ spawnProcess: vi.fn(), probe: vi.fn() }));
 
 const commands: ComposerReference[] = [
   { kind: "command", name: "publier", path: "/projet/.claude/commands/publier.md", description: "Publie le module" },
@@ -224,40 +222,22 @@ describe("positions et consignes des références", () => {
     );
   });
 
-  it("Codex : les skills viennent de `skills/list`, désactivés écartés, et le catalogue est gardé 30 s", async () => {
-    const spawned = fakeSpawn((process) => {
-      process.respond("initialize", { result: {} });
-      process.respond("skills/list", {
-        result: {
-          data: [
-            {
-              cwd: "/projet",
-              skills: [
-                { name: "relire", path: "/s/relire/SKILL.md", description: "Relit", enabled: true },
-                { name: "ancien", path: "/s/ancien/SKILL.md", enabled: false },
-              ],
-            },
-          ],
-        },
-      });
-    });
+  it("Codex : les skills viennent de Rust (`skills/list`), et le catalogue est gardé 30 s", async () => {
+    const previous = native.invoke.getMockImplementation();
+    native.invoke.mockImplementation(async (command: string, args: unknown) =>
+      command === "agents.skills"
+        ? [{ kind: "skill", name: "relire", path: "/s/relire/SKILL.md", description: "Relit" }]
+        : previous?.(command, args),
+    );
     const found = await loadComposerReferences("/projet", "codex", "skill", "");
     expect(found).toEqual([{ kind: "skill", name: "relire", path: "/s/relire/SKILL.md", description: "Relit" }]);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0].provider).toBe("codex");
-    expect(spawned[0].process.written.map((message) => message.method)).toEqual([
-      "initialize",
-      "initialized",
-      "skills/list",
-    ]);
-    expect(spawned[0].process.written[2].params).toEqual({ cwds: ["/projet"], forceReload: true });
-    expect(spawned[0].process.killed).toBe(true);
+    expect(native.invoke).toHaveBeenCalledWith("agents.skills", { cwd: "/projet" });
     // `/` réunit les commandes lues par Alfred et les skills de Codex, sans relancer le CLI.
     await act(async () => {
       const all = await loadComposerReferences("/projet", "codex", "command", "");
       expect(all.map((item) => item.name)).toEqual(["publier", "relire"]);
     });
-    expect(spawned).toHaveLength(1);
+    expect(native.invoke.mock.calls.filter(([command]) => command === "agents.skills")).toHaveLength(1);
     expect(native.invoke).not.toHaveBeenCalledWith("composer.references", expect.objectContaining({ kind: "skill" }));
   });
 });

@@ -76,11 +76,23 @@ export async function invoke<Result = unknown>(command: string, args: Record<str
  * Ouvre une page de l’espace (`module/page`, ou `module/page@instance`) seule dans sa propre fenêtre, ou ramène au
  * premier plan celle qui l’affiche déjà. Seulement dans l’application : un navigateur de test n’a qu’une fenêtre.
  */
-export async function openPageWindow(reference: string): Promise<void> {
+/** Fenêtre ouverte sur un élément précis : ses paramètres (lus par la page), sa clé et le titre de l’élément. */
+export interface PageWindowOptions {
+  params?: Record<string, unknown>;
+  key?: string;
+  title?: string;
+}
+
+export async function openPageWindow(reference: string, options: PageWindowOptions = {}): Promise<void> {
   if (!inTauri) throw new AlfredError({ message: "Les fenêtres de page ne s’ouvrent que dans l’application Alfred." });
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
   try {
-    await tauriInvoke("alfred_open_window", { reference });
+    await tauriInvoke("alfred_open_window", {
+      reference,
+      params: options.params ?? null,
+      key: options.key ?? null,
+      title: options.title ?? null,
+    });
   } catch (error) {
     throw toError(error);
   }

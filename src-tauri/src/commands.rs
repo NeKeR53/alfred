@@ -119,7 +119,15 @@ async fn frame_run(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         ("ALFRED_CALLER".to_string(), subject.reference.clone()),
         ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
     ];
-    let module_dir = space.module_dir(&subject.module);
+    // `cwd: { folder, path? }` : un dossier du poste accordé au module, au lieu du dossier du module.
+    let module_dir = match args.get("cwd").filter(|cwd| !cwd.is_null()) {
+        Some(cwd) => {
+            let folder: String = arg(cwd, "folder").map_err(|_| AppError::new("`cwd.folder` : l’identifiant d’un dossier accordé."))?;
+            let path: Option<String> = opt_arg(cwd, "path")?;
+            crate::folders::resolve_dir(state, &subject.module, &folder, path.as_deref())?
+        }
+        None => space.module_dir(&subject.module),
+    };
     let started = Instant::now();
     let summary = format!("{} {}", request.program, request.args.join(" ")).chars().take(200).collect::<String>();
     let result = tokio::task::spawn_blocking(move || run(module_dir, env, &request))

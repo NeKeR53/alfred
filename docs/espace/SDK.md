@@ -33,7 +33,7 @@ export default async function (input: { texte?: string }) {
 }
 ```
 
-Une fonction utilise le même pont qu’une page (`db`, `commands`, `documents`, `events`, `history`, `jobs`, `search`, `semantic`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
+Une fonction utilise le même pont qu’une page (`db`, `commands`, `documents`, `events`, `history`, `jobs`, `search`, `semantic`, `files` sauf `pick`, `export` et `open`, `client`, `functions`, `ai`, `voice.speak`, `shell.notify`, `badge`, `menu`), sans les hooks React ni le micro. Elle répond en moins de 120 secondes (au-delà, une tâche de fond : section 11), ne tourne que pendant qu’Alfred est ouvert, et au-delà de 40 appels simultanés les suivants sont refusés.
 
 ### Fonction en script (bash, PowerShell, Python)
 
@@ -235,7 +235,7 @@ Seules les fonctions du connecteur écrivent `client("jira")`. Un module qui uti
 
 **Données d’exemple.** Chaque fonction du connecteur déclare, dès son écriture, deux ou trois `examples` (`name`, `input`, `output`) : des sorties réalistes, au format exact du service, cohérentes d’une fonction à l’autre (mêmes identifiants, pour qu’une liste et son détail s’enchaînent). Quand l’utilisateur règle le module en mode « données d’exemple » (page d’attente ou fiche du module), `functions.call` vers une fonction de connecteur rend l’exemple dont l’`input` correspond le mieux à l’appel (entrée identique, sinon le plus de champs fournis égaux, sinon le premier), sans lancer la fonction ; sans exemple, la promesse est rejetée (« Cette fonction n’a pas encore de données d’exemple »). La page n’a rien à faire de particulier : elle reçoit la même forme de données. Une fonction sans service s’exécute normalement, et ses propres appels de fonctions restent en mode exemple ; `client(id)` y est rejeté (aucune requête ne part vers un service), dépendances comprises. `db` reste réelle : ce que la page enregistre dans la base du module y reste. Une fonction en script reçoit `ALFRED_EXAMPLES=1` dans ce mode. Détails : AGENTS.md, « Données d’exemple ».
 
-Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }` (corps JSON décodé, sinon texte ; en-têtes d’authentification retirés). Sa valeur de retour part en JSON à l’émetteur si elle arrive en moins de 25 secondes ; sinon l’émetteur reçoit `202` et la fonction continue. Planifiée, elle reçoit le `input` de sa planification. Webhooks et planifications se déclarent avec les outils `declare_webhook` et `declare_schedule` (AGENTS.md).
+Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }` (corps JSON décodé, sinon texte ; en-têtes d’authentification retirés). Sa valeur de retour part en JSON à l’émetteur si elle arrive en moins de 25 secondes ; sinon l’émetteur reçoit `202` et la fonction continue. Planifiée, elle reçoit le `input` de sa planification ; à intervalle (`everyMinutes` ou `everySeconds`), elle peut rendre `{ nextInSeconds: n }` (de 5 secondes à un jour) pour fixer son prochain passage, une fois : 3 secondes pendant une exécution suivie, plusieurs minutes au repos. Sans ce champ, l’intervalle déclaré reprend. Webhooks et planifications se déclarent avec les outils `declare_webhook` et `declare_schedule` (AGENTS.md).
 
 ## 6. Clients : `client(id)`
 
@@ -249,7 +249,11 @@ client(id: string, options?: { instance?: string }): {
   put<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   patch<Body>(path: string, body?: unknown): Promise<ClientResponse<Body>>;
   delete<Body>(path: string): Promise<ClientResponse<Body>>;
+  download(path: string, options?: ClientTransferRequest & { name?: string }): Promise<ClientDownload>;
+  stream(path: string, options?: ClientTransferRequest & { format?: "auto" | "lines" | "sse" | "docker" | "raw" }): Promise<ClientChannel>;
+  socket(path: string, options?: { query?: ClientRequest["query"]; headers?: Record<string, string> }): Promise<ClientChannel>;
   instances(): Promise<{ id: string; label: string; default: boolean }[]>;
+  params(): Promise<{ instance: string; params: Record<string, string> }>;
   clearCache(): Promise<{ cleared: number }>;
 };
 interface ClientRequest {
@@ -257,13 +261,18 @@ interface ClientRequest {
   path: string;
   query?: Record<string, string | number | boolean>;
   headers?: Record<string, string>;
-  body?: unknown;
+  body?: unknown;                         // un seul de body, form, multipart et file
+  form?: Record<string, string | number | boolean>;
+  multipart?: Array<{ name: string; value: string | number | boolean } | { name: string; file: string; filename?: string; mime?: string }>;
+  file?: string;                          // identifiant d’un fichier du module, envoyé tel quel
+  responseType?: "auto" | "text" | "base64";
   cache?: number; // secondes : voir « Cache des lectures »
+  sealed?: boolean; // remplacer les références de secret du corps : voir « Secrets scellés »
 }
 interface ClientResponse<Body> { status: number; ok: boolean; headers: Record<string, string>; body: Body; cached?: boolean; cacheAge?: number }
 ```
 
-Alfred exécute la requête et ajoute l’authentification : la page ne voit jamais le secret. `path` commence par `/` et reste sous l’adresse de base (ni adresse complète, ni `//`, `..` ou `@`). Un `body` objet part en JSON, une chaîne telle quelle. `Authorization`, `Cookie`, `Host`, `Range`, `If-Range` et l’en-tête de la clé sont fixés par Alfred. `body` est décodé si la réponse est du JSON, sinon c’est le texte ; 20 Mo et 60 secondes au plus.
+Alfred exécute la requête et ajoute l’authentification : la page ne voit jamais le secret. `path` commence par `/` et reste sous l’adresse de base (ni adresse complète, ni `//`, `..` ou `@`). Un `body` objet part en JSON, une chaîne telle quelle. `Authorization`, `Cookie`, `Host`, `Range`, `If-Range` et l’en-tête de la clé sont fixés par Alfred. `body` est décodé si la réponse est du JSON, sinon c’est le texte (`responseType` pour un binaire, voir « Fichiers, flux et WebSocket ») ; 20 Mo et 60 secondes au plus.
 
 **Un statut HTTP d’erreur ne rejette pas la promesse** : teste `ok` ou `status`. Le rejet signifie que la requête n’a pas abouti : client inconnu ou à valider, secret manquant, accès refusé, chemin refusé, erreur réseau. La première requête d’une page vers un client (et, séparément, de son panneau, ou des fonctions d’un module) demande l’accord de l’utilisateur.
 
@@ -303,7 +312,7 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 ```
 
 - `baseUrl` : `https://` (`http://` admis vers `localhost` et `127.0.0.1`), sans identifiants, paramètres ni ancre ; son chemin préfixe toutes les requêtes.
-- `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes`.
+- `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes` ; `session` avec `login` et `apply` (identifiant et mot de passe échangés par Alfred contre un jeton, voir plus bas) ; `secretUrl` (toute l’adresse est secrète).
 - `auth.secret` : l’entrée du coffre renvoyée par `vault_store` ; omis, `declare_client` garde celle déjà reliée. `headers` : en-têtes fixes, jamais d’authentification.
 - `testPath` : chemin que lit le bouton Tester des Réglages (`GET`), pour chaque instance. Choisis une lecture légère qui demande l’authentification (`/me`, `/labels`…) : beaucoup d’API n’ont rien à la racine, qui est lue sans lui.
 
@@ -334,8 +343,142 @@ Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des
   - `clientId` (`oauth2` seulement) : identifiant public de l’application que le module a déclarée chez le service. Avec lui, le parcours propose « Se connecter avec … » dans le navigateur, sans rien faire saisir (PKCE) ; sans lui, l’utilisateur doit saisir l’identifiant d’une application qu’il a créée.
 - `instances[]` : `id` (celui que les pages passent à `client(id, { instance })`), `label`, `url` (omise : `baseUrl`), `method`, `secret` (omis : l’entrée déjà reliée est gardée). La première est celle par défaut.
 - `baseUrl` (facultatif) : adresse proposée aux instances qui n’ont pas la leur.
+- `methods[].params` (facultatif) : paramètres **non secrets** que l’utilisateur saisit avec chaque compte : royaume Keycloak, montage et rôle OpenBao, endpoint Portainer. `{ "id": "realm", "label": "Royaume", "example": "equipe", "help": "…", "default": "master", "optional": false }` ; `id` en lettres, chiffres et `_` (`url`, `username` et `password` sont réservés). Les valeurs vont dans `instances[].params` (`{ "realm": "equipe" }`), dans le fichier du client, versionnées : **jamais de secret dans un paramètre**. `{realm}` se remplace, encodé comme un segment, dans `authorizationUrl`, `tokenUrl`, la connexion `session`, les règles `sealed` et le `path` d’une requête (`client("keycloak").get("/admin/realms/{realm}/users")`). Une fonction les lit par `client(id, { instance }).params()` ; un paramètre obligatoire manquant rend le compte invalide (« Saisir « Royaume » pour ce compte »), et les modifier remet le compte « à vérifier ».
+
+#### Connexion par identifiant : la méthode `session`
+
+Un service qui rend un jeton contre un identifiant et un mot de passe (Portainer `/api/auth`, OpenBao userpass ou LDAP) se déclare en `session` : **Alfred fait la requête de connexion**, range le jeton dans le trousseau du système avec le compte, le pose sur chaque requête et le redemande à l’échéance ou sur un refus (401). Aucune fonction ne voit le mot de passe, la réponse de connexion ni le jeton ; n’écris jamais de fonction qui poste un identifiant. L’entrée du coffre est de type `basic` (`username`, `password`).
+
+```json
+{ "id": "motdepasse", "label": "Identifiant et mot de passe", "type": "session",
+  "login": { "path": "/api/auth", "body": { "username": "{username}", "password": "{password}" }, "token": "jwt" },
+  "params": [{ "id": "endpoint", "label": "Environnement", "example": "1" }] }
+```
+
+- `login.path` : chemin sous l’adresse du compte ; `{username}` et les paramètres y sont encodés (`/v1/auth/userpass/login/{username}`), `{password}` jamais.
+- `login.body` : corps JSON modèle (`form: true` pour un formulaire) ; `{username}`, `{password}` et les paramètres y sont remplacés, et seulement là. `method` : `POST` par défaut.
+- `login.token` : chemin pointé du jeton dans la réponse (`jwt`, `auth.client_token`) ou `header:<nom>` ; `login.expiresIn` : chemin pointé de sa durée de vie en secondes (`auth.lease_duration`), sans lui le jeton vaut jusqu’au premier refus.
+- `apply` : en-tête qui porte le jeton, `{ "header": "X-Vault-Token" }` ; à défaut `Authorization: Bearer <jeton>`.
+
+OpenBao userpass : `"login": { "path": "/v1/auth/userpass/login/{username}", "body": { "password": "{password}" }, "token": "auth.client_token", "expiresIn": "auth.lease_duration" }, "apply": { "header": "X-Vault-Token" }`.
+
+`secretUrl` : toute l’adresse du compte est secrète (agenda publié dont l’adresse porte un jeton). L’entrée du coffre est de type `token` et sa valeur est l’adresse complète ; le client n’a pas de `baseUrl`. `path` reste sous cette adresse et ses paramètres sont gardés ; l’adresse et ses morceaux sont masqués partout.
+
+#### Secrets scellés : `sealed`, `secrets`
+
+Un service qui **rend** des secrets (valeurs d’un coffre OpenBao, secret d’un client Keycloak) déclare les champs à sceller dans son client :
+
+```json
+"sealed": [{ "path": "/v1/{mount}/data/**", "fields": ["data.data.*"] }]
+```
+
+- `path` : `*` vaut un segment, `**` la suite du chemin, `{param}` la valeur du paramètre du compte (un segment quelconque s’il n’en a pas). `methods` : méthodes concernées (toutes à défaut). `fields` : chemins pointés avec `*` ; sans champ, toute la réponse.
+- Dans la réponse, chaque champ est remplacé par une **référence** `alfred-secret-ref:v1:…`, valable **cinq minutes, pour ce module et ce service**. Le reste de la réponse est lisible ; une valeur scellée répétée ailleurs (autre champ, en-tête) y est masquée. Une réponse scellée n’est jamais mise en cache ; un chemin scellé ne se lit ni par `download`, ni par `stream`, ni par `socket`, ni en `responseType: "base64"`.
+- Les règles `sealed` font partie de ce que l’utilisateur valide : les retirer remet le client « à valider ».
+
+La fonction rend les références à la page telles quelles. La page **ne reçoit jamais la valeur** :
+
+```ts
+import { secrets } from "@alfred/sdk";
+
+secrets.isRef(value): boolean;
+// Boîte de la coquille « Afficher » / « Copier » ; rend { shown }, jamais la valeur. Page ou panneau seulement.
+secrets.reveal(ref, { label: "DB_PASSWORD" }): Promise<{ shown: boolean }>;
+// L’utilisateur choisit où enregistrer ; chaque ligne vient d’une référence (`ref`) ou d’une valeur ordinaire.
+secrets.writeEnvFile({ name: ".env", entries: [{ name: "DB_PASSWORD", ref }, { name: "PORT", value: 5432 }] }): Promise<{ saved: boolean; written?: number }>;
+```
+
+Affiche une référence comme un secret masqué (« •••• ») avec un bouton « Afficher » qui appelle `secrets.reveal` ; ne la montre pas en clair. L’affichage et l’enregistrement sont notés au journal, sans la valeur. Une fonction ne peut ni afficher ni écrire un secret.
+
+**Recopier une valeur vers un autre compte du même service** (coffre de prod vers recette) : une requête `sealed: true` vers un chemin scellé de ce service ; Alfred remplace en natif les références du corps (`body` ou `form`) par leurs valeurs.
+
+```ts
+await client("openbao", { instance: "recette" }).request({
+  method: "POST", path: "/v1/{mount}/data/app", body: { data: { DB_PASSWORD: ref } }, sealed: true,
+});
+```
+
+Partout ailleurs une référence est **refusée**, jamais remplacée en silence : dans le chemin, les paramètres ou les en-têtes, dans le corps d’une requête sans `sealed: true`, vers un chemin non scellé, vers un autre service, ou venue d’un autre module. Une référence expirée est refusée aussi : relis la valeur.
 
 Un client déclaré ou modifié par l’agent est « à valider » : l’agent range son secret avec `vault_store`, le relie (`auth.secret`, ou le `secret` de chaque instance), le valide avec `validate_client`, puis accorde l’accès à la page avec `grant_access` (voir AGENTS.md). Chaque instance se valide séparément : modifier une méthode ne remet « à valider » que les instances qui l’utilisent.
+
+### Fichiers, flux et WebSocket
+
+Tout ce qui suit s’écrit, comme `request`, dans une fonction du connecteur : même adresse bornée, même authentification posée par Alfred, même accord, même journal. Ce qui revient du service est débarrassé des secrets du compte, même dans un binaire.
+
+**Envoyer un fichier.** Le fichier est d’abord dans les fichiers du module (`files.save`, `files.pick` depuis la page, un téléchargement) ; la fonction le désigne par son identifiant, jamais par un chemin, et un module n’envoie que les siens (2 Go au plus).
+
+- `multipart: [{ name: "comment", value: "…" }, { name: "file", file: "<id>", filename?, mime? }]` : formulaire `multipart/form-data` (pièce jointe Jira ou GitLab) ; la frontière et `Content-Type` sont posés par Alfred.
+- `file: "<id>"` : le contenu tel quel, avec sa longueur et son type (dépôt d’un artefact par `PUT` dans Artifactory ou Nexus).
+- `form: { … }` : formulaire `application/x-www-form-urlencoded`.
+
+Un seul corps par requête : `body`, `form`, `multipart` ou `file`.
+
+**Recevoir un binaire.** `responseType: "base64"` rend `body` en base64 (une image, une icône : 5 Mo au plus) ; `"text"` force le texte. Au-delà, ou pour un fichier à garder, `download` :
+
+```ts
+interface ClientDownload { status: number; ok: boolean; headers: Record<string, string>; file: FileInfo | null; body?: unknown }
+```
+
+`client(id).download(path, { name, query, … })` écrit la réponse en flux dans les fichiers du module (2 Go au plus), avec son SHA-256, sans passer par la mémoire de la fonction ; le fichier n’apparaît qu’une fois complet. `name` omis : le nom donné par le service (`Content-Disposition`), sinon le dernier segment du chemin. Un statut d’erreur ne laisse aucun fichier : `file` vaut `null` et `body` porte la réponse. Une transmission muette plus de deux minutes est abandonnée. La fonction rend `file.id` à la page, qui l’affiche (`DocumentViewer`), l’ouvre (`files.open`) ou l’enregistre (`files.export`).
+
+```ts
+// functions/telecharger-artefact.ts
+import { client } from "@alfred/sdk";
+
+export default async function ({ chemin, instance }: { chemin: string; instance?: string }) {
+  const reponse = await client("artifactory", { instance }).download(`/artifactory/${chemin}`);
+  if (!reponse.ok || !reponse.file) throw new Error(`Artifactory a répondu ${reponse.status}.`);
+  return { fichier: reponse.file.id, nom: reponse.file.name, taille: reponse.file.size, sha256: reponse.file.sha256 };
+}
+```
+
+**Flux et WebSocket : les canaux.** Une réponse qui ne finit pas (journal suivi, SSE, `docker logs --follow`) ou une console WebSocket ne tient pas dans une réponse de fonction. La fonction ouvre un **canal** et rend son identifiant ; la page du module le lit et l’écrit, sans jamais joindre le compte.
+
+```ts
+interface ClientChannel { status: number; ok: boolean; headers: Record<string, string>; channel: string | null; body?: unknown; format?: string; protocol?: string | null }
+
+channels.read(channel: string, options?: { after?: number; wait?: number }): Promise<{
+  events: Array<{ seq: number; type: "data" | "close" | "error"; data?: string; base64?: boolean; event?: string; id?: string; stream?: "stdout" | "stderr" }>;
+  next: number; closed: boolean; reason: string | null; dropped: number; kind: "stream" | "socket";
+}>;
+channels.write(channel: string, message: string | { data: string }): Promise<void>; // WebSocket ; data en base64 ; 64 Kio
+channels.close(channel: string): Promise<void>;
+useChannel(channel: string | null, options?: { keep?: number }): { events; closed; reason; error; write; close };
+```
+
+- `client(id).stream(path, { query, format })` : `format` `"auto"` (d’après le type de la réponse : `text/event-stream` en SSE, `application/vnd.docker.multiplexed-stream` en journaux Docker, le reste en lignes), `"lines"` (une ligne par événement), `"sse"` (`data`, `event`, `id`), `"docker"` (une ligne par événement avec `stream` : `stdout` ou `stderr` ; un conteneur avec TTY est lu en lignes) ou `"raw"` (morceaux en base64).
+- `client(id).socket(path, { query, headers })` : WebSocket (`wss://` pour une adresse `https://`) ; `headers` peut porter `Sec-WebSocket-Protocol`. Les messages texte arrivent en `data`, les binaires en base64 (`base64: true`).
+- Un statut d’erreur (ou un service qui ne passe pas au WebSocket) n’ouvre pas de canal : `channel` vaut `null` et `body` porte la réponse.
+- `channels.read` rend les événements après `after` ; avec `wait` (25 s au plus), il attend qu’il en arrive : lire en boucle avec `after = next`. La fin arrive en dernier événement (`close`, ou `error` avec la raison) et `closed` passe à vrai. Au-delà de 5 000 événements ou 4 Mo non lus, les plus anciens sont oubliés (`dropped`).
+- `useChannel(id)` fait cette boucle pour une page : il rend les événements `data` reçus (les 2 000 derniers, `keep` pour changer), `closed`, `reason`, et `write` et `close`.
+- Un canal appartient au module qui l’a ouvert : une autre page de ce module peut le lire, un autre module jamais. Il se ferme quand la page (ou le panneau) qui le lisait disparaît, après 10 minutes sans lecture, ou deux minutes s’il n’a jamais été lu ; 16 canaux ouverts au plus par module.
+
+```ts
+// functions/suivre-journal.ts : ouvre le journal d’un conteneur et rend le canal.
+import { client } from "@alfred/sdk";
+
+export default async function ({ conteneur, environnement }: { conteneur: string; environnement: number }) {
+  const reponse = await client("portainer").stream(`/api/endpoints/${environnement}/docker/containers/${conteneur}/logs`, {
+    query: { follow: true, stdout: true, stderr: true, tail: 200 },
+  });
+  if (!reponse.ok || !reponse.channel) throw new Error(`Portainer a répondu ${reponse.status}.`);
+  return { canal: reponse.channel };
+}
+```
+
+```tsx
+// pages/journal.tsx
+import { functions, useAsync, useChannel } from "@alfred/sdk";
+
+export default function Journal() {
+  const ouvert = useAsync(() => functions.call<{ canal: string }>("suivre-journal", { conteneur: "web", environnement: 1 }), []);
+  const journal = useChannel(ouvert.data?.canal);
+  return <pre>{journal.events.map((ligne) => `${ligne.stream === "stderr" ? "! " : ""}${ligne.data}`).join("\n")}</pre>;
+}
+```
+
+Une console (`client("portainer").socket("/api/websocket/exec", { query: { id, endpointId } })`) se lit de même, et la page écrit ce que tape l’utilisateur par `journal.write(texte)`.
 
 ## 7. IA
 
@@ -371,6 +514,16 @@ export function analyser(ticket: { titre: string; description: string }) {
   });
 }
 ```
+
+### `ai.watch` : relancer un agent sur un événement
+
+```ts
+ai.watch(options: { conversationId: string; event: string; match?: Record<string, unknown>; timeoutMinutes?: number; label?: string }):
+  Promise<{ id: string; status: "waiting"; deadline: number }>;
+ai.cancelWatch(id: string): Promise<void>;
+```
+
+Relance une conversation lancée par ce module quand l’événement de module `event` (« module/evenement », comme la fin d’une CI) arrive, ou à l’échéance (`timeoutMinutes`, 60 par défaut, de 1 minute à 7 jours). `match` filtre le contenu : chaque clé doit y valoir la même chose (`{ pipeline: 42 }`). Alfred dépose alors un message dans la conversation, avec le contenu de l’événement en JSON (ou « n’est pas arrivé avant l’échéance »), et l’agent reprend ; une seule relance par suivi. Le suivi est gardé dans la base de l’espace : il survit à une fermeture d’Alfred, et un événement publié pendant la fermeture est vu au retour. Archiver la conversation arrête ses suivis ; la ligne « Relance à la fin de … · au plus tard … » au-dessus de la saisie montre chacun, avec sa croix. Vingt suivis en attente au plus par conversation. L’agent pose lui-même un suivi avec l’outil `wait_for_event` (et l’annule avec `cancel_wait`). Pour « une fois par occurrence observée », publie avec `events.publish(event, payload, { occurrence })`.
 
 ### `ai.decide` : une décision locale, rapide et gratuite
 
@@ -425,12 +578,22 @@ ai.startAgent<Result>(options: {
   instruction: string;
   context?: unknown;
   title?: string;
-  functions?: string[];
+  functions?: Array<string | { name: string; input: Record<string, unknown> }>;
+  folder?: { id: string; path?: string };          // dossier accordé au module (`folders`), sous-dossier facultatif
+  mode?: "espace-de-travail" | "complet";          // "espace-de-travail" par défaut
+  coordinator?: boolean;                           // la conversation répartit le travail entre d’autres agents
   resultSchema?: Record<string, unknown>;
 }): Promise<{ conversationId: string; message: string; result?: Result }>;
+ai.sendToAgent(conversationId: string, message: string): Promise<void>;
 ```
 
-Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. L’agent est en autonomie stricte (chaque action lui est demandée à l’utilisateur) et n’agit que sur le module : `check`, `db_schema`, `db_query` et `call_function` sur ce module, rien qui change la structure de l’espace de travail. Les `functions` (`"fonction"` ou `"module/fonction"`) deviennent des outils de cet agent ; celle d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot` ; pour un choix fermé, `ai.decide`.
+Lance une vraie conversation, affichée dans le panneau de droite de la page (lancée par une fonction, elle n’apparaît que dans la page Agent) ; l’utilisateur la suit et peut répondre. La première fois, l’utilisateur accorde à la page (ou aux fonctions du module) le droit de lancer un agent ; un refus rejette la promesse. La promesse se résout à la fin du premier tour avec le dernier message ; avec `resultSchema`, l’agent finit par un bloc JSON validé, rendu dans `result` (sinon rejet). Pour une simple réponse structurée, préfère `ai.oneShot` ; pour un choix fermé, `ai.decide`.
+
+- **Dossier.** `folder` désigne un dossier que l’utilisateur a accordé au module (`folders.pick`), et `path` un sous-dossier : l’agent y démarre et y travaille. Un dossier non accordé, absent ou qui sort du dossier accordé rejette la promesse, avant toute demande. Sans `folder`, l’agent travaille dans le dossier du module (`modules/<module>`).
+- **Mode, deux seulement.** `"espace-de-travail"` (par défaut) : l’agent lit, écrit et lance ses commandes dans son dossier de travail, sans aucune demande ; tout ce qui en sortirait est refusé, jamais proposé (bac à sable de Codex sans `/tmp`, bac à sable des commandes de Claude Code, `external_directory` refusé chez OpenCode). `"complet"` : l’agent fait ce qu’il veut, sans aucune demande d’autorisation ni accord préalable. Tout autre mode rejette la promesse. Le mode est visible, et modifiable par l’utilisateur, sous la saisie de la conversation.
+- **Outils.** L’agent n’agit que sur le module : `check`, `db_schema`, `db_query`, `call_function`, `wait_for_event` et `cancel_wait` sur ce module, rien qui change la structure de l’espace de travail. Les `functions` deviennent ses outils : `"fonction"`, `"module/fonction"`, ou `{ name, input }`, dont les entrées sont **imposées** — elles disparaissent du schéma que voit le modèle et remplacent toujours ce qu’il envoie (`{ name: "lire-produit", input: { produit: "alpha" } }` : l’agent ne lit que « alpha »). Une fonction d’un autre module demande l’accord de l’utilisateur, comme `functions.call`. Ce ne sont pas des outils MCP de plus : ce sont les fonctions d’Alfred.
+- **Coordinatrice.** Avec `coordinator: true`, la conversation reçoit les outils de délégation (voir « Délégation entre agents » dans AGENTS.md) ; ses délégués ne dépassent pas son mode et gardent son périmètre.
+- `ai.sendToAgent` envoie un message à une conversation que **ce module** a lancée ; elle reprend si elle était au repos, sinon le message rejoint sa file. Une autre conversation est refusée.
 
 ```tsx
 import { ai } from "@alfred/sdk";
@@ -507,12 +670,13 @@ export default function Dicter() {
 }
 ```
 
-## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `useTopBarSearch`, `badge`
+## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `useTopBarSearch`, `badge`, `menu`
 
 ```ts
-shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
+shell.notify(options: NotifyOptions): Promise<void>;   // section « Notifications » ci-dessous : actions, persistante
 shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@suffixe » pour l’une de ses copies)
-shell.openWindow(reference?: string): Promise<void>;    // ouvre la page (sans argument : celle-ci) seule dans sa fenêtre
+shell.openWindow(reference?: string, options?: { params?: object; key?: string; title?: string }): Promise<void>;
+// ouvre la page (sans argument : celle-ci) seule dans sa fenêtre ; avec `params`, sur un élément précis
 shell.setPanelVisible(visible: boolean): Promise<void>; // panneau de droite de la page
 shell.publish(selection: unknown): Promise<void>;       // sélection transmise au panneau
 shell.send(message: unknown): Promise<void>;            // page vers panneau, ou panneau vers page
@@ -530,6 +694,8 @@ interface PageContext {
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
   instance: string | null; // compte du besoin que suit la page (`perInstance`), ou son seul compte ; sinon null
   accounts: Record<string, string>; // compte choisi par l’utilisateur pour chaque besoin de la page : { jira: "acme" }
+  entry: { id: string; label: string } | null; // entrée du menu ouverte dans la page (`menu`), ou celle de sa page pour un panneau
+  params: Record<string, unknown> | null; // paramètres de la fenêtre ouverte sur un élément (`shell.openWindow`), sinon null
 }
 ```
 
@@ -569,10 +735,102 @@ const visibles = (tickets.data ?? []).filter((ticket) => recherche.matches(ticke
 - Réservée à une page : dans un panneau de droite, `useTopBarSearch` est refusé (erreur de la page) ; un panneau garde un `SearchField` ou `Page search`.
 - Jamais de `SearchField` en tête d’une page ni de barre de filtres à part pour chercher : un `SearchField` ne sert que dans un bloc, pour une liste secondaire.
 
+### Entrées du menu de gauche : `menu`, `useMenuEntryAction`
+
+```ts
+menu.setZone(options: { title?: string; order?: "page" | "user"; visible?: number }, target?: { page?: string }): Promise<void>;
+menu.setEntries(entries: MenuEntry[], target?: { page?: string }): Promise<void>;   // remplace toute la zone (200 au plus)
+menu.updateEntry(id: string, patch: Partial<MenuEntry>, target?: { page?: string }): Promise<void>; // null efface un champ
+menu.removeEntry(id: string, target?: { page?: string }): Promise<void>;
+menu.clear(target?: { page?: string }): Promise<void>;                               // retire la zone
+useMenuEntryAction(handler: (event: { entry: string; action: string; value?: string }) => void): void;
+
+interface MenuEntry {
+  id: string;                 // propre à la zone : identifiant du produit, de la ligne…
+  label: string;              // une ligne, 120 caractères au plus
+  icon?: string;              // nom Lucide ; sans icône, la pastille d’état tient lieu de glyphe
+  color?: "steel" | "blue" | "violet" | "pink" | "red" | "orange" | "green" | "teal";
+  status?: "ok" | "warning" | "error" | "running" | "waiting"; // pastille : bon, à surveiller, en échec, au travail, réponse attendue
+  badge?: number;             // compteur en pastille, comme `badge`
+  page?: string;              // autre page du module ouverte au clic (« vue »), sinon la page de la zone
+  actions?: Array<{ id: string; label: string; icon: string; function?: string }>; // 3 au plus, au survol
+}
+```
+
+Une page peut, en plus de ses onglets, faire apparaître des **entrées** dans le menu de gauche : une par produit, par client, par tableau suivi. Elles forment **sa zone**, sous l’entrée de sa section, après un petit séparateur, avec un titre facultatif (« Produits ») qui la replie. Un clic sur une entrée ouvre la page (ou la page `page` du module) **avec cette entrée** : la page la lit dans `usePageContext()?.entry` et montre l’objet choisi ; son panneau reçoit la même entrée. L’entrée de la section, elle, ouvre la page sans entrée (`entry` vaut `null`) : la page montre alors sa vue d’ensemble.
+
+- La zone est conservée d’un lancement à l’autre, comme le compteur. La page la recalcule depuis sa source (table, fichier, service) à son chargement et après chaque écriture ; une fonction planifiée ou abonnée à un événement la tient à jour quand la page est fermée, en nommant la page : `menu.setEntries(entrees, { page: "produits" })`.
+- `menu.setEntries` remplace toute la liste : c’est le moyen simple de la régénérer depuis une requête. `menu.updateEntry` change l’état ou le compteur d’une seule entrée.
+- `order: "page"` (défaut) garde l’ordre donné ; `order: "user"` laisse l’utilisateur déplacer les entrées (Alt+↑, Alt+↓), Alfred retient son ordre et range les nouvelles à la fin. `visible: 5` montre cinq entrées puis « Afficher plus » ; l’entrée ouverte reste toujours visible.
+- `page` (dans `target`) nomme une autre page du même module, jamais celle d’un autre module ; une copie de page (« liste@recette ») a sa propre zone. Masquer la page masque sa zone.
+- Les **actions** s’affichent en icônes au survol ou au focus de la ligne. Sans `function`, la page les reçoit par `useMenuEntryAction` : Alfred l’ouvre avec l’entrée puis lui remet l’action (même si elle n’était pas affichée). Avec `function`, la fonction du module est appelée avec `{ entry, action, page }`, sans ouvrir la page. L’action `rename` ouvre la saisie du libellé dans la ligne (F2 aussi) et remet `value`, le nouveau libellé : la page l’enregistre dans sa source puis met l’entrée à jour.
+- Une entrée invalide (état ou couleur hors liste, libellé vide, identifiant en double) fait refuser tout l’appel, sans rien changer.
+
+```tsx
+// pages/produits.tsx : une entrée par produit, avec son état ; l’entrée ouverte montre son produit.
+import { db, menu, useAsync, useMenuEntryAction, usePageContext } from "@alfred/sdk";
+
+async function publierMenu() {
+  const produits = await db.query<{ id: string; nom: string; etat: string; alertes: number }>(
+    "SELECT id, nom, etat, alertes FROM produits_liste ORDER BY nom",
+  );
+  await menu.setZone({ title: "Produits", order: "user", visible: 8 });
+  await menu.setEntries(produits.map((produit) => ({
+    id: produit.id,
+    label: produit.nom,
+    icon: "box",
+    status: produit.etat === "ko" ? "error" : "ok",
+    badge: produit.alertes,
+    actions: [{ id: "rename", label: "Renommer", icon: "pencil" }, { id: "archive", label: "Archiver", icon: "archive" }],
+  })));
+}
+
+export default function Produits() {
+  const entry = usePageContext()?.entry ?? null;
+  const produits = useAsync(async () => { await publierMenu(); return db.query("SELECT * FROM produits_liste"); }, []);
+  useMenuEntryAction(async ({ entry, action, value }) => {
+    if (action === "rename" && value) await db.execute("UPDATE produits_liste SET nom = ? WHERE id = ?", [value, entry]);
+    if (action === "archive") await db.execute("UPDATE produits_liste SET archive = 1 WHERE id = ?", [entry]);
+    await publierMenu();
+    produits.reload();
+  });
+  // entry === null : vue d’ensemble ; sinon le produit choisi dans le menu.
+  …
+}
+```
+
+### Fenêtre sur un élément précis : `shell.openWindow(page, { params, key, title })`
+
+Une page ouvre une autre page du module seule dans sa fenêtre, sur un élément précis : le journal d’une exécution, la console d’un conteneur, une spécification. La page de la fenêtre lit `usePageContext()?.params` (son panneau aussi) ; ailleurs, `params` vaut `null`.
+
+- `params` est un objet JSON de 16 Kio au plus : un identifiant suffit, la page recharge le reste.
+- `key` : la même clé ramène au premier plan la fenêtre déjà ouverte, une autre clé en ouvre une autre. Sans `key`, la clé est celle des paramètres ; sans paramètres, une fenêtre par page.
+- `title` précède le titre de la page dans la barre de la fenêtre : « Build #42 — Journal ».
+- « Ouvrir dans une fenêtre » d’une entrée du menu (action `window`) ouvre sa page sur cette entrée, une fenêtre par entrée : la page y lit `usePageContext()?.entry` comme dans la fenêtre principale.
+- La page Agent ne s’ouvre pas encore seule dans sa fenêtre.
+
+```ts
+await shell.openWindow("journal", { params: { build: 42 }, key: `build-42`, title: "Build #42" });
+// pages/journal.tsx
+const build = usePageContext()?.params?.build;
+```
+
 ### Notifications et compteur : `shell.notify`, `badge`
 
 ```ts
-shell.notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }): Promise<void>;
+shell.notify(options: {
+  title: string;
+  description?: string;
+  tone?: "info" | "success" | "warning" | "error";
+  persistent?: boolean; // reste à l’écran jusqu’à ce qu’on la ferme ou qu’on choisisse une action
+  actions?: Array<{     // deux au plus ; une seule cible par action
+    label: string;
+    navigate?: string;  // page ouverte (« executions », ou « module/page »), avec `entry` : sur une entrée de sa zone du menu
+    entry?: string;
+    window?: { page: string; params?: object; key?: string; title?: string }; // fenêtre sur un élément précis
+    function?: { id: string; input?: unknown };                              // fonction du module
+  }>;
+}): Promise<void>;
 badge.set(count: number, options?: { page?: string }): Promise<{ count: number }>;      // 0 efface la pastille
 badge.increment(by?: number, options?: { page?: string }): Promise<{ count: number }>; // 1 par défaut, négatif pour retirer
 badge.clear(options?: { page?: string }): Promise<{ count: number }>;                  // remise à zéro
@@ -585,6 +843,7 @@ badge.clear(options?: { page?: string }): Promise<{ count: number }>;           
 - Sans `page`, le compteur est celui de la page qui appelle ; un panneau règle celui de sa page.
 - `page` nomme une autre page du même module (« boite », ou « boite@suffixe » pour l’une de ses copies) ; jamais celle d’un autre module. Depuis une copie (« liste@recette »), une page nommée sans suffixe est sa copie de même suffixe, si elle existe.
 - Une fonction (planifiée, webhook) nomme toujours la page : c’est ainsi qu’un relevé fait en arrière-plan prévient l’utilisateur alors que la page est fermée.
+- Les **actions** d’une notification s’affichent en boutons dans la surimpression et restent dans la cloche : « Journal » ouvre la fenêtre de l’exécution, « Relancer » appelle une fonction du module. Elles sont vérifiées au moment de la notification (page de l’espace, fonction du même module, deux au plus) : une action mal formée fait refuser la notification. Une notification du système (Alfred en arrière-plan) n’a pas de boutons. `persistent` est réservé à ce qui attend l’utilisateur (un échec à examiner) ; une fin d’exécution ordinaire disparaît seule.
 - Pour un nombre que la page sait recompter, préfère `badge.set` (le total exact) à `badge.increment`.
 
 ```ts
@@ -795,13 +1054,16 @@ Un module signale ce qui lui arrive (« un ticket est créé ») ; d’autres mo
 ```
 
 ```ts
-events.publish(event: string, payload?: unknown): Promise<{ event: string; subscribers: number }>;
+events.publish(event: string, payload?: unknown, options?: { occurrence?: string }):
+  Promise<{ event: string; subscribers: number; duplicate?: boolean }>;
 // La fonction abonnée reçoit :
 interface ModuleEvent<Payload> { event: string; from: string; payload: Payload; publishedAt: string }
 ```
 
 - `publish` n’accepte que les événements déclarés dans `events.publishes` du module ; `id` en minuscules et tirets ; `schema` (facultatif) décrit le contenu pour les abonnés. Le contenu fait 256 Ko au plus : envoie un identifiant et l’essentiel, pas un fichier.
 - `subscribes[].event` : « module/événement » (« événement » seul pour un événement du module lui-même) ; `function` : fonction du module abonné, sans préfixe.
+- `occurrence` (1 à 200 caractères) : une occurrence déjà publiée pour cet événement ne l’est pas une seconde fois (`duplicate: true`, aucun abonné) — la règle « une fois par occurrence observée » d’une sonde qui revoit le même état.
+- Un événement publié relance aussi les conversations d’agent qui l’attendent (`ai.watch`, `wait_for_event`).
 - Livraison après coup, dans l’ordre de publication pour chaque abonné, même si Alfred a été fermé entre-temps ; `publish` n’attend pas les abonnés. Une fonction qui échoue est rappelée deux fois, puis la livraison reste en échec (journal, `kind: "event"`).
 - Un module abonné à un module dont il ne dépend pas (`requires`) doit en avoir l’accord : l’utilisateur le donne à la première livraison, ou toi d’avance avec `grant_access` (`to` : « taches/* », `event` : « support/ticket-cree »).
 - `check` signale (`events`) un abonnement à un événement que personne ne déclare et une fonction abonnée absente.
@@ -887,12 +1149,12 @@ export function useNotesProches(question: string) {
 Une page ou une fonction TypeScript lance un programme installé sur l’ordinateur et lit sa sortie : convertir une vidéo (`ffmpeg`), un document (`pandoc`), lire l’état d’un dépôt (`git`).
 
 ```ts
-commands.run(program: string, args?: string[], options?: { input?: string; timeout?: number }):
+commands.run(program: string, args?: string[], options?: { input?: string; timeout?: number; cwd?: { folder: string; path?: string } }):
   Promise<{ code: number | null; ok: boolean; stdout: string; stderr: string; truncated: boolean }>;
 ```
 
 - `program` : le nom seul (« git », « ffmpeg »), cherché dans le PATH ; ni chemin, ni ligne de shell. `args` passent tels quels, sans shell : ni `|`, ni `>`, ni `$VAR`, ni jokers (`*.pdf`). Pour un enchaînement, écris une fonction en script (section 2).
-- Lancé dans le dossier du module, avec l’environnement réduit des scripts ; `input` arrive sur stdin. `timeout` en secondes (60 par défaut, 120 au plus), après quoi le programme et ce qu’il a lancé sont arrêtés et la promesse rejetée.
+- Lancé dans le dossier du module (ou dans un dossier du poste accordé : `cwd: { folder, path? }`, section 18), avec l’environnement réduit des scripts ; `input` arrive sur stdin. `timeout` en secondes (60 par défaut, 120 au plus), après quoi le programme et ce qu’il a lancé sont arrêtés et la promesse rejetée.
 - **Un code de sortie non nul ne rejette pas la promesse** : teste `ok`, `code` et lis `stderr`. Le rejet signifie que le programme n’a pas pu tourner : nom invalide, introuvable, accès refusé, délai dépassé. stdout est coupé au-delà de 1 Mo (`truncated`).
 - La première fois, l’utilisateur accorde le programme à la page (ou aux fonctions du module) : la question montre son chemin. Accorde-le d’avance avec `grant_access` (`command` : « ffmpeg ») pour ce que tu construis. Les fichiers du module (section 9) sont hors du dossier du module : pour qu’un programme les traite, passe par une fonction en script et le pont du SDK.
 - Chaque lancement va au journal (`kind: "command"`).
@@ -935,3 +1197,85 @@ await db.execute("INSERT INTO carnet_contacts (id, nom, email) VALUES (?1, ?2, ?
 - Ce qui change ici part dans le dépôt ; ce qui change dans le dépôt arrive dans la base, comme une écriture (déclencheurs de recherche et d’historique compris, auteur `partage`). Une même ligne modifiée des deux côtés : la version de l’équipe l’emporte, la version locale est notée au journal (`kind: "sync"`).
 - Une page qui charge ses données avec un gabarit ou `useAsync` se recharge d’elle-même quand des données arrivent de l’équipe. Rien d’autre à écrire : pas d’appel de synchronisation dans la page.
 - Ne partage que les données de l’équipe : un réglage personnel ou un brouillon reste dans une table non partagée.
+
+## 18. Dossiers du poste et Git local : `folders`, `git`
+
+Pour travailler sur des dossiers de l’ordinateur : les dépôts locaux des composants d’un produit, le dépôt de configuration d’une équipe (`.oneapp/`), un dossier de documentation. L’utilisateur accorde un dossier **au module** (ses pages, ses panneaux et ses fonctions) ; il le voit et le retire dans la fiche du module (Réglages → Modules → Dossiers du poste).
+
+```ts
+interface Folder { id: string; path: string; label: string; grantedAt: string; grantedBy: "user" | "agent" }
+interface FolderEntry { path: string; name: string; kind: "file" | "dir" | "link"; size: number; modifiedAt: string | null }
+// Page ou panneau seulement (un geste de l’utilisateur) :
+folders.pick(options?: { title?: string; label?: string }): Promise<Folder | null>; // sélecteur du système ; null s’il annule
+folders.open(folder: string, path?: string, app?: "explorer" | "editor" | "terminal"): Promise<{ opened: string }>;
+// Partout :
+folders.list(): Promise<Folder[]>;
+folders.get(folder: string): Promise<Folder>;
+folders.forget(folder: string): Promise<void>;                    // retire l’accord, les fichiers restent
+folders.entries(folder: string, path?: string, options?: { recursive?: boolean; glob?: string }):
+  Promise<{ entries: FolderEntry[]; truncated: boolean }>;        // 10 000 entrées au plus, sans entrer dans .git
+folders.stat(folder: string, path: string): Promise<FolderEntry | null>;
+folders.readText(folder: string, path: string): Promise<string>; // UTF-8, BOM retiré
+folders.readFile(folder: string, path: string): Promise<{ data: string }>; // base64
+folders.readJson<T>(folder: string, path: string): Promise<T>;
+folders.writeText(folder: string, path: string, text: string): Promise<void>; // atomique, parents créés
+folders.writeFile(folder: string, path: string, data: string): Promise<void>; // base64
+folders.writeJson(folder: string, path: string, data: unknown): Promise<void>; // indenté de 2, retour final
+folders.mkdir(folder: string, path: string): Promise<void>;
+folders.remove(folder: string, path: string): Promise<void>;     // vers la corbeille du système
+folders.rename(folder: string, path: string, to: string): Promise<void>; // sans écraser
+folders.watch(folder: string, handler: (paths: string[]) => void): Promise<() => void>; // page ou panneau
+```
+
+- `folder` est l’`id` du dossier (`folders.pick` ou `folders.list`) : garde-le dans une table du module, à côté de la ligne qu’il concerne (un produit, un composant). Ne garde jamais le chemin.
+- Chaque `path` est relatif au dossier, avec des `/` : ni `..`, ni chemin absolu, ni lecteur (`C:`), ni lien symbolique qui en sort. Rien ne s’écrit dans `.git` : passe par `git.*`. 20 Mo par fichier.
+- `glob` : `*` et `?` sur un nom (`*.md`), `**` pour des sous-dossiers ; un motif avec `/` porte sur le chemin entier et parcourt les sous-dossiers.
+- `folders.watch` prévient par lots (environ 300 ms) : les chemins changés, et `.git` (ou `api/.git`) quand l’état d’un dépôt change (branche, index, commit). Relis alors `git.status`.
+- `folders.open` : `explorer` ouvre le dossier (ou montre le fichier) dans le Finder ou l’Explorateur ; `editor` l’ouvre dans l’éditeur de code du poste (VS Code, Cursor, Zed ou Sublime Text, à défaut l’application du système) ; `terminal` ouvre un terminal dans le dossier (Terminal sur Mac ; Windows Terminal, à défaut Git Bash, à défaut l’invite de commandes sous Windows).
+- Pour lancer un programme du poste dans un dossier accordé : `commands.run("npm", ["test"], { cwd: { folder, path: "api" } })` (section 16).
+- Une fonction en script a les mêmes méthodes par le pont (`folders.readText`, `git.status`…), sauf `pick`, `open` et `watch`.
+
+```ts
+git.repositories(folder): Promise<Array<{ repo: string; name: string }>>; // dépôts du dossier, sur trois niveaux
+git.status(folder, { repo? }): Promise<GitStatus>;
+git.branches(folder, { repo? }): Promise<{ current: string | null; local: GitBranch[]; remote: GitBranch[] }>;
+git.tags(folder, { repo? }): Promise<GitTag[]>;                    // du plus récent au plus ancien
+git.log(folder, { repo?, ref?, file?, since?, limit? }): Promise<GitCommit[]>; // 50 par défaut, 500 au plus
+git.compare(folder, { repo?, base, head? }): Promise<{ ahead: number; behind: number; commits: GitCommit[] }>;
+git.diff(folder, { repo?, from?, to?, file?, staged? }): Promise<{ text: string; truncated: boolean; files: … }>;
+git.show(folder, ref, file, { repo? }): Promise<string>;
+git.fetch(folder, { repo?, remote? }): Promise<GitStatus>;
+git.pull(folder, { repo?, rebase? }): Promise<GitStatus>;
+git.push(folder, { repo?, remote?, branch?, tag? }): Promise<{ remote: string; branch?: string; tag?: string }>;
+git.commit(folder, { repo?, message, paths? }): Promise<{ commit: string | null }>;
+git.switch(folder, branch, { repo?, create?, start? }): Promise<GitStatus>;
+git.createTag(folder, { repo?, name, ref?, message? }): Promise<void>;
+git.clone(folder, url, path): Promise<void>;
+interface GitStatus { repo: string; branch: string | null; head: string | null; upstream: string | null;
+  ahead: number; behind: number; clean: boolean; operation: "merge" | "rebase" | "cherry-pick" | "revert" | null;
+  files: { path: string; from?: string; kind: "modified" | "added" | "deleted" | "renamed" | "copied" | "typechange" | "untracked" | "conflicted"; staged: boolean; unstaged: boolean }[] }
+interface GitCommit { id: string; message: string; date: string; author: string; files: string[]; lines: ({ added: number; removed: number } | null)[] }
+```
+
+- `repo` : le dossier du dépôt, relatif au dossier accordé (`"api"` pour le composant `api` d’un produit) ; le dossier lui-même par défaut. Un dépôt plus grand qui contiendrait le dossier accordé n’est jamais atteint : hors d’un dépôt, `git.status` rejette « … n’est pas un dépôt Git ».
+- `file` et `paths` sont relatifs au dépôt. `ref`, `from`, `to`, `base`, `head` : une branche, un tag, `origin/main`, `HEAD~2` ou un identifiant ; jamais une plage (`a..b`) : `git.compare` est fait pour ça.
+- `git.commit` enregistre sous l’identité git de l’utilisateur (celle d’Alfred si le poste n’en a pas) ; avec `paths`, seulement ces chemins, nouveaux fichiers compris, même si d’autres changements étaient indexés. `commit` vaut `null` s’il n’y avait rien à enregistrer.
+- `git.pull` avance rapidement seulement ; s’il refuse (des commits des deux côtés), propose `rebase: true`, qui rejoue les commits locaux et annule tout en cas de conflit. `git.push` pousse la branche courante vers son distant et la fait suivre si elle ne suivait rien ; jamais de force : s’il refuse, tire puis repousse. Un tag se pousse avec `{ tag }`.
+- `git.clone` : https, http, ssh ou `utilisateur@hôte:chemin`, dans un sous-dossier neuf du dossier accordé.
+- Aucun crochet ne tourne (husky compris), ni filtre, éditeur ou aide d’identification réglé dans le dépôt : un `.git/config` qui ferait lancer un programme est refusé avec la clé en cause. Les fins de ligne restent celles du poste (`core.autocrlf`). Le réseau passe par les identifiants git, le proxy et les certificats du poste ; un échec dit quoi vérifier (`error.message`), la sortie de git restant dans `error.detail.stderr`.
+- Une opération à la fois par dépôt ; les écritures et les opérations réseau vont au journal (`kind: "git"`).
+
+```tsx
+import { folders, git, shell } from "@alfred/sdk";
+
+// Le partage d’équipe en fichiers : tirer, modifier la configuration partagée, enregistrer et pousser.
+export async function renommerProduit(depot: string, id: string, nom: string) {
+  await git.pull(depot);
+  const chemin = `.oneapp/produits/${id}.json`;
+  const produit = await folders.readJson<{ nom: string }>(depot, chemin);
+  await folders.writeJson(depot, chemin, { ...produit, nom });
+  await git.commit(depot, { message: `Produit ${id} renommé en ${nom}`, paths: [chemin] });
+  await git.push(depot);
+  void shell.notify({ title: "Produit renommé", description: "Partagé avec l’équipe.", tone: "success" });
+}
+```

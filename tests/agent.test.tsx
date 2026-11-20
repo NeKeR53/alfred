@@ -1,6 +1,6 @@
 /**
  * Une conversation d’agent complète dans l’application entière : le vrai harnais Claude Code de l’interface parle à
- * un faux CLI (derrière `agents.spawn`) et les outils d’Alfred posent leurs questions par le faux backend.
+ * un faux agent (derrière les commandes `agents.*`) et les outils d’Alfred posent leurs questions par le faux backend.
  */
 import "./support/dom";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -27,12 +27,14 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
     provider: string;
     cwd: string;
     conversation: string;
-    claude: Record<string, unknown>;
+    autonomy: string;
+    instructions: string;
   };
   expect(spawned.provider).toBe("claude");
   expect(spawned.cwd).toBe("/Users/lea/Maison");
-  expect(spawned.claude.permissionMode).toBe("acceptEdits");
-  expect(String(spawned.claude.appendSystemPrompt)).toContain("/Users/lea/Maison/AGENTS.md");
+  // Libre dans ses dossiers : Rust le traduit en `acceptEdits` pour Claude Code.
+  expect(spawned.autonomy).toBe("ask");
+  expect(String(spawned.instructions)).toContain("/Users/lea/Maison/AGENTS.md");
   const sent = backend.agent.written.find((message) => message.type === "user") as {
     message: { content: Array<{ text: string }> };
   };

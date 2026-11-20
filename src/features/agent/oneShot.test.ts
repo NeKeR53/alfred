@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
-import { type FakeProcess, fakeSpawn, type Spawned } from "./harness/fakeProcess.test-helper";
+import { answerTurn, type FakeSession, fakeAgents } from "./harness/fakeNative.test-helper";
 import { useHarnesses } from "./harness/installed";
 import { complete, oneShot } from "./oneShot";
 import { useAgentPreferences } from "./panel/ModelPicker";
@@ -17,7 +17,6 @@ vi.mock("../../lib/native", async (importOriginal) => ({
   invoke: native.invoke,
   onNativeEvent: native.onNativeEvent,
 }));
-vi.mock("./harness/process", () => ({ spawnProcess: vi.fn(), probe: vi.fn() }));
 
 const schema = {
   type: "object",
@@ -27,51 +26,28 @@ const schema = {
 };
 const request = { instruction: "Résume cette demande client", context: { texte: "Le portail est cassé" }, schema };
 
-/** Réponse du faux Claude Code à un appel unique : résultat structuré, ou texte seul. */
+/** Réponse du faux agent à un appel unique : résultat structuré, ou texte seul, ou erreur du CLI. */
 type Answer = { structured: unknown } | { text: string } | { error: string };
 
-/** Faux `claude -p` en appel unique : à chaque message reçu, il rend la réponse suivante de la liste. */
-function claudeAnswering(answers: Answer[]) {
+/** Faux agent en appel unique : à chaque message reçu, il rend la réponse suivante de la liste. */
+function fakeSpawn(answers: Answer[]): FakeSession[] {
   let index = 0;
-  return (process: FakeProcess) =>
-    process.onWrite((message) => {
-      if (message.type !== "user") return;
-      const answer = answers[index++];
-      queueMicrotask(() => {
-        process.send({ type: "system", subtype: "init", session_id: `ses-${index}` });
-        if ("error" in answer) {
-          process.send(
-            {
-              type: "assistant",
-              message: { id: "a", model: "<synthetic>", content: [{ type: "text", text: answer.error }] },
-              error: "authentication_failed",
-            },
-            { type: "result", subtype: "success", is_error: true, result: answer.error },
-          );
-          return;
-        }
-        const text = "text" in answer ? answer.text : JSON.stringify(answer.structured);
-        process.send(
-          { type: "assistant", message: { id: `msg-${index}`, content: [{ type: "text", text }] } },
-          {
-            type: "result",
-            subtype: "success",
-            is_error: false,
-            result: text,
-            ...("structured" in answer ? { structured_output: answer.structured } : {}),
-          },
-        );
-      });
-    });
+  return fakeAgents(native, (session) => {
+    const answer = answers[index++];
+    if ("error" in answer) {
+      session.emit(
+        { type: "error", message: `Claude Code n’a pas pu terminer sa réponse : ${answer.error}.` },
+        { type: "status", status: "idle" },
+      );
+      return;
+    }
+    if ("text" in answer) answerTurn(session, answer.text);
+    else answerTurn(session, JSON.stringify(answer.structured), answer.structured);
+  });
 }
 
-/** Texte du message envoyé au CLI lors du lancement `index`. */
-const sentText = (launch: Spawned) => {
-  const message = launch.process.written.find((line) => line.type === "user") as {
-    message: { content: Array<{ text: string }> };
-  };
-  return message.message.content[0].text;
-};
+/** Texte du message envoyé à l’agent. */
+const sentText = (launch: FakeSession) => launch.sent[0];
 const journal = () =>
   native.invoke.mock.calls.filter(([command]) => command === "journal.record").map(([, args]) => args);
 
@@ -100,19 +76,24 @@ const setPageModel = (
 
 describe("appel unique", () => {
   it("rend la réponse conforme du premier coup et l’inscrit au journal", async () => {
-    const spawned = fakeSpawn(claudeAnswering([{ structured: { titre: "Portail cassé", priorite: "haute" } }]));
+    const spawned = fakeSpawn([{ structured: { titre: "Portail cassé", priorite: "haute" } }]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual({ titre: "Portail cassé", priorite: "haute" });
 
     expect(spawned).toHaveLength(1);
-    expect(spawned[0].options).toEqual({
+    expect(spawned[0].args).toMatchObject({
+      provider: "claude",
       cwd: "/espace",
-      claude: { model: "sonnet", effort: "low", oneShot: true, jsonSchema: schema },
+      model: "sonnet",
+      effort: "low",
+      oneShot: true,
+      outputSchema: schema,
     });
+    expect(spawned[0].args).not.toHaveProperty("conversation");
     const text = sentText(spawned[0]);
     expect(text).toContain("Consigne :\nRésume cette demande client");
     expect(text).toContain('"texte": "Le portail est cassé"');
     expect(text).toContain(JSON.stringify(schema));
-    expect(spawned[0].process.killed).toBe(true);
+    expect(spawned[0].closed).toBe(true);
     expect(journal()).toEqual([
       expect.objectContaining({
         kind: "ai",
@@ -125,17 +106,15 @@ describe("appel unique", () => {
   });
 
   it("lit le JSON du texte quand le CLI ne rend pas de résultat structuré", async () => {
-    fakeSpawn(claudeAnswering([{ text: 'Voici :\n```json\n{"titre":"Portail","priorite":"basse"}\n```' }]));
+    fakeSpawn([{ text: 'Voici :\n```json\n{"titre":"Portail","priorite":"basse"}\n```' }]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual({ titre: "Portail", priorite: "basse" });
   });
 
   it("relance une fois avec les écarts, puis rend la réponse corrigée", async () => {
-    const spawned = fakeSpawn(
-      claudeAnswering([
-        { structured: { titre: "Portail", priorite: "urgente" } },
-        { structured: { titre: "Portail", priorite: "haute" } },
-      ]),
-    );
+    const spawned = fakeSpawn([
+      { structured: { titre: "Portail", priorite: "urgente" } },
+      { structured: { titre: "Portail", priorite: "haute" } },
+    ]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual({ titre: "Portail", priorite: "haute" });
 
     expect(spawned).toHaveLength(2);
@@ -143,14 +122,12 @@ describe("appel unique", () => {
     expect(sentText(spawned[1])).toContain(
       'Ta réponse précédente était invalide :\n$.priorite : valeur hors de la liste autorisée ("basse", "haute").\nCorrige-la.',
     );
-    expect(spawned.every(({ process }) => process.killed)).toBe(true);
+    expect(spawned.every(({ closed }) => closed)).toBe(true);
     expect(journal()).toEqual([expect.objectContaining({ ok: true })]);
   });
 
   it("échoue avec le détail des écarts après deux réponses invalides, et l’inscrit au journal", async () => {
-    const spawned = fakeSpawn(
-      claudeAnswering([{ structured: { titre: 3, priorite: "haute" } }, { structured: { titre: "Portail" } }]),
-    );
+    const spawned = fakeSpawn([{ structured: { titre: 3, priorite: "haute" } }, { structured: { titre: "Portail" } }]);
     const failure = await oneShot(request, "clients/demandes").catch((error: unknown) => error);
 
     expect(spawned).toHaveLength(2);
@@ -168,7 +145,7 @@ describe("appel unique", () => {
   });
 
   it("rend l’erreur du CLI non connecté sans relance", async () => {
-    const spawned = fakeSpawn(claudeAnswering([{ error: "Not logged in · Please run /login" }]));
+    const spawned = fakeSpawn([{ error: "Not logged in · Please run /login" }]);
     await expect(oneShot(request, "clients/demandes")).rejects.toThrow(
       "Claude Code n’a pas pu terminer sa réponse : Not logged in · Please run /login.",
     );
@@ -187,9 +164,9 @@ describe("appel unique · modèle des pages", () => {
 
   it("prend le harnais, le modèle et l’effort réglés pour les pages", async () => {
     setPageModel({ provider: "claude", model: "haiku", effort: "high" });
-    const spawned = fakeSpawn(claudeAnswering([answer]));
+    const spawned = fakeSpawn([answer]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual(answer.structured);
-    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku", effort: "high" } });
+    expect(spawned[0].args).toMatchObject({ model: "haiku", effort: "high" });
     expect(journal()).toEqual([
       expect.objectContaining({
         ok: true,
@@ -201,9 +178,9 @@ describe("appel unique · modèle des pages", () => {
 
   it("prend le modèle réglé pour ce harnais quand les pages n’en choisissent pas", async () => {
     setPageModel({ provider: "claude" });
-    const spawned = fakeSpawn(claudeAnswering([answer]));
+    const spawned = fakeSpawn([answer]);
     await oneShot(request, "clients/demandes");
-    expect(spawned[0].options).toMatchObject({ claude: { model: "sonnet", effort: "low" } });
+    expect(spawned[0].args).toMatchObject({ model: "sonnet", effort: "low" });
   });
 
   it("lit le réglage enregistré avant le premier appel", async () => {
@@ -211,18 +188,18 @@ describe("appel unique · modèle des pages", () => {
     native.invoke.mockImplementation(async (command: string, args: { key?: string }) =>
       command === "settings.get" && args?.key === "agents.pageModel" ? { provider: "claude", model: "haiku" } : null,
     );
-    const spawned = fakeSpawn(claudeAnswering([answer]));
+    const spawned = fakeSpawn([answer]);
     await oneShot(request, "clients/demandes");
-    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku" } });
+    expect(spawned[0].args).toMatchObject({ model: "haiku" });
   });
 
   it("retombe sur le modèle de l’agent quand celui des pages ne répond pas, et le note au journal", async () => {
     setPageModel({ provider: "claude", model: "haiku" });
-    const spawned = fakeSpawn(claudeAnswering([{ error: "Overloaded" }, answer]));
+    const spawned = fakeSpawn([{ error: "Overloaded" }, answer]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual(answer.structured);
     expect(spawned).toHaveLength(2);
-    expect(spawned[0].options).toMatchObject({ claude: { model: "haiku" } });
-    expect(spawned[1].options).toMatchObject({ claude: { model: "sonnet", effort: "low" } });
+    expect(spawned[0].args).toMatchObject({ model: "haiku" });
+    expect(spawned[1].args).toMatchObject({ model: "sonnet", effort: "low" });
     const [entry] = journal() as Array<{ ok: boolean; summary: string; detail: Record<string, unknown> }>;
     expect(entry.ok).toBe(true);
     expect(entry.summary).toMatch(
@@ -237,14 +214,10 @@ describe("appel unique · modèle des pages", () => {
 
   it("ne change pas de modèle pour une réponse hors schéma", async () => {
     setPageModel({ provider: "claude", model: "haiku" });
-    const spawned = fakeSpawn(
-      claudeAnswering([{ structured: { titre: 3, priorite: "haute" } }, { structured: { titre: "Portail" } }]),
-    );
+    const spawned = fakeSpawn([{ structured: { titre: 3, priorite: "haute" } }, { structured: { titre: "Portail" } }]);
     await expect(oneShot(request, "clients/demandes")).rejects.toThrow("ne respecte pas le schéma");
     expect(spawned).toHaveLength(2);
-    expect(spawned.every((launch) => (launch.options as { claude: { model: string } }).claude.model === "haiku")).toBe(
-      true,
-    );
+    expect(spawned.every((launch) => launch.args.model === "haiku")).toBe(true);
   });
 
   it("retombe sur le harnais de l’agent quand celui des pages n’est plus installé", async () => {
@@ -256,9 +229,9 @@ describe("appel unique · modèle des pages", () => {
       },
     });
     setPageModel({ provider: "opencode", model: "kimi" });
-    const spawned = fakeSpawn(claudeAnswering([answer]));
+    const spawned = fakeSpawn([answer]);
     await oneShot(request, "clients/demandes");
-    expect(spawned[0].options).toMatchObject({ claude: { model: "sonnet" } });
+    expect(spawned[0].args).toMatchObject({ provider: "claude", model: "sonnet" });
     expect(journal()).toEqual([
       expect.objectContaining({
         summary:
@@ -271,12 +244,10 @@ describe("appel unique · modèle des pages", () => {
 /** Régression corrigée dans `oneShot.ts` : une réponse sans JSON lisible est relancée. */
 describe("appel unique · réponse sans JSON", () => {
   it("relance aussi une réponse sans JSON lisible", async () => {
-    const spawned = fakeSpawn(
-      claudeAnswering([
-        { text: "Bien sûr, voici le résumé." },
-        { structured: { titre: "Portail", priorite: "haute" } },
-      ]),
-    );
+    const spawned = fakeSpawn([
+      { text: "Bien sûr, voici le résumé." },
+      { structured: { titre: "Portail", priorite: "haute" } },
+    ]);
     await expect(oneShot(request, "clients/demandes")).resolves.toEqual({ titre: "Portail", priorite: "haute" });
     expect(spawned).toHaveLength(2);
   });
@@ -284,12 +255,18 @@ describe("appel unique · réponse sans JSON", () => {
 
 describe("appel texte (nommage des conversations)", () => {
   it("rend le texte de la réponse du modèle choisi, sans schéma", async () => {
-    const spawned = fakeSpawn(claudeAnswering([{ text: "Page des factures clients" }]));
+    const spawned = fakeSpawn([{ text: "Page des factures clients" }]);
     await expect(complete("Donne un titre", { provider: "claude", model: "haiku" })).resolves.toBe(
       "Page des factures clients",
     );
-    expect(spawned[0].options).toEqual({ cwd: "/espace", claude: { model: "haiku", oneShot: true } });
+    expect(spawned[0].args).toEqual({
+      provider: "claude",
+      cwd: "/espace",
+      model: "haiku",
+      autonomy: "strict",
+      oneShot: true,
+    });
     expect(sentText(spawned[0])).toBe("Donne un titre");
-    expect(spawned[0].process.killed).toBe(true);
+    expect(spawned[0].closed).toBe(true);
   });
 });

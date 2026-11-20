@@ -77,7 +77,14 @@ export interface CatalogModule {
   functions?: Array<{ id: string; description: string; tool: boolean; effect?: "read" | "write" | null }>;
   clients?: ClientNeed[];
   webhooks?: Array<{ id: string; description: string; function: string }>;
-  schedules?: Array<{ id: string; description: string; function: string; everyMinutes?: number; at?: string }>;
+  schedules?: Array<{
+    id: string;
+    description: string;
+    function: string;
+    everyMinutes?: number;
+    everySeconds?: number;
+    at?: string;
+  }>;
   tools?: Array<{ id: string; description: string }>;
   /** Module dont celui-ci lit les données (`x` pour un module `x-ajouts`). */
   extends?: string | null;
@@ -196,9 +203,11 @@ export function catalogAccesses(module: CatalogModule): ModuleAccess[] {
     ...(module.schedules ?? []).map((schedule) => {
       const cadence = schedule.everyMinutes
         ? ` (toutes les ${schedule.everyMinutes} min)`
-        : schedule.at
-          ? ` (chaque jour à ${schedule.at})`
-          : "";
+        : schedule.everySeconds
+          ? ` (toutes les ${schedule.everySeconds} s)`
+          : schedule.at
+            ? ` (chaque jour à ${schedule.at})`
+            : "";
       return {
         kind: "schedule" as const,
         id: schedule.id,

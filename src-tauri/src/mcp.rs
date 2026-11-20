@@ -45,15 +45,50 @@ fn reaches(scope: Option<&AgentScope>, reference: &str) -> bool {
 /// Clé du résultat d’un outil qui porte une image : `answer` la rend comme contenu `image` du protocole MCP.
 const IMAGE_KEY: &str = "__image";
 
-const SCOPED_TOOLS: [&str; 4] = ["check", "db_schema", "db_query", "call_function"];
+const SCOPED_TOOLS: [&str; 6] = ["check", "db_schema", "db_query", "call_function", "wait_for_event", "cancel_wait"];
+
+/// Fonction offerte à un agent lancé par une page : son nom, et les entrées que le modèle ne peut pas changer.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum OfferedFunction {
+    Name(String),
+    Fixed { name: String, input: serde_json::Map<String, Value> },
+}
+
+/// Mode d’un agent lancé par une page : `complet` (sans aucune demande) ou `espace-de-travail` (seulement dans son
+/// dossier de travail, sans demande ; ce qui en sort est refusé). Traduit en autonomie des harnais.
+fn page_autonomy(mode: Option<&str>) -> AppResult<&'static str> {
+    match mode.unwrap_or("espace-de-travail") {
+        "complet" => Ok("auto"),
+        "espace-de-travail" => Ok("workspace"),
+        other => Err(AppError::new(format!(
+            "Mode d’agent inconnu : « {other} ». Les modes sont « complet » et « espace-de-travail »."
+        ))),
+    }
+}
 
 /// `frame.agents.authorize` : une page (ou les fonctions d’un module) veut lancer un agent. L’utilisateur l’accorde
 /// une fois pour ce demandeur, puis chaque fonction d’un autre module offerte comme outil passe par son propre
-/// accord. Le périmètre de la conversation est ensuite fixé.
+/// accord. Le périmètre de la conversation est ensuite fixé : fonctions et entrées imposées, dossier de travail
+/// (un dossier accordé au module, sinon le dossier du module dans l’espace) et mode. Rend `{ cwd, autonomy }`.
 async fn authorize_agent(state: &Shared, args: &Value) -> AppResult<Value> {
     let subject: Subject = arg(args, "subject")?;
     let conversation: String = arg(args, "conversation")?;
-    let functions: Vec<String> = opt_arg(args, "functions")?.unwrap_or_default();
+    let functions: Vec<OfferedFunction> = opt_arg(args, "functions")?.unwrap_or_default();
+    let autonomy = page_autonomy(opt_arg::<String>(args, "mode")?.as_deref())?;
+    // Le dossier est vérifié avant toute demande : un dossier non accordé n’a pas à déranger l’utilisateur.
+    let folder: Option<Value> = opt_arg(args, "folder")?;
+    let cwd = match &folder {
+        Some(folder) => {
+            let id = folder["id"].as_str().ok_or_else(|| AppError::new("Le dossier de l’agent demande son `id`."))?;
+            let sub = folder["path"].as_str();
+            crate::folders::resolve_dir(state, &subject.module, id, sub)?
+        }
+        None => state.space()?.root.join("modules").join(&subject.module),
+    };
+    if !cwd.is_dir() {
+        return Err(AppError::new("Le dossier de travail de l’agent est introuvable."));
+    }
     permissions::ensure(
         state,
         &subject,
@@ -61,8 +96,13 @@ async fn authorize_agent(state: &Shared, args: &Value) -> AppResult<Value> {
         "un agent (une conversation qu’elle lance et dont elle lit la réponse)",
     )
     .await?;
-    let mut granted = Vec::new();
-    for reference in functions {
+    let mut scope = AgentScope { module: subject.module.clone(), ..AgentScope::default() };
+    for offered in functions {
+        let (reference, input) = match offered {
+            OfferedFunction::Name(name) => (name, None),
+            OfferedFunction::Fixed { name, input } => (name, Some(Value::Object(input))),
+        };
+        let reference = if reference.contains('/') { reference } else { format!("{}/{reference}", subject.module) };
         let Some((module, name)) = reference.split_once('/') else {
             return Err(AppError::new(format!("Fonction invalide : « {reference} ».")));
         };
@@ -73,11 +113,47 @@ async fn authorize_agent(state: &Shared, args: &Value) -> AppResult<Value> {
             permissions::ensure(state, &subject, &format!("function:{reference}"), &format!("la fonction {reference}"))
                 .await?;
         }
-        granted.push(reference);
+        if let Some(input) = input {
+            scope.inputs.insert(reference.clone(), input);
+        }
+        if !scope.functions.contains(&reference) {
+            scope.functions.push(reference);
+        }
     }
     let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
-    app_db::set_agent_scope(&db, &conversation, &AgentScope { module: subject.module.clone(), functions: granted })?;
-    Ok(Value::Null)
+    app_db::set_agent_scope(&db, &conversation, &scope)?;
+    Ok(json!({ "cwd": crate::folders::plain(&cwd).to_string_lossy(), "autonomy": autonomy }))
+}
+
+/// Entrée d’une fonction appelée par l’agent : les entrées imposées par le demandeur l’emportent sur les siennes.
+fn with_fixed_input(scope: Option<&AgentScope>, reference: &str, input: Value) -> Value {
+    let Some(fixed) = scope.and_then(|scope| scope.inputs.get(reference)).and_then(Value::as_object) else {
+        return input;
+    };
+    let mut merged = match input {
+        Value::Object(object) => object,
+        _ => serde_json::Map::new(),
+    };
+    for (key, value) in fixed {
+        merged.insert(key.clone(), value.clone());
+    }
+    Value::Object(merged)
+}
+
+/// Schéma d’entrée montré au modèle : sans les champs imposés, qu’il n’a pas à fournir.
+fn without_fixed_fields(scope: Option<&AgentScope>, reference: &str, mut schema: Value) -> Value {
+    let Some(fixed) = scope.and_then(|scope| scope.inputs.get(reference)).and_then(Value::as_object) else {
+        return schema;
+    };
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for key in fixed.keys() {
+            properties.remove(key);
+        }
+    }
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.retain(|name| name.as_str().is_none_or(|name| !fixed.contains_key(name)));
+    }
+    schema
 }
 
 pub async fn handle(state: &Shared, command: &str, args: &Value) -> Option<AppResult<Value>> {
@@ -373,11 +449,26 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                                     "url": { "type": "string", "description": "Adresse de l’instance ; omise, celle du client (`baseUrl`)." },
                                     "method": { "type": "string", "description": "Identifiant d’une méthode de `methods`." },
                                     "secret": { "type": "string", "description": "Entrée du coffre (renvoyée par `vault_store`) ; omise, celle déjà reliée est gardée." },
+                                    "params": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Valeurs des paramètres de la méthode (ex. { \"realm\": \"equipe\" })." },
                                 },
                             },
                         },
                         "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "En-têtes fixes (Accept…), jamais d’authentification." },
                         "testPath": { "type": "string", "description": "Chemin lu par le bouton Tester des Réglages (ex. /me), pour chaque instance : une lecture légère qui demande l’authentification. Sans lui, la racine." },
+                        "sealed": {
+                            "type": "array",
+                            "description": "Réponses scellées : pour ces chemins, les champs nommés (valeurs d’un coffre, secrets émis) n’arrivent aux fonctions que sous forme de références `alfred-secret-ref:v1:…`, que la page affiche par `secrets.reveal` ou écrit par `secrets.writeEnvFile`. Obligatoire pour tout service qui rend des valeurs secrètes (OpenBao KV, secret d’un client Keycloak).",
+                            "items": {
+                                "type": "object",
+                                "required": ["path"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "path": { "type": "string", "description": "Ex. /v1/{mount}/data/** (`*` un segment, `**` la suite, `{param}` un paramètre du compte)." },
+                                    "methods": { "type": "array", "items": { "type": "string" } },
+                                    "fields": { "type": "array", "items": { "type": "string" }, "description": "Chemins pointés avec * (ex. data.data.*) ; vide : toute la réponse." },
+                                },
+                            },
+                        },
                     },
                 },
                 "create": { "type": "boolean", "description": "Refuser si un client porte déjà cet identifiant." },
@@ -405,7 +496,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "grant_access",
-            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* ») ou `command` (nom d’un programme du poste lancé par `commands.run`, par exemple « ffmpeg »). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
+            "Accorde à une page (`to` : « module/page ») ou aux fonctions d’un module (`to` : « module/* ») une ressource, pour qu’elle ne pose pas la question à l’utilisateur : `client` (identifiant), `function` (« module/fonction » d’un autre module), `agent: true` (lancer un agent), `host` (ouvrir des liens vers cet hôte) `event` (« module/événement » d’un autre module auquel les fonctions s’abonnent, avec `to` « module/* ») `command` (nom d’un programme du poste lancé par `commands.run`, par exemple « ffmpeg ») ou `folder` (chemin absolu d’un dossier du poste, avec `label` facultatif : il est accordé à tout le module, quel que soit `to`, et rendu par `folders.list`). Une seule ressource par appel. À faire pour chaque ressource que la page ou ses fonctions utilisent.",
             json!({
                 "to": { "type": "string" },
                 "client": { "type": "string" },
@@ -414,6 +505,8 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "host": { "type": "string" },
                 "event": { "type": "string" },
                 "command": { "type": "string" },
+                "folder": { "type": "string", "description": "Chemin absolu d’un dossier du poste (dépôt d’un composant, dossier partagé de l’équipe)." },
+                "label": { "type": "string", "description": "Avec `folder` : nom montré à l’utilisateur." },
             }),
             &["to"],
         ),
@@ -445,13 +538,14 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_schedule",
-            "Déclare (ou met à jour) une planification : une fonction du même module lancée toutes les N minutes (`everyMinutes`) ou chaque jour à une heure locale (`at`, « HH:MM »), jamais les deux. Elle ne tourne que pendant qu’Alfred est ouvert. Déclarer la fonction d’abord (`declare_function`).",
+            "Déclare (ou met à jour) une planification : une fonction du même module lancée toutes les N minutes (`everyMinutes`), toutes les N secondes pour un relevé rapproché (`everySeconds`, au moins 5), ou chaque jour à une heure locale (`at`, « HH:MM »), un seul des trois. Une fonction à intervalle peut rendre `{ nextInSeconds }` pour avancer ou espacer son prochain passage. Elle ne tourne que pendant qu’Alfred est ouvert. Déclarer la fonction d’abord (`declare_function`).",
             json!({
                 "module": { "type": "string" },
                 "id": { "type": "string", "description": "Identifiant en minuscules et tirets." },
                 "description": { "type": "string", "description": "Ce que fait la planification, en une phrase." },
                 "function": { "type": "string", "description": "Identifiant local d’une fonction du même module, sans « module/ »." },
                 "everyMinutes": { "type": "integer", "minimum": 1, "description": "Intervalle en minutes." },
+                "everySeconds": { "type": "integer", "minimum": 5, "description": "Intervalle en secondes (relevé rapproché)." },
                 "at": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$", "description": "Heure locale, « HH:MM » (ex. 08:30)." },
                 "input": { "type": "object", "description": "Entrée passée à la fonction ({} par défaut)." },
             }),
@@ -591,6 +685,23 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["function"],
         ),
         tool(
+            "wait_for_event",
+            "Attend un événement de module (« module/evenement », par exemple la fin d’une CI) : quand il arrive, ou à l’échéance, Alfred dépose son contenu dans cette conversation et te relance, même après un redémarrage. Termine ton tour après l’avoir posé. `match` filtre le contenu (chaque clé doit valoir la même chose).",
+            json!({
+                "event": { "type": "string", "description": "« module/evenement »." },
+                "match": { "type": "object" },
+                "timeoutMinutes": { "type": "integer", "minimum": 1, "maximum": 10080, "description": "Échéance, 60 par défaut." },
+                "label": { "type": "string", "description": "Ce que tu attends, montré à l’utilisateur." },
+            }),
+            &["event"],
+        ),
+        tool(
+            "cancel_wait",
+            "Annule un suivi posé par `wait_for_event` dans cette conversation.",
+            json!({ "id": { "type": "string" } }),
+            &["id"],
+        ),
+        tool(
             "read_journal",
             "Dernières exécutions enregistrées : fonctions, webhooks, requêtes des clients, appels IA, avec leur durée et leur erreur éventuelle.",
             json!({
@@ -604,6 +715,10 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     if scope.is_some() {
         list.retain(|tool| tool["name"].as_str().is_some_and(|name| SCOPED_TOOLS.contains(&name)));
     }
+    // Une coordinatrice répartit son travail entre d’autres agents ; ses délégués n’ont jamais ces outils.
+    if crate::agents::delegation::is_coordinator(state, conversation) {
+        list.extend(crate::agents::delegation::tools());
+    }
     // Les fonctions que l’utilisateur propose aux agents deviennent des outils à part entière.
     if let Some(snapshot) = state.try_space().and_then(|space| space.snapshot().ok()) {
         for function in
@@ -614,6 +729,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             } else {
                 json!({ "type": "object" })
             };
+            let schema = without_fixed_fields(scope.as_ref(), &function.reference, schema);
             list.push(json!({
                 "name": function_tool_name(&function.reference),
                 "description": if function.description.is_empty() {
@@ -834,13 +950,33 @@ fn trigger_problems(snapshot: &Snapshot, keep: &impl Fn(&str) -> bool) -> (Vec<V
 /// coffre) n’appartient qu’à `auth`, une méthode laissant ce choix à chaque instance.
 fn auth_properties(with_secret: bool) -> Value {
     let mut properties = json!({
-        "type": { "enum": ["none", "bearer", "apiKey", "basic", "oauth2", "clientCredentials"] },
+        "type": { "enum": ["none", "bearer", "apiKey", "basic", "oauth2", "clientCredentials", "session", "secretUrl"], "description": "`session` : identifiant et mot de passe (entrée `basic`) échangés par Alfred contre un jeton (Portainer, OpenBao userpass), décrits par `login` et `apply`. `secretUrl` : toute l’adresse du compte est secrète (entrée `token` dont la valeur est l’adresse, ex. agenda publié)." },
         "header": { "type": "string", "description": "apiKey : en-tête qui porte la clé." },
         "prefix": { "type": "string", "description": "apiKey : préfixe placé avant la clé (ex. « Token  »)." },
         "queryParam": { "type": "string", "description": "apiKey : paramètre d’URL qui porte la clé, à la place de `header`." },
         "authorizationUrl": { "type": "string", "description": "oauth2 : page d’autorisation." },
         "tokenUrl": { "type": "string", "description": "oauth2, clientCredentials : serveur de jetons." },
         "scopes": { "type": "array", "items": { "type": "string" } },
+        "login": {
+            "type": "object",
+            "description": "session : requête de connexion. `{username}`, `{password}` et les paramètres du compte y sont remplacés par Alfred, jamais ailleurs.",
+            "required": ["path", "token"],
+            "additionalProperties": false,
+            "properties": {
+                "method": { "type": "string", "description": "POST par défaut." },
+                "path": { "type": "string", "description": "Chemin sous l’adresse du compte (ex. /api/auth, /v1/auth/userpass/login/{username})." },
+                "body": { "description": "Corps JSON modèle (ex. { \"username\": \"{username}\", \"password\": \"{password}\" })." },
+                "form": { "type": "boolean", "description": "Envoyer le corps en formulaire plutôt qu’en JSON." },
+                "token": { "type": "string", "description": "Chemin pointé du jeton dans la réponse (jwt, auth.client_token) ou header:<nom>." },
+                "expiresIn": { "type": "string", "description": "Chemin pointé de sa durée de vie en secondes (auth.lease_duration)." },
+            },
+        },
+        "apply": {
+            "type": "object",
+            "description": "session : en-tête qui porte le jeton ; à défaut Authorization: Bearer.",
+            "additionalProperties": false,
+            "properties": { "header": { "type": "string" }, "prefix": { "type": "string" } },
+        },
     });
     if with_secret {
         properties["secret"] =
@@ -854,6 +990,23 @@ fn method_properties() -> Value {
     let mut properties = auth_properties(false);
     properties["id"] = json!({ "type": "string", "description": "Identifiant de la méthode (ex. cloud)." });
     properties["label"] = json!({ "type": "string", "description": "Nom montré à l’utilisateur (ex. « Jira Cloud (jeton d’API) »)." });
+    properties["params"] = json!({
+        "type": "array",
+        "description": "Paramètres non secrets saisis avec chaque compte (royaume Keycloak, montage OpenBao, endpoint Portainer). `{id}` se remplace dans authorizationUrl, tokenUrl, login, les règles `sealed` et le chemin des requêtes ; les fonctions les lisent par `client(id).params()`.",
+        "items": {
+            "type": "object",
+            "required": ["id", "label"],
+            "additionalProperties": false,
+            "properties": {
+                "id": { "type": "string", "description": "Lettres, chiffres et _ (ex. realm)." },
+                "label": { "type": "string" },
+                "example": { "type": "string" },
+                "help": { "type": "string" },
+                "default": { "type": "string" },
+                "optional": { "type": "boolean" },
+            },
+        },
+    });
     properties
 }
 
@@ -902,6 +1055,9 @@ fn offered(scope: Option<&AgentScope>, function: &crate::space::ResolvedFunction
 
 pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
+    if let Some(result) = crate::agents::delegation::call(state, conversation, name, args) {
+        return result;
+    }
     let scope = scope_of(state, conversation);
     if let Some(scope) = &scope {
         let out_of_scope = || {
@@ -924,6 +1080,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     return Err(out_of_scope());
                 }
             }
+            "wait_for_event" | "cancel_wait" => {}
             other if other.starts_with("fn__") => {}
             _ => return Err(out_of_scope()),
         }
@@ -1374,8 +1531,19 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
         "call_function" => {
             let reference: String = arg(args, "function")?;
             let examples = opt_arg::<bool>(args, "examples")?.unwrap_or(false);
-            let input = args.get("input").cloned().unwrap_or_else(|| json!({}));
+            let input = with_fixed_input(scope.as_ref(), &reference, args.get("input").cloned().unwrap_or_else(|| json!({})));
             functions::call_in(state, &reference, input, "agent", examples).await
+        }
+        "wait_for_event" => {
+            let watch = crate::agents::watches::create(state, conversation, args)?;
+            Ok(json!({
+                "watch": watch,
+                "next": "Le suivi est posé : termine ton tour. Alfred te relancera avec le contenu de l’événement, ou à l’échéance.",
+            }))
+        }
+        "cancel_wait" => {
+            crate::agents::watches::cancel(state, &arg::<String>(args, "id")?, Some(conversation))?;
+            Ok(json!({ "cancelled": true }))
         }
         "read_journal" => functions::handle(state, "journal.list", args)
             .await
@@ -1387,7 +1555,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 .iter()
                 .find(|function| offered(scope.as_ref(), function) && function_tool_name(&function.reference) == other)
                 .ok_or_else(|| AppError::new(format!("Outil inconnu : {other}")))?;
-            functions::call(state, &function.reference, args.clone(), "agent").await
+            functions::call(state, &function.reference, with_fixed_input(scope.as_ref(), &function.reference, args.clone()), "agent").await
         }
     }
 }
@@ -1994,6 +2162,32 @@ mod tests {
         }
     }
 
+    /// Les entrées imposées par la page l’emportent sur celles du modèle et disparaissent du schéma qu’il voit ;
+    /// les deux modes d’une page deviennent des autonomies des harnais, et le périmètre survit à la base.
+    #[test]
+    fn imposed_inputs_and_page_modes() {
+        let mut scope = AgentScope { module: "produits".into(), functions: vec!["produits/lire".into()], ..AgentScope::default() };
+        scope.inputs.insert("produits/lire".into(), json!({ "produit": "alpha" }));
+        let merged = with_fixed_input(Some(&scope), "produits/lire", json!({ "produit": "beta", "page": 2 }));
+        assert_eq!(merged, json!({ "produit": "alpha", "page": 2 }));
+        assert_eq!(with_fixed_input(Some(&scope), "produits/autre", json!({ "produit": "beta" })), json!({ "produit": "beta" }));
+        let schema = without_fixed_fields(
+            Some(&scope),
+            "produits/lire",
+            json!({ "type": "object", "properties": { "produit": {}, "page": {} }, "required": ["produit", "page"] }),
+        );
+        assert_eq!(schema, json!({ "type": "object", "properties": { "page": {} }, "required": ["page"] }));
+        assert_eq!(page_autonomy(Some("complet")).unwrap(), "auto");
+        assert_eq!(page_autonomy(None).unwrap(), "workspace");
+        assert!(page_autonomy(Some("strict")).is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let db = state.app_db.lock().unwrap();
+        app_db::set_agent_scope(&db, "c", &scope).unwrap();
+        assert_eq!(app_db::agent_scope(&db, "c").unwrap(), Some(scope));
+    }
+
     /// Un agent lancé par une page n’agit que sur le module de cette page : pas d’outil de structure, pas de
     /// requête ni d’appel de fonction vers un autre module, sauf fonction accordée par l’utilisateur.
     #[tokio::test(flavor = "multi_thread")]
@@ -2081,12 +2275,14 @@ mod tests {
             names,
             [
                 "call_function",
+                "cancel_wait",
                 "check",
                 "db_query",
                 "db_schema",
                 "fn__banque__exporter",
                 "fn__notes__exporter",
-                "fn__notes__outil"
+                "fn__notes__outil",
+                "wait_for_event"
             ]
         );
 

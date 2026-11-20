@@ -524,9 +524,12 @@ pub struct ScheduleDecl {
     pub id: String,
     pub description: String,
     pub function: String,
-    /// Intervalle en minutes ; exclusif avec `at`.
+    /// Intervalle en minutes ; exclusif avec `at` et `every_seconds`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub every_minutes: Option<u32>,
+    /// Intervalle en secondes (au moins 5), pour un relevé rapproché ; exclusif avec `at` et `every_minutes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub every_seconds: Option<u32>,
     /// Heure locale « HH:MM », une fois par jour.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,

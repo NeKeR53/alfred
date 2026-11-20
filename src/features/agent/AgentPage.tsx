@@ -19,6 +19,7 @@ import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
+import { setCoordinator } from "./delegation";
 import { PROVIDER_LABEL } from "./harness";
 import { type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
 import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
@@ -222,16 +223,36 @@ export function AgentPage() {
                 <Archive size={16} aria-hidden="true" />
               </IconButton>
             ) : null}
-            {conversation?.started ? (
+            {conversation?.started || (conversation && !conversation.parent) ? (
               <OverflowMenu label="Autres actions sur la conversation">
-                <MenuItem
-                  onClickCapture={() => setRenaming(true)}
-                  aria-keyshortcuts="F2"
-                  title={`Renommer ${conversation.title} (F2)`}
-                >
-                  Renommer
-                </MenuItem>
-                <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
+                {conversation.started ? (
+                  <>
+                    <MenuItem
+                      onClickCapture={() => setRenaming(true)}
+                      aria-keyshortcuts="F2"
+                      title={`Renommer ${conversation.title} (F2)`}
+                    >
+                      Renommer
+                    </MenuItem>
+                    <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
+                  </>
+                ) : null}
+                {/* Une coordinatrice confie des tâches à d’autres agents ; un délégué ne délègue pas. */}
+                {conversation.parent ? null : (
+                  <MenuItem
+                    onClickCapture={() =>
+                      void setCoordinator(conversation.id, !conversation.coordinator).catch((error: unknown) =>
+                        notify({
+                          title: "Répartition impossible",
+                          description: error instanceof Error ? error.message : String(error),
+                          tone: "error",
+                        }),
+                      )
+                    }
+                  >
+                    {conversation.coordinator ? "Ne plus répartir le travail" : "Répartir le travail entre des agents"}
+                  </MenuItem>
+                )}
               </OverflowMenu>
             ) : null}
             <NotificationBell />

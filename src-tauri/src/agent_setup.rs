@@ -188,6 +188,21 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         }
         format!("page:{to}")
     };
+    // Un dossier du poste s’accorde au module entier (ses pages et ses fonctions) : `folders.list` le rend.
+    if let Some(path) = opt_arg::<String>(args, "folder")? {
+        if client.is_some() || function.is_some() || agent || host.is_some() || event.is_some() || command.is_some() {
+            return Err(AppError::new("Donner une seule ressource par appel."));
+        }
+        let label: Option<String> = opt_arg(args, "label")?;
+        let folder = crate::folders::grant(state, module, std::path::Path::new(&path), label.as_deref(), "agent")?;
+        notice(
+            state,
+            &subject,
+            &format!("J’ai accordé à {module} le dossier « {} »", folder.label),
+            &format!("{} : vous pouvez retirer cet accès dans la fiche du module.", folder.path),
+        );
+        return Ok(json!({ "granted": { "to": format!("{module}/*"), "folder": folder } }));
+    }
     let given = usize::from(client.is_some())
         + usize::from(function.is_some())
         + usize::from(agent)

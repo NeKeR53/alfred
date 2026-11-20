@@ -8,8 +8,8 @@ vi.mock("../agent/harness", async (original) => ({
   ...(await original<typeof import("../agent/harness")>()),
   listModels: vi.fn(),
 }));
-vi.mock("../agent/harness/process", async (original) => ({
-  ...(await original<typeof import("../agent/harness/process")>()),
+vi.mock("../agent/harness/native", async (original) => ({
+  ...(await original<typeof import("../agent/harness/native")>()),
   probe: vi.fn(),
 }));
 // Le magasin de la coquille lit le thème du système à son chargement ; jsdom n’a pas `matchMedia`.
@@ -26,7 +26,7 @@ import { invoke } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { checkHarnesses, listModels, type Provider, useHarnesses } from "../agent/harness";
-import { probe } from "../agent/harness/process";
+import { probe } from "../agent/harness/native";
 import { useAgentPreferences } from "../agent/panel/ModelPicker";
 import { useAgents } from "../agent/store";
 import { AgentSettings, validateTextEditorCommand } from "./AgentSettings";

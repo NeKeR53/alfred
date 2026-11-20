@@ -1,6 +1,4 @@
-import { createClaudeSession, listClaudeModels } from "./claude";
-import { createCodexSession, listCodexModels } from "./codex";
-import { createOpenCodeSession, listOpenCodeModels } from "./opencode";
+import { createSession as createNativeSession, listNativeModels } from "./native";
 import type { HarnessModel, HarnessSession, Provider, SessionOptions } from "./types";
 
 export {
@@ -12,19 +10,12 @@ export {
   useHarnesses,
   useInstalledProviders,
 } from "./installed";
-export { probe } from "./process";
+export { probe } from "./native";
 export * from "./types";
 
-/** Ouvre une conversation dans le harnais demandé. */
+/** Ouvre une conversation dans le harnais demandé ; Rust parle son protocole. */
 export function createSession(options: SessionOptions): Promise<HarnessSession> {
-  switch (options.provider) {
-    case "claude":
-      return createClaudeSession(options);
-    case "codex":
-      return createCodexSession(options);
-    case "opencode":
-      return createOpenCodeSession(options);
-  }
+  return createNativeSession(options);
 }
 
 const catalogs = new Map<Provider, Promise<HarnessModel[]>>();
@@ -33,12 +24,7 @@ const catalogs = new Map<Provider, Promise<HarnessModel[]>>();
 export function listModels(provider: Provider, cwd: string): Promise<HarnessModel[]> {
   let catalog = catalogs.get(provider);
   if (!catalog) {
-    catalog =
-      provider === "claude"
-        ? Promise.resolve(listClaudeModels())
-        : provider === "codex"
-          ? listCodexModels(cwd)
-          : listOpenCodeModels(cwd);
+    catalog = listNativeModels(provider, cwd);
     catalogs.set(provider, catalog);
     // Un échec (CLI absent, non connecté) ne doit pas rester en cache.
     catalog.catch(() => catalogs.delete(provider));

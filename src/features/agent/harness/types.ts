@@ -80,10 +80,11 @@ export function isInputImage(file: InputFile): boolean {
 }
 
 /**
- * Liberté d’action de l’agent : `ask` (libre dans ses dossiers, accord ailleurs), `auto` (ne demande jamais),
- * `strict` (accord à chaque écriture et chaque commande).
+ * Liberté d’action de l’agent : `ask` (libre dans ses dossiers, accord ailleurs), `auto` (mode complet : ne demande
+ * jamais), `strict` (accord à chaque écriture et chaque commande), `workspace` (mode espace de travail : n’agit que
+ * dans son dossier de travail, sans demande ; ce qui en sortirait est refusé).
  */
-export type Autonomy = "ask" | "auto" | "strict";
+export type Autonomy = "ask" | "auto" | "strict" | "workspace";
 
 export interface HarnessSession {
   readonly sessionId?: string;
@@ -104,8 +105,6 @@ export interface SessionOptions {
   spaceDir?: string;
   /** Conversation à laquelle rattacher les outils d’Alfred. */
   conversation?: string;
-  /** Adresse du serveur d’outils d’Alfred. */
-  toolsUrl?: string;
   model?: string;
   effort?: string;
   /** Consignes d’Alfred, hors du fil des messages. */
@@ -121,3 +120,10 @@ export interface HarnessModel {
   name: string;
   efforts: string[];
 }
+
+/**
+ * Consigne de OneApp pour Codex : des lectures simples et séparées portent les métadonnées read, search et listFiles
+ * (affichées « Lu », « Recherché »), et `apply_patch` celles des fichiers modifiés.
+ */
+export const CODEX_FILE_TOOLS =
+  "Pour lire des fichiers, faites des appels de lecture simples et distincts (par exemple cat ou sed selon le shell disponible). Séparez les lectures des recherches, listes de dossiers, commandes Git et tests : ne les réunissez pas dans un même appel avec &&, ; ou un script. Cela permet à Codex de fournir les métadonnées read, search et listFiles à Alfred. Vous pouvez effectuer plusieurs appels de lecture indépendants en parallèle. Pour modifier des fichiers texte existants ou en créer, privilégiez l’outil natif apply_patch lorsqu’il est disponible. Réservez les commandes shell aux lectures, recherches, tests et opérations qui nécessitent réellement le shell. Évitez de réécrire un fichier texte avec cat, echo ou un script lorsque apply_patch convient : ses événements permettent à Alfred d’afficher précisément les fichiers modifiés.";

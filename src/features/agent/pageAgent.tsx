@@ -13,7 +13,7 @@ import { declaredReference, type FrameIdentity, frameServices } from "../../shel
 import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
-import type { Provider } from "./harness";
+import type { Autonomy, Provider } from "./harness";
 import { type ConversationRuntime, lastAssistantText } from "./model";
 import { oneShot } from "./oneShot";
 import { modelSummary, resolvePageModel } from "./pageModel";
@@ -75,26 +75,55 @@ async function runAgent(
   const fromPage = identity.kind !== "function";
   const page = identity.host ?? identity.reference;
   const title = fromPage ? pageTitle(page) : identity.module;
+  // Une fonction offerte est son nom, ou `{ name, input }` : ces entrées sont imposées, le modèle ne les change pas.
   const functions = Array.isArray(options.functions)
-    ? options.functions.map(String).map((name) => (name.includes("/") ? name : `${identity.module}/${name}`))
+    ? options.functions.map((offered) => {
+        const qualify = (name: string) => (name.includes("/") ? name : `${identity.module}/${name}`);
+        if (offered && typeof offered === "object" && !Array.isArray(offered)) {
+          const { name, input } = offered as { name?: unknown; input?: unknown };
+          return { name: qualify(String(name ?? "")), input: input && typeof input === "object" ? input : {} };
+        }
+        return qualify(String(offered));
+      })
     : [];
-  // Une page n’est pas l’utilisateur : l’agent qu’elle lance demande chaque action (autonomie stricte), et la
-  // conversation ne touche qu’au module de la page, sauf fonctions d’autres modules accordées par l’utilisateur.
+  const mode = options.mode === undefined ? undefined : String(options.mode);
+  const folder =
+    options.folder && typeof options.folder === "object"
+      ? (options.folder as { id?: unknown; path?: unknown })
+      : undefined;
+  // Une page n’est pas l’utilisateur : la conversation ne touche qu’au module de la page, sauf fonctions d’autres
+  // modules accordées par l’utilisateur. Elle travaille dans le dossier que Rust a vérifié, dans le mode demandé :
+  // « complet » (aucune demande) ou « espace-de-travail » (seulement dans son dossier, par défaut).
   const conversation = useAgents.getState().create({
     title: typeof options.title === "string" && options.title.trim() ? options.title.trim() : `${title} · agent`,
     origin: { reference: page, title },
-    autonomy: "strict",
+    autonomy: "workspace",
     provider: model.provider,
     model: model.model,
     effort: model.effort,
   });
   try {
-    await invoke("frame.agents.authorize", {
+    const granted = await invoke<{ cwd: string; autonomy: Autonomy }>("frame.agents.authorize", {
       // Les accords d’une page valent pour toutes ses copies par instance.
       subject: { kind: identity.kind, module: identity.module, reference: declaredReference(identity) },
       conversation: conversation.id,
       functions,
+      ...(mode ? { mode } : {}),
+      ...(folder
+        ? { folder: { id: String(folder.id ?? ""), ...(folder.path ? { path: String(folder.path) } : {}) } }
+        : {}),
     });
+    useAgents.getState().update(conversation.id, { cwd: granted.cwd, autonomy: granted.autonomy });
+    // Coordinatrice : elle reçoit les outils de délégation ; ses délégués ne dépassent pas son mode.
+    if (options.coordinator === true) {
+      await invoke("agents.coordinator.set", {
+        conversation: conversation.id,
+        on: true,
+        cwd: granted.cwd,
+        maxMode: granted.autonomy === "auto" ? "complet" : "espace-de-travail",
+      });
+      useAgents.getState().update(conversation.id, { coordinator: true });
+    }
   } catch (error) {
     await useAgents.getState().remove(conversation.id);
     throw error;
@@ -142,6 +171,18 @@ async function runAgent(
 /** Branche l’IA des pages sur les harnais : à appeler une fois au démarrage de la coquille. */
 export function bindPageAi() {
   frameServices.startAgent = startAgent;
+  frameServices.sendToAgent = async (identity, options) => {
+    const conversationId = String(options.conversationId ?? "");
+    const text = typeof options.message === "string" ? options.message.trim() : "";
+    if (!text) throw new AlfredError({ message: "Le message à l’agent est vide." });
+    // Rust vérifie que la conversation a été lancée par ce module.
+    await invoke("frame.agents.owns", {
+      subject: { kind: identity.kind, module: identity.module, reference: declaredReference(identity) },
+      conversationId,
+    });
+    await useAgents.getState().send(conversationId, { text, attachments: [], contexts: [] });
+    return null;
+  };
   frameServices.oneShot = (identity, request) =>
     oneShot(request as unknown as Parameters<typeof oneShot>[0], identity.reference);
 }

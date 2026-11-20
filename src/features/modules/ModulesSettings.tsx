@@ -30,6 +30,7 @@ import type { ClientNeedItem } from "../clients/api";
 import { serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
+import { ModuleFolders } from "../folders/ModuleFolders";
 import { ModuleJobs } from "../jobs/ModuleJobs";
 import { MODULE_FOCUS } from "../settings/open";
 import { remainingSummary, type SetupStep } from "../setup/api";
@@ -562,6 +563,7 @@ export function ModulesSettings() {
           hidden={hidden}
           nameOf={nameOf}
         />
+        <ModuleFolders module={module.id} name={module.name} />
         <TeamSync module={module} />
         <ModuleAutomations module={module.id} />
         <ModuleJobs module={module.id} />

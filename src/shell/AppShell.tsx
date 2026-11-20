@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
+  Fragment,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
@@ -26,11 +27,14 @@ import { useOverflowEdges } from "../ui/components/overflowEdges";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { ExampleIndicator } from "./ExampleIndicator";
 import { SectionIcon } from "./icons";
+import { MenuZoneView, type ZoneRow } from "./MenuZone";
+import { startMenuZones } from "./menuZones";
 import { NotificationBell, NotificationToasts } from "./NotificationCenter";
 import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
 import { mergeVisibleOrder, pagesOf, reorderSections, reorderTabs, SETTINGS_SECTION } from "./navigationLayout";
 import { notify } from "./notifications";
 import { PageFrame } from "./PageFrame";
+import { SectionZones } from "./PageZones";
 import { ResizablePanel } from "./ResizablePanel";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
@@ -247,15 +251,20 @@ export function SectionView({
             {detachable && inTauri && page && !builtInTab && !waiting ? (
               <IconButton
                 label="Ouvrir dans une nouvelle fenêtre"
-                onClick={() =>
-                  void openPageWindow(page.reference).catch((error: unknown) =>
+                onClick={() => {
+                  // Une entrée de zone ouverte suit la page dans sa fenêtre.
+                  const entry = useShell.getState().activeEntry[page.reference];
+                  void openPageWindow(
+                    page.reference,
+                    entry ? { params: { entry }, key: `entry:${entry.zone}:${entry.id}`, title: entry.label } : {},
+                  ).catch((error: unknown) =>
                     notify({
                       title: "La fenêtre n’a pas pu s’ouvrir",
                       description: error instanceof Error ? error.message : String(error),
                       tone: "error",
                     }),
-                  )
-                }
+                  );
+                }}
               >
                 <AppWindow size={16} aria-hidden="true" />
               </IconButton>
@@ -458,8 +467,18 @@ function announceEdge(edge: "premier" | "dernier") {
 const sameView = (left: View, right: View) =>
   left.kind === right.kind && (left.kind !== "section" || (right.kind === "section" && left.id === right.id));
 
+/** Zone de la page Agent dans le menu : ses conversations non archivées, sous l’entrée Agent. */
+export interface AgentZone {
+  rows: ZoneRow[];
+  activeId?: string;
+  visible?: number;
+  onOpen: (id: string) => void;
+  onAction: (id: string, action: string, value?: string) => void;
+}
+
 export function AppShell({
   agent,
+  agentZone,
   settingsTabs,
   renderAgentPanel,
   renderPageTools,
@@ -476,6 +495,8 @@ export function AppShell({
   agentAvailable?: boolean | null;
   /** Conversations qui attendent l’utilisateur, travaillent ou sont à lire. */
   agentSummary?: AgentSummary;
+  /** Conversations rangées dans la zone de l’entrée Agent. */
+  agentZone?: AgentZone;
   /** Onglets intégrés des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
   settingsTabs: BuiltInTab[];
   renderAgentPanel?: AgentPanelRenderer;
@@ -492,7 +513,10 @@ export function AppShell({
   const toggleSidebar = useShell((state) => state.toggleSidebar);
   const editor = useNavigationEditor();
   const counts = useBadges((state) => state.counts);
+  const activeTabs = useShell((state) => state.activeTab);
+  const activeEntry = useShell((state) => state.activeEntry);
   useEffect(() => startBadges(), []);
+  useEffect(() => startMenuZones(), []);
   const sections = useMemo(
     () =>
       (snapshot?.sections ?? []).filter((section) => !section.hidden).map((section) => ({ id: section.id, section })),
@@ -543,57 +567,68 @@ export function AppShell({
             const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
             const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
             return (
-              <div
-                className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
-                key={section.id}
-                data-sortable-scope={drag.scopeId}
-                data-sortable-id={section.id}
-              >
-                <NavButton
-                  label={section.label}
-                  count={sectionCount(counts, section.pages)}
-                  active={!settingsOpen && sameView(effective, { kind: "section", id: section.id })}
-                  onClick={() => setView({ kind: "section", id: section.id })}
-                  className={`product-nav product-color--${section.color ?? "steel"}`}
-                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
-                  onPointerDown={(event) => {
-                    const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
-                    if (row) drag.startDrag(event, section.id, row);
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
-                  }}
-                  onKeyDown={(event) => {
-                    if (isMenuKey(event)) {
-                      event.preventDefault();
-                      editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
-                    } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                      event.preventDefault();
-                      if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
-                        announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
-                      refocus(selector, (element) => element.querySelector("button"));
-                    }
-                  }}
+              <Fragment key={section.id}>
+                <div
+                  className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
+                  data-sortable-scope={drag.scopeId}
+                  data-sortable-id={section.id}
                 >
-                  <SectionIcon section={section} />
-                </NavButton>
-                <div className="sidebar-product__actions">
-                  <IconButton
-                    size="small"
-                    label={`Actions de la section ${section.label}`}
-                    tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
-                    aria-haspopup="menu"
-                    aria-expanded={editor.menuOpenFor === section.id}
-                    onClick={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
+                  <NavButton
+                    label={section.label}
+                    count={sectionCount(counts, section.pages)}
+                    active={
+                      !settingsOpen &&
+                      sameView(effective, { kind: "section", id: section.id }) &&
+                      // Une entrée de zone ouverte est surlignée à la place de sa section.
+                      !activeEntry[activeTabs[section.id] ?? ""]
+                    }
+                    onClick={() => {
+                      // L’entrée de la section ouvre ses pages sans entrée de zone.
+                      useShell.getState().clearEntries(section.pages.map((page) => page.reference));
+                      setView({ kind: "section", id: section.id });
+                    }}
+                    className={`product-nav product-color--${section.color ?? "steel"}`}
+                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
+                    onPointerDown={(event) => {
+                      const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
+                      if (row) drag.startDrag(event, section.id, row);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
+                    }}
+                    onKeyDown={(event) => {
+                      if (isMenuKey(event)) {
+                        event.preventDefault();
+                        editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
+                      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                        event.preventDefault();
+                        if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
+                          announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
+                        refocus(selector, (element) => element.querySelector("button"));
+                      }
                     }}
                   >
-                    <MoreHorizontal size={16} aria-hidden="true" />
-                  </IconButton>
+                    <SectionIcon section={section} />
+                  </NavButton>
+                  <div className="sidebar-product__actions">
+                    <IconButton
+                      size="small"
+                      label={`Actions de la section ${section.label}`}
+                      tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
+                      aria-haspopup="menu"
+                      aria-expanded={editor.menuOpenFor === section.id}
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
+                      }}
+                    >
+                      <MoreHorizontal size={16} aria-hidden="true" />
+                    </IconButton>
+                  </div>
                 </div>
-              </div>
+                <SectionZones pages={section.pages} sectionLabel={section.label} />
+              </Fragment>
             );
           })}
         </nav>
@@ -609,6 +644,22 @@ export function AppShell({
           >
             <Bot size={16} aria-hidden="true" />
           </NavButton>
+        ) : null}
+        {agentAvailable === true && agentZone ? (
+          <div className="sidebar-agent-zone">
+            <MenuZoneView
+              zoneKey="agent"
+              label="Conversations de l’agent"
+              rows={agentZone.rows}
+              activeId={!settingsOpen && effective.kind === "agent" ? agentZone.activeId : undefined}
+              visible={agentZone.visible}
+              onOpen={(id) => {
+                agentZone.onOpen(id);
+                setView({ kind: "agent" });
+              }}
+              onAction={agentZone.onAction}
+            />
+          </div>
         ) : null}
         <SpaceSwitcher />
         <NavButton

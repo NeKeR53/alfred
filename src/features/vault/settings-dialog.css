@@ -33,3 +33,16 @@
   padding: 4px 16px;
   border-top: 1px solid var(--line);
 }
+/* Valeur scellée affichée par la coquille (`SecretReveal`) : police à chasse fixe, coupée n’importe où. */
+.secret-reveal__value {
+  display: block;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.secret-reveal__actions {
+  gap: 8px;
+}

@@ -17,7 +17,8 @@ function time(at: number) {
   return new Date(at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function NotificationRow({ item }: { item: AppNotification }) {
+function NotificationRow({ item, onAction }: { item: AppNotification; onAction: () => void }) {
+  const actions = [...(item.action ? [item.action] : []), ...(item.actions ?? [])];
   return (
     <li className={`notification notification--${item.tone}`}>
       <span className="notification__tone">{toneLabel[item.tone]}</span>
@@ -27,6 +28,21 @@ function NotificationRow({ item }: { item: AppNotification }) {
         {time(item.at)}
         {item.source ? ` · ${item.source}` : ""}
       </span>
+      {actions.length ? (
+        <span className="notification__actions">
+          {actions.map((action) => (
+            <Button
+              key={action.label}
+              onClick={() => {
+                action.run();
+                onAction();
+              }}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </span>
+      ) : null}
     </li>
   );
 }
@@ -69,7 +85,7 @@ export function NotificationBell() {
           ) : (
             <ul className="notification-list">
               {items.map((item) => (
-                <NotificationRow key={item.id} item={item} />
+                <NotificationRow key={item.id} item={item} onAction={() => setAnchor(null)} />
               ))}
             </ul>
           )}

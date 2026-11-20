@@ -5,7 +5,7 @@
  */
 import { useMemo } from "react";
 import { create } from "zustand";
-import { type ProbeResult, probe } from "./process";
+import { type ProbeResult, probe } from "./native";
 import type { Provider } from "./types";
 
 export const ALL_PROVIDERS: readonly Provider[] = ["claude", "codex", "opencode"];

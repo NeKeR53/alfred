@@ -2,7 +2,27 @@
 import { invoke } from "../../lib/native";
 import type { VaultKind } from "../vault/api";
 
-export type AuthType = "none" | "bearer" | "apiKey" | "basic" | "oauth2" | "clientCredentials";
+export type AuthType =
+  | "none"
+  | "bearer"
+  | "apiKey"
+  | "basic"
+  | "oauth2"
+  | "clientCredentials"
+  /** Identifiant et mot de passe échangés par Alfred contre un jeton (Portainer, OpenBao). */
+  | "session"
+  /** Toute l’adresse du compte est secrète (agenda publié). */
+  | "secretUrl";
+
+/** Paramètre non secret saisi avec le compte (royaume, montage, endpoint). */
+export interface ClientParamDef {
+  id: string;
+  label?: string;
+  example?: string;
+  help?: string;
+  default?: string;
+  optional?: boolean;
+}
 
 export interface ClientAuth {
   type: AuthType;
@@ -28,6 +48,11 @@ export interface ClientMethod extends Omit<ClientAuth, "secret"> {
   urlExample?: string;
   /** OAuth 2 : identifiant public de l’application déclarée par le module ; « Se connecter avec… » sans rien saisir. */
   clientId?: string;
+  /** Paramètres saisis avec chaque compte ; `{id}` se remplace dans les adresses et les chemins. */
+  params?: ClientParamDef[];
+  /** `session` : requête de connexion et en-tête du jeton (gérés par Alfred). */
+  login?: Record<string, unknown>;
+  apply?: { header: string; prefix?: string };
 }
 
 /**
@@ -44,6 +69,8 @@ export interface ClientConfig {
   headers?: Record<string, string>;
   /** Chemin lu par le bouton Tester, pour chaque instance ; sans lui, la racine de l’adresse. */
   testPath?: string;
+  /** Réponses scellées : chemins dont les champs secrets n’arrivent aux fonctions qu’en références. */
+  sealed?: { path: string; methods?: string[]; fields?: string[] }[];
 }
 
 /** Instance d’un client : un compte ou une installation, avec son adresse, sa méthode et son entrée du coffre. */
@@ -58,6 +85,8 @@ export interface ClientInstanceConfig {
   headers?: Record<string, string>;
   /** … et certificat du serveur accepté sans vérification. */
   insecureTls?: boolean;
+  /** Valeurs des paramètres déclarés par la méthode (`realm` → `equipe`). */
+  params?: Record<string, string>;
 }
 
 export type ClientStatus = "ready" | "toValidate" | "noInstance" | "missingSecret" | "toConnect" | "invalid";
@@ -175,6 +204,8 @@ export const AUTH_TYPES: ReadonlyArray<{ type: AuthType; label: string; vaultKin
   { type: "basic", label: "Identifiant et mot de passe", vaultKind: "basic" },
   { type: "oauth2", label: "Connexion par le navigateur (OAuth)", vaultKind: "oauth2" },
   { type: "clientCredentials", label: "Identifiants d’application (OAuth)", vaultKind: "clientCredentials" },
+  { type: "session", label: "Identifiant et mot de passe (session)", vaultKind: "basic" },
+  { type: "secretUrl", label: "Adresse secrète", vaultKind: "token" },
 ];
 
 export function authTypeLabel(type: string): string {

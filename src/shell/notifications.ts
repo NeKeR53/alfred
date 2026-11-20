@@ -20,6 +20,10 @@ export interface AppNotification {
   source?: string;
   /** Action proposée dans la surimpression, par exemple « Annuler » après un archivage. */
   action?: NotificationAction;
+  /** Actions supplémentaires (deux au plus en tout), aussi dans la cloche : « Journal », « Ouvrir ». */
+  actions?: NotificationAction[];
+  /** Reste dans la surimpression jusqu’à ce qu’on la ferme ou qu’on choisisse une action. */
+  persistent?: boolean;
   dedupeKey?: string;
 }
 
@@ -34,6 +38,8 @@ export interface NotificationInput {
   tone?: NotificationTone;
   source?: string;
   action?: NotificationAction;
+  /** Actions proposées (deux au plus, avec `action`) : la surimpression montre les deux, la cloche les garde. */
+  actions?: NotificationAction[];
   /** Durée d’affichage en millisecondes ; `null` : jusqu’à ce qu’on la ferme. Par défaut selon le ton. */
   duration?: number | null;
   /** Reste affichée jusqu’à ce qu’on la ferme (un agent qui attend une réponse) ; équivaut à `duration: null`. */
@@ -71,7 +77,19 @@ export const useNotifications = create<NotificationState>((set, get) => {
   return {
     items: [],
     toasts: [],
-    notify({ title, description, tone = "info", source, action, duration, persistent, dedupeKey }) {
+    notify({
+      title,
+      description,
+      tone = "info",
+      source,
+      action: single,
+      actions: more,
+      duration,
+      persistent,
+      dedupeKey,
+    }) {
+      const actions = [...(single ? [single] : []), ...(more ?? [])].slice(0, 2);
+      const [action, second] = actions;
       const state = get();
       const duplicate = state.items.find(
         (item) =>
@@ -89,6 +107,8 @@ export const useNotifications = create<NotificationState>((set, get) => {
         tone,
         source,
         action,
+        ...(actions.length > 1 ? { actions: actions.slice(1) } : {}),
+        ...(persistent ? { persistent: true } : {}),
         dedupeKey,
         at: Date.now(),
         read: false,
@@ -111,6 +131,15 @@ export const useNotifications = create<NotificationState>((set, get) => {
               label: action.label,
               onClick: () => {
                 action.run();
+                onDismiss();
+              },
+            }
+          : undefined,
+        cancel: second
+          ? {
+              label: second.label,
+              onClick: () => {
+                second.run();
                 onDismiss();
               },
             }

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     create: vi.fn(() => conversation),
     remove: vi.fn(async () => undefined),
     send: vi.fn(async () => undefined),
+    update: vi.fn(),
   };
   return { invoke: vi.fn(), agents, conversation };
 });
@@ -32,8 +33,13 @@ const page: FrameIdentity = { kind: "page", module: "notes", reference: "notes/l
 
 beforeEach(() => {
   bindPageAi();
-  mocks.invoke.mockReset().mockResolvedValue(null);
+  mocks.invoke
+    .mockReset()
+    .mockImplementation(async (command: string) =>
+      command === "frame.agents.authorize" ? { cwd: "/espace/modules/notes", autonomy: "workspace" } : null,
+    );
   mocks.agents.create.mockClear();
+  mocks.agents.update.mockClear();
   setPageModel(null);
 });
 
@@ -46,21 +52,45 @@ const journal = () =>
   mocks.invoke.mock.calls.filter(([command]) => command === "journal.record").map(([, args]) => args);
 
 describe("agent lancé par une page", () => {
-  it("demande l’accord, fixe le périmètre et impose l’autonomie stricte avant d’envoyer la consigne", async () => {
+  it("demande l’accord, fixe le périmètre, le dossier et le mode avant d’envoyer la consigne", async () => {
     await frameServices.startAgent?.(page, {
       instruction: "Classe les notes",
-      functions: ["classer", "banque/exporter"],
+      functions: ["classer", "banque/exporter", { name: "lire", input: { produit: "alpha" } }],
     });
-    expect(mocks.agents.create).toHaveBeenCalledWith(expect.objectContaining({ autonomy: "strict" }));
     expect(mocks.invoke).toHaveBeenCalledWith("frame.agents.authorize", {
       subject: { kind: "page", module: "notes", reference: "notes/liste" },
       conversation: "conv-1",
-      functions: ["notes/classer", "banque/exporter"],
+      functions: ["notes/classer", "banque/exporter", { name: "notes/lire", input: { produit: "alpha" } }],
     });
+    // Le dossier et l’autonomie sont ceux que Rust a vérifiés.
+    expect(mocks.agents.update).toHaveBeenCalledWith("conv-1", { cwd: "/espace/modules/notes", autonomy: "workspace" });
     const commands = mocks.invoke.mock.calls.map(([command]) => command);
     expect(commands).not.toContain("agents.allowFunctions");
     const authorized = mocks.invoke.mock.invocationCallOrder[commands.indexOf("frame.agents.authorize")];
     expect(authorized).toBeLessThan(mocks.agents.send.mock.invocationCallOrder[0]);
+  });
+
+  it("désigne la coordinatrice lancée par la page", async () => {
+    await frameServices.startAgent?.(page, { instruction: "Répartis", coordinator: true });
+    expect(mocks.invoke).toHaveBeenCalledWith("agents.coordinator.set", {
+      conversation: "conv-1",
+      on: true,
+      cwd: "/espace/modules/notes",
+      maxMode: "espace-de-travail",
+    });
+    expect(mocks.agents.update).toHaveBeenCalledWith("conv-1", { coordinator: true });
+  });
+
+  it("transmet le dossier accordé et le mode complet", async () => {
+    await frameServices.startAgent?.(page, {
+      instruction: "Corrige le test",
+      folder: { id: "depot", path: "web" },
+      mode: "complet",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "frame.agents.authorize",
+      expect.objectContaining({ folder: { id: "depot", path: "web" }, mode: "complet" }),
+    );
   });
 
   it("n’envoie rien et retire la conversation si l’utilisateur refuse", async () => {

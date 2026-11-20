@@ -310,10 +310,17 @@ export function ConversationList({
     const state = states.get(header.id) ?? "idle";
     const provider = PROVIDER_LABEL[header.provider];
     // Le harnais en sous-ligne ; une conversation qui attend une réponse ou a échoué le dit à côté, comme dans OneApp.
+    // Une coordinatrice et ses délégués se reconnaissent dans la sous-ligne.
+    const parent = header.parent ? conversations.find(({ id }) => id === header.parent) : undefined;
+    const role = header.coordinator
+      ? " · coordinatrice"
+      : header.parent
+        ? ` · délégué${parent ? ` de ${parent.title}` : ""}`
+        : "";
     const details =
       state === "attention" || state === "error"
-        ? `${provider} · ${CONVERSATION_STATE_LABEL[state].toLowerCase()}`
-        : provider;
+        ? `${provider}${role} · ${CONVERSATION_STATE_LABEL[state].toLowerCase()}`
+        : `${provider}${role}`;
     const status = CONVERSATION_STATE_LABEL[state];
     return {
       key: header.id,

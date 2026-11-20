@@ -400,9 +400,11 @@ function OfferDetail({ offer, back, onImport }: { offer: Offer; back: ReactNode;
       badge: "Planification",
       detail: schedule.everyMinutes
         ? `toutes les ${schedule.everyMinutes} min`
-        : schedule.at
-          ? `chaque jour à ${schedule.at}`
-          : undefined,
+        : schedule.everySeconds
+          ? `toutes les ${schedule.everySeconds} s`
+          : schedule.at
+            ? `chaque jour à ${schedule.at}`
+            : undefined,
     })),
   ];
   return (

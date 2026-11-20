@@ -111,7 +111,6 @@ describe("conversation d’agent · un tour", () => {
       cwd: "/espace",
       spaceDir: "/espace",
       conversation: id,
-      toolsUrl: "http://127.0.0.1:4100/mcp",
       model: "gpt-5",
       autonomy: "ask",
       title: "Ajoute une page Factures",

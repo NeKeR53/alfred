@@ -4,6 +4,7 @@ mod agents;
 mod app_db;
 mod backups;
 mod badges;
+mod channels;
 mod client_cache;
 mod clients;
 mod commands;
@@ -17,6 +18,8 @@ mod docs;
 mod error;
 mod events;
 mod examples;
+mod folder_git;
+mod folders;
 mod function_tests;
 mod functions;
 mod git;
@@ -32,6 +35,7 @@ mod module_search;
 mod module_semantic;
 mod mcp;
 mod menu;
+mod menu_zones;
 mod oauth;
 mod page_windows;
 mod pages;
@@ -40,9 +44,11 @@ mod process_tree;
 mod reorganize;
 mod schedules;
 mod script_sdk;
+mod secret_refs;
 mod scripts;
 mod section_icons;
 mod server;
+mod sessions;
 mod setup;
 mod space;
 mod space_db;
@@ -51,6 +57,7 @@ mod state;
 mod system_notifications;
 mod team_sync;
 mod transpile;
+mod transport;
 mod vault;
 #[cfg(feature = "verify")]
 mod verify;
@@ -84,7 +91,7 @@ async fn alfred_agent_spawn(
     args: Value,
     on_event: tauri::ipc::Channel<Value>,
 ) -> Result<Value, AppError> {
-    agents::spawn(state.inner(), &args, agents::Output::Channel(on_event))
+    agents::spawn(state.inner(), &args, agents::Output::Channel(on_event)).await
 }
 
 /// Réaction du cœur à ses propres événements, avant leur envoi à la fenêtre.
@@ -106,6 +113,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         alfred_invoke,
         alfred_agent_spawn,
         page_windows::alfred_open_window,
+        agents::window::alfred_open_agents_window,
         system_notifications::alfred_notify_system
     ]
 }
@@ -116,6 +124,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         alfred_invoke,
         alfred_agent_spawn,
         page_windows::alfred_open_window,
+        agents::window::alfred_open_agents_window,
         system_notifications::alfred_notify_system,
         verify::verify_result
     ]
@@ -205,6 +214,7 @@ pub fn run() {
             backups::start(state.clone());
             jobs::start(state.clone());
             module_events::start(state.clone());
+            agents::watches::start(state.clone());
             module_semantic::start(state.clone());
             team_sync::start(state.clone());
             schedules::start(state);

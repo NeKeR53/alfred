@@ -193,8 +193,16 @@ export interface ModuleEvent<Payload = unknown> {
  */
 export const events = {
   /** Publie l’événement `event` (identifiant local) ; rend le nombre d’abonnés qui le recevront. */
-  publish(event: string, payload: unknown = null): Promise<{ event: string; subscribers: number }> {
-    return request("events.publish", { event, payload });
+  publish(
+    event: string,
+    payload: unknown = null,
+    options: { occurrence?: string } = {},
+  ): Promise<{ event: string; subscribers: number; duplicate?: boolean }> {
+    return request("events.publish", {
+      event,
+      payload,
+      ...(options.occurrence ? { occurrence: options.occurrence } : {}),
+    });
   },
 };
 
@@ -246,17 +254,270 @@ export interface CommandResult {
 }
 
 /**
- * Programmes installés sur l’ordinateur (`git`, `ffmpeg`, `pandoc`…), lancés sans shell dans le dossier du module.
- * L’utilisateur accorde chaque programme une fois.
+ * Programmes installés sur l’ordinateur (`git`, `ffmpeg`, `pandoc`…), lancés sans shell dans le dossier du module,
+ * ou dans un dossier accordé (`cwd`). L’utilisateur accorde chaque programme une fois.
  */
 export const commands = {
   /** Lance `program` (son nom seul) avec `args` tels quels ; un code non nul ne rejette pas la promesse. */
   run(
     program: string,
     args: string[] = [],
-    options: { input?: string; timeout?: number } = {},
+    options: { input?: string; timeout?: number; cwd?: { folder: string; path?: string } } = {},
   ): Promise<CommandResult> {
     return request("commands.run", { program, args, ...options });
+  },
+};
+
+// --- Dossiers du poste et Git local ---------------------------------------------------------------------------
+
+/** Dossier du poste accordé au module (ses pages, ses panneaux et ses fonctions). */
+export interface Folder {
+  /** Identifiant stable dans le module, à garder en base : c’est lui que nomment les appels. */
+  id: string;
+  /** Chemin absolu sur le poste. */
+  path: string;
+  label: string;
+  grantedAt: string;
+  grantedBy: "user" | "agent";
+}
+
+export interface FolderEntry {
+  /** Relatif au dossier accordé, avec des `/`. */
+  path: string;
+  name: string;
+  kind: "file" | "dir" | "link";
+  size: number;
+  modifiedAt: string | null;
+}
+
+/**
+ * Dossiers du poste que l’utilisateur a accordés au module. Chaque `path` est relatif au dossier et n’en sort pas
+ * (ni `..`, ni lien symbolique) ; rien ne s’écrit dans `.git`. 20 Mo par fichier.
+ */
+export const folders = {
+  /** Fait choisir un dossier à l’utilisateur et l’accorde au module (page ou panneau) ; `null` s’il annule. */
+  pick(options: { title?: string; label?: string } = {}): Promise<Folder | null> {
+    return request("folders.pick", options);
+  },
+  list(): Promise<Folder[]> {
+    return request("folders.list");
+  },
+  get(folder: string): Promise<Folder> {
+    return request("folders.get", { folder });
+  },
+  /** Retire l’accord (les fichiers restent sur le disque). */
+  forget(folder: string): Promise<void> {
+    return request<void>("folders.forget", { folder });
+  },
+  /** Entrées de `path` (le dossier par défaut) ; `glob` (`*.md`, ou un chemin avec `**` et `/`) parcourt les sous-dossiers s’il contient `/`. */
+  entries(
+    folder: string,
+    path = "",
+    options: { recursive?: boolean; glob?: string } = {},
+  ): Promise<{ entries: FolderEntry[]; truncated: boolean }> {
+    return request("folders.entries", { folder, path, ...options });
+  },
+  /** L’entrée, ou `null` si elle n’existe pas. */
+  stat(folder: string, path: string): Promise<FolderEntry | null> {
+    return request("folders.stat", { folder, path });
+  },
+  readText(folder: string, path: string): Promise<string> {
+    return request("folders.readText", { folder, path });
+  },
+  /** Contenu en base64. */
+  readFile(folder: string, path: string): Promise<{ data: string }> {
+    return request("folders.readFile", { folder, path });
+  },
+  /** Écriture atomique ; les dossiers parents sont créés. */
+  writeText(folder: string, path: string, text: string): Promise<void> {
+    return request<void>("folders.writeText", { folder, path, text });
+  },
+  writeFile(folder: string, path: string, data: string): Promise<void> {
+    return request<void>("folders.writeFile", { folder, path, data });
+  },
+  /** Fichier JSON (une configuration partagée de l’équipe). */
+  async readJson<Data = unknown>(folder: string, path: string): Promise<Data> {
+    const text = await folders.readText(folder, path);
+    try {
+      return JSON.parse(text) as Data;
+    } catch (error) {
+      throw new AlfredSdkError(`« ${path} » n’est pas du JSON valide.`, String(error));
+    }
+  },
+  /** Écrit du JSON indenté de deux espaces, terminé par un retour à la ligne : un diff lisible dans git. */
+  writeJson(folder: string, path: string, data: unknown): Promise<void> {
+    return folders.writeText(folder, path, `${JSON.stringify(data, null, 2)}\n`);
+  },
+  mkdir(folder: string, path: string): Promise<void> {
+    return request<void>("folders.mkdir", { folder, path });
+  },
+  /** Vers la corbeille du système. */
+  remove(folder: string, path: string): Promise<void> {
+    return request<void>("folders.remove", { folder, path });
+  },
+  /** Renomme ou déplace dans le dossier, sans écraser. */
+  rename(folder: string, path: string, to: string): Promise<void> {
+    return request<void>("folders.rename", { folder, path, to });
+  },
+  /** Ouvre dans l’explorateur (défaut), l’éditeur de code ou un terminal du poste (page ou panneau). */
+  open(folder: string, path = "", app: "explorer" | "editor" | "terminal" = "explorer"): Promise<{ opened: string }> {
+    return request("folders.open", { folder, path, app });
+  },
+  /**
+   * Prévient à chaque lot de changements dans le dossier : chemins relatifs, `.git` (ou `api/.git`) pour l’état
+   * d’un dépôt (branche, index). Rend la fonction de désabonnement.
+   */
+  async watch(folder: string, handler: (paths: string[]) => void): Promise<() => void> {
+    const stop = onShellEvent("folderChanged", (payload) => {
+      const change = payload as { folder?: string; paths?: string[] } | null;
+      if (change?.folder === folder) handler(change.paths ?? []);
+    });
+    try {
+      await request<void>("folders.watch", { folder });
+    } catch (error) {
+      stop();
+      throw error;
+    }
+    return stop;
+  },
+};
+
+export interface GitFileStatus {
+  path: string;
+  from?: string;
+  kind: "modified" | "added" | "deleted" | "renamed" | "copied" | "typechange" | "untracked" | "conflicted";
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface GitStatus {
+  /** Dossier du dépôt, relatif au dossier accordé. */
+  repo: string;
+  branch: string | null;
+  head: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  files: GitFileStatus[];
+  operation: "merge" | "rebase" | "cherry-pick" | "revert" | null;
+}
+
+export interface GitBranch {
+  name: string;
+  head: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  current: boolean;
+  remote: string | null;
+  date: string;
+  subject: string;
+}
+
+export interface GitTag {
+  name: string;
+  commit: string;
+  annotated: boolean;
+  date: string;
+  message: string;
+}
+
+export interface GitCommit {
+  id: string;
+  message: string;
+  date: string;
+  author: string;
+  files: string[];
+  lines: Array<{ added: number; removed: number } | null>;
+}
+
+/** `repo` : le dépôt, relatif au dossier accordé (le dossier lui-même par défaut). */
+type InRepo = { repo?: string };
+
+/**
+ * Git dans un dossier accordé : sans crochet, avec les identifiants, le proxy et les certificats du poste. Les
+ * chemins (`file`, `paths`) sont relatifs au dépôt.
+ */
+export const git = {
+  /** Dépôts du dossier, sur trois niveaux (les composants d’un produit). */
+  repositories(folder: string): Promise<Array<{ repo: string; name: string }>> {
+    return request("git.repositories", { folder });
+  },
+  status(folder: string, options: InRepo = {}): Promise<GitStatus> {
+    return request("git.status", { folder, ...options });
+  },
+  branches(
+    folder: string,
+    options: InRepo = {},
+  ): Promise<{ current: string | null; local: GitBranch[]; remote: GitBranch[] }> {
+    return request("git.branches", { folder, ...options });
+  },
+  /** Du plus récent au plus ancien. */
+  tags(folder: string, options: InRepo = {}): Promise<GitTag[]> {
+    return request("git.tags", { folder, ...options });
+  },
+  log(
+    folder: string,
+    options: InRepo & { ref?: string; file?: string; since?: string; limit?: number } = {},
+  ): Promise<GitCommit[]> {
+    return request("git.log", { folder, ...options });
+  },
+  /** Écart : commits de `head` (HEAD par défaut) absents de `base` (`ahead`, `commits`) et l’inverse (`behind`). */
+  compare(
+    folder: string,
+    options: InRepo & { base: string; head?: string },
+  ): Promise<{ base: string; head: string; ahead: number; behind: number; commits: GitCommit[] }> {
+    return request("git.compare", { folder, ...options });
+  },
+  /** Sans `from` : les changements non indexés (`staged` : ceux indexés). 2 Mo de texte au plus. */
+  diff(
+    folder: string,
+    options: InRepo & { from?: string; to?: string; file?: string; staged?: boolean } = {},
+  ): Promise<{
+    text: string;
+    truncated: boolean;
+    files: Array<{ path: string; added: number | null; removed: number | null }>;
+  }> {
+    return request("git.diff", { folder, ...options });
+  },
+  /** Contenu d’un fichier à une révision. */
+  show(folder: string, ref: string, file: string, options: InRepo = {}): Promise<string> {
+    return request("git.show", { folder, ref, file, ...options });
+  },
+  fetch(folder: string, options: InRepo & { remote?: string } = {}): Promise<GitStatus> {
+    return request("git.fetch", { folder, ...options });
+  },
+  /** Avance rapide seulement ; `rebase: true` rejoue les commits locaux (annulé en cas de conflit). */
+  pull(folder: string, options: InRepo & { rebase?: boolean } = {}): Promise<GitStatus> {
+    return request("git.pull", { folder, ...options });
+  },
+  /** Branche courante (ou `branch`) vers son distant, suivie s’il le faut ; ou un `tag`. Jamais de force. */
+  push(
+    folder: string,
+    options: InRepo & { remote?: string; branch?: string; tag?: string } = {},
+  ): Promise<{ remote: string; branch?: string; tag?: string }> {
+    return request("git.push", { folder, ...options });
+  },
+  /** `paths` : seulement ces chemins (nouveaux fichiers compris) ; sinon tout. `commit` vaut `null` si rien n’a changé. */
+  commit(folder: string, options: InRepo & { message: string; paths?: string[] }): Promise<{ commit: string | null }> {
+    return request("git.commit", { folder, ...options });
+  },
+  /** Change de branche ; `create` la crée (depuis `start`). Une branche distante seule devient locale. */
+  switch(
+    folder: string,
+    branch: string,
+    options: InRepo & { create?: boolean; start?: string } = {},
+  ): Promise<GitStatus> {
+    return request("git.switch", { folder, branch, ...options });
+  },
+  /** Tag annoté avec `message`, léger sinon ; `git.push(folder, { tag })` pour le partager. */
+  createTag(folder: string, options: InRepo & { name: string; ref?: string; message?: string }): Promise<void> {
+    return request<void>("git.createTag", { folder, ...options });
+  },
+  /** Clone `url` (https ou ssh) dans `path`, un sous-dossier neuf du dossier accordé. */
+  clone(folder: string, url: string, path: string): Promise<void> {
+    return request<void>("git.clone", { folder, url, path });
   },
 };
 
@@ -387,13 +648,62 @@ export interface ClientRequest {
   path: string;
   query?: Record<string, string | number | boolean>;
   headers?: Record<string, string>;
-  /** Objet envoyé en JSON, ou chaîne envoyée telle quelle. */
+  /** Objet envoyé en JSON, ou chaîne envoyée telle quelle. Un seul de `body`, `form`, `multipart` et `file`. */
   body?: unknown;
+  /** Formulaire `application/x-www-form-urlencoded`. */
+  form?: Record<string, string | number | boolean>;
+  /** Formulaire `multipart/form-data` : champs texte et fichiers du module (pièces jointes), 2 Go au plus. */
+  multipart?: MultipartPart[];
+  /** Identifiant d’un fichier du module, envoyé tel quel avec son type (dépôt d’un artefact par `PUT`), 2 Go au plus. */
+  file?: string;
+  /**
+   * Forme de `body` dans la réponse : `"auto"` (JSON décodé, sinon texte), `"text"`, ou `"base64"` pour un petit
+   * binaire (5 Mo au plus ; au-delà, `download`).
+   */
+  responseType?: "auto" | "text" | "base64";
   /**
    * Lecture (`GET`, `HEAD`) : garder la réponse réussie ce nombre de secondes (un jour au plus) et la resservir
    * sans rappeler le service. À défaut, la durée `cache` du besoin dans `module.json`.
    */
   cache?: number;
+  /**
+   * Remplacer les références de secret du corps (`body`, `form`) par leurs valeurs, en natif. Admis seulement vers
+   * un chemin que le client déclare scellé (`sealed`), avec des références lues par ce module sur le même service
+   * (recopie d’une valeur d’un coffre vers un autre compte). Sans lui, une référence dans le corps est refusée.
+   */
+  sealed?: boolean;
+}
+
+/** Partie d’un envoi `multipart` : un champ texte, ou un fichier du module (`file` : son identifiant). */
+export type MultipartPart =
+  | { name: string; value: string | number | boolean }
+  | { name: string; file: string; filename?: string; mime?: string };
+
+/** Requête d’un téléchargement, d’un flux ou d’un WebSocket : comme `ClientRequest`, sans cache. */
+export type ClientTransferRequest = Omit<ClientRequest, "path" | "cache" | "responseType">;
+
+export interface ClientDownload {
+  status: number;
+  ok: boolean;
+  headers: Record<string, string>;
+  /** Le fichier rangé dans les fichiers du module ; `null` si le service a répondu par une erreur. */
+  file: FileInfo | null;
+  /** Réponse du service quand `ok` est faux (JSON décodé, sinon texte). */
+  body?: unknown;
+}
+
+export interface ClientChannel {
+  status: number;
+  ok: boolean;
+  headers: Record<string, string>;
+  /** Identifiant du canal, à passer à la page ; `null` si le service a répondu par une erreur. */
+  channel: string | null;
+  /** Réponse du service quand `ok` est faux. */
+  body?: unknown;
+  /** Flux : découpage retenu. */
+  format?: "lines" | "sse" | "docker" | "raw";
+  /** WebSocket : sous-protocole accepté par le service. */
+  protocol?: string | null;
 }
 
 export interface ClientResponse<Body = unknown> {
@@ -420,6 +730,13 @@ export interface ClientOptions {
   instance?: string;
 }
 
+/** Paramètres non secrets du compte appelé (royaume, montage, endpoint), saisis par l’utilisateur avec le compte. */
+export interface ClientParams {
+  /** Compte dont viennent les paramètres. */
+  instance: string;
+  params: Record<string, string>;
+}
+
 /**
  * Client déclaré dans l’espace, **pour les fonctions du connecteur seulement** : une requête venue d’une page ou d’un
  * panneau est refusée (la page appelle la fonction avec `functions.call`). Alfred exécute la requête et y ajoute
@@ -438,11 +755,182 @@ export function client(id: string, options: ClientOptions = {}) {
     put: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PUT", path, body }),
     patch: <Body = unknown>(path: string, body?: unknown) => send<Body>({ method: "PATCH", path, body }),
     delete: <Body = unknown>(path: string) => send<Body>({ method: "DELETE", path }),
+    /**
+     * Télécharge en flux dans les fichiers du module (2 Go au plus), avec son SHA-256, sans passer par la fonction.
+     * `name` : nom du fichier ; à défaut, celui que donne le service, puis le dernier segment du chemin.
+     */
+    download: (path: string, options: ClientTransferRequest & { name?: string } = {}) =>
+      request<ClientDownload>("clients.download", { client: id, path, ...options, ...(instance ? { instance } : {}) }),
+    /**
+     * Ouvre une réponse en continu (SSE, journal suivi, journaux Docker) et rend l’identifiant de son canal, que la
+     * page lit par `channels.read` ou `useChannel`. `format` : `"auto"` (d’après le type de la réponse), `"lines"`,
+     * `"sse"`, `"docker"` ou `"raw"` (morceaux en base64).
+     */
+    stream: (
+      path: string,
+      options: ClientTransferRequest & { format?: "auto" | "lines" | "sse" | "docker" | "raw" } = {},
+    ) => request<ClientChannel>("clients.stream", { client: id, path, ...options, ...(instance ? { instance } : {}) }),
+    /**
+     * Ouvre un WebSocket vers le compte (`wss://` pour une adresse `https://`) et rend l’identifiant de son canal,
+     * que la page lit et écrit (`channels.write`). `headers` peut porter `Sec-WebSocket-Protocol`.
+     */
+    socket: (path: string, options: Pick<ClientTransferRequest, "query" | "headers"> = {}) =>
+      request<ClientChannel>("clients.socket", { client: id, path, ...options, ...(instance ? { instance } : {}) }),
     /** Oublie les réponses de ce client gardées pour le module (après une écriture, pour relire à jour). */
     clearCache: () => request<{ cleared: number }>("clients.clearCache", { client: id }),
     /** Instances du client, la première étant celle par défaut. */
     instances: () => request<ClientInstance[]>("clients.instances", { client: id }),
+    /**
+     * Paramètres non secrets du compte que viserait une requête (`realm`, `mount`…), déclarés par sa méthode
+     * (`methods[].params`). `{realm}` dans un chemin de requête est d’ailleurs remplacé d’office.
+     */
+    params: () => request<ClientParams>("clients.params", { client: id, ...(instance ? { instance } : {}) }),
   };
+}
+
+// --- Secrets scellés -------------------------------------------------------------------------------------------
+
+/** Préfixe des références de secret (`alfred-secret-ref:v1:<nonce>`). */
+export const SECRET_REF_PREFIX = "alfred-secret-ref:v1:";
+
+/** Ligne d’un fichier `.env` : une référence de secret (`ref`) ou une valeur ordinaire (`value`). */
+export type EnvEntry = { name: string; ref: string } | { name: string; value: string | number | boolean | null };
+
+/**
+ * Valeurs scellées : un champ qu’un client déclare secret (`sealed`) arrive à la fonction, puis à la page, sous
+ * forme de référence opaque, valable cinq minutes pour ce module. **Aucune page ne reçoit jamais la valeur** : elle
+ * ne s’affiche que dans une boîte de la coquille, après un clic de l’utilisateur, et ne s’écrit que dans un `.env`
+ * dont l’utilisateur choisit l’emplacement. Une fonction ne peut ni l’afficher ni l’écrire.
+ */
+export const secrets = {
+  /** Le texte est-il une référence de secret ? */
+  isRef(value: unknown): value is string {
+    return typeof value === "string" && value.startsWith(SECRET_REF_PREFIX);
+  },
+  /**
+   * Ouvre la boîte de la coquille qui affiche la valeur (« Afficher », « Copier ») : `label` dit ce que c’est
+   * (« DB_PASSWORD »). Rend `{ shown }` (vrai si l’utilisateur l’a affichée ou copiée), jamais la valeur.
+   */
+  reveal(ref: string, options: { label?: string } = {}): Promise<{ shown: boolean }> {
+    return request("secrets.reveal", { ref, ...options });
+  },
+  /**
+   * Fait choisir à l’utilisateur où enregistrer un `.env`, puis l’écrit en natif (valeurs entre guillemets,
+   * échappées). `name` : nom proposé (`.env`). Rend `{ saved: false }` si l’utilisateur annule.
+   */
+  writeEnvFile(options: { name?: string; entries: EnvEntry[] }): Promise<{ saved: boolean; written?: number }> {
+    return request("secrets.writeEnvFile", options);
+  },
+};
+
+// --- Canaux (flux et WebSocket ouverts par un connecteur) ------------------------------------------------------
+
+export interface ChannelEvent {
+  /** Rang de l’événement, croissant ; à passer en `after` pour lire la suite. */
+  seq: number;
+  /** `data` : un message ; `close` : fin normale (`data` dit pourquoi) ; `error` : fin sur une erreur. */
+  type: "data" | "close" | "error";
+  /** Texte, ou base64 si `base64` est vrai. */
+  data?: string;
+  base64?: boolean;
+  /** SSE : nom et identifiant de l’événement. */
+  event?: string;
+  id?: string;
+  /** Journaux Docker : `stdout` ou `stderr`. */
+  stream?: "stdout" | "stderr" | "stdin";
+}
+
+export interface ChannelRead {
+  events: ChannelEvent[];
+  /** Dernier rang lu, à repasser en `after`. */
+  next: number;
+  closed: boolean;
+  reason: string | null;
+  /** Événements oubliés faute de lecture (au-delà de 5 000 ou 4 Mo gardés). */
+  dropped: number;
+  kind: "stream" | "socket";
+}
+
+/**
+ * Canal ouvert par une fonction du connecteur (`client(id).stream` ou `client(id).socket`), lu et écrit par la page
+ * sans jamais joindre le service. Seul le module qui l’a ouvert le lit.
+ */
+export const channels = {
+  /** Événements après `after` ; `wait` : attendre jusqu’à ce nombre de secondes (25 au plus) qu’il en arrive. */
+  read(channel: string, options: { after?: number; wait?: number } = {}): Promise<ChannelRead> {
+    return request("channels.read", { channel, ...options });
+  },
+  /** Envoie un message par le WebSocket du canal : du texte, ou `{ data }` en base64 ; 64 Kio au plus. */
+  write(channel: string, message: string | { data: string }): Promise<void> {
+    return request<void>("channels.write", {
+      channel,
+      ...(typeof message === "string" ? { text: message } : { data: message.data }),
+    });
+  },
+  close(channel: string): Promise<void> {
+    return request<void>("channels.close", { channel });
+  },
+};
+
+export interface ChannelState {
+  /** Événements `data` reçus, les plus anciens oubliés au-delà de `keep`. */
+  events: ChannelEvent[];
+  closed: boolean;
+  /** Raison de la fin, ou erreur de lecture. */
+  reason: string | null;
+  error: Error | undefined;
+  write: (message: string | { data: string }) => Promise<void>;
+  close: () => Promise<void>;
+}
+
+/**
+ * Lit un canal tant que la page est affichée : `useChannel(id)` rend ses événements au fil de l’eau et se ferme avec
+ * la page. `id` nul : rien n’est lu (canal pas encore ouvert).
+ */
+export function useChannel(channel: string | null | undefined, options: { keep?: number } = {}): ChannelState {
+  const keep = options.keep ?? 2000;
+  type Seen = { events: ChannelEvent[]; closed: boolean; reason: string | null; error?: Error };
+  const [state, setState] = useState<Seen>({ events: [], closed: false, reason: null });
+  useEffect(() => {
+    setState({ events: [], closed: false, reason: null });
+    if (!channel) return;
+    let active = true;
+    void (async () => {
+      let after = 0;
+      while (active) {
+        try {
+          const read = await channels.read(channel, { after, wait: 20 });
+          if (!active) return;
+          after = read.next;
+          const data = read.events.filter((event) => event.type === "data");
+          setState((current) => ({
+            events: data.length ? [...current.events, ...data].slice(-keep) : current.events,
+            closed: read.closed,
+            reason: read.reason,
+          }));
+          if (read.closed) return;
+        } catch (error) {
+          if (active)
+            setState((current) => ({
+              ...current,
+              closed: true,
+              error: error instanceof Error ? error : new Error(String(error)),
+            }));
+          return;
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [channel, keep]);
+  const write = useCallback(
+    (message: string | { data: string }) =>
+      channel ? channels.write(channel, message) : Promise.reject(new Error("Aucun canal ouvert.")),
+    [channel],
+  );
+  const close = useCallback(() => (channel ? channels.close(channel) : Promise.resolve()), [channel]);
+  return { events: state.events, closed: state.closed, reason: state.reason, error: state.error, write, close };
 }
 
 // --- Fonctions -------------------------------------------------------------------------------------------------
@@ -566,8 +1054,23 @@ export interface AgentStartOptions {
   context?: unknown;
   /** Titre de la conversation. */
   title?: string;
-  /** Fonctions que l’agent peut appeler comme outils, en plus de celles déjà proposées aux agents. */
-  functions?: string[];
+  /**
+   * Fonctions que l’agent peut appeler comme outils, en plus de celles déjà proposées aux agents : `"fonction"`,
+   * `"module/fonction"`, ou `{ name, input }` dont les entrées sont imposées (le modèle ne peut pas les changer).
+   */
+  functions?: Array<string | { name: string; input: Record<string, unknown> }>;
+  /**
+   * Dossier de travail : un dossier accordé au module (`folders`) et un sous-dossier facultatif. Sans dossier, l’agent
+   * travaille dans le dossier du module.
+   */
+  folder?: { id: string; path?: string };
+  /**
+   * `"espace-de-travail"` (par défaut) : l’agent n’agit que dans son dossier de travail, sans demande ; ce qui en
+   * sortirait est refusé. `"complet"` : il fait ce qu’il veut, sans aucune demande d’autorisation.
+   */
+  mode?: "espace-de-travail" | "complet";
+  /** Conversation qui répartit le travail entre d’autres agents (outils de délégation). */
+  coordinator?: boolean;
   /** Schéma JSON du résultat attendu en fin de conversation. */
   resultSchema?: Record<string, unknown>;
 }
@@ -606,7 +1109,31 @@ export const ai = {
   ): Promise<{ conversationId: string; message: string; result?: Result }> {
     return request("ai.startAgent", options);
   },
+  /** Envoie un message à une conversation que ce module a lancée ; la relance si elle était au repos. */
+  sendToAgent(conversationId: string, message: string): Promise<void> {
+    return request("ai.sendToAgent", { conversationId, message });
+  },
+  /**
+   * Relance une conversation lancée par ce module quand l’événement `event` (« module/evenement ») arrive, ou à
+   * l’échéance (60 minutes par défaut, 7 jours au plus). `match` filtre son contenu. Le suivi survit à un redémarrage.
+   */
+  watch(options: AgentWatchOptions): Promise<{ id: string }> {
+    return request("ai.watch", options);
+  },
+  /** Annule un suivi posé par `ai.watch`. */
+  cancelWatch(id: string): Promise<void> {
+    return request("ai.cancelWatch", { id });
+  },
 };
+
+export interface AgentWatchOptions {
+  conversationId: string;
+  event: string;
+  match?: Record<string, unknown>;
+  timeoutMinutes?: number;
+  /** Ce qui est attendu, montré à l’utilisateur (« la CI de alpha »). */
+  label?: string;
+}
 
 // --- Voix ------------------------------------------------------------------------------------------------------
 
@@ -663,6 +1190,48 @@ export interface PageContext {
    * page vise d’office ces comptes : `client("jira")` y appelle `acme`.
    */
   accounts: Record<string, string>;
+  /**
+   * Entrée du menu de gauche ouverte dans la page (`menu.setEntries`), par exemple le produit choisi ; `null` quand
+   * la page est ouverte par l’entrée de sa section, ou pour une fonction. Un panneau reçoit celle de sa page.
+   */
+  entry: { id: string; label: string } | null;
+  /**
+   * Paramètres de la fenêtre ouverte sur un élément précis (`shell.openWindow("journal", { params })`), pour la page
+   * et son panneau ; `null` ailleurs.
+   */
+  params: Record<string, unknown> | null;
+}
+
+/** Fenêtre ouverte sur un élément précis : ce que la page y lit, la clé qui ramène la même fenêtre, son titre. */
+export interface WindowOptions {
+  /** Objet JSON (16 Kio au plus), lu par la page dans `usePageContext().params`. */
+  params?: Record<string, unknown>;
+  /** La même clé ramène la fenêtre déjà ouverte ; par défaut, les paramètres eux-mêmes. */
+  key?: string;
+  /** Titre de l’élément, placé avant celui de la page : « Build #42 — Journal CI ». */
+  title?: string;
+}
+
+/** Action d’une notification : une seule de `navigate`, `window` ou `function`. */
+export interface NotificationAction {
+  label: string;
+  /** Page ouverte (« journal », ou « module/page ») ; `entry` l’ouvre sur une entrée de sa zone du menu. */
+  navigate?: string;
+  entry?: string;
+  /** Page ouverte seule dans sa fenêtre, sur un élément précis. */
+  window?: { page: string } & WindowOptions;
+  /** Fonction du module appelée avec `input`. */
+  function?: { id: string; input?: unknown };
+}
+
+export interface NotifyOptions {
+  title: string;
+  description?: string;
+  tone?: "info" | "success" | "warning" | "error";
+  /** Reste à l’écran jusqu’à ce que l’utilisateur la ferme ou choisisse une action. */
+  persistent?: boolean;
+  /** Deux au plus, en boutons dans la surimpression et dans la cloche. */
+  actions?: NotificationAction[];
 }
 
 export const shell = {
@@ -670,7 +1239,7 @@ export const shell = {
    * Affiche une notification dans Alfred (surimpression et centre de notifications). Quand aucune fenêtre d’Alfred
    * n’est au premier plan, elle part aussi au centre de notifications du système.
    */
-  notify(options: { title: string; description?: string; tone?: "info" | "success" | "warning" | "error" }) {
+  notify(options: NotifyOptions) {
     return request<void>("shell.notify", options);
   },
   /** Ouvre une autre page de l’espace (« module/page », ou « module/page@suffixe » pour l’une de ses copies). */
@@ -679,10 +1248,11 @@ export const shell = {
   },
   /**
    * Ouvre une page de l’espace seule dans sa propre fenêtre (sans argument : la page elle-même), ou ramène au
-   * premier plan la fenêtre qui l’affiche déjà.
+   * premier plan la fenêtre qui l’affiche déjà. Avec `params`, la fenêtre s’ouvre sur un élément précis : une
+   * fenêtre par clé (par défaut, par jeu de paramètres).
    */
-  openWindow(reference?: string) {
-    return request<void>("shell.openWindow", reference ? { reference } : {});
+  openWindow(reference?: string, options: WindowOptions = {}) {
+    return request<void>("shell.openWindow", { ...(reference ? { reference } : {}), ...options });
   },
   /** Affiche ou masque le panneau de droite de la page. */
   setPanelVisible(visible: boolean) {
@@ -872,6 +1442,105 @@ export const badge = {
     return request("badge.update", { op: "set", value: 0, ...options });
   },
 };
+
+// --- Zone du menu de gauche ------------------------------------------------------------------------------------
+
+/** État d’une entrée du menu, rendu en pastille : au travail, attend l’utilisateur, en échec, à surveiller, bon. */
+export type MenuEntryStatus = "ok" | "warning" | "error" | "running" | "waiting";
+export type MenuEntryColor = "steel" | "blue" | "violet" | "pink" | "red" | "orange" | "green" | "teal";
+
+export interface MenuEntryAction {
+  /** Reçu par la page dans `useMenuEntryAction`. `rename` ouvre la saisie du libellé dans la ligne. */
+  id: string;
+  label: string;
+  /** Nom d’icône Lucide (`pencil`, `archive`, `app-window`). */
+  icon: string;
+  /** Fonction du module appelée avec `{ entry, action, page, value? }`, à la place de la page. */
+  function?: string;
+}
+
+export interface MenuEntry {
+  /** Identifiant, propre à la zone (identifiant du produit, de la ligne…). */
+  id: string;
+  label: string;
+  /** Nom d’icône Lucide ; sans icône, la pastille d’état ou un point. */
+  icon?: string;
+  color?: MenuEntryColor;
+  status?: MenuEntryStatus;
+  /** Compteur en pastille, comme `badge`. */
+  badge?: number;
+  /** Autre page du module ouverte au clic (« vue »), sinon la page de la zone. */
+  page?: string;
+  /** Au plus trois actions, en icônes au survol de la ligne. */
+  actions?: MenuEntryAction[];
+}
+
+export interface MenuZoneOptions {
+  /** Titre discret au-dessus des entrées (« Produits ») ; un clic replie la zone. */
+  title?: string;
+  /** `page` (défaut) : l’ordre de `setEntries` ; `user` : l’utilisateur déplace les entrées avec Alt+↑ et Alt+↓. */
+  order?: "page" | "user";
+  /** Entrées montrées avant « Afficher plus » ; par défaut toutes. */
+  visible?: number;
+}
+
+/** Une fonction nomme la page dont elle règle la zone ; une page règle la sienne. */
+export interface MenuTarget {
+  page?: string;
+}
+
+/**
+ * Zone de la page dans le menu de gauche : des entrées sous l’entrée de sa section, après un petit séparateur. Elles
+ * durent d’un lancement à l’autre ; un clic ouvre la page avec l’entrée (`usePageContext().entry`).
+ */
+export const menu = {
+  /** Titre, ordre et nombre d’entrées visibles de la zone. */
+  setZone(options: MenuZoneOptions, target: MenuTarget = {}): Promise<void> {
+    return request<void>("menu.update", { op: "setZone", ...options, ...target });
+  },
+  /** Remplace toutes les entrées de la zone (200 au plus) ; une liste vide la vide. */
+  setEntries(entries: MenuEntry[], target: MenuTarget = {}): Promise<void> {
+    return request<void>("menu.update", { op: "setEntries", entries, ...target });
+  },
+  /** Change quelques champs d’une entrée (`null` efface un champ). */
+  updateEntry(id: string, patch: Partial<Omit<MenuEntry, "id">>, target: MenuTarget = {}): Promise<void> {
+    return request<void>("menu.update", { op: "updateEntry", id, patch, ...target });
+  },
+  removeEntry(id: string, target: MenuTarget = {}): Promise<void> {
+    return request<void>("menu.update", { op: "removeEntry", id, ...target });
+  },
+  /** Retire la zone entière. */
+  clear(target: MenuTarget = {}): Promise<void> {
+    return request<void>("menu.update", { op: "clear", ...target });
+  },
+};
+
+/** Action choisie sur une entrée de la zone : `value` porte le nouveau libellé d’un `rename`. */
+export interface MenuEntryActionEvent {
+  entry: string;
+  action: string;
+  value?: string;
+}
+
+/**
+ * Reçoit les actions des entrées de la zone de la page, y compris celles choisies avant que la page ne soit
+ * affichée : Alfred ouvre la page avec l’entrée, puis lui remet l’action.
+ */
+export function useMenuEntryAction(handler: (event: MenuEntryActionEvent) => void) {
+  const latest = useRef(handler);
+  latest.current = handler;
+  useEffect(() => {
+    const take = () =>
+      void request<MenuEntryActionEvent[]>("menu.takeActions").then(
+        (events) => {
+          for (const event of events ?? []) latest.current(event);
+        },
+        () => undefined,
+      );
+    take();
+    return onShellEvent("menuEntryAction", take);
+  }, []);
+}
 
 /** Reçoit les messages envoyés par l’autre cadre de la page (`shell.send`). */
 export function usePeerMessage(handler: (message: unknown) => void) {

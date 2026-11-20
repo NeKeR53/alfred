@@ -26,6 +26,7 @@ import {
   testClient,
 } from "../clients/api";
 import { createFromTemplate, templateOf } from "../clients/fromTemplate";
+import { ParamFields, paramErrors, paramValues } from "../clients/ParamFields";
 import type { ClientsController } from "../clients/useClients";
 import { errorMessage, listVault, saveVaultEntry, slugify, type VaultKind } from "../vault/api";
 import type { NeedPlan } from "./flow";
@@ -36,6 +37,8 @@ const VAULT_KIND: Partial<Record<AuthType, VaultKind>> = {
   basic: "basic",
   oauth2: "oauth2",
   clientCredentials: "clientCredentials",
+  session: "basic",
+  secretUrl: "token",
 };
 
 /** Ce que l’utilisateur saisit selon la façon de se connecter. */
@@ -49,6 +52,20 @@ function fieldsOf(method: ClientMethod | undefined) {
       return {
         login: { name: "username", label: "Identifiant", missing: "Saisissez votre identifiant." },
         secret: { name: "password", label: "Mot de passe ou jeton", missing: "Saisissez le mot de passe ou le jeton." },
+      };
+    case "session":
+      // Alfred se connecte lui-même et garde le jeton obtenu au trousseau.
+      return {
+        login: { name: "username", label: "Identifiant", missing: "Saisissez votre identifiant." },
+        secret: { name: "password", label: "Mot de passe", missing: "Saisissez le mot de passe." },
+      };
+    case "secretUrl":
+      return {
+        secret: {
+          name: "value",
+          label: "Collez l’adresse secrète ici",
+          missing: "Collez l’adresse secrète, en entier.",
+        },
       };
     case "clientCredentials":
       return {
@@ -81,7 +98,10 @@ export function failureText(
     case "certificate":
       return `Le certificat de ${where} n’est pas reconnu, ce qui arrive souvent avec un serveur d’entreprise. Si c’est bien le vôtre, cochez « Faire confiance à ce serveur », puis réessayez.`;
     case "refused":
-      if (type === "basic") return "L’identifiant ou le mot de passe a été refusé. Vérifiez-les, puis réessayez.";
+      if (type === "basic" || type === "session")
+        return "L’identifiant ou le mot de passe a été refusé. Vérifiez-les, puis réessayez.";
+      if (type === "secretUrl")
+        return "L’adresse a été refusée. Copiez-la à nouveau en entier depuis le service, ou créez-en une nouvelle.";
       if (type === "none" || !type)
         return "Ce serveur demande un compte : choisissez une autre façon de vous connecter.";
       return "Le jeton a été refusé. Vérifiez que vous l’avez copié en entier, ou créez-en un nouveau.";
@@ -165,6 +185,7 @@ export function AccountWizard({
   const [login, setLogin] = useState("");
   const [secret, setSecret] = useState("");
   const [trust, setTrust] = useState(Boolean(editing?.insecureTls));
+  const [params, setParams] = useState<Record<string, string>>(editing?.params ?? {});
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [address, setAddress] = useState<Address>({ state: "idle" });
   const [phase, setPhase] = useState<"form" | "saving" | "browser" | "testing">("form");
@@ -176,6 +197,7 @@ export function AccountWizard({
 
   const method = methods.find((item) => item.id === methodId) ?? methods[0];
   const fields = fieldsOf(method);
+  const declaredParams = method?.params;
   const kind = method ? VAULT_KIND[method.type] : undefined;
   const effectiveUrl = (askUrl ? url.trim() : "") || fixedUrl;
   const example = method?.urlExample;
@@ -252,6 +274,7 @@ export function AccountWizard({
       login: fields.login && !login.trim() ? fields.login.missing : undefined,
       secret: fields.secret && !secret && !keepsSecret ? fields.secret.missing : undefined,
     };
+    for (const [id, message] of Object.entries(paramErrors(declaredParams, params))) next[`param:${id}`] = message;
     setErrors(next);
     if (Object.values(next).some(Boolean) || !method) return;
     setFailure(undefined);
@@ -290,6 +313,8 @@ export function AccountWizard({
       if (askUrl && url.trim()) instance.url = url.trim();
       if (kind) instance.secret = secretId;
       if (trust) instance.insecureTls = true;
+      const values = paramValues(declaredParams, params);
+      if (values) instance.params = values;
       const created = !simple && !previous;
       const next = await saveInstance(client.id, instance, created);
       saved.current = { client: next, instance };
@@ -414,6 +439,20 @@ export function AccountWizard({
             }}
           />
         ) : null}
+        <ParamFields
+          params={declaredParams}
+          values={params}
+          disabled={busy}
+          errors={Object.fromEntries(
+            Object.entries(errors)
+              .filter(([key]) => key.startsWith("param:"))
+              .map(([key, message]) => [key.slice(6), message]),
+          )}
+          onChange={(id, value) => {
+            setParams((current) => ({ ...current, [id]: value }));
+            setErrors((current) => ({ ...current, [`param:${id}`]: undefined }));
+          }}
+        />
         {advice && (fields.secret || fields.login || browser) ? <Text tone="muted">{advice}</Text> : null}
         {tokenPage && fields.secret ? (
           <div className="setup-wizard__token">

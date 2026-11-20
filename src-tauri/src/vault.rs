@@ -455,6 +455,10 @@ fn describe(entry: &Entry) -> Value {
 
 /// Traite les commandes de ce module ; `None` quand la commande ne le concerne pas.
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
+    // Références de secrets (valeurs scellées) : commandes de la coquille seulement.
+    if let Some(result) = crate::secret_refs::handle(state, command, args).await {
+        return Some(result);
+    }
     if !matches!(command, "vault.list" | "vault.save" | "vault.delete") {
         return None;
     }
@@ -557,6 +561,13 @@ fn save(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
                 object.remove(name);
             }
         }
+    }
+    // Un jeton de session (méthode `session`) a été obtenu avec l’ancien identifiant ou l’ancien mot de passe : il
+    // ne vaut plus pour ce compte.
+    let user_changed =
+        existing.as_ref().is_some_and(|existing| existing.meta.get("username") != meta.get("username"));
+    if kind == KIND_BASIC && (secret_changed || user_changed) {
+        crate::sessions::clear(&mut secret);
     }
     if previous.as_ref() != Some(&secret) {
         write_secret(&id, &secret)?;

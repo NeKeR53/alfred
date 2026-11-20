@@ -7,6 +7,8 @@ export interface ScheduleItem {
   description: string;
   function: string;
   everyMinutes: number | null;
+  /** Relevé rapproché : intervalle en secondes (au moins 5). */
+  everySeconds?: number | null;
   at: string | null;
   enabled: boolean;
   running?: boolean;
@@ -36,9 +38,10 @@ export function spokenTime(at: string): string {
   return minutes ? `${hours} h ${String(minutes).padStart(2, "0")}` : `${hours} h`;
 }
 
-/** Rythme lisible : « toutes les 15 minutes », « tous les jours à 8 h ». */
-export function cadence(item: Pick<ScheduleItem, "everyMinutes" | "at">): string {
+/** Rythme lisible : « toutes les 15 minutes », « toutes les 10 secondes », « tous les jours à 8 h ». */
+export function cadence(item: Pick<ScheduleItem, "everyMinutes" | "at"> & { everySeconds?: number | null }): string {
   if (item.at) return `tous les jours à ${spokenTime(item.at)}`;
+  if (item.everySeconds) return `toutes les ${item.everySeconds} secondes`;
   const minutes = item.everyMinutes ?? 0;
   if (minutes === 1) return "toutes les minutes";
   if (minutes % 1440 === 0) return minutes === 1440 ? "tous les jours" : `tous les ${minutes / 1440} jours`;

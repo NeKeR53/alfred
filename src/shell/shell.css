@@ -206,6 +206,12 @@
   font-size: var(--font-size-secondary);
   overflow-wrap: anywhere;
 }
+.notification__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
 .notification__tone,
 .notification__meta {
   color: var(--color-muted);

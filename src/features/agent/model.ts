@@ -91,6 +91,11 @@ export interface Conversation {
   sessionId?: string;
   /** Page qui a lancé la conversation (mode agentique). */
   origin?: { reference: string; title: string };
+  /** Conversation coordinatrice : elle confie des tâches à d’autres agents (outils de délégation). */
+  coordinator?: boolean;
+  /** Coordinatrice dont cette conversation est la tâche déléguée, et la clé de cette tâche. */
+  parent?: string;
+  taskKey?: string;
   /** Aperçu du dernier message de l’agent, pour la liste. */
   preview?: string;
   /** Date d’archivage, pour Réglages › Agents archivés ; absente tant que la conversation est visible. */
@@ -345,7 +350,7 @@ export function attachmentPrompt(attachments: readonly Attachment[]): string {
 /* Validation de ce qui est relu sur le disque : une conversation mal formée n’est pas ouverte, comme dans OneApp. */
 
 const PROVIDERS = new Set(["claude", "codex", "opencode"]);
-const AUTONOMIES = new Set(["ask", "auto", "strict"]);
+const AUTONOMIES = new Set(["ask", "auto", "strict", "workspace"]);
 const TURN_STATUSES = new Set(["running", "done", "error", "cancelled"]);
 const ACTIVITY_STATUSES = new Set(["running", "completed", "failed", "cancelled", "stopped"]);
 

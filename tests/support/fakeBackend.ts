@@ -4,8 +4,8 @@
  * développement : `fetch` vers `/__dev/invoke` pour les commandes, `EventSource` sur `/__dev/events` pour les
  * événements. `src/lib/native.ts` est donc exercé tel quel, sans `vi.mock`.
  *
- * Il joue aussi un faux CLI Claude Code derrière `agents.spawn` : le harnais réel de l’interface (`claude.ts`) lit
- * ses lignes de flux JSON et lui écrit ses réponses.
+ * Il joue aussi un faux agent Claude Code derrière les commandes fermées `agents.*` : comme le pilote Rust, il rend
+ * des événements normalisés (`agent:event`) au client réel de l’interface (`harness/native.ts`).
  */
 import type {
   Commit,
@@ -99,6 +99,17 @@ export class FakeBackend {
   readonly settings = new Map<string, unknown>();
   /** Compteurs des pages (`badge.set`), comme `badges.rs` : une entrée par page, toujours supérieure à zéro. */
   badges: Record<string, number> = {};
+  /** Zones du menu (`menu.*`), comme `menu_zones.rs`, sans ses vérifications : une zone par page. */
+  menuZones: Record<
+    string,
+    {
+      title?: string;
+      order: string;
+      visible?: number;
+      entries: Array<Record<string, unknown> & { id: string }>;
+      userOrder?: string[];
+    }
+  > = {};
   /** Voix : dictée réglée ou non, ce que rendra la prochaine dictée, ce qui a été lu. */
   voice = {
     configured: false,
@@ -405,6 +416,29 @@ export class FakeBackend {
       this.emit("badges:changed", { ...this.badges });
       return { count };
     },
+    "menuZones.list": () => (this.space ? structuredClone(this.menuZones) : {}),
+    "frame.menuZones.update": (args) => {
+      const page = String(args.page);
+      const zone = this.menuZones[page] ?? { order: "page", entries: [] };
+      if (args.op === "setZone")
+        Object.assign(zone, { title: args.title, order: args.order ?? "page", visible: args.visible });
+      else if (args.op === "setEntries") zone.entries = structuredClone(args.entries as typeof zone.entries);
+      else if (args.op === "updateEntry")
+        zone.entries = zone.entries.map((entry) =>
+          entry.id === args.id ? { ...entry, ...(args.patch as object), id: entry.id } : entry,
+        );
+      else if (args.op === "removeEntry") zone.entries = zone.entries.filter((entry) => entry.id !== args.id);
+      if (args.op === "clear") delete this.menuZones[page];
+      else this.menuZones[page] = zone;
+      this.emit("menuZones:changed", structuredClone(this.menuZones));
+      return null;
+    },
+    "menuZones.reorder": (args) => {
+      const zone = this.menuZones[String(args.page)];
+      if (zone) zone.userOrder = args.order as string[];
+      this.emit("menuZones:changed", structuredClone(this.menuZones));
+      return null;
+    },
     "app.info": () => ({
       version: "0.1.0",
       serverPort: 14731,
@@ -471,6 +505,8 @@ export class FakeBackend {
     "frame.voice.listen.cancel": () => this.handlers["voice.listen.cancel"]?.({}),
     "frame.voice.speak": (args) => this.handlers["voice.speak"]?.(args),
     "frame.voice.speak.stop": () => null,
+    // Canaux (flux, WebSocket) : aucun n’est ouvert dans les parcours ; un cadre qui disparaît en ferme zéro.
+    "frame.channels.release": () => ({ closed: 0 }),
     "settings.get": (args) => this.settings.get(String(args.key)) ?? null,
     "settings.set": (args) => {
       this.settings.set(String(args.key), args.value);
@@ -552,15 +588,31 @@ export class FakeBackend {
         : this.agentsInstalled
           ? { installed: true, version: "2.1.0", loggedIn: true }
           : { installed: false },
-    "agents.spawn": (args) => this.agent.spawn(args),
-    "agents.write": (args) => {
-      this.agent.receive(String(args.session), String(args.data));
+    "agents.start": (args) => this.agent.spawn(args),
+    "agents.send": (args) => {
+      this.agent.receive(String(args.handle), String(args.text ?? ""));
       return null;
     },
-    "agents.kill": (args) => {
-      this.agent.kill(String(args.session));
+    "agents.answer": (args) => {
+      this.agent.answer(String(args.approvalId), String(args.optionId));
       return null;
     },
+    "agents.cancel": () => null,
+    "agents.models": () => [],
+    "agents.close": (args) => {
+      this.agent.kill(String(args.handle));
+      return null;
+    },
+    "agents.watches.list": () => [],
+    "agents.watches.pending": () => [],
+    "agents.watches.cancel": () => null,
+    "agents.watches.delivered": () => null,
+    "agents.watches.cancelConversation": () => null,
+    "agents.tasks.stop": () => [],
+    "agents.tasks.links": () => ({ delegates: [], coordinators: [] }),
+    "agents.coordinator.set": () => null,
+    "agents.skills": () => [],
+    "agents.tasks.claim": () => [],
     // Les questions sont diffusées à la seule interface du test : aucune n’attend une fenêtre ouverte après coup.
     "ui.waiting": () => [],
     "ui.claim": (args) => this.pending.has(String(args.requestId)),
@@ -704,18 +756,20 @@ export class FakeBackend {
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Un CLI Claude Code joué par script : à chaque message de l’utilisateur, il regarde l’espace, demande l’accord pour
- * une commande, place une page (carte de placement posée par l’outil `place_page`), l’écrit et conclut.
+ * Un agent Claude Code joué par script, tel que le pilote Rust le rend à l’interface : à chaque message de
+ * l’utilisateur, il regarde l’espace, demande l’accord pour une commande, place une page (carte de placement posée par
+ * l’outil `place_page`), l’écrit et conclut. `written` garde ce que l’interface lui a envoyé, sous la forme du flux de
+ * Claude Code (`user`, `control_response`).
  */
 export class FakeClaude {
   readonly #backend: FakeBackend;
   readonly spawned: Json[] = [];
   readonly written: Json[] = [];
-  readonly #controlWaiters = new Map<string, (response: Json) => void>();
+  readonly #approvals = new Map<string, (option: string) => void>();
   #conversation = "";
   #session = "";
   killed = false;
-  /** Résultat de la commande soumise à l’accord, et réponse que l’utilisateur a donnée. */
+  /** Réponse que l’utilisateur a donnée à la commande soumise à l’accord. */
   approvalAnswer: string | undefined;
 
   constructor(backend: FakeBackend) {
@@ -726,75 +780,67 @@ export class FakeClaude {
     this.spawned.push(clone(args));
     this.#conversation = String(args.conversation ?? "");
     this.#session = `session-${this.spawned.length}`;
-    return { session: this.#session };
+    queueMicrotask(() => {
+      this.#out({ type: "status", status: "connecting" });
+      this.#out({ type: "status", status: "ready" });
+    });
+    return { handle: this.#session, sessionId: null };
   }
 
   kill(session: string) {
     if (session !== this.#session) return;
     this.killed = true;
-    this.#backend.emit("agent:output", { session, kind: "closed", code: 0 });
+    this.#out({ type: "status", status: "closed" });
   }
 
-  #out(message: Json) {
-    this.#backend.emit("agent:output", { session: this.#session, kind: "stdout", line: JSON.stringify(message) });
+  #out(event: Json) {
+    this.#backend.emit("agent:event", { ...event, session: this.#session });
   }
 
-  receive(session: string, data: string) {
-    for (const line of data.split("\n").filter((text) => text.trim())) {
-      const message = JSON.parse(line) as Json;
-      this.written.push(message);
-      if (message.type === "user") void this.#turn(session, message);
-      if (message.type === "control_response") {
-        const response = message.response as Json;
-        this.#controlWaiters.get(String(response.request_id))?.(response.response as Json);
-      }
-    }
+  receive(session: string, text: string) {
+    this.written.push({ type: "user", message: { content: [{ type: "text", text }] } });
+    void this.#turn(session);
   }
 
-  async #turn(_session: string, _message: Json) {
+  answer(approvalId: string, optionId: string) {
+    const behavior = optionId === "deny" ? "deny" : "allow";
+    this.written.push({
+      type: "control_response",
+      response: { request_id: approvalId.replace(/^claude-/, ""), response: { behavior } },
+    });
+    this.#approvals.get(approvalId)?.(behavior);
+  }
+
+  async #turn(_session: string) {
     const backend = this.#backend;
-    this.#out({ type: "system", subtype: "init", session_id: "claude-session-1" });
+    const tool = (itemId: string, kind: string, title: string, status: string, extra: Json = {}) =>
+      this.#out({ type: "activity", itemId, kind, title, status, ...extra });
+    this.#out({ type: "session", sessionId: "claude-session-1" });
+    this.#out({ type: "status", status: "responding" });
+    this.#out({ type: "message", itemId: "m1-text-0", content: "Je regarde ce que contient l’espace.", replace: true });
+    tool("outil-1", "tool", "Outil · Alfred / space_overview", "running");
+    tool("outil-1", "tool", "Outil · Alfred / space_overview", "completed", { content: "{}" });
+
+    // Une commande hors de ce qui est permis : la carte d’accord attend l’utilisateur.
+    const decided = new Promise<string>((resolve) => this.#approvals.set("claude-controle-1", resolve));
     this.#out({
-      type: "assistant",
-      message: {
-        id: "m1",
-        content: [
-          { type: "text", text: "Je regarde ce que contient l’espace." },
-          { type: "tool_use", id: "outil-1", name: "mcp__alfred__space_overview", input: {} },
+      type: "approval",
+      request: {
+        id: "claude-controle-1",
+        title: "Exécuter une commande",
+        detail: "ls modules",
+        options: [
+          { id: "allow", label: "Autoriser", kind: "allow" },
+          { id: "deny", label: "Refuser", kind: "deny" },
         ],
       },
     });
-    this.#out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "outil-1", content: "{}" }] } });
-
-    // Une commande hors de ce qui est permis : la carte d’accord attend l’utilisateur.
-    const decided = new Promise<Json>((resolve) => this.#controlWaiters.set("controle-1", resolve));
-    this.#out({
-      type: "control_request",
-      request_id: "controle-1",
-      request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls modules" } },
-    });
-    const decision = await decided;
-    this.approvalAnswer = String(decision.behavior);
-    this.#out({
-      type: "assistant",
-      message: {
-        id: "m2",
-        content: [{ type: "tool_use", id: "outil-2", name: "Bash", input: { command: "ls modules" } }],
-      },
-    });
-    this.#out({
-      type: "user",
-      message: { content: [{ type: "tool_result", tool_use_id: "outil-2", content: "suivi", is_error: false }] },
-    });
+    this.approvalAnswer = await decided;
+    tool("outil-2", "command", "Commande", "running", { detail: "ls modules", actions: [] });
+    tool("outil-2", "command", "Commande", "completed", { detail: "ls modules", actions: [], content: "suivi" });
 
     // `place_page` sans emplacement : la carte de placement, puis l’écriture de la page.
-    this.#out({
-      type: "assistant",
-      message: {
-        id: "m3",
-        content: [{ type: "tool_use", id: "outil-3", name: "mcp__alfred__place_page", input: { title: "Recettes" } }],
-      },
-    });
+    tool("outil-3", "tool", "Outil · Alfred / place_page", "running", { detail: '{\n  "title": "Recettes"\n}' });
     const answer = await backend.ask("agent:question", {
       conversation: this.#conversation,
       kind: "placement",
@@ -807,15 +853,9 @@ export class FakeClaude {
       backend.writePage(placed);
       backend.emit("space:changed");
     }
-    this.#out({
-      type: "user",
-      message: { content: [{ type: "tool_result", tool_use_id: "outil-3", content: answer.error ?? placed }] },
-    });
-    this.#out({
-      type: "assistant",
-      message: { id: "m4", content: [{ type: "text", text: `La page **${placed}** est prête.` }] },
-    });
-    this.#out({ type: "result", subtype: "success", is_error: false, result: "fini" });
+    tool("outil-3", "tool", "Outil · Alfred / place_page", "completed", { content: answer.error ?? placed });
+    this.#out({ type: "message", itemId: "m4-text-0", content: `La page **${placed}** est prête.`, replace: true });
+    this.#out({ type: "status", status: "idle" });
   }
 }
 

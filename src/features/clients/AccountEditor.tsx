@@ -35,6 +35,7 @@ import {
   methodLabel,
   saveInstance,
 } from "./api";
+import { ParamFields, paramErrors, paramValues } from "./ParamFields";
 import "./services.css";
 
 const SECURE_URL = /^https:\/\/[^\s/?#]+[^\s?#]*$/i;
@@ -63,9 +64,19 @@ function fieldsOf(type: AuthType | undefined): Fields {
     case "apiKey":
       return { secret: { name: "value", label: "Clé d’API", required: true, missing: "Saisissez la clé." } };
     case "basic":
+    case "session":
       return {
         login: { name: "username", label: "Identifiant", missing: "Saisissez votre identifiant." },
         secret: { name: "password", label: "Mot de passe", required: true, missing: "Saisissez le mot de passe." },
+      };
+    case "secretUrl":
+      return {
+        secret: {
+          name: "value",
+          label: "Adresse secrète (avec son jeton)",
+          required: true,
+          missing: "Collez l’adresse secrète.",
+        },
       };
     case "oauth2":
       return {
@@ -143,7 +154,9 @@ const headersText = (headers: Record<string, string> | undefined) =>
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
 
-type Errors = Partial<Record<"url" | "login" | "secret" | "headers", string>>;
+type Errors = Partial<Record<"url" | "login" | "secret" | "headers", string>> & {
+  params?: Record<string, string>;
+};
 
 export function AccountEditor({
   client,
@@ -175,6 +188,7 @@ export function AccountEditor({
   const [secret, setSecret] = useState("");
   const [headers, setHeaders] = useState(headersText(editing?.headers));
   const [insecureTls, setInsecureTls] = useState(Boolean(editing?.insecureTls));
+  const [params, setParams] = useState<Record<string, string>>(editing?.params ?? {});
   const [entries, setEntries] = useState<VaultEntry[]>();
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
@@ -184,6 +198,7 @@ export function AccountEditor({
     : client.methods.find((known) => known.id === method)?.type;
   const kind = vaultKindOf(type);
   const fields = fieldsOf(type);
+  const declaredParams = simple ? undefined : client.methods.find((known) => known.id === method)?.params;
   const secretId = simple ? client.auth?.secret : editing?.secret;
   const stored = entries?.find((entry) => entry.id === secretId && entry.kind === kind);
 
@@ -215,6 +230,8 @@ export function AccountEditor({
       secret: fields.secret?.required && !secret && !keepsSecret ? fields.secret.missing : undefined,
       headers: parseHeaders(headers).error,
     };
+    const missingParams = paramErrors(declaredParams, params);
+    if (Object.keys(missingParams).length > 0) next.params = missingParams;
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
     setPending(true);
@@ -242,6 +259,8 @@ export function AccountEditor({
       const extra = parseHeaders(headers).headers;
       if (Object.keys(extra).length > 0) instance.headers = extra;
       if (insecureTls) instance.insecureTls = true;
+      const values = paramValues(declaredParams, params);
+      if (values) instance.params = values;
       const saved = await saveInstance(client.id, instance, !simple && !initial);
       notify({ title: editing && (simple || initial) ? "Compte enregistré" : "Compte ajouté", tone: "success" });
       onSaved({ saved, instance: instance.id, created: !simple && !initial });
@@ -305,6 +324,15 @@ export function AccountEditor({
                 </SelectControl>
               </FormField>
             ) : null}
+            <ParamFields
+              params={declaredParams}
+              values={params}
+              errors={errors.params}
+              onChange={(id, value) => {
+                setParams((current) => ({ ...current, [id]: value }));
+                setErrors((current) => ({ ...current, params: { ...current.params, [id]: "" } }));
+              }}
+            />
             {fields.login ? (
               <FormField label={fields.login.label} error={errors.login}>
                 <TextInput

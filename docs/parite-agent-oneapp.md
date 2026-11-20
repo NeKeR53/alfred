@@ -1,5 +1,7 @@
 # Parité des agents : OneApp → Alfred
 
+> Mis à jour le 20 novembre 2026 : pilotage des harnais depuis Rust (S9), agents lancés par une page avec dossier et mode imposés (S3), relance sur un événement (S10) et délégation entre agents (S11). Voir les sections 8 à 10.
+
 Inventaire des fonctions d’agent de OneApp (`/Users/alexandre/Workspace/oneapp`) comparées à celles d’Alfred, en vue d’un périmètre identique. État d’Alfred : branche `verif-windows-agents` au 2026-11-16.
 
 Les chemins OneApp sont relatifs au dépôt OneApp ; les chemins Alfred, relatifs à ce dépôt (`src/features/agent/` abrégé en `agent/`).
@@ -222,17 +224,17 @@ Déjà fait dans Alfred, donc non listé comme manquant : Entrée envoie tout de
 
 | Fonction | OneApp | Alfred | Ce qui manque ou diffère | Cat. |
 |---|---|---|---|---|
-| Orchestrateur global unique qui délègue (`oneapp_threads` : plan, status, send, dispatch, report) | `src/lib/agentThreadBridge.ts:1-192`, `src/lib/globalOrchestrator.ts:117-300` | absent | Noyau générique possible (outil « lancer un sous-agent » réservé au coordinateur). | B |
-| Plan validé en bloc (1 à 50 tâches, dépendances acycliques, profils autorisés), idempotent | `src/lib/agentThreadModel.ts:365-413`, `src/lib/agentThreadsDelegation.ts:103-129` | absent | — | B |
+| Orchestrateur global unique qui délègue (`oneapp_threads` : plan, status, send, dispatch, report) | `src/lib/agentThreadBridge.ts:1-192`, `src/lib/globalOrchestrator.ts:117-300` | partiel | Alfred : conversation coordinatrice désignée par l’utilisateur (page Agent) ou par une page (`coordinator: true`), outils `delegate`, `task_status`, `read_report`, `relaunch_task` (`agents/delegation.rs`, `delegation.ts`). Pas d’orchestrateur global unique. | B |
+| Plan validé en bloc (1 à 50 tâches, dépendances acycliques, profils autorisés), idempotent | `src/lib/agentThreadModel.ts:365-413`, `src/lib/agentThreadsDelegation.ts:103-129` | identique | `delegate` : lot vérifié en entier (clés, boucles, dossiers, mode borné par celui de la coordinatrice), `requestId`. Pas de profils : harnais et modèle par tâche. | B |
 | Messages originaux transmis tels quels aux sous-agents, avec leurs pièces jointes (16 au plus) | `src/lib/agentThreadsDelegation.ts:35-97` | absent | — | B |
-| Dépendances entre sous-agents, statuts « en attente » et « attend ses agents » | `src/lib/agentThreads.ts:141-178`, `src/lib/agentThreadsStore.ts:282-322` | absent | — | B |
-| Reprise en main d’un sous-agent par l’utilisateur | `src/lib/agentThreadsStore.ts:271-281` | absent | — | B |
-| Arrêt en cascade des sous-agents | `src/lib/agentThreadsConversation.ts:463-494` | absent | — | B |
-| Contrat de retour JSON des sous-agents, artefacts vérifiés, statut partiel | `src/lib/agentResults.ts:16-255`, `src/lib/agentThreads.ts:530-574` | absent | — | B |
-| Rapports volumineux transmis par fichier, résumé compacté, lecture paginée | `src/lib/agentHandoffs.ts:5-58`, `src/lib/agentThreadsDelegation.ts:270-377` | absent | — | B |
-| Rapport de sous-agent replié dans le fil parent (« Retour de … »), « Voir l’agent » | `src/pages/chat/ChatTranscript.tsx:502-540` | absent | — | B |
+| Dépendances entre sous-agents, statuts « en attente » et « attend ses agents » | `src/lib/agentThreads.ts:141-178`, `src/lib/agentThreadsStore.ts:282-322` | partiel | Dépendances et annulation en cascade d’un échec ; pas de statut affiché « attend ses agents ». | B |
+| Reprise en main d’un sous-agent par l’utilisateur | `src/lib/agentThreadsStore.ts:271-281` | identique | Un délégué est une conversation ordinaire de la page Agent. | B |
+| Arrêt en cascade des sous-agents | `src/lib/agentThreadsConversation.ts:463-494` | partiel | À l’archivage de la coordinatrice ; pas encore à l’arrêt d’un tour. | B |
+| Contrat de retour JSON des sous-agents, artefacts vérifiés, statut partiel | `src/lib/agentResults.ts:16-255`, `src/lib/agentThreads.ts:530-574` | identique | `status`, `summary` (600), `artifacts` vérifiés dans le dossier du délégué, `questions`. | B |
+| Rapports volumineux transmis par fichier, résumé compacté, lecture paginée | `src/lib/agentHandoffs.ts:5-58`, `src/lib/agentThreadsDelegation.ts:270-377` | partiel | Rapport gardé dans la base de l’espace, lu par pages de 4 000 caractères (`read_report`). | B |
+| Rapport de sous-agent replié dans le fil parent (« Retour de … »), « Voir l’agent » | `src/pages/chat/ChatTranscript.tsx:502-540` | partiel | Le rapport arrive comme message dans la coordinatrice, sans repli ni bouton « Voir l’agent ». | B |
 | Proposition d’agent sur un produit lié : carte « Lancer l’agent » / « Ignorer », 5 au plus | `src/lib/agentThreadsConversation.ts:538-578`, `src/hooks/useAgents.ts:386-436` | absent | Noyau générique possible (« proposer un agent ailleurs, l’utilisateur décide »). | B |
-| Lancement d’un agent depuis une page avec fichier de contexte privé, un seul par demande | `src/lib/agentThreadsStore.ts:731-781` | partiel | `ai.startAgent` d’Alfred lance une conversation depuis une page, sans dédoublonnage par demande ni fichier de contexte. | B |
+| Lancement d’un agent depuis une page avec fichier de contexte privé, un seul par demande | `src/lib/agentThreadsStore.ts:731-781` | partiel | `ai.startAgent` : dossier accordé, mode (`espace-de-travail` ou `complet`), fonctions à entrées imposées, coordinatrice ; `ai.sendToAgent`. Sans dédoublonnage par demande ni fichier de contexte privé. | B |
 | Événements « document modifié par l’agent » pour rafraîchir les vues | `src/lib/agentDocumentEvents.ts:1-18` | absent | — | B |
 | Sous-agents natifs du CLI affichés (« Agent · … ») | `src/lib/codexSession.ts:298-307` | identique | — | C |
 | Consigne pour des agents concurrents dans le même dossier | `src/lib/agentQuestions.ts:3-4` | absent | Consigne d’agent produit. | B |
@@ -248,10 +250,10 @@ Déjà fait dans Alfred, donc non listé comme manquant : Entrée envoie tout de
 | Codex : fragments et texte final remplaçant ; sorties de commande, résumé de raisonnement, plan, progression MCP | `src/lib/codexSession.ts:636-666` | identique | — | C |
 | Codex : types d’éléments affichés (raisonnement, plan, commande, fichiers, MCP, outils dynamiques, collaboration, web, image) | `src/lib/codexSession.ts:187-340` | identique | — | C |
 | Codex : JSONL tolérant, une erreur sur un message n’arrête pas les suivants | `src/lib/codexSession.ts:109-128,595` | identique | — | C |
-| Codex : requête non prise en charge signalée à l’utilisateur (« Le CLI demande une interaction non prise en charge… ») | `src/lib/codexSession.ts:717-728` | partiel | Alfred répond -32601 au CLI sans rien afficher. | A |
+| Codex : requête non prise en charge signalée à l’utilisateur (« Le CLI demande une interaction non prise en charge… ») | `src/lib/codexSession.ts:717-728` | identique | Porté en Rust (`agents/codex/mod.rs`). | A |
 | Codex : dernière erreur du modèle ajoutée au message d’échec | `src/lib/codexSession.ts:634,667` | identique | — | C |
 | Codex : outils dynamiques (`item/tool/call`, 120 s) | `src/lib/codexSession.ts:681-711` | absent | Délégation de OneApp ; Alfred passe ses outils par MCP. | B |
-| OpenCode : `opencode acp`, `initialize`, `session/new` ou `session/resume`, configuration par `OPENCODE_CONFIG_CONTENT` | `src/lib/agentSession.ts:115-143,519` | identique | — | C |
+| OpenCode : `opencode serve` privé (ADR 0022 de OneApp), client généré depuis l’OpenAPI, mot de passe et appairage dans Rust, demandes envoyées une par une, rattrapage par `session.message.list` | `src-tauri/src/agents/opencode/` | identique | Repris de OneApp ; un serveur par session d’Alfred (jeton des outils propre à la conversation). OpenCode 2.1 ou plus : OpenCode 1 n’a pas l’API v2. | C |
 | OpenCode : `session/prompt` avec `resource_link`, adresses Windows, refus signalé | `src/lib/agentSession.ts:17-39,570` | identique | — | C |
 | OpenCode : annulation (autorisations annulées puis `session/cancel`), filtrage par session, -32601 | `src/lib/agentSession.ts:495-600` | identique | — | C |
 | OpenCode : traduction des mises à jour ACP (message, pensée, outils, plan, images) | `src/lib/agentSession.ts:155-332` | identique | — | C |
@@ -259,6 +261,8 @@ Déjà fait dans Alfred, donc non listé comme manquant : Entrée envoie tout de
 | Harnais Claude Code | — | identique | Absent de OneApp ; Alfred va au-delà (constat 1). | C |
 
 ## 10. Couche processus Rust
+
+Depuis le 20 novembre 2026 (S9), Alfred pilote les trois harnais depuis Rust (`src-tauri/src/agents/`) : Claude Code en `stream-json`, Codex `app-server` sur les types générés depuis son JSON Schema, OpenCode par `opencode serve` et son client généré (`src-tauri/codegen`). L’interface n’a que des commandes fermées (`agents.start`, `send`, `steer`, `answer`, `cancel`, `close`, `models`, `skills`) et reçoit des événements normalisés par un `Channel` ; `agents.spawn`/`write`/`kill`, qui écrivaient du texte libre sur l’entrée d’un CLI, ont disparu, comme les 1 900 lignes de protocole de `src/features/agent/harness/`.
 
 | Fonction | OneApp | Alfred | Ce qui manque ou diffère | Cat. |
 |---|---|---|---|---|

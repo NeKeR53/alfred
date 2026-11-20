@@ -43,12 +43,14 @@ import { QueueList, queuedEditable } from "./QueueList";
 import { useAgents } from "./store";
 import { TextPreview } from "./TextPreview";
 import { QUOTE_EVENT } from "./Transcript";
+import { WatchLines } from "./watches";
 import "./agent-composer.css";
 
 const AUTONOMY_LABEL: Record<Autonomy, string> = {
   ask: "Libre dans ses dossiers",
   auto: "Autonomie totale",
   strict: "Accord à chaque action",
+  workspace: "Seulement dans son dossier",
 };
 
 function failure(title: string, error: unknown) {
@@ -548,6 +550,7 @@ export function Composer({
         onDragLeave={() => !inTauri && setDragging(false)}
         onDrop={onDrop}
       >
+        <WatchLines conversationId={conversationId} />
         <QueueList
           queue={queued}
           disabled={locked}

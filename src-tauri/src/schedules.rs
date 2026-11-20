@@ -1,5 +1,6 @@
-//! Planification des fonctions : un module déclare qu’une de ses fonctions part toutes les N minutes ou chaque jour
-//! à une heure locale. Tout repose sur l’horloge d’Alfred ouvert : rien ne tourne quand il est fermé, et une heure
+//! Planification des fonctions : un module déclare qu’une de ses fonctions part toutes les N minutes, toutes les N
+//! secondes (relevé rapproché, au moins 5) ou chaque jour à une heure locale. Une fonction à intervalle peut rendre
+//! `{ nextInSeconds }` : son prochain passage est avancé ou repoussé d’autant, une fois. Tout repose sur l’horloge d’Alfred ouvert : rien ne tourne quand il est fermé, et une heure
 //! fixe manquée part au premier réveil qui suit, le jour même.
 
 use std::collections::HashSet;
@@ -16,6 +17,12 @@ use crate::state::AppState;
 
 /// Intervalle de réveil de la boucle : une planification part au plus 30 secondes après son heure.
 const WAKE_EVERY: Duration = Duration::from_secs(30);
+/// Réveil rapproché, tant qu’une planification à la seconde ou un prochain passage demandé existe.
+const WAKE_FAST: Duration = Duration::from_secs(1);
+/// Plus petit intervalle à la seconde.
+pub const MIN_SECONDS: u32 = 5;
+/// Bornes de `nextInSeconds` rendu par une fonction : de 5 secondes à un jour.
+const NEXT_RANGE: (u64, u64) = (5, 86_400);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Calcul pur : est-elle due, et quand partira-t-elle ?
@@ -23,7 +30,7 @@ const WAKE_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
-    /// Toutes les N minutes (au moins 1).
+    /// Toutes les N secondes : `everyMinutes` × 60, ou `everySeconds` (au moins 5).
     Every(u32),
     /// Chaque jour à cette heure locale.
     At(NaiveTime),
@@ -31,12 +38,16 @@ pub enum Trigger {
 
 impl Trigger {
     pub fn of(declaration: &ScheduleDecl) -> AppResult<Self> {
-        match (declaration.every_minutes, declaration.at.as_deref()) {
-            (Some(minutes), None) if minutes >= 1 => Ok(Self::Every(minutes)),
-            (Some(_), None) => Err(AppError::new("L’intervalle doit être d’au moins une minute.")),
-            (None, Some(at)) => parse_at(at).map(Self::At),
+        match (declaration.every_minutes, declaration.every_seconds, declaration.at.as_deref()) {
+            (Some(minutes), None, None) if minutes >= 1 => Ok(Self::Every(minutes.saturating_mul(60))),
+            (Some(_), None, None) => Err(AppError::new("L’intervalle doit être d’au moins une minute.")),
+            (None, Some(seconds), None) if seconds >= MIN_SECONDS => Ok(Self::Every(seconds)),
+            (None, Some(_), None) => {
+                Err(AppError::new(format!("L’intervalle doit être d’au moins {MIN_SECONDS} secondes.")))
+            }
+            (None, None, Some(at)) => parse_at(at).map(Self::At),
             _ => Err(AppError::new(
-                "Une planification a soit un intervalle (everyMinutes), soit une heure (at), pas les deux.",
+                "Une planification a un seul déclencheur : un intervalle (everyMinutes ou everySeconds) ou une heure (at), pas les deux.",
             )),
         }
     }
@@ -56,8 +67,8 @@ fn parse_at(at: &str) -> AppResult<NaiveTime> {
 /// faite plus tôt dans la journée n’empêche pas le passage prévu.
 pub fn is_due(trigger: Trigger, last_run: Option<NaiveDateTime>, now: NaiveDateTime) -> bool {
     match trigger {
-        Trigger::Every(minutes) => {
-            last_run.is_none_or(|last| now - last >= chrono::Duration::minutes(i64::from(minutes.max(1))))
+        Trigger::Every(seconds) => {
+            last_run.is_none_or(|last| now - last >= chrono::Duration::seconds(i64::from(seconds.max(1))))
         }
         Trigger::At(at) => {
             let today = now.date().and_time(at);
@@ -72,9 +83,9 @@ pub fn next_run(trigger: Trigger, last_run: Option<NaiveDateTime>, now: NaiveDat
         return now;
     }
     match trigger {
-        Trigger::Every(minutes) => {
+        Trigger::Every(seconds) => {
             let last = last_run.unwrap_or(now);
-            (last + chrono::Duration::minutes(i64::from(minutes.max(1)))).max(now)
+            (last + chrono::Duration::seconds(i64::from(seconds.max(1)))).max(now)
         }
         Trigger::At(at) => {
             let today = now.date().and_time(at);
@@ -84,6 +95,45 @@ pub fn next_run(trigger: Trigger, last_run: Option<NaiveDateTime>, now: NaiveDat
                 today + chrono::Duration::days(1)
             }
         }
+    }
+}
+
+/// Prochain passage demandé par la fonction (`{ nextInSeconds }`), borné de 5 secondes à un jour.
+pub fn requested_next(output: &Value) -> Option<u64> {
+    let seconds = output.get("nextInSeconds")?.as_f64()?;
+    (seconds.is_finite() && seconds > 0.0).then(|| (seconds.round() as u64).clamp(NEXT_RANGE.0, NEXT_RANGE.1))
+}
+
+/// Due compte tenu d’un prochain passage demandé : il remplace l’intervalle, une fois. Une heure fixe l’ignore.
+pub fn is_due_with(
+    trigger: Trigger,
+    last_run: Option<NaiveDateTime>,
+    now: NaiveDateTime,
+    requested: Option<NaiveDateTime>,
+) -> bool {
+    match (trigger, requested) {
+        (Trigger::Every(_), Some(at)) => now >= at,
+        _ => is_due(trigger, last_run, now),
+    }
+}
+
+/// Prochains passages demandés par les fonctions, par planification ; perdus à la fermeture d’Alfred.
+fn requested() -> &'static Mutex<std::collections::HashMap<String, NaiveDateTime>> {
+    static REQUESTED: OnceLock<Mutex<std::collections::HashMap<String, NaiveDateTime>>> = OnceLock::new();
+    REQUESTED.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn requested_at(space: &str, schedule: &str) -> Option<NaiveDateTime> {
+    requested().lock().ok()?.get(&format!("{space}\u{0}{schedule}")).copied()
+}
+
+fn set_requested(space: &str, schedule: &str, at: Option<NaiveDateTime>) {
+    if let Ok(mut map) = requested().lock() {
+        let key = format!("{space}\u{0}{schedule}");
+        match at {
+            Some(at) => map.insert(key, at),
+            None => map.remove(&key),
+        };
     }
 }
 
@@ -207,6 +257,13 @@ async fn run(
     let input = if declaration.input.is_null() { json!({}) } else { declaration.input.clone() };
     let started = Instant::now();
     let result = crate::functions::call(state, &reference, input, "planification").await;
+    // Une fonction à intervalle peut avancer ou repousser son prochain passage ; sinon l’intervalle reprend.
+    let next = match (&result, Trigger::of(&declaration)) {
+        (Ok(output), Ok(Trigger::Every(_))) => requested_next(output)
+            .map(|seconds| Local::now().naive_local() + chrono::Duration::seconds(seconds as i64)),
+        _ => None,
+    };
+    set_requested(&space, &schedule, next);
     let duration = Some(started.elapsed().as_millis() as u64);
     let summary = format!("{} → fonction {reference}", if manual { "exécution manuelle" } else { "planification" });
     match &result {
@@ -236,11 +293,13 @@ fn space_key(space: &Space) -> String {
     space.root.to_string_lossy().to_string()
 }
 
-/// Un réveil de la boucle : lance chaque planification due, chacune dans sa tâche. Renvoie celles lancées.
-fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
-    let Some(space) = state.try_space() else { return Vec::new() };
+/// Un réveil de la boucle : lance chaque planification due, chacune dans sa tâche. Renvoie celles lancées, et vrai
+/// quand la boucle doit se réveiller à la seconde (planification à la seconde, ou prochain passage demandé).
+fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> (Vec<String>, bool) {
+    let Some(space) = state.try_space() else { return (Vec::new(), false) };
     let key = space_key(&space);
     let mut launched = Vec::new();
+    let mut fast = false;
     for module in space.module_ids() {
         let Ok(manifest) = space.module(&module) else { continue };
         for declaration in manifest.schedules {
@@ -249,7 +308,11 @@ fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
             let schedule = format!("{module}/{}", declaration.id);
             let Ok(run_state) = lock_db(state).and_then(|db| read_state(&db, &key, &schedule)) else { continue };
             let last = run_state.last_run_at.as_deref().and_then(to_local);
-            if !run_state.enabled || !is_due(trigger, last, now) {
+            let asked = requested_at(&key, &schedule);
+            if run_state.enabled && (asked.is_some() || matches!(trigger, Trigger::Every(seconds) if seconds < 60)) {
+                fast = true;
+            }
+            if !run_state.enabled || !is_due_with(trigger, last, now, asked) {
                 continue;
             }
             // Encore en cours depuis le réveil précédent : on n’en lance pas une seconde.
@@ -261,18 +324,16 @@ fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
             });
         }
     }
-    launched
+    (launched, fast)
 }
 
 /// Lance la boucle de planification ; appelée une fois au démarrage d’Alfred, dans le runtime tokio.
 pub fn start(state: Arc<AppState>) {
     tokio::spawn(async move {
-        let mut wake = tokio::time::interval(WAKE_EVERY);
-        // Après une mise en veille, un seul réveil de rattrapage suffit.
-        wake.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Toutes les 30 secondes, ou chaque seconde tant qu’un relevé rapproché l’exige.
         loop {
-            wake.tick().await;
-            tick(&state, Local::now().naive_local());
+            let (_, fast) = tick(&state, Local::now().naive_local());
+            tokio::time::sleep(if fast { WAKE_FAST } else { WAKE_EVERY }).await;
         }
     });
 }
@@ -326,6 +387,9 @@ fn list(state: &AppState, now: NaiveDateTime) -> AppResult<Value> {
             let trigger = Trigger::of(declaration);
             let last = run_state.last_run_at.as_deref().and_then(to_local);
             let next = match &trigger {
+                Ok(Trigger::Every(_)) if run_state.enabled && requested_at(&key, &schedule).is_some() => {
+                    requested_at(&key, &schedule).map(|at| at.max(now)).and_then(to_iso)
+                }
                 Ok(trigger) if run_state.enabled => to_iso(next_run(*trigger, last, now)),
                 _ => None,
             };
@@ -335,6 +399,7 @@ fn list(state: &AppState, now: NaiveDateTime) -> AppResult<Value> {
                 "description": declaration.description,
                 "function": declaration.function,
                 "everyMinutes": declaration.every_minutes,
+                "everySeconds": declaration.every_seconds,
                 "at": declaration.at,
                 "enabled": run_state.enabled,
                 "running": is_running(&key, &schedule),
@@ -379,6 +444,7 @@ fn declare(state: &AppState, args: &Value) -> AppResult<Value> {
         description: opt_arg::<String>(args, "description")?.unwrap_or_default(),
         function: local_function(&module, &arg::<String>(args, "function")?)?,
         every_minutes: opt_arg(args, "everyMinutes")?,
+        every_seconds: opt_arg(args, "everySeconds")?,
         at: opt_arg(args, "at")?,
         input: args.get("input").cloned().unwrap_or(Value::Null),
     };
@@ -462,7 +528,7 @@ mod tests {
 
     #[test]
     fn computes_due_and_next_run_on_several_clocks() {
-        let every = Trigger::Every(15);
+        let every = Trigger::Every(15 * 60);
         // Jamais exécutée : part au premier réveil.
         assert!(is_due(every, None, at(12, 9, 0, 0)));
         assert_eq!(next_run(every, None, at(12, 9, 0, 0)), at(12, 9, 0, 0));
@@ -494,7 +560,11 @@ mod tests {
             at: at.map(str::to_string),
             ..ScheduleDecl::default()
         };
-        assert_eq!(Trigger::of(&decl(Some(5), None)).unwrap(), Trigger::Every(5));
+        assert_eq!(Trigger::of(&decl(Some(5), None)).unwrap(), Trigger::Every(300));
+        let seconds = |every_seconds: u32| ScheduleDecl { every_seconds: Some(every_seconds), ..ScheduleDecl::default() };
+        assert_eq!(Trigger::of(&seconds(10)).unwrap(), Trigger::Every(10));
+        assert!(Trigger::of(&seconds(4)).is_err(), "au moins 5 secondes");
+        assert!(Trigger::of(&ScheduleDecl { every_minutes: Some(1), ..seconds(10) }).is_err(), "un seul déclencheur");
         assert_eq!(
             Trigger::of(&decl(None, Some("08:30"))).unwrap(),
             Trigger::At(NaiveTime::from_hms_opt(8, 30, 0).unwrap())
@@ -509,6 +579,29 @@ mod tests {
         ] {
             assert!(Trigger::of(&decl(every_minutes, at)).is_err(), "{every_minutes:?} {at:?}");
         }
+    }
+
+    #[test]
+    fn a_function_can_ask_for_its_next_run() {
+        assert_eq!(requested_next(&json!({ "nextInSeconds": 3 })), Some(5), "au moins 5 secondes");
+        assert_eq!(requested_next(&json!({ "nextInSeconds": 42.4 })), Some(42));
+        assert_eq!(requested_next(&json!({ "nextInSeconds": 1_000_000 })), Some(86_400), "au plus un jour");
+        assert_eq!(requested_next(&json!({ "nextInSeconds": 0 })), None);
+        assert_eq!(requested_next(&json!({ "nextInSeconds": "10" })), None);
+        assert_eq!(requested_next(&json!({ "ok": true })), None);
+
+        let every = Trigger::Every(600);
+        let last = at(12, 10, 0, 0);
+        // Rapproché : 3 secondes plus tard au lieu de 10 minutes.
+        let soon = Some(at(12, 10, 0, 3));
+        assert!(!is_due_with(every, Some(last), at(12, 10, 0, 2), soon));
+        assert!(is_due_with(every, Some(last), at(12, 10, 0, 3), soon));
+        // Espacé : l’intervalle échu ne suffit plus.
+        let later = Some(at(12, 11, 0, 0));
+        assert!(!is_due_with(every, Some(last), at(12, 10, 30, 0), later));
+        // Une heure fixe ignore la demande.
+        let daily = Trigger::At(NaiveTime::from_hms_opt(8, 0, 0).unwrap());
+        assert!(!is_due_with(daily, None, at(12, 7, 0, 0), Some(at(12, 6, 0, 0))));
     }
 
     /// Joue l’interface : renvoie l’entrée reçue, ou échoue quand `fail` est vrai.
@@ -526,7 +619,11 @@ mod tests {
                 let result = if fail.load(std::sync::atomic::Ordering::SeqCst) {
                     Err("Le service ne répond pas.".to_string())
                 } else {
-                    Ok(json!({ "relances": 3, "input": event.payload["input"] }))
+                    Ok(json!({
+                        "relances": 3,
+                        "input": event.payload["input"],
+                        "nextInSeconds": event.payload["input"]["nextInSeconds"],
+                    }))
                 };
                 let _ = state.resolve_ui(id, result);
             }
@@ -596,8 +693,9 @@ mod tests {
         assert_eq!(listed[1]["at"], "08:00");
 
         // Premier réveil : la planification à intervalle part, celle à heure fixe attend 08:00.
-        let launched = tick(&state, at(12, 7, 0, 0));
+        let (launched, fast) = tick(&state, at(12, 7, 0, 0));
         assert_eq!(launched, ["factures/relance"]);
+        assert!(!fast, "rien à la seconde : la boucle garde ses 30 secondes");
         let item = settle(&state, "factures/relance").await;
         assert_eq!(item["lastStatus"], "ok");
         assert!(item["lastRunAt"].is_string());
@@ -613,14 +711,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(tick(&state, Local::now().naive_local() + chrono::Duration::minutes(1)).is_empty());
+        assert!(tick(&state, Local::now().naive_local() + chrono::Duration::minutes(1)).0.is_empty());
 
         // Pause : plus rien ne part, même longtemps après.
         handle(&state, "schedules.setEnabled", &json!({ "schedule": "factures/relance", "enabled": false }))
             .await
             .unwrap()
             .unwrap();
-        assert!(tick(&state, Local::now().naive_local() + chrono::Duration::hours(30)).is_empty());
+        assert!(tick(&state, Local::now().naive_local() + chrono::Duration::hours(30)).0.is_empty());
         let listed = handle(&state, "schedules.list", &Value::Null).await.unwrap().unwrap();
         assert_eq!(listed[0]["enabled"], false);
         assert_eq!(listed[0]["nextRunAt"], Value::Null);
@@ -657,4 +755,49 @@ mod tests {
         let listed = handle(&state, "schedules.list", &Value::Null).await.unwrap().unwrap();
         assert_eq!(listed.as_array().unwrap().len(), 1);
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fast_schedule_runs_every_few_seconds_and_follows_next_in_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        space
+            .write_module(&ModuleManifest {
+                id: "ci".into(),
+                name: "CI".into(),
+                functions: vec![FunctionDecl { id: "sonder".into(), ..FunctionDecl::default() }],
+                ..ModuleManifest::default()
+            })
+            .unwrap();
+        state.set_space(Some(space.clone()));
+        let calls = fake_ui(&state, Arc::new(std::sync::atomic::AtomicBool::new(false)));
+
+        let too_fast = json!({ "module": "ci", "id": "sonde", "function": "sonder", "everySeconds": 2 });
+        assert!(handle(&state, "schedules.declare", &too_fast).await.unwrap().is_err());
+        // La fonction demande à repasser dans 3 secondes (bornées à 5) au lieu de 10.
+        let declared = json!({
+            "module": "ci", "id": "sonde", "function": "sonder", "everySeconds": 10, "input": { "nextInSeconds": 3 }
+        });
+        handle(&state, "schedules.declare", &declared).await.unwrap().unwrap();
+        let listed = handle(&state, "schedules.list", &Value::Null).await.unwrap().unwrap();
+        assert_eq!(listed[0]["everySeconds"], 10);
+
+        let now = Local::now().naive_local();
+        let (launched, fast) = tick(&state, now);
+        assert_eq!(launched, ["ci/sonde"]);
+        assert!(fast, "une planification à la seconde réveille la boucle chaque seconde");
+        settle(&state, "ci/sonde").await;
+        assert_eq!(calls.lock().unwrap().len(), 1);
+        let key = space_key(&space);
+        let asked = requested_at(&key, "ci/sonde").expect("prochain passage demandé");
+        let delay = (asked - Local::now().naive_local()).num_seconds();
+        assert!((3..=5).contains(&delay), "{delay}");
+
+        let after = Local::now().naive_local();
+        assert!(tick(&state, after + chrono::Duration::seconds(1)).0.is_empty(), "pas avant le passage demandé");
+        assert_eq!(tick(&state, after + chrono::Duration::seconds(6)).0, ["ci/sonde"]);
+        settle(&state, "ci/sonde").await;
+        set_requested(&key, "ci/sonde", None);
+    }
+
 }
