@@ -256,6 +256,44 @@ describe("SettingsPage", () => {
     expect(ajouter).toHaveBeenCalledOnce();
   });
 
+  it("montre en icône rouge une action danger qui a une icône, et la confirme avant de l’exécuter", async () => {
+    const user = userEvent.setup();
+    const supprimer = vi.fn();
+    render(
+      <FrameServicesContext.Provider value={services()}>
+        <SettingsPage
+          sections={() => [
+            {
+              title: "Environnements",
+              settings: [
+                {
+                  id: "rec",
+                  type: "item",
+                  title: "Recette",
+                  actions: [
+                    {
+                      label: "Supprimer",
+                      icon: Trash2,
+                      danger: true,
+                      confirm: "Supprimer Recette ?",
+                      onClick: supprimer,
+                    },
+                  ],
+                },
+              ],
+            },
+          ]}
+        />
+      </FrameServicesContext.Provider>,
+    );
+    const bouton = await screen.findByRole("button", { name: "Supprimer : Recette" });
+    expect(bouton).toHaveClass("button--danger");
+    await user.click(bouton);
+    expect(supprimer).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: "Supprimer" }));
+    await waitFor(() => expect(supprimer).toHaveBeenCalledOnce());
+  });
+
   it("remet la valeur précédente et notifie quand l’enregistrement échoue", async () => {
     const user = userEvent.setup();
     const frame = services();

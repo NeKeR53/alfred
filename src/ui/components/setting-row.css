@@ -104,3 +104,8 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+.setting-item__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}

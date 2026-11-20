@@ -2,6 +2,7 @@ import { type CSSProperties, isValidElement, type ReactNode } from "react";
 import { type Action, ActionBar } from "../templates/actions";
 import { TemplateDialogHost, useDialogOwner } from "../templates/dialogs";
 import { PageHeaderBar, type PageHeaderSpec, SubpageLayer, useSubpage } from "../templates/subpages";
+import { useTopBarActionsField } from "../templates/topBarActions";
 import { useTopBarSearchField } from "../templates/topBarSearch";
 import { useOverflowEdges } from "./overflowEdges";
 import { PageToolbar } from "./PageToolbar";
@@ -74,9 +75,12 @@ export function Page({
   const covered = host && subpage !== undefined;
   const inTopBar = useTopBarSearchField(search, search?.value ?? "", search?.onChange ?? ignore);
   const own = inTopBar ? undefined : search;
+  // Les actions de la page racine vont dans la barre du haut d’Alfred (pas celles d’un panneau, qui a son en-tête).
+  const actionsInTopBar = useTopBarActionsField(actions, Boolean(host) && !header && !toolbar);
+  const ownActions = actionsInTopBar ? undefined : actions;
   const topBar =
     toolbar ??
-    (actions?.length || own || bar ? (
+    (ownActions?.length || own || bar ? (
       <PageToolbar
         start={
           own || bar ? (
@@ -94,7 +98,7 @@ export function Page({
           ) : undefined
         }
       >
-        {actions ? <ActionBar actions={actions} place="toolbar" /> : null}
+        {ownActions ? <ActionBar actions={ownActions} place="toolbar" /> : null}
       </PageToolbar>
     ) : undefined);
   const bodyClass = ["al-page__body", width === "text" ? "al-page__body--text" : "", fill ? "al-page__body--fill" : ""]

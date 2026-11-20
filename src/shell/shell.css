@@ -664,3 +664,11 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Actions de la page dans la barre du haut (icônes, « ⋯ », action principale), sur une seule rangée. */
+.shell-topbar__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}

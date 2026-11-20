@@ -1,4 +1,4 @@
-import { Check, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -44,6 +44,8 @@ export type DataTableEditor<Row> = (
       onCommit: Commit<Row, boolean>;
       /** Ce que disent la case cochée et la case vide (« Présent », « Absent ») ; « Oui » et « Non » par défaut. */
       labels?: { on: string; off: string };
+      /** `box` : une case à cocher (sélection de lignes) au lieu des marques V et X. */
+      appearance?: "mark" | "box";
     }
 ) & {
   /** La cellule de cette ligne est en lecture seule. */
@@ -97,6 +99,14 @@ function checked<Row>(column: DataTableColumn<Row>, row: Row) {
  * colonnes `frozen` figés pendant le défilement ; édition dans la cellule ; lignes virtualisées au-delà de
  * `virtualizeFrom`. Tris et filtres sont ceux du tableau.
  */
+/** Lignes de titre de groupe insérées dans les lignes de la grille par `DataTable` (option `groups`). */
+export interface GroupRows<Row> {
+  isGroup(row: Row): boolean;
+  /** Titre, compteur et état replié du groupe. */
+  describe(row: Row): { title: ReactNode; count: number; collapsed: boolean; label: string };
+  toggle(row: Row): void;
+}
+
 export function DataGrid<Row>({
   columns,
   rows,
@@ -116,7 +126,12 @@ export function DataGrid<Row>({
   onFiltersChange,
   virtualizeFrom = 200,
   rowHeight = "single",
-}: DataTableProps<Row>) {
+  appearance = "boxed",
+  groupRows,
+}: DataTableProps<Row> & {
+  /** Lignes de titre d’un groupe (posées par `DataTable groups`) : une cellule sur toute la largeur, qui se replie. */
+  groupRows?: GroupRows<Row>;
+}) {
   const ROW_HEIGHT = ROW_HEIGHTS[rowHeight];
   const view = useTableView({ columns, rows, sort, defaultSort, onSortChange, filters, onFiltersChange });
   const shown = view.view;
@@ -213,9 +228,15 @@ export function DataGrid<Row>({
     td.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   });
 
+  const isGroupAt = (index: number) => {
+    const row = shown[index];
+    return Boolean(row && groupRows?.isGroup(row));
+  };
   const moveTo = (row: number, col: number) => {
     focusPending.current = true;
-    setActive({ row: Math.max(-1, Math.min(lastRow, row)), col: Math.max(0, Math.min(lastCol, col)) });
+    const target = Math.max(-1, Math.min(lastRow, row));
+    // Une ligne de groupe n’a qu’une cellule, sur toute la largeur.
+    setActive({ row: target, col: isGroupAt(target) ? 0 : Math.max(0, Math.min(lastCol, col)) });
   };
 
   const commit = useCallback(
@@ -294,6 +315,16 @@ export function DataGrid<Row>({
     // Un champ placé dans une cellule par `render` garde ses touches.
     if (target.matches("input, select, textarea, [contenteditable]:not([contenteditable='false'])")) return;
     const header = cell.row < 0;
+    // Ligne de groupe : Entrée ou Espace la replient ou la déplient ; les flèches haut et bas la traversent.
+    if (!header && isGroupAt(cell.row) && groupRows) {
+      const groupRow = shown[cell.row] as Row;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+        groupRows.toggle(groupRow);
+        return;
+      }
+    }
     const row = shown[cell.row];
     const column = columns[cell.col];
     if ((!row && !header) || !column) return;
@@ -467,7 +498,11 @@ export function DataGrid<Row>({
           tabIndex={isActive ? 0 : -1}
           title={on ? labels.on : labels.off}
         >
-          {on ? (
+          {editor.appearance === "box" ? (
+            <span className={`al-datagrid__box${on ? " al-datagrid__box--on" : ""}`} aria-hidden="true">
+              {on ? <Check size={12} strokeWidth={3} /> : null}
+            </span>
+          ) : on ? (
             <Check size={16} aria-hidden="true" className="al-datagrid__check-on" />
           ) : (
             <X size={16} aria-hidden="true" className="al-datagrid__check-off" />
@@ -536,7 +571,7 @@ export function DataGrid<Row>({
   const editingColumn = editing ? columns[editing.col] : undefined;
   return (
     <div
-      className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}${rowHeight === "double" ? " al-datagrid-frame--double" : ""}`}
+      className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}${rowHeight === "double" ? " al-datagrid-frame--double" : ""}${appearance === "plain" ? " al-datagrid-frame--plain" : ""}`}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: délégation des touches de toutes les cellules de la grille. */}
       <div
@@ -625,6 +660,39 @@ export function DataGrid<Row>({
             {shown.slice(first, last).map((row, offset) => {
               const index = first + offset;
               const key = rowKey(row);
+              if (groupRows?.isGroup(row)) {
+                const group = groupRows.describe(row);
+                const isActive = cell.row === index;
+                const Chevron = group.collapsed ? ChevronRight : ChevronDown;
+                return (
+                  <tr key={key} aria-rowindex={headerRows + index + 1} className="al-datagrid__group">
+                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: Entrée et Espace replient le groupe dans le clavier de la grille. */}
+                    <td
+                      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: titre d’un groupe de la grille, qui se replie.
+                      role="gridcell"
+                      colSpan={columns.length}
+                      data-row={index}
+                      data-col={0}
+                      tabIndex={isActive ? 0 : -1}
+                      aria-expanded={!group.collapsed}
+                      aria-label={`${group.label}, ${group.count} ligne${group.count > 1 ? "s" : ""}, ${group.collapsed ? "replié" : "déplié"}`}
+                      onFocus={() => {
+                        if (!isActive) setActive({ row: index, col: 0 });
+                      }}
+                      onClick={() => {
+                        setActive({ row: index, col: 0 });
+                        groupRows.toggle(row);
+                      }}
+                    >
+                      <span className="al-datagrid__group-title">
+                        <Chevron size={14} aria-hidden="true" />
+                        <span className="al-datagrid__group-name">{group.title}</span>
+                        <span className="al-datagrid__group-count">{group.count}</span>
+                      </span>
+                    </td>
+                  </tr>
+                );
+              }
               return (
                 <tr
                   key={key}

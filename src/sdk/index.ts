@@ -1371,6 +1371,150 @@ export function declareTopBarSearch(
   };
 }
 
+// --- Actions de la barre du haut ----------------------------------------------------------------------------------
+
+/**
+ * Ce que la coquille sait d’une action de la barre du haut : jamais la fonction, seulement de quoi la dessiner.
+ * `icon` est le nom d’une icône Lucide (« Download ») ; sans icône, l’action va dans le menu « ⋯ ».
+ */
+export interface TopBarActionDescriptor {
+  id: string;
+  label: string;
+  icon?: string;
+  primary?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  /** L’action tourne (attente affichée sur son bouton). */
+  running?: boolean;
+}
+
+/** Une action de la barre du haut telle que la page l’écrit (la forme d’une `Action` de `@alfred/ui`). */
+export interface TopBarAction {
+  label: string;
+  /** Composant d’icône Lucide (`Download`), dont la coquille dessine l’icône de même nom. */
+  icon?: { displayName?: string; name?: string };
+  primary?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  hidden?: boolean;
+  confirm?: string;
+  confirmMessage?: string;
+  success?: string;
+  onClick: () => unknown;
+}
+
+const iconName = (icon: TopBarAction["icon"]) =>
+  icon?.displayName ?? (icon?.name && icon.name !== "Object" ? icon.name : undefined);
+
+/** Description sans fonction d’actions de page, avec un identifiant stable par position et libellé. */
+export function describeTopBarActions(
+  actions: ReadonlyArray<TopBarAction>,
+  running?: string | null,
+): TopBarActionDescriptor[] {
+  return actions
+    .filter((action) => !action.hidden)
+    .map((action, index) => {
+      const id = `${index}:${action.label}`;
+      return {
+        id,
+        label: action.label,
+        ...(iconName(action.icon) ? { icon: iconName(action.icon) } : {}),
+        ...(action.primary ? { primary: true } : {}),
+        ...(action.danger ? { danger: true } : {}),
+        ...(action.disabled ? { disabled: true } : {}),
+        ...(running === id ? { running: true } : {}),
+      };
+    });
+}
+
+let listeningActions = false;
+let activateTopBarAction: ((id: string) => void) | null = null;
+
+/**
+ * Bas niveau de `useTopBarActions` (gabarits) : montre des actions dans la barre du haut d’Alfred et rappelle
+ * `onActivate(id)` quand l’utilisateur en choisit une. Une seule série par page : la dernière déclarée.
+ */
+export function declareTopBarActions(
+  descriptors: ReadonlyArray<TopBarActionDescriptor>,
+  onActivate: (id: string) => void,
+): { update(descriptors: ReadonlyArray<TopBarActionDescriptor>): void; dispose(): void } {
+  if (!listeningActions) {
+    listeningActions = true;
+    onShellEvent("topBarAction", (payload) => {
+      const id = (payload as { id?: unknown } | null)?.id;
+      if (typeof id === "string") activateTopBarAction?.(id);
+    });
+  }
+  const send = (list: ReadonlyArray<TopBarActionDescriptor>) =>
+    void request("shell.actions.set", { actions: list }).catch(() => undefined);
+  activateTopBarAction = onActivate;
+  send(descriptors);
+  return {
+    update: (list) => {
+      if (activateTopBarAction === onActivate) send(list);
+    },
+    dispose: () => {
+      if (activateTopBarAction !== onActivate) return;
+      activateTopBarAction = null;
+      void request("shell.actions.set", { actions: [] }).catch(() => undefined);
+    },
+  };
+}
+
+/**
+ * Actions de la page dans la barre du haut d’Alfred, à droite de la recherche, comme la barre d’une page de OneApp :
+ * icônes avec infobulle, menu « ⋯ » (actions sans icône, destructrices, ou fenêtre étroite) et action principale.
+ * La coquille ne reçoit que leur description ; un clic revient à la page, qui exécute l’action par `run` (celui de
+ * `@alfred/ui` confirme une action `danger` ou `confirm`, montre l’attente et notifie) ou, à défaut, `onClick`.
+ * Réservé à une page : un panneau garde ses actions.
+ */
+export function useTopBarActions(
+  actions: ReadonlyArray<TopBarAction>,
+  options: { run?: (action: TopBarAction) => unknown } = {},
+) {
+  const latest = useRef({ actions, run: options.run });
+  latest.current = { actions, run: options.run };
+  const [running, setRunning] = useState<string | null>(null);
+  const handle = useRef<ReturnType<typeof declareTopBarActions> | null>(null);
+  const descriptors = describeTopBarActions(actions, running);
+  const key = JSON.stringify(descriptors);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: la déclaration vit avec la page ; `key` passe ensuite par `update`.
+  useEffect(() => {
+    const declared = declareTopBarActions(JSON.parse(key), async (id) => {
+      const visible = latest.current.actions.filter((action) => !action.hidden);
+      const action = visible.find((item, index) => `${index}:${item.label}` === id);
+      if (!action || action.disabled) return;
+      setRunning(id);
+      try {
+        await (latest.current.run ? latest.current.run(action) : action.onClick());
+      } finally {
+        setRunning((current) => (current === id ? null : current));
+      }
+    });
+    handle.current = declared;
+    return () => {
+      declared.dispose();
+      if (handle.current === declared) handle.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    handle.current?.update(JSON.parse(key));
+  }, [key]);
+}
+
+/**
+ * Vrai quand la page est affichée avec les données d’exemple de son module (mode réglé par l’utilisateur : page
+ * d’attente, Réglages → Modules, pastille « Exemple »). Une page qui lit aussi sa propre base y montre alors ses
+ * données fictives, jamais mêlées aux vraies. Le cadre est rechargé quand le mode change.
+ */
+export function isExampleMode(): boolean {
+  try {
+    return new URLSearchParams(globalThis.location?.search ?? "").get("examples") === "1";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Résumé de la page dans la barre du haut, après son titre : « 3 personnes · 2 en écart · 6 environnements ». Une
  * ligne courte, recalculée avec les données ; un texte vide le retire. Réservé à une page : un panneau n’en a pas.

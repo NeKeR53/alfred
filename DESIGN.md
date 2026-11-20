@@ -374,6 +374,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 | Besoin | Composant | Props essentielles |
 |---|---|---|
 | Résumé de la page dans la barre du haut, après le titre (« 3 personnes · 2 en écart ») | `useTopBarSummary` du SDK | `texte` ; vide, il disparaît |
+| Actions de la page dans la barre du haut (icônes, « ⋯ », action principale) | `Page actions`, ou `useTopBarActions` du SDK pour une page sans `Page` | les `Action` habituelles ; jusqu’à 4 icônes, le reste et les actions `danger` dans « ⋯ », tout dans « ⋯ » sous 1100 px. Une page racine sans `header` n’a plus de seconde barre si elle n’a ni `bar` ni recherche propre |
 | Recherche dans la page, placée par Alfred dans la barre du haut | `useTopBarSearch` du SDK, ou `Page search` | `label`, `placeholder?` ; `recherche.matches(champ, …)` filtre sans accents, chaque mot exigé. Le texte est retenu au retour. Jamais un `SearchField` en tête de page : il ne sert que dans un bloc (une recherche propre à une liste secondaire) |
 | Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
 | Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
@@ -386,7 +387,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 |---|---|---|
 | Collection principale d’une page (tri, recherche, filtres, sélection) | `CollectionPage` (4.1) | `columns`, `load`, `search`, `filters` |
 | Tableau secondaire dans un bloc | `DataTable` | `label`, `columns` (`key`, `header`, `align?`, `render?`, `sortable?`, `filter?`), `rows`, `rowKey`, `onRowClick?`, `selectedKey?`, `loading?`, `emptyTitle?`, `fill?` (sous `Page fill` : seules les lignes défilent, l’en-tête reste fixe), `defaultSort?` ; Maj+clic sur un en-tête ajoute une clé de tri |
-| Grille éditable, matrice (éléments × environnements, droits d’accès), grande table parcourue au clavier | `DataTable variant="grid"` (« Arbre et grille » ci-dessous) | colonnes avec `frozen?`, `rowHeader?`, `editor?` (`text`, `choice`, `check`), `filter?` ; `virtualizeFrom?` (200) |
+| Grille éditable, matrice (éléments × environnements, droits d’accès), grande table parcourue au clavier | `DataTable variant="grid"` (« Arbre et grille » ci-dessous) | colonnes avec `frozen?`, `rowHeader?`, `editor?` (`text`, `choice`, `check`), `filter?` ; `virtualizeFrom?` (200) ; `appearance="plain"` (sans cadre, en-tête non teinté), `groups` (lignes de titre repliables), `selection` (cases et « Tout sélectionner »), `rowAction` (corbeille rouge confirmée) |
 | Hiérarchie : dossiers d’un poste, chemins de secrets, dépôts et branches | `TreeView` (« Arbre et grille » ci-dessous) | `label`, `nodes` (`id`, `label`, `icon?`, `meta?`, `children?`, `hasChildren?`), `loadChildren?`, `selection?`, `onActivate?`, `actions?`, `fill?` |
 | Découper une longue liste | `Pagination` dans `Page footer`, et `pageOf(rows, page, pageSize)` | `page` (dès 1), `pageSize`, `total`, `onChange` |
 | Quelques éléments hétérogènes (personnes, fichiers, résultats) | `List` + `ListItem` | `title`, `description?`, `leading?` (un `Avatar`, une icône), `trailing?` (un `StatusBadge`, une date), `onClick?`, `selected?` |
@@ -567,6 +568,13 @@ const colonnes: DataTableColumn<Secret>[] = [
 ];
 <DataTable variant="grid" label="Secrets par environnement" columns={colonnes} rows={secrets} rowKey={(secret) => secret.nom} />
 ```
+
+Variantes de la grille, cumulables, sans effet sur une grille qui ne les demande pas :
+
+- `appearance="plain"` : ni cadre ni coins arrondis, en-tête non teinté, pour un tableau qui occupe la page.
+- `groups={{ by, title?, defaultCollapsed? }}` : une ligne de titre (nom, nombre de lignes, chevron) avant chaque groupe, dans l’ordre des lignes données ; clic, Entrée ou Espace la replient. Les tris et filtres de colonne sont alors coupés.
+- `selection={{ selected, onChange }}` : une case par ligne (clic, Espace ou Entrée sur la case active) et « Tout sélectionner » dans l’en-tête, à l’état mixte quand une partie est cochée. `selected` contient des `rowKey`.
+- `rowAction={(row) => action}` : une action directe en bout de ligne, en icône ; `danger` la dessine en corbeille rouge (icône `Trash2` par défaut) et la confirme comme toute `Action`. Sans action pour une ligne, la case reste vide.
 
 ## 6. Couleurs et thèmes
 

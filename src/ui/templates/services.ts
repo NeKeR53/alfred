@@ -29,6 +29,22 @@ export interface FrameServices {
     options: { label?: string; placeholder?: string },
     onQuery: (query: string) => void,
   ): { setQuery(query: string): void; dispose(): void };
+  /**
+   * Place les actions de la page dans la barre du haut d’Alfred (`useTopBarActions` du SDK) : leur description
+   * seule ; `onActivate` reçoit l’identifiant choisi. Absent hors d’un cadre de page (panneau, capture, tests).
+   */
+  topBarActions?(
+    descriptors: ReadonlyArray<{
+      id: string;
+      label: string;
+      icon?: string;
+      primary?: boolean;
+      danger?: boolean;
+      disabled?: boolean;
+      running?: boolean;
+    }>,
+    onActivate: (id: string) => void,
+  ): { update(descriptors: ReadonlyArray<{ id: string; label: string }>): void; dispose(): void };
   /** État retenu par Alfred pour cette page (`usePageState`) : valeurs au chargement, et enregistrement. */
   state?: { initial: Record<string, unknown>; set(key: string, value: unknown): void };
 }

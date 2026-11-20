@@ -3,7 +3,16 @@
  * rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur d’exécution).
  */
 
-import { declareTopBarSearch, emitToShell, files, onShellEvent, type PageContext, request, shell } from "@alfred/sdk";
+import {
+  declareTopBarActions,
+  declareTopBarSearch,
+  emitToShell,
+  files,
+  onShellEvent,
+  type PageContext,
+  request,
+  shell,
+} from "@alfred/sdk";
 import { EmptyState, type FrameServices, FrameServicesContext } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -106,6 +115,10 @@ const services: FrameServices = {
   ...(params.get("kind") === "panel"
     ? {}
     : { topBarSearch: (options, onQuery) => declareTopBarSearch(options, onQuery, () => undefined) }),
+  // Les actions d’une page vont dans la barre du haut ; un panneau et une capture gardent les leurs.
+  ...(params.get("kind") === "panel" || params.get("capture") === "1"
+    ? {}
+    : { topBarActions: (descriptors, onActivate) => declareTopBarActions(descriptors, onActivate) }),
   onSelection: (handler) => {
     let active = true;
     void request<PageContext>("shell.context").then(

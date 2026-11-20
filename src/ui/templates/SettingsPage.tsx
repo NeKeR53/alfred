@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Button } from "../components/Button";
+import { Button, IconButton } from "../components/Button";
 import { ChoiceButton, ChoiceGroup } from "../components/ChoiceButton";
 import { Code } from "../components/Content";
 import { FeedbackBanner } from "../components/FeedbackBanner";
@@ -8,7 +8,7 @@ import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Page, Section } from "../components/page";
 import { SettingRow, SettingRows } from "../components/SettingRow";
 import { StatusBadge } from "../components/StatusBadge";
-import { type Action, ActionBar, useRunAction } from "./actions";
+import { type Action, ActionBar, type ActionIcon, useRunAction } from "./actions";
 import type { FieldOption } from "./dialogs";
 import { FormattedValue, type ValueOptions } from "./format";
 import { errorMessage, useFrameServices } from "./services";
@@ -236,6 +236,42 @@ function ActionSetting({ setting }: { setting: Extract<Setting, { type: "action"
   );
 }
 
+/**
+ * Actions d’un élément : une action `danger` qui a une icône reste visible en icône rouge (la corbeille de OneApp),
+ * confirmée avant de s’exécuter ; les autres suivent la barre d’une ligne (icônes, puis « ⋯ »).
+ */
+function ItemActions({ actions, subject }: { actions: ReadonlyArray<Action>; subject: string }) {
+  const { run, running } = useRunAction();
+  const shown = actions.filter((action) => !action.hidden);
+  const direct = shown.filter((action) => action.danger && action.icon);
+  const rest = shown.filter((action) => !direct.includes(action));
+  if (!shown.length) return null;
+  return (
+    <span className="setting-item__actions">
+      {rest.length ? <ActionBar actions={rest} place="row" subject={subject} /> : null}
+      {direct.map((action) => {
+        const Icon = action.icon as ActionIcon;
+        return (
+          <IconButton
+            key={action.label}
+            label={`${action.label} : ${subject}`}
+            tooltip={action.label}
+            size="small"
+            appearance="table"
+            tone="danger"
+            disabled={action.disabled}
+            loading={running === action.label}
+            loadingLabel={`${action.label}…`}
+            onClick={() => void run(action)}
+          >
+            <Icon size={16} aria-hidden="true" />
+          </IconButton>
+        );
+      })}
+    </span>
+  );
+}
+
 function ItemSetting({ setting }: { setting: Extract<Setting, { type: "item" }> }) {
   return (
     <SettingRow
@@ -258,7 +294,7 @@ function ItemSetting({ setting }: { setting: Extract<Setting, { type: "item" }> 
         ) : undefined
       }
     >
-      {setting.actions?.length ? <ActionBar actions={setting.actions} place="row" subject={setting.title} /> : null}
+      <ItemActions actions={setting.actions ?? []} subject={setting.title} />
     </SettingRow>
   );
 }

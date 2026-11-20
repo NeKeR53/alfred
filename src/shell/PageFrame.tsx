@@ -18,6 +18,7 @@ import { addFrameConsole, addFrameErrorLog, addFrameLog } from "./frameLogs";
 import { registerEntryActions } from "./menuZones";
 import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
+import { onTopBarAction } from "./topBarActions";
 import { onTopBarQuery } from "./topBarSearchStore";
 
 /**
@@ -92,8 +93,10 @@ export function PageFrame({
     if (initialTheme.current.accent) query.set("accent", initialTheme.current.accent);
     // Entrer dans les données d’exemple ou en sortir recharge la page : elle relit tout dans le nouveau mode.
     if (examples) query.set("examples", "1");
+    // Une capture dessine ses actions dans sa propre barre : la barre du haut n’est pas sur l’image.
+    if (capture) query.set("capture", "1");
     return `${frameBase(info.pageBase)}/host/page?${query}`;
-  }, [info, moduleKey, page.module, page.id, kind, revision, ready, examples]);
+  }, [info, moduleKey, page.module, page.id, kind, revision, ready, examples, capture]);
 
   useEffect(() => {
     const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
@@ -200,6 +203,13 @@ export function PageFrame({
             post({ alfred: ALFRED_MESSAGE, kind: "event", name: "search", payload: { query } }),
           )
         : () => undefined;
+    // Action choisie dans la barre du haut : la page l’exécute (`useTopBarActions`).
+    const stopActions =
+      kind === "page" && !capture
+        ? onTopBarAction(identity.reference, (id) =>
+            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "topBarAction", payload: { id } }),
+          )
+        : () => undefined;
     const stopPeer = capture
       ? () => undefined
       : registerPeer(identity, (message) =>
@@ -209,6 +219,7 @@ export function PageFrame({
       snapshot.dispose();
       window.removeEventListener("message", onMessage);
       stopPeer();
+      stopActions();
       stopSearch();
       stopData();
       stopFolders();

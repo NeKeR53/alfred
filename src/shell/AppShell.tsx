@@ -39,6 +39,7 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
 import { TopBarSearch } from "./TopBarSearch";
+import { TopBarActions } from "./topBarActions";
 import { TopBarSummary } from "./topBarSummary";
 import { useDragReorder } from "./useDragReorder";
 import "./shell.css";
@@ -247,6 +248,7 @@ export function SectionView({
           }
         >
           {page && !builtInTab && !waiting ? <TopBarSearch reference={page.reference} /> : null}
+          {page && !builtInTab && !waiting ? <TopBarActions reference={page.reference} /> : null}
           {/* Actions de la page, puis un trait, puis celles de la coquille : le trait disparaît quand la page n’en a pas. */}
           <span className="shell-topbar__page-tools">
             {actions}

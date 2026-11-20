@@ -962,6 +962,11 @@ html select:not([multiple], [data-slot="native-select"]) {
   width: 16px;
   height: 16px;
 }
+/* Une action destructrice en icône reste rouge au repos (la corbeille d’une ligne), pas seulement au survol. */
+.icon-button.button--danger,
+.table-icon-action.button--danger {
+  color: var(--color-danger);
+}
 .sidebar-orchestrator > svg {
   color: var(--color-primary);
 }

@@ -1,4 +1,7 @@
+import { Trash2 } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type Action, type ActionIcon, useRunAction } from "../templates/actions";
+import { IconButton } from "./Button";
 import { DataGrid, type DataTableEditor } from "./DataGrid";
 import { ariaSort, FilterControl, fromInnerControl, HeaderContent, NoMatch, SortHeader } from "./dataTableParts";
 import {
@@ -96,6 +99,30 @@ export interface DataTableProps<Row> {
   onFiltersChange?: (filters: Record<string, string>) => void;
   /** Grille seulement : nombre de lignes à partir duquel seules celles à l’écran sont rendues (200). */
   virtualizeFrom?: number;
+  /**
+   * Grille seulement : `plain` sans cadre ni coins arrondis, en-tête non teinté (les tableaux de OneApp) ;
+   * `boxed` (par défaut) dans un cadre.
+   */
+  appearance?: "boxed" | "plain";
+  /**
+   * Grille seulement : lignes regroupées sous une ligne de titre (nom, nombre de lignes), qui se replie au clic, à
+   * Entrée ou à Espace. Les lignes gardent l’ordre donné (pas de tri par colonne). `title` remplace le nom affiché.
+   */
+  groups?: {
+    by: (row: Row) => string;
+    title?: (group: string, rows: ReadonlyArray<Row>) => ReactNode;
+    defaultCollapsed?: ReadonlyArray<string>;
+  };
+  /**
+   * Grille seulement : une case par ligne en tête, et une case « Tout sélectionner » dans l’en-tête. Clic, Espace
+   * ou Entrée basculent la case de la ligne active. `selected` : clés (`rowKey`) des lignes cochées.
+   */
+  selection?: { selected: ReadonlyArray<string | number>; onChange: (keys: Array<string | number>) => void };
+  /**
+   * Grille seulement : une action de ligne directe en bout de ligne, en icône (corbeille rouge pour une action
+   * `danger`), confirmée comme une `Action`. Sans action pour une ligne, la cellule reste vide.
+   */
+  rowAction?: (row: Row) => Action | undefined;
 }
 
 /**
@@ -106,7 +133,169 @@ export interface DataTableProps<Row> {
  * lignes seules. Avec `variant="grid"`, c’est une grille de cellules (voir `DataGrid`).
  */
 export function DataTable<Row>(props: DataTableProps<Row>) {
-  return props.variant === "grid" ? <DataGrid {...props} /> : <ListTable {...props} />;
+  return props.variant === "grid" ? <Grid {...props} /> : <ListTable {...props} />;
+}
+
+const GROUP = Symbol("groupe");
+type GroupMarker = { [GROUP]: { name: string; count: number } };
+const isMarker = (row: unknown): row is GroupMarker => typeof row === "object" && row !== null && GROUP in row;
+
+/** Case « Tout sélectionner » de l’en-tête : cochée si tout l’est, partielle si une partie l’est. */
+function SelectAll({ total, chosen, onToggle }: { total: number; chosen: number; onToggle: (all: boolean) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => {
+    if (ref.current) ref.current.indeterminate = chosen > 0 && chosen < total;
+  });
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      data-cell-focus=""
+      className="al-datagrid__select-all"
+      aria-label="Tout sélectionner"
+      checked={total > 0 && chosen === total}
+      onChange={(event) => onToggle(event.target.checked)}
+    />
+  );
+}
+
+/** Action directe d’une ligne : une icône (corbeille rouge pour une action `danger`), confirmée comme une `Action`. */
+function RowActionButton({ action, subject }: { action: Action; subject: string }) {
+  const { run, running } = useRunAction();
+  const Icon = (action.icon ?? Trash2) as ActionIcon;
+  return (
+    <IconButton
+      label={`${action.label} : ${subject}`}
+      tooltip={action.label}
+      size="small"
+      appearance="table"
+      tone={action.danger ? "danger" : "default"}
+      disabled={action.disabled}
+      loading={running === action.label}
+      loadingLabel={`${action.label}…`}
+      data-cell-focus=""
+      onClick={(event) => {
+        event.stopPropagation();
+        void run(action);
+      }}
+    >
+      <Icon size={16} aria-hidden="true" />
+    </IconButton>
+  );
+}
+
+/** Grille, avec les options qui ajoutent des colonnes (sélection, action de ligne) et des lignes de groupe. */
+function Grid<Row>({ groups, selection, rowAction, ...props }: DataTableProps<Row>) {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set(groups?.defaultCollapsed ?? []));
+  const keyOf = (row: Row | GroupMarker) => (isMarker(row) ? `groupe:${row[GROUP].name}` : props.rowKey(row as Row));
+  const nameOf = (row: Row) => {
+    const first = props.columns[0];
+    const value = first ? (first.sortValue?.(row) ?? cellValue(row, first.key)) : undefined;
+    return typeof value === "string" || typeof value === "number" ? String(value) : String(props.rowKey(row));
+  };
+  let columns = props.columns as ReadonlyArray<DataTableColumn<Row | GroupMarker>>;
+  if (groups) columns = columns.map((column) => ({ ...column, sortable: false, filter: undefined }));
+  if (selection) {
+    const chosen = new Set(selection.selected);
+    const keys = props.rows.map((row) => props.rowKey(row));
+    columns = [
+      {
+        key: "__selection",
+        header: (
+          <SelectAll
+            total={keys.length}
+            chosen={keys.filter((key) => chosen.has(key)).length}
+            onToggle={(all) => selection.onChange(all ? keys : [])}
+          />
+        ),
+        // L’en-tête est la case « Tout sélectionner », qui porte son propre nom.
+        width: "40px",
+        sortable: false,
+        editor: {
+          type: "check",
+          appearance: "box",
+          labels: { on: "Sélectionnée", off: "Non sélectionnée" },
+          value: (row) => !isMarker(row) && chosen.has(props.rowKey(row as Row)),
+          onCommit: (row, on) => {
+            const key = props.rowKey(row as Row);
+            selection.onChange(
+              on ? [...selection.selected.filter((k) => k !== key), key] : selection.selected.filter((k) => k !== key),
+            );
+          },
+          disabled: isMarker,
+        },
+      },
+      ...columns,
+    ];
+  }
+  if (rowAction)
+    columns = [
+      ...columns,
+      {
+        key: "__action",
+        header: "",
+        headerLabel: "Action",
+        width: "44px",
+        sortable: false,
+        align: "end",
+        render: (row) => {
+          const action = isMarker(row) ? undefined : rowAction(row as Row);
+          return action && !action.hidden ? <RowActionButton action={action} subject={nameOf(row as Row)} /> : null;
+        },
+      },
+    ];
+  let rows = props.rows as ReadonlyArray<Row | GroupMarker>;
+  if (groups) {
+    const order: string[] = [];
+    const members = new Map<string, Row[]>();
+    for (const row of props.rows) {
+      const name = groups.by(row);
+      if (!members.has(name)) {
+        order.push(name);
+        members.set(name, []);
+      }
+      members.get(name)?.push(row);
+    }
+    rows = order.flatMap((name) => {
+      const list = members.get(name) ?? [];
+      const marker: GroupMarker = { [GROUP]: { name, count: list.length } };
+      return [marker, ...(collapsed.has(name) ? [] : list)];
+    });
+  }
+  const groupRows = groups
+    ? {
+        isGroup: isMarker,
+        describe: (row: Row | GroupMarker) => {
+          const { name, count } = (row as GroupMarker)[GROUP];
+          const list = props.rows.filter((item) => groups.by(item) === name);
+          return {
+            title: groups.title ? groups.title(name, list) : name,
+            count,
+            collapsed: collapsed.has(name),
+            label: name,
+          };
+        },
+        toggle: (row: Row | GroupMarker) => {
+          const { name } = (row as GroupMarker)[GROUP];
+          setCollapsed((current) => {
+            const next = new Set(current);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+          });
+        },
+      }
+    : undefined;
+  return (
+    <DataGrid<Row | GroupMarker>
+      {...(props as unknown as DataTableProps<Row | GroupMarker>)}
+      columns={columns}
+      rows={rows}
+      rowKey={keyOf}
+      onRowClick={props.onRowClick ? (row) => (isMarker(row) ? undefined : props.onRowClick?.(row as Row)) : undefined}
+      groupRows={groupRows}
+    />
+  );
 }
 
 function ListTable<Row>({
