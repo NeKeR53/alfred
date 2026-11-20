@@ -17,8 +17,10 @@
   min-height: 0;
   max-height: none;
 }
+/* Disposition fixe : chaque colonne garde sa largeur (`width`, 160 px par défaut) et le texte trop long se termine par
+   « … » ; la table fait la somme des colonnes, au moins toute la largeur, et défile au-delà. */
 .al-datagrid {
-  width: max-content;
+  width: 1px;
   min-width: 100%;
   table-layout: fixed;
   border-collapse: separate;
@@ -150,4 +152,17 @@
   .al-datagrid__check-off {
     color: CanvasText;
   }
+}
+/* Lignes doubles (`rowHeight="double"`) : un nom et sa précision dessous, chacun sur sa ligne. */
+.al-datagrid-frame--double .al-datagrid td {
+  height: 44px;
+}
+/* Une pastille d’état dans une cellule de grille se termine par « … » plutôt que d’être coupée net (comme OneApp). */
+.al-datagrid td .state-label {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  line-height: 20px;
 }

@@ -22,6 +22,7 @@ import { loadDurablePageMemory, pageMemoryOf, rememberPageValue } from "./pageMe
 import { pageWindowParams, pageWindowReference } from "./pageWindowMode";
 import { useShell } from "./store";
 import { declareTopBarSearch, removeTopBarSearch, setTopBarQuery, topBarQueryOf } from "./topBarSearchStore";
+import { setTopBarSummary } from "./topBarSummary";
 
 export interface FrameIdentity {
   kind: "page" | "panel" | "function";
@@ -238,7 +239,10 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
 
 /** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
 export function releaseFrame(identity: FrameIdentity) {
-  if (identity.kind === "page" && !identity.capture) removeTopBarSearch(identity.reference);
+  if (identity.kind === "page" && !identity.capture) {
+    removeTopBarSearch(identity.reference);
+    setTopBarSummary(identity.reference, "");
+  }
   void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
   // Les flux et WebSocket que ce cadre était seul à lire se ferment avec lui.
   if (identity.kind !== "function") void handleFrameRequest(identity, "channels.release", {}).catch(() => undefined);
@@ -344,6 +348,10 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return declareTopBarSearch(identity.reference, params);
     case "shell.search.set":
       if (identity.kind === "page" && !identity.capture) setTopBarQuery(identity.reference, params.query, "page");
+      return null;
+    // Résumé de la barre du haut (`useTopBarSummary`) : une page seulement ; un panneau ou une capture l’ignore.
+    case "shell.summary.set":
+      if (identity.kind === "page" && !identity.capture) setTopBarSummary(identity.reference, params.text);
       return null;
     case "shell.search.remove":
       if (identity.kind === "page" && !identity.capture) removeTopBarSearch(identity.reference);

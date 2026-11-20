@@ -1371,6 +1371,17 @@ export function declareTopBarSearch(
   };
 }
 
+/**
+ * Résumé de la page dans la barre du haut, après son titre : « 3 personnes · 2 en écart · 6 environnements ». Une
+ * ligne courte, recalculée avec les données ; un texte vide le retire. Réservé à une page : un panneau n’en a pas.
+ */
+export function useTopBarSummary(text: string | null | undefined) {
+  useEffect(() => {
+    void request<void>("shell.summary.set", { text: text ?? "" }).catch(() => undefined);
+  }, [text]);
+  useEffect(() => () => void request<void>("shell.summary.set", { text: "" }).catch(() => undefined), []);
+}
+
 export interface TopBarSearch {
   /** Texte tapé, tel quel. */
   query: string;

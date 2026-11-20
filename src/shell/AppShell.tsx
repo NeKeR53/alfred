@@ -39,6 +39,7 @@ import { ResizablePanel } from "./ResizablePanel";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
 import { TopBarSearch } from "./TopBarSearch";
+import { TopBarSummary } from "./topBarSummary";
 import { useDragReorder } from "./useDragReorder";
 import "./shell.css";
 
@@ -186,6 +187,7 @@ export function SectionView({
             // Onglets à gauche, juste après le titre, comme les vues d’un produit dans OneApp.
             <div className="shell-title">
               <h1>{title}</h1>
+              {page && !builtInTab && !waiting ? <TopBarSummary reference={page.reference} /> : null}
               {tabs.length > 1 && activeId ? (
                 // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
                 <div

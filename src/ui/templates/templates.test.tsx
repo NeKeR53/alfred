@@ -220,6 +220,42 @@ describe("SettingsPage", () => {
     expect(body?.firstElementChild).toHaveClass("al-section");
   });
 
+  it("liste des éléments avec leur code, leurs étiquettes et leurs actions de ligne, et des actions de bloc", async () => {
+    const user = userEvent.setup();
+    const modifier = vi.fn();
+    const ajouter = vi.fn();
+    render(
+      <FrameServicesContext.Provider value={services()}>
+        <SettingsPage
+          sections={() => [
+            {
+              title: "Environnements",
+              actions: [{ label: "Nouvel environnement", primary: true, onClick: ajouter }],
+              settings: [
+                {
+                  id: "rec",
+                  type: "item",
+                  title: "Recette",
+                  code: "REC",
+                  description: "Intégration · 4 outils",
+                  tags: [{ label: "✓ Keycloak", tone: "success" }, { label: "Grafana" }],
+                  actions: [{ label: "Modifier", icon: Pencil, onClick: modifier }],
+                },
+              ],
+            },
+          ]}
+        />
+      </FrameServicesContext.Provider>,
+    );
+    expect(await screen.findByText("REC")).toBeInTheDocument();
+    expect(screen.getByText("✓ Keycloak")).toBeInTheDocument();
+    expect(screen.getByText("Intégration · 4 outils")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Modifier : Recette" }));
+    expect(modifier).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Nouvel environnement" }));
+    expect(ajouter).toHaveBeenCalledOnce();
+  });
+
   it("remet la valeur précédente et notifie quand l’enregistrement échoue", async () => {
     const user = userEvent.setup();
     const frame = services();

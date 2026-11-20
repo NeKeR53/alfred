@@ -301,12 +301,24 @@ pub fn close(space: &str, subject: &Subject, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Un cadre disparaît : les canaux qu’il était seul à lire se ferment.
+/// Le demandeur d’une lecture, d’une écriture ou d’une fermeture : un cadre d’un module qui dépend du module qui a
+/// ouvert le canal (la page Usine d’Atom et le connecteur `portainer`) agit pour ce module ; sa référence (qui tient
+/// le canal) ne change pas.
+fn reader(subject: Subject, id: &str, depends: impl Fn(&str) -> bool) -> Subject {
+    let owner = lock().ok().and_then(|channels| channels.get(id).map(|channel| channel.module.clone()));
+    match owner {
+        Some(owner) if owner != subject.module && depends(&owner) => Subject { module: owner, ..subject },
+        _ => subject,
+    }
+}
+
+/// Un cadre disparaît : les canaux qu’il était seul à lire se ferment, y compris ceux d’un module dont il dépend
+/// (le cadre est nommé par sa référence complète, « module/page »).
 pub fn release(subject: &Subject, holder: Option<&str>) -> usize {
     let holder = holder.unwrap_or(&subject.reference).to_string();
     let Ok(mut channels) = lock() else { return 0 };
     let mut closed = 0;
-    for channel in channels.values_mut().filter(|channel| channel.module == subject.module) {
+    for channel in channels.values_mut() {
         if channel.holders.remove(&holder) && channel.holders.is_empty() && channel.closed.is_none() {
             shut(channel, "page fermée");
             closed += 1;
@@ -378,8 +390,12 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         if command == "frame.channels.release" {
             return Ok(json!({ "closed": release(&subject, holder.as_deref()) }));
         }
-        let space = state.space()?.root.to_string_lossy().to_string();
+        let open_space = state.space()?;
+        let space = open_space.root.to_string_lossy().to_string();
         let id: String = arg(args, "channel")?;
+        // Un canal ouvert par un connecteur dont le module dépend (`requires`) se lit comme le sien.
+        let module = subject.module.clone();
+        let subject = reader(subject, &id, |owner| open_space.module(&module).is_ok_and(|manifest| manifest.requires_module(owner)));
         match command {
             "frame.channels.read" => {
                 let after = opt_arg::<u64>(args, "after")?.unwrap_or(0);
@@ -432,6 +448,13 @@ mod tests {
 
         // Un autre module, ou un autre espace, ne le voit pas.
         assert!(read(&space, &subject("page", "autre", "autre/p"), None, &id, 0, 0).await.is_err());
+        // Un module qui dépend du connecteur le lit, et sa page qui disparaît le ferme.
+        let dependant = reader(subject("page", "atom", "atom/usine"), &id, |owner| owner == "portainer");
+        assert_eq!((dependant.module.as_str(), dependant.reference.as_str()), ("portainer", "atom/usine"));
+        assert_eq!(read(&space, &dependant, None, &id, 0, 0).await.unwrap()["events"].as_array().unwrap().len(), 2);
+        let stranger = reader(subject("page", "autre", "autre/p"), &id, |_| false);
+        assert!(read(&space, &stranger, None, &id, 0, 0).await.is_err(), "sans dépendance, toujours refusé");
+        assert_eq!(release(&subject("page", "atom", "atom/usine"), None), 0, "la page du connecteur le lit encore");
         assert!(read("/ailleurs", &page, None, &id, 0, 0).await.is_err());
         // Un flux ne reçoit pas d’écriture.
         assert!(write(&space, &page, &id, Some("x".into()), None).is_err());

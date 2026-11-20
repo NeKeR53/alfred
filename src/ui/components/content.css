@@ -231,3 +231,13 @@
     outline-offset: -1px;
   }
 }
+/* `Code plain` : chasse fixe sans fond ni marge, dans le texte d’une cellule ; `strong` en gras. */
+.ui-code--plain {
+  padding: 0;
+  background: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-code--strong {
+  font-weight: 600;
+}

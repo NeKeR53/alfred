@@ -609,6 +609,10 @@ mod tests {
         assert_eq!(read["body"]["data"]["metadata"]["version"], json!(1), "le reste reste lisible");
         assert_eq!(read["body"]["data"]["metadata"]["path"], json!("/bao/v1/kv/data/app"), "montage du compte");
         outputs.push(read.to_string());
+        // Jeton de session perdu par le service (redémarré, révoqué) : OpenBao répond 403, Alfred se reconnecte une fois.
+        remote.tokens.lock().unwrap().clear();
+        let again = request(&state, &function, "openbao", json!({ "instance": "prod", "path": "/v1/{mount}/data/app" })).await.unwrap();
+        assert_eq!(again["status"], json!(200), "nouvelle connexion après un 403 : {again}");
         // Un chemin non scellé du même service n’est pas touché (et ici la valeur répétée reste masquée par la
         // requête suivante seulement si elle est scellée : le module déclare ce qu’il faut sceller).
         assert!(request(&state, &function, "openbao", json!({ "instance": "prod", "path": "/v1/kv/data/app", "query": { "v": db_ref } })).await.is_err(), "référence en paramètre");

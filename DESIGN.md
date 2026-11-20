@@ -175,7 +175,7 @@ Toute page placée dans les Réglages (`{ "kind": "settings" }`) est une `Settin
 | Prop | Rôle |
 |---|---|
 | `load?: () => Promise<Values>` | Lit les valeurs enregistrées ; chargement et erreur sont affichés par le gabarit. |
-| `sections: (values) => SettingsSection[]` | `{ title, description?, settings: Setting[] }` : un bloc par sujet, deux à six réglages chacun. |
+| `sections: (values) => SettingsSection[]` | `{ title, description?, actions?, settings: Setting[] }` : un bloc par sujet, deux à six réglages chacun (une liste d’`item` peut être plus longue) ; `actions` à droite du titre du bloc (« Nouvel environnement »). |
 
 Chaque réglage a `id`, `title` (« Notifier les retards ») et `description?` (une phrase), puis selon son `type` :
 
@@ -186,6 +186,7 @@ Chaque réglage a `id`, `title` (« Notifier les retards ») et `description?` (
 | `text` | Champ de 240 px (96 px pour un nombre) ; Annuler et Enregistrer apparaissent sur la ligne une fois la valeur changée ; Entrée enregistre ; l’erreur remplace l’explication | `value: string`, `save(value)`, `inputType?: "text" \| "number" \| "email" \| "url"`, `placeholder?`, `optional?`, `validate?(value)` |
 | `action` | Bouton texte (rouge et confirmé si `danger`) | `action: Action` |
 | `info` | Valeur en lecture seule, formatée | `value`, `valueType?`, `statuses?`, `currency?` |
+| `item` | Un élément d’une liste réglée ici (un environnement, un profil) : nom en gras, code à côté, explication et étiquettes d’état dessous, actions de ligne à droite (icônes, puis « ⋯ » ; une action `danger` y est confirmée) | `code?`, `tags?: { label, tone? }[]`, `actions?: Action[]` |
 
 `save` rend la promesse de l’écriture et ne notifie pas : le gabarit s’en charge.
 
@@ -372,6 +373,7 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 
 | Besoin | Composant | Props essentielles |
 |---|---|---|
+| Résumé de la page dans la barre du haut, après le titre (« 3 personnes · 2 en écart ») | `useTopBarSummary` du SDK | `texte` ; vide, il disparaît |
 | Recherche dans la page, placée par Alfred dans la barre du haut | `useTopBarSearch` du SDK, ou `Page search` | `label`, `placeholder?` ; `recherche.matches(champ, …)` filtre sans accents, chaque mot exigé. Le texte est retenu au retour. Jamais un `SearchField` en tête de page : il ne sert que dans un bloc (une recherche propre à une liste secondaire) |
 | Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
 | Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
@@ -451,7 +453,7 @@ Un texte long en Markdown (note, compte rendu, fichier `.md` d’un dossier) s�
 | `Heading` | Titre ; niveaux 1, 2, 3 sans saut | `level`: `1 \| 2 \| 3` (`2`) |
 | `Text` | Tout texte | `tone` (`"default"`), `size`: `"meta" \| "body" \| "panel"` (`"body"`), `weight`: `"normal" \| "medium" \| "strong"` (`"normal"`), `as`: `"p" \| "span" \| "div"` (`"p"`) |
 | `KeyValueList` | Fiche « libellé : valeur » d’un objet (exemple en 12.2) ; pas pour des données tabulaires | `items: { id?: string \| number; label: string; value: ReactNode }[]` |
-| `Code` | Texte à chasse fixe et chiffres tabulaires : identifiant, chemin, valeur technique ; `block` pour un extrait de plusieurs lignes, qui défile et se joint au clavier | `children`, `block` (`false`), `label` (`"Extrait de code"`, nom du bloc) |
+| `Code` | Texte à chasse fixe et chiffres tabulaires : identifiant, chemin, valeur technique ; `block` pour un extrait de plusieurs lignes, qui défile et se joint au clavier ; `plain` sans fond, dans une cellule (conteneur, version, nom de variable), `strong` en gras | `children`, `block` (`false`), `label` (`"Extrait de code"`, nom du bloc), `plain` (`false`), `strong` (`false`) |
 | `Link` | Lien texte souligné dans une phrase ou une cellule | Avec `href: string` et `onNavigate: (href) => void` : un lien, dont l’adresse web ou `mailto:` porte l’icône « hors d’Alfred ». Sans `href` : `onClick`, bouton d’apparence lien |
 | `Image` | Image venue des données (`data:` ou `blob:` ; une adresse distante affiche son texte de remplacement) | `src`, `alt: string` (obligatoire ; `""` si décorative), `size`: `"sm" \| "md" \| "lg" \| "full"` (`"md"` : 120, 240, 480 px, toute la largeur), `fit`: `"contain" \| "cover"` (`"contain"` ; `cover` : vignette carrée) |
 | `Markdown` | Affiche un texte Markdown venu des données (note, réponse d’un agent) : titres, listes, tableaux, code. Pas pour composer la page elle-même | `children: string`, `onLink?: (href: string) => void` |
@@ -541,6 +543,8 @@ chargent par la pièce jointe du message, les images distantes restent masquées
 `onCommit` peut rendre une promesse : la cellule attend, puis porte l’erreur (contour et message lu) si elle est rejetée. La page garde les données et les met à jour dans `onCommit` ; la grille ne modifie rien elle-même.
 
 **Filtres et tris**, en liste comme en grille : `filter: { type: "text" }` (chaque mot exigé, sans accents) ou `{ type: "choice", options }` pose un champ par colonne dans une ligne sous l’en-tête, et les filtres se cumulent ; quand ils ne laissent rien, « Aucun résultat » et « Effacer les filtres ». Un clic sur un en-tête trie par cette colonne seule, Maj+clic l’ajoute en clé suivante (son rang suit la flèche). `defaultSort`, ou `sort`/`onSortChange` et `filters`/`onFiltersChange` pour les garder ailleurs (`usePageState`).
+
+ donne des lignes de 44 px, pour une cellule sur deux lignes (un nom et sa précision dessous : courriel, conteneur, date) ; chaque ligne reste tronquée par « … ».
 
 La **matrice** (secrets par environnement, droits par rôle) n’est pas un composant à part : une ligne par élément, une colonne `check` par environnement.
 

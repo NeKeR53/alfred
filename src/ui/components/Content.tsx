@@ -10,13 +10,22 @@ export function Code({
   children,
   block = false,
   label = "Extrait de code",
+  plain = false,
+  strong = false,
 }: {
   children: ReactNode;
   block?: boolean;
   /** Nom accessible du bloc (`block` seulement). */
   label?: string;
+  /** Sans fond, dans le texte : un conteneur, une version, un nom de variable dans une cellule (comme OneApp). */
+  plain?: boolean;
+  /** En gras (une version, un nom de variable mis en avant). */
+  strong?: boolean;
 }) {
-  if (!block) return <code className="ui-code">{children}</code>;
+  if (!block)
+    return (
+      <code className={`ui-code${plain ? " ui-code--plain" : ""}${strong ? " ui-code--strong" : ""}`}>{children}</code>
+    );
   return (
     // biome-ignore lint/a11y/noNoninteractiveTabindex: un bloc qui défile doit être joignable au clavier (WCAG 2.1.1) ; la région porte son nom.
     <section className="ui-code-block" aria-label={label} tabIndex={0}>

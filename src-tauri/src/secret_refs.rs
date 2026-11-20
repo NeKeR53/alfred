@@ -141,6 +141,26 @@ fn lookup(reference: &str, module: &str, client: Option<&str>) -> AppResult<Seal
     }
 }
 
+/// Valeur qu’une page ou un panneau du module `module` peut afficher ou écrire dans un `.env` : scellée par ce
+/// module, ou par un module dont il dépend (`depends`). Un module qui se sert d’un connecteur à part (la page
+/// Secrets d’Atom et le connecteur `openbao`) reçoit les références que les fonctions du connecteur ont lues.
+fn lookup_shown(reference: &str, module: &str, depends: impl Fn(&str) -> bool) -> AppResult<Sealed> {
+    let nonce = reference.strip_prefix(PREFIX).filter(|_| is_reference(reference)).ok_or_else(denied)?;
+    let sealed = references().get(nonce).filter(|sealed| sealed.created.elapsed() < TTL).cloned().ok_or_else(denied)?;
+    if sealed.module == module || depends(&sealed.module) {
+        Ok(sealed)
+    } else {
+        Err(denied())
+    }
+}
+
+/// `lookup_shown` d’après les `requires` du module dans l’espace ouvert.
+fn shown_value(state: &AppState, reference: &str, module: &str) -> AppResult<Sealed> {
+    lookup_shown(reference, module, |owner| {
+        state.try_space().and_then(|space| space.module(module).ok()).is_some_and(|manifest| manifest.requires_module(owner))
+    })
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Règles
 // ---------------------------------------------------------------------------------------------------------------
@@ -459,16 +479,16 @@ fn label_of(args: &Value) -> AppResult<String> {
 fn reveal(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let subject = shown_subject(args)?;
     let reference: String = arg(args, "reference")?;
-    let sealed = lookup(reference.trim(), &subject.module, None)?;
+    let sealed = shown_value(state, reference.trim(), &subject.module)?;
     journal(state, &subject, &format!("Valeur « {} » affichée (compte {}/{})", label_of(args)?, sealed.client, sealed.instance));
     Ok(json!({ "value": value_text(&sealed.value) }))
 }
 
 /// `secrets.describe` : ce que la boîte montre avant tout clic, sans la valeur.
-fn describe(args: &Value) -> AppResult<Value> {
+fn describe(state: &AppState, args: &Value) -> AppResult<Value> {
     let subject = shown_subject(args)?;
     let reference: String = arg(args, "reference")?;
-    let sealed = lookup(reference.trim(), &subject.module, None)?;
+    let sealed = shown_value(state, reference.trim(), &subject.module)?;
     let remaining = TTL.saturating_sub(sealed.created.elapsed()).as_secs();
     Ok(json!({ "client": sealed.client, "instance": sealed.instance, "expiresIn": remaining }))
 }
@@ -495,7 +515,7 @@ fn write_env_file(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
             )));
         }
         let value = match (entry.get("ref").and_then(Value::as_str), entry.get("value")) {
-            (Some(reference), _) => value_text(&lookup(reference.trim(), &subject.module, None)?.value),
+            (Some(reference), _) => value_text(&shown_value(state, reference.trim(), &subject.module)?.value),
             (None, Some(Value::Null) | None) => String::new(),
             (None, Some(value)) => {
                 let text = value_text(value);
@@ -537,7 +557,7 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> AppResult<()> {
 pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     let result = match command {
         "secrets.reveal" => reveal(state, args),
-        "secrets.describe" => describe(args),
+        "secrets.describe" => describe(state, args),
         "secrets.writeEnvFile" => {
             let (state, args) = (state.clone(), args.clone());
             crate::vault::blocking(move || write_env_file(&state, &args)).await
@@ -639,6 +659,20 @@ mod tests {
 
         expire(&reference);
         assert!(substitute_body(&body, true, &consent, path_rule, &account).is_err(), "expirée");
+    }
+
+    #[test]
+    fn a_page_shows_a_reference_sealed_by_a_module_it_depends_on() {
+        let account = client(&[], vec![]);
+        let (sealed, _) = seal_body(json!({ "k": "d3p3nd4nc3" }), &rule("/x", &["k"]), "openbao", &account);
+        let reference = sealed["k"].as_str().unwrap().to_string();
+        let shown = lookup_shown(&reference, "atom", |owner| owner == "openbao").unwrap();
+        assert_eq!(value_text(&shown.value), "d3p3nd4nc3", "une page d’atom, qui dépend d’openbao");
+        assert!(lookup_shown(&reference, "openbao", |_| false).is_ok(), "le module qui l’a lue");
+        assert!(lookup_shown(&reference, "voisin", |owner| owner == "autre").is_err(), "un module sans cette dépendance");
+        assert!(lookup(&reference, "atom", None).is_err(), "une requête d’atom ne la recopie toujours pas");
+        expire(&reference);
+        assert!(lookup_shown(&reference, "atom", |owner| owner == "openbao").is_err(), "expirée");
     }
 
     #[test]

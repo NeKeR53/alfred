@@ -82,6 +82,11 @@ export interface DataTableProps<Row> {
    * et lignes virtualisées au-delà de `virtualizeFrom`.
    */
   variant?: "list" | "grid";
+  /**
+   * Grille seulement : `double` donne des lignes de 44 px, pour une cellule sur deux lignes (un nom et sa précision
+   * dessous : courriel, conteneur, date), comme les tableaux de OneApp.
+   */
+  rowHeight?: "single" | "double";
   /** Tris en cours (contrôlé) ; sans lui, le tableau garde les siens. */
   sort?: ReadonlyArray<DataTableSort>;
   defaultSort?: ReadonlyArray<DataTableSort>;

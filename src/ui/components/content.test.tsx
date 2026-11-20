@@ -79,6 +79,18 @@ describe("List", () => {
 });
 
 describe("Code, Divider, Image", () => {
+  it("Code plain : chasse fixe sans fond, et en gras avec strong", () => {
+    render(
+      <p>
+        <Code plain strong>
+          2.4.1
+        </Code>
+      </p>,
+    );
+    const code = screen.getByText("2.4.1");
+    expect(code).toHaveClass("ui-code", "ui-code--plain", "ui-code--strong");
+  });
+
   it("rend le code en ligne et en bloc, joignable au clavier", async () => {
     const user = userEvent.setup();
     render(

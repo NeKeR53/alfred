@@ -763,6 +763,14 @@ const visibles = (tickets.data ?? []).filter((ticket) => recherche.matches(ticke
 - Réservée à une page : dans un panneau de droite, `useTopBarSearch` est refusé (erreur de la page) ; un panneau garde un `SearchField` ou `Page search`.
 - Jamais de `SearchField` en tête d’une page ni de barre de filtres à part pour chercher : un `SearchField` ne sert que dans un bloc, pour une liste secondaire.
 
+### Résumé de la barre du haut : `useTopBarSummary`
+
+`useTopBarSummary(texte)` place après le titre de la page, dans la barre du haut, une ligne de résumé recalculée avec ses données : « 3 personnes · 2 en écart · 6 environnements ». Un texte vide le retire ; il disparaît avec la page. Réservé à une page (un panneau l’ignore). Le résumé ne remplace pas un état d’erreur ni une action.
+
+```tsx
+useTopBarSummary(donnees ? `${personnes.length} personnes · ${ecarts} en écart` : "");
+```
+
 ### Entrées du menu de gauche : `menu`, `useMenuEntryAction`
 
 ```ts

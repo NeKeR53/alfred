@@ -217,4 +217,22 @@ describe("DataTable en grille", () => {
     expect(last).toHaveFocus();
     expect(last.closest("tr")).toHaveAttribute("aria-rowindex", "5001");
   });
+
+  it("lignes doubles : la grille réserve 44 px par ligne, y compris pour l’espace des lignes virtualisées", () => {
+    const rows = Array.from({ length: 1000 }, (_, index) => ({ id: index, name: `Ligne ${index + 1}` }));
+    const { container } = render(
+      <DataTable
+        variant="grid"
+        rowHeight="double"
+        label="Conteneurs"
+        columns={[{ key: "name", header: "Nom" }]}
+        rows={rows}
+        rowKey={(row) => row.id}
+      />,
+    );
+    expect(container.querySelector(".al-datagrid-frame")).toHaveClass("al-datagrid-frame--double");
+    const spacer = container.querySelector<HTMLElement>(".al-datagrid__spacer");
+    expect(spacer?.style.height).toMatch(/^\d+px$/);
+    expect(Number.parseInt(spacer?.style.height ?? "0", 10) % 44).toBe(0);
+  });
 });

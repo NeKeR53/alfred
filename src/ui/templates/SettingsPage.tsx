@@ -1,12 +1,14 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "../components/Button";
 import { ChoiceButton, ChoiceGroup } from "../components/ChoiceButton";
+import { Code } from "../components/Content";
 import { FeedbackBanner } from "../components/FeedbackBanner";
 import { SelectControl, SwitchControl, TextInput } from "../components/FormControls";
 import { LoadingSkeleton } from "../components/LoadingSkeleton";
 import { Page, Section } from "../components/page";
 import { SettingRow, SettingRows } from "../components/SettingRow";
-import { type Action, useRunAction } from "./actions";
+import { StatusBadge } from "../components/StatusBadge";
+import { type Action, ActionBar, useRunAction } from "./actions";
 import type { FieldOption } from "./dialogs";
 import { FormattedValue, type ValueOptions } from "./format";
 import { errorMessage, useFrameServices } from "./services";
@@ -47,6 +49,16 @@ export type Setting =
     })
   | (SettingBase & { type: "action"; action: Action })
   | (SettingBase & {
+      /**
+       * Un élément d’une liste réglée ici (un environnement, un profil) : son nom, un code court à côté, une
+       * explication, des étiquettes d’état (« ✓ Keycloak ») et ses actions de ligne (icônes, puis « ⋯ »).
+       */
+      type: "item";
+      code?: string;
+      tags?: ReadonlyArray<{ label: string; tone?: "neutral" | "success" | "warning" | "danger" }>;
+      actions?: ReadonlyArray<Action>;
+    })
+  | (SettingBase & {
       type: "info";
       value: unknown;
       /** Format de la valeur (voir `ValueType`). */
@@ -58,6 +70,8 @@ export type Setting =
 export interface SettingsSection {
   title: string;
   description?: string;
+  /** Actions du bloc, à droite de son titre (« Nouvel environnement »). */
+  actions?: ReadonlyArray<Action>;
   settings: ReadonlyArray<Setting>;
 }
 
@@ -222,6 +236,33 @@ function ActionSetting({ setting }: { setting: Extract<Setting, { type: "action"
   );
 }
 
+function ItemSetting({ setting }: { setting: Extract<Setting, { type: "item" }> }) {
+  return (
+    <SettingRow
+      title={setting.title}
+      badge={setting.code ? <Code>{setting.code}</Code> : undefined}
+      description={
+        setting.description || setting.tags?.length ? (
+          <>
+            {setting.description ? <span className="setting-item__text">{setting.description}</span> : null}
+            {setting.tags?.length ? (
+              <span className="setting-item__tags">
+                {setting.tags.map((tag) => (
+                  <StatusBadge key={tag.label} tone={tag.tone ?? "neutral"} size="compact">
+                    {tag.label}
+                  </StatusBadge>
+                ))}
+              </span>
+            ) : null}
+          </>
+        ) : undefined
+      }
+    >
+      {setting.actions?.length ? <ActionBar actions={setting.actions} place="row" subject={setting.title} /> : null}
+    </SettingRow>
+  );
+}
+
 function SettingLine({ setting }: { setting: Setting }) {
   switch (setting.type) {
     case "switch":
@@ -232,6 +273,8 @@ function SettingLine({ setting }: { setting: Setting }) {
       return <TextSetting setting={setting} />;
     case "action":
       return <ActionSetting setting={setting} />;
+    case "item":
+      return <ItemSetting setting={setting} />;
     case "info":
       return (
         <SettingRow title={setting.title} description={setting.description}>
@@ -277,7 +320,7 @@ export function SettingsPage<Values>({
   return (
     <Page>
       {sections(state.data as Values).map((section) => (
-        <Section key={section.title} title={section.title} description={section.description}>
+        <Section key={section.title} title={section.title} description={section.description} actions={section.actions}>
           <SettingRows>
             {section.settings.map((setting) => (
               <SettingLine key={setting.id} setting={setting} />

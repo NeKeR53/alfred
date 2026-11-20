@@ -90,3 +90,17 @@
 .setting-row__control > form > .ui-input:not([data-width]) {
   width: min(240px, 36vw);
 }
+/* Élément d’une liste réglée ici (`SettingsPage`, réglage `item`) : nom en gras et code, explication, puis étiquettes. */
+.setting-row:has(.setting-item__tags, .setting-item__text) .setting-row__title {
+  font-weight: 600;
+}
+.setting-row__description:has(.setting-item__tags) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setting-item__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

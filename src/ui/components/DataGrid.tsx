@@ -50,7 +50,7 @@ export type DataTableEditor<Row> = (
   disabled?: (row: Row) => boolean;
 };
 
-const ROW_HEIGHT = 36;
+const ROW_HEIGHTS = { single: 36, double: 44 } as const;
 
 /** Ligne vide qui réserve la hauteur des lignes non rendues. */
 function Spacer({ height, span }: { height: number; span: number }) {
@@ -115,7 +115,9 @@ export function DataGrid<Row>({
   filters,
   onFiltersChange,
   virtualizeFrom = 200,
+  rowHeight = "single",
 }: DataTableProps<Row>) {
+  const ROW_HEIGHT = ROW_HEIGHTS[rowHeight];
   const view = useTableView({ columns, rows, sort, defaultSort, onSortChange, filters, onFiltersChange });
   const shown = view.view;
   const [active, setActive] = useState({ row: 0, col: 0 });
@@ -533,7 +535,9 @@ export function DataGrid<Row>({
   const total = shown.length + headerRows;
   const editingColumn = editing ? columns[editing.col] : undefined;
   return (
-    <div className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}`}>
+    <div
+      className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}${rowHeight === "double" ? " al-datagrid-frame--double" : ""}`}
+    >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: délégation des touches de toutes les cellules de la grille. */}
       <div
         className={`al-datagrid-scroll${virtual ? " al-datagrid-scroll--virtual" : ""}`}

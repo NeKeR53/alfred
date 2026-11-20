@@ -1902,7 +1902,10 @@ pub(crate) async fn send(state: &Arc<AppState>, client: &Client, call: &Call, pr
             sent.insert(name.clone(), value);
         }
         let response = request.headers(sent).send().await.map_err(|error| network_error(error, &credential.secrets))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED && stale.is_none() && credential.renewable.is_some() {
+        // OpenBao refuse un jeton de session révoqué ou perdu par 403 (« permission denied »), pas par 401.
+        let refused = response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || (response.status() == reqwest::StatusCode::FORBIDDEN && client.auth.kind == AuthKind::Session);
+        if refused && stale.is_none() && credential.renewable.is_some() {
             // Jeton refusé avant l’heure (révoqué, horloge décalée) : on en redemande un, une seule fois.
             stale = credential.renewable;
             continue;
@@ -2895,7 +2898,8 @@ async fn test_client(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let path = opt_arg::<String>(args, "path")?.or_else(|| client.test_path.clone()).unwrap_or_default();
     let call = Call {
         method: Method::GET,
-        path: path.clone(),
+        // `{realm}`, `{mount}`… : les paramètres du compte, comme dans le chemin d’une requête.
+        path: fill_params(&path, &client.params),
         query: None,
         headers: None,
         payload: Payload::None,
@@ -3359,6 +3363,23 @@ mod tests {
             let error = invoke(&state, "clients.save", json!({ "client": wrong })).await.unwrap_err();
             assert!(error.message.contains("Chemin de test invalide"), "{path} : {}", error.message);
         }
+    }
+
+    /// Le chemin de test reçoit les paramètres du compte (`{realm}` de Keycloak…), comme le chemin d’une requête.
+    #[tokio::test]
+    async fn the_test_path_receives_the_account_params() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let base = format!("{}/api", remote.origin);
+        save_client(
+            &state,
+            json!({ "id": "royaumes", "label": "Royaumes", "testPath": "/{zone}",
+                "methods": [{ "id": "ouvert", "label": "Ouvert", "type": "none", "params": [{ "id": "zone", "label": "Zone" }] }],
+                "instances": [{ "id": "a", "label": "A", "url": base, "method": "ouvert", "params": { "zone": "texte" } }] }),
+        )
+        .await;
+        let tested = invoke(&state, "clients.test", json!({ "id": "royaumes", "instance": "a" })).await.unwrap();
+        assert_eq!((tested["ok"].clone(), tested["status"].clone()), (json!(true), json!(200)), "{tested}");
     }
 
     /// Le parcours de configuration dit pourquoi un test échoue, vérifie une adresse avant tout compte, et garde
