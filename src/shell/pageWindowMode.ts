@@ -10,3 +10,14 @@ export function pageWindowParams(): Record<string, unknown> | null {
   const params = value?.params;
   return params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : null;
 }
+
+/**
+ * Fenêtre secondaire : une fenêtre de page, ou la fenêtre Agent détachée (`agentsWindow.ts`). Elle relit l’espace que
+ * la fenêtre principale a ouvert, sans le rouvrir : rouvrir fermerait les fenêtres de page, elle comprise.
+ */
+export function isSecondaryWindow(): boolean {
+  return (
+    pageWindowReference() !== null ||
+    (window as { __ALFRED_AGENTS_WINDOW__?: unknown }).__ALFRED_AGENTS_WINDOW__ === true
+  );
+}

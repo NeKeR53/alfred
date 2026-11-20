@@ -181,7 +181,7 @@ fn approval_for(id: &str, tool: &str, input: &Value, can_remember: bool) -> Appr
     let title = match tool {
         "Bash" | "PowerShell" => "Exécuter une commande".to_string(),
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" if path.is_some() => {
-            "Modifier un fichier hors des dossiers de l’agent".to_string()
+            "Modifier un fichier".to_string()
         }
         "WebFetch" | "WebSearch" => "Accéder au web".to_string(),
         _ => format!("Utiliser l’outil {tool}"),

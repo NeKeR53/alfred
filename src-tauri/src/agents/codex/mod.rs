@@ -493,7 +493,7 @@ impl Inner {
                 ("Exécuter une commande", detail.into_iter().flatten().collect::<Vec<_>>().join("\n"))
             }),
             "item/fileChange/requestApproval" => read::<g::FileChangeRequestApprovalParams>(params).map(|request| {
-                ("Modifier des fichiers hors des dossiers de l’agent", request.reason.unwrap_or_default())
+                ("Modifier des fichiers", request.reason.unwrap_or_default())
             }),
             _ => None,
         };

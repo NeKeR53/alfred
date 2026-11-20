@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke, onNativeEvent } from "../lib/native";
 import type { AppInfo, Snapshot } from "../lib/types";
-import { pageWindowReference } from "./pageWindowMode";
+import { isSecondaryWindow, pageWindowReference } from "./pageWindowMode";
 
 /** Espace déjà ouvert sur ce poste, proposé pour y revenir en un clic. */
 export interface RecentSpace {
@@ -116,7 +116,7 @@ export const useShell = create<ShellState>((set, get) => ({
       const info = await invoke<AppInfo>("app.info");
       const [snapshot, theme, collapsed, recent] = await Promise.all([
         // Une fenêtre de page relit l’espace que la fenêtre principale a ouvert, sans le rouvrir.
-        pageWindowReference()
+        isSecondaryWindow()
           ? invoke<Snapshot | null>("space.snapshot").catch(() => null)
           : invoke<Snapshot | null>("space.restore"),
         invoke<Theme | null>("settings.get", { key: "appearance.theme" }),
@@ -134,7 +134,7 @@ export const useShell = create<ShellState>((set, get) => ({
         recentSpaces: Array.isArray(recent) ? recent : [],
         startupError: null,
       });
-      if (snapshot && !pageWindowReference()) rememberSpace(snapshot);
+      if (snapshot && !isSecondaryWindow()) rememberSpace(snapshot);
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
         if (!get().themeFollowsSystem) return;
         applyTheme(systemTheme(), get().snapshot?.accent);
