@@ -1,7 +1,9 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Folder, Trash2 } from "lucide-react";
-import { describe, expect, it, vi } from "vitest";
+import { Folder, Pencil, Trash2 } from "lucide-react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { installDialogPolyfill } from "../dialog.test-helper";
+import { Page } from "./page";
 import { type TreeNode, TreeView } from "./TreeView";
 
 const folders: TreeNode[] = [
@@ -11,6 +13,8 @@ const folders: TreeNode[] = [
 ];
 
 const item = (name: string) => screen.getByRole("treeitem", { name: new RegExp(`^${name}`) });
+
+beforeAll(installDialogPolyfill);
 
 describe("TreeView", () => {
   it("se parcourt au clavier et charge les enfants à l’ouverture, avec erreur et nouvel essai", async () => {
@@ -72,18 +76,28 @@ describe("TreeView", () => {
     const change = vi.fn();
     const activate = vi.fn();
     const remove = vi.fn();
+    const rename = vi.fn();
     render(
-      <TreeView
-        label="Secrets"
-        selection="multiple"
-        defaultExpanded={["/src"]}
-        nodes={folders}
-        onSelectedChange={change}
-        onActivate={activate}
-        actions={(node) => [
-          { label: `Supprimer ${node.label}`, icon: Trash2, danger: true, onClick: () => remove(node.id) },
-        ]}
-      />,
+      <Page>
+        <TreeView
+          label="Secrets"
+          selection="multiple"
+          defaultExpanded={["/src"]}
+          nodes={folders}
+          onSelectedChange={change}
+          onActivate={activate}
+          actions={(node) => [
+            { label: `Renommer ${node.label}`, icon: Pencil, onClick: () => rename(node.id) },
+            {
+              label: `Supprimer ${node.label}`,
+              icon: Trash2,
+              danger: true,
+              confirm: `Supprimer « ${node.label} » ?`,
+              onClick: () => remove(node.id),
+            },
+          ]}
+        />
+      </Page>,
     );
     expect(screen.getByRole("tree")).toHaveAttribute("aria-multiselectable", "true");
 
@@ -102,8 +116,18 @@ describe("TreeView", () => {
 
     // Les actions suivent la ligne active dans l’ordre de tabulation, et leur clic ne sélectionne pas la ligne.
     await user.tab();
-    expect(within(item("README.md")).getByRole("button", { name: "Supprimer README.md" })).toHaveFocus();
+    expect(within(item("README.md")).getByRole("button", { name: "Renommer README.md" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Renommer docs" }));
+    expect(rename).toHaveBeenCalledWith("/docs");
+
+    // Une action `danger` demande confirmation, comme une `Action` : refusée, rien ne se passe.
     await user.click(screen.getByRole("button", { name: "Supprimer docs" }));
+    const question = await screen.findByRole("alertdialog", { name: "Supprimer « docs » ?" });
+    await user.click(within(question).getByRole("button", { name: "Annuler" }));
+    expect(remove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Supprimer docs" }));
+    const again = await screen.findByRole("alertdialog", { name: "Supprimer « docs » ?" });
+    await user.click(within(again).getByRole("button", { name: "Supprimer docs" }));
     expect(remove).toHaveBeenCalledWith("/docs");
   });
 

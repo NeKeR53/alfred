@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ActionIcon } from "../templates/actions";
+import { type Action, type ActionIcon, useRunAction } from "../templates/actions";
 import { IconButton } from "./Button";
 import { EmptyState } from "./EmptyState";
 import "./tree-view.css";
@@ -34,13 +34,13 @@ export interface TreeNode<Data = unknown> {
   data?: Data;
 }
 
-/** Action d’un nœud : un bouton icône en bout de ligne, visible au survol et quand la ligne a le focus. */
-export interface TreeAction {
-  label: string;
+/**
+ * Action d’un nœud : un bouton icône en bout de ligne, visible au survol et quand la ligne a le focus. Elle s’exécute
+ * comme une `Action` : `danger` (ou `confirm`) demande d’abord confirmation, un échec est notifié.
+ */
+export type TreeAction = Pick<Action, "label" | "onClick" | "danger" | "confirm" | "confirmMessage" | "success"> & {
   icon: ActionIcon;
-  onClick: () => unknown;
-  danger?: boolean;
-}
+};
 
 type LoadState = { status: "loading" } | { status: "error"; message: string };
 
@@ -130,6 +130,7 @@ export function TreeView<Data = unknown>({
   const typeahead = useRef({ text: "", at: 0 });
   const scroller = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
+  const { run } = useRunAction();
   const errorPrefix = useRef(`tree-${Math.random().toString(36).slice(2)}`).current;
 
   const childrenOf = useCallback((node: TreeNode<Data>) => node.children ?? loaded.get(node.id), [loaded]);
@@ -542,7 +543,7 @@ export function TreeView<Data = unknown>({
                         tabIndex={isActive ? 0 : -1}
                         onClick={(event) => {
                           event.stopPropagation();
-                          action.onClick();
+                          void run(action);
                         }}
                         onDoubleClick={(event) => event.stopPropagation()}
                       >
