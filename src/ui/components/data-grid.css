@@ -329,3 +329,19 @@
     outline-offset: -2px;
   }
 }
+
+/* Case qui ouvre un menu (`column.menu`) : un cadre fin au survol et quand le menu est ouvert ; sans menu, inerte. */
+.al-datagrid td.al-datagrid__cell--menu {
+  cursor: pointer;
+}
+.al-datagrid td.al-datagrid__cell--menu:hover > .al-datagrid__frame,
+.al-datagrid td.al-datagrid__cell--menu[aria-expanded="true"] > .al-datagrid__frame {
+  border-color: var(--line);
+}
+.al-datagrid td.al-datagrid__cell--menu.al-datagrid__cell--tone-warning:hover > .al-datagrid__frame,
+.al-datagrid td.al-datagrid__cell--menu.al-datagrid__cell--tone-danger:hover > .al-datagrid__frame {
+  border-color: currentColor;
+}
+.al-datagrid td.al-datagrid__cell--inert {
+  cursor: default;
+}

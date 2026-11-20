@@ -102,3 +102,22 @@ describe("Surface en creux", () => {
     expect(container.firstChild).not.toHaveClass("al-surface--sunken");
   });
 });
+
+describe("Pied de Page", () => {
+  it("se range à droite avec footerAlign=\"end\", à gauche par défaut", () => {
+    const { container, rerender } = render(
+      <Page footer={<span>Appliquer…</span>}>
+        <p>Contenu</p>
+      </Page>,
+    );
+    const pied = () => container.querySelector("footer");
+    expect(pied()).toHaveClass("al-page__footer");
+    expect(pied()).not.toHaveClass("al-page__footer--end");
+    rerender(
+      <Page footer={<span>Appliquer…</span>} footerAlign="end">
+        <p>Contenu</p>
+      </Page>,
+    );
+    expect(pied()).toHaveClass("al-page__footer", "al-page__footer--end");
+  });
+});

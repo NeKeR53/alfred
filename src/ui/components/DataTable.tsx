@@ -49,6 +49,24 @@ export interface DataTableColumn<Row> {
    */
   tone?: (row: Row) => DataTableCellTone | undefined;
   toneStyle?: "fill" | "frame";
+  /**
+   * Grille seulement : la case ouvre un menu ancré sous elle (clic, Entrée ou Espace), comme une case de matrice de
+   * déploiement (« Voir les logs », « Ouvrir une console »). Sans menu pour une ligne, la case est inerte.
+   */
+  menu?: (row: Row) => DataTableCellMenu | undefined;
+  /** Grille seulement : infobulle de la case (le nom complet de l’objet et son image, par exemple). */
+  cellTitle?: (row: Row) => string | undefined;
+}
+
+/** Menu d’une case de grille : son nom, un titre en tête, un groupe d’entrées et ses actions. */
+export interface DataTableCellMenu {
+  /** Nom du menu pour les lecteurs d’écran : « Actions pour web-1 dans Recette ». */
+  label: string;
+  /** Titre affiché en tête du menu. */
+  title?: string;
+  /** Intitulé du groupe d’entrées (l’état de l’objet, par exemple). */
+  group?: string;
+  items: Action[];
 }
 
 export type DataTableCellTone = "danger" | "warning" | "success" | "neutral";

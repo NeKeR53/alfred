@@ -450,3 +450,18 @@
   border-top: 1px solid var(--line);
   background: var(--color-bg);
 }
+.al-page__footer--end {
+  justify-content: flex-end;
+}
+
+/*
+ * Champ à étiquette en ligne (`FormField layout="inline"`) posé dans une rangée ou dans la barre : il prend la largeur
+ * de son étiquette et de son contrôle, sans s’étirer ni étirer son étiquette (sinon le second champ sort de la vue).
+ */
+:is(.al-row, .al-page__bar) > .form-field--inline {
+  width: auto;
+  flex: none;
+}
+:is(.al-row, .al-page__bar) > .form-field--inline > [data-slot="field-label"] {
+  flex: none;
+}

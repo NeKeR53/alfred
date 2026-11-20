@@ -29,6 +29,7 @@ export function AnchoredMenu({
   id,
   anchor,
   label,
+  title,
   placement,
   align,
   onClose,
@@ -38,6 +39,8 @@ export function AnchoredMenu({
   id: string;
   anchor: HTMLElement;
   label: string;
+  /** Titre affiché en tête du menu (l’objet visé). */
+  title?: string;
   placement: "below" | "above";
   align: "start" | "end";
   /** `restoreFocus` : vrai quand le focus doit revenir au bouton (Échap, choix d’une entrée). */
@@ -95,6 +98,7 @@ export function AnchoredMenu({
     >
       <Menu
         label={label}
+        title={title}
         style={
           position
             ? { top: position.top, left: position.left, width: `min(${menuWidth}px, calc(100vw - 16px))` }

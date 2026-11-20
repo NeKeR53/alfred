@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Terminal, type TerminalChannel } from "./Terminal";
+import { Terminal, type TerminalChannel, type TerminalHandle } from "./Terminal";
 import { terminalKeyAction } from "./terminalEngine";
 
 // jsdom ne mesure pas les caractères : l’ajustement à la taille du conteneur est simulé (10 × 20 px par cellule).
@@ -129,6 +130,22 @@ describe("Terminal", () => {
     expect(onResize).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledWith({ cols: 120, rows: 32 });
     expect(container.querySelector(".ui-terminal__size")).toHaveTextContent("120 × 32");
+  });
+
+  it("poignée : texte affiché, sélection, collage envoyé au service et effacement", async () => {
+    const service = connection();
+    const handle = createRef<TerminalHandle>();
+    render(<Terminal ref={handle} label="Console" connection={service.value} />);
+    await screen.findByText("Connecté");
+    service.write("bonjour\r\n$ ");
+    await waitFor(() => expect(handle.current?.text()).toMatch(/^bonjour\n\$ ?$/));
+    expect(handle.current?.text(1)).toMatch(/^\$ ?$/);
+    expect(handle.current?.selection()).toBe("");
+    expect(handle.current?.bracketedPaste()).toBe(false);
+    handle.current?.paste("ls -la");
+    expect(service.send).toHaveBeenLastCalledWith("ls -la");
+    handle.current?.clear();
+    await waitFor(() => expect(handle.current?.text()).toMatch(/^\$ ?$/));
   });
 
   it("lit et écrit un canal WebSocket, et dit quand la session se termine", async () => {

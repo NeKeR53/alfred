@@ -34,6 +34,7 @@ export function Page({
   bar,
   header,
   footer,
+  footerAlign = "start",
   width = "full",
   fill = false,
 }: {
@@ -62,6 +63,8 @@ export function Page({
   header?: PageHeaderSpec | ReactNode;
   /** Pied fixe sous la zone qui défile : total, état d’une sélection, pagination. Contenu libre. */
   footer?: ReactNode;
+  /** `end` range le pied à droite : l’action qui conclut un panneau-formulaire (« Appliquer… »). */
+  footerAlign?: "start" | "end";
   /** `text` limite la largeur de lecture ; `full` sert aux tableaux et aux vues denses. */
   width?: "full" | "text";
   /**
@@ -116,7 +119,9 @@ export function Page({
           )}
           {topBar}
           <div className={bodyClass}>{children}</div>
-          {footer ? <footer className="al-page__footer">{footer}</footer> : null}
+          {footer ? (
+            <footer className={footerAlign === "end" ? "al-page__footer al-page__footer--end" : "al-page__footer"}>{footer}</footer>
+          ) : null}
         </div>
         {covered ? <SubpageLayer entry={subpage} /> : null}
       </div>

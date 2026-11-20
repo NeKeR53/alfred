@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronDown, ChevronUp, Clock, Copy, WrapText } from "lucide-react";
+import { ArrowDown, ArrowDownToLine, Check, ChevronDown, ChevronUp, Clock, Copy, ListX, WrapText } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -14,15 +14,28 @@ import {
 } from "react";
 import { type AnsiSegment, type AnsiStyle, parseAnsi } from "./ansi";
 import { Button, IconButton } from "./Button";
+import { ChoiceButton, ChoiceGroup } from "./ChoiceButton";
 import { copyText } from "./clipboard";
 import { EmptyState } from "./EmptyState";
-import { findLines, LineStore, type LogChannel, type LogLine } from "./logLines";
+import { findLines, LineStore, type LogChannel, type LogLevel, type LogLine, logLineLevel } from "./logLines";
 import { SearchField } from "./SearchField";
 import { StatusDot } from "./StatusDot";
 import "./ansi.css";
 import "./log-viewer.css";
 
 export type { LogChannel, LogLine } from "./logLines";
+
+/** Filtre de niveau d’un journal à niveaux (`levels`) : toutes les lignes, alertes et erreurs, erreurs seules. */
+export type LogLevelFilter = "all" | "warning" | "error";
+
+/** Ce que voit l’utilisateur, pour les actions de la page (copie, téléchargement, analyse). */
+export interface LogViewerView {
+  /** Texte des lignes affichées (filtre de niveau appliqué), sans séquences ANSI ; calculé à la demande. */
+  text(): string;
+  level: LogLevelFilter;
+  /** Aucune ligne affichée. */
+  empty: boolean;
+}
 
 export interface LogViewerProps {
   /** Nom du journal, pour les lecteurs d’écran : « Journal du build #42 ». */
@@ -45,6 +58,40 @@ export interface LogViewerProps {
   emptyTitle?: string;
   /** Occupe la hauteur restante d’une `Page fill`. */
   fill?: boolean;
+  /**
+   * Journal à niveaux : filtre « Tous / Alertes / Erreurs » avec ses compteurs, liste des erreurs (un clic mène à la
+   * ligne) et compteurs d’erreurs et d’alertes dans la barre d’état. Niveau d’une ligne : `ERROR`, `WARN`,
+   * `level=error`, `[warn]`, une exception…
+   */
+  levels?: boolean;
+  /** Réglages propres à la source, en tête de barre (nombre de lignes lues…). */
+  tools?: ReactNode;
+  /** Actions de la page en fin de barre, d’après ce qui est affiché (télécharger, analyser…). */
+  actions?: (view: LogViewerView) => ReactNode;
+  /** Complète la barre d’état, à droite. */
+  status?: ReactNode;
+  /** À la place de l’état vide habituel quand le journal n’a aucune ligne : erreur avec « Réessayer », journal effacé. */
+  emptyState?: ReactNode;
+}
+
+const LEVEL_CHOICES = [
+  ["all", "Tous", "Toutes les lignes"],
+  ["warning", "Alertes", "Alertes et erreurs"],
+  ["error", "Erreurs", "Erreurs"],
+] as const;
+const ERROR_LIST_LIMIT = 200;
+
+/** Position d’une valeur dans un tableau trié, -1 si absente. */
+function positionOf(sorted: readonly number[], value: number) {
+  let low = 0;
+  let high = sorted.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (sorted[middle] === value) return middle;
+    if (sorted[middle] < value) low = middle + 1;
+    else high = middle - 1;
+  }
+  return -1;
 }
 
 const OVERSCAN = 24;
@@ -165,14 +212,21 @@ export function LogViewer({
   loading = false,
   emptyTitle = "Journal vide",
   fill = false,
+  levels = false,
+  tools,
+  actions,
+  status: extraStatus,
+  emptyState,
 }: LogViewerProps) {
   // --- Lignes : le magasin est alimenté pendant le rendu, une seule fois par tableau ou par lot d’événements.
   const storeRef = useRef<LineStore>(null);
   storeRef.current ??= new LineStore(maxLines);
   const store = storeRef.current;
   const fed = useRef<{ lines?: readonly LogLine[]; events?: LogChannel["events"]; version: number }>({ version: 0 });
+  const levelCache = useRef<{ dropped: number; levels: (LogLevel | undefined)[] }>({ dropped: 0, levels: [] });
   if (lines && fed.current.lines !== lines) {
     store.replace(lines);
+    levelCache.current = { dropped: 0, levels: [] };
     fed.current = { ...fed.current, lines, version: fed.current.version + 1 };
   }
   if (channel && fed.current.events !== channel.events) {
@@ -182,6 +236,35 @@ export function LogViewer({
   const version = fed.current.version;
   const total = store.lines.length;
   const streaming = channel ? !channel.closed : live;
+
+  // --- Niveaux : chaque ligne est classée une fois ; la dernière est relue, un flux brut pouvant la compléter.
+  const [level, setLevel] = useState<LogLevelFilter>("all");
+  const [errorsOpen, setErrorsOpen] = useState(false);
+  const levelInfo = useMemo(() => {
+    void version;
+    if (!levels) return null;
+    const cache = levelCache.current;
+    if (store.dropped < cache.dropped) cache.levels = [];
+    else if (store.dropped > cache.dropped) cache.levels.splice(0, store.dropped - cache.dropped);
+    cache.dropped = store.dropped;
+    if (cache.levels.length > store.lines.length) cache.levels = [];
+    for (let index = Math.max(0, cache.levels.length - 1); index < store.lines.length; index += 1)
+      cache.levels[index] = logLineLevel(store.text(index));
+    const errors: number[] = [];
+    const alerts: number[] = [];
+    let warnings = 0;
+    cache.levels.forEach((value, index) => {
+      if (!value) return;
+      alerts.push(index);
+      if (value === "error") errors.push(index);
+      else warnings += 1;
+    });
+    return { errors, alerts, warnings };
+  }, [levels, store, version]);
+  /** Lignes affichées (indices du magasin) quand un filtre de niveau s’applique ; `null` : toutes. */
+  const view = levelInfo && level !== "all" ? (level === "error" ? levelInfo.errors : levelInfo.alerts) : null;
+  const shownCount = view ? view.length : total;
+  const lineAt = useCallback((position: number) => (view ? view[position] : position), [view]);
 
   // --- Affichage.
   const [wrap, setWrap] = useState(initialWrap);
@@ -225,9 +308,9 @@ export function LogViewer({
   useLayoutEffect(() => {
     heights.current = new Float64Array(0);
     setMeasured((value) => value + 1);
-  }, [wrap, size.width, timesShown, store.dropped]);
-  if (wrap && heights.current.length < total) {
-    const grown = new Float64Array(Math.max(total, heights.current.length * 2, 1024));
+  }, [wrap, size.width, timesShown, store.dropped, view]);
+  if (wrap && heights.current.length < shownCount) {
+    const grown = new Float64Array(Math.max(shownCount, heights.current.length * 2, 1024));
     grown.set(heights.current);
     heights.current = grown;
   }
@@ -235,17 +318,17 @@ export function LogViewer({
   const offsets = useMemo(() => {
     void measured;
     if (!wrap) return null;
-    const result = new Float64Array(total + 1);
-    for (let index = 0; index < total; index += 1)
+    const result = new Float64Array(shownCount + 1);
+    for (let index = 0; index < shownCount; index += 1)
       result[index + 1] = result[index] + (heights.current[index] || rowHeight);
     return result;
-  }, [wrap, total, rowHeight, measured]);
+  }, [wrap, shownCount, rowHeight, measured]);
   const offsetOf = useCallback((index: number) => (offsets ? offsets[index] : index * rowHeight), [offsets, rowHeight]);
   const indexAt = useCallback(
     (y: number) => {
       if (!offsets) return Math.floor(y / rowHeight);
       let low = 0;
-      let high = total;
+      let high = shownCount;
       while (low < high) {
         const middle = (low + high) >> 1;
         if (offsets[middle + 1] <= y) low = middle + 1;
@@ -253,12 +336,12 @@ export function LogViewer({
       }
       return low;
     },
-    [offsets, rowHeight, total],
+    [offsets, rowHeight, shownCount],
   );
-  const contentHeight = offsetOf(total);
+  const contentHeight = offsetOf(shownCount);
   const viewHeight = size.height || DEFAULT_VIEWPORT;
-  const first = Math.max(0, Math.min(total, indexAt(scrollTop)) - OVERSCAN);
-  const last = Math.min(total, indexAt(scrollTop + viewHeight) + 1 + OVERSCAN);
+  const first = Math.max(0, Math.min(shownCount, indexAt(scrollTop)) - OVERSCAN);
+  const last = Math.min(shownCount, indexAt(scrollTop + viewHeight) + 1 + OVERSCAN);
 
   // --- Suivi de la fin : actif au départ, suspendu dès qu’on remonte, repris en bas ou par « Revenir à la fin ».
   const [follow, setFollowState] = useState(true);
@@ -337,7 +420,12 @@ export function LogViewer({
   const [query, setQuery] = useState("");
   const deferred = useDeferredValue(query.trim().toLocaleLowerCase("fr-FR"));
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` signale de nouvelles lignes dans le même magasin.
-  const matches = useMemo(() => findLines(store, deferred), [store, deferred, version]);
+  const found = useMemo(() => findLines(store, deferred), [store, deferred, version]);
+  /** Résultats en positions affichées : un filtre de niveau écarte ceux qu’il cache. */
+  const matches = useMemo(
+    () => (view ? found.map((line) => positionOf(view, line)).filter((position) => position >= 0) : found),
+    [found, view],
+  );
   const [matchPos, setMatchPos] = useState(-1);
   const currentLine = matchPos >= 0 ? matches[matchPos] : undefined;
 
@@ -377,6 +465,22 @@ export function LogViewer({
     }
   };
 
+  /** Texte des lignes affichées, filtre de niveau compris. */
+  const displayedText = () =>
+    view
+      ? view.map((index) => store.text(index)).join("\n")
+      : store.lines.map((_, index) => store.text(index)).join("\n");
+
+  // --- Liste des erreurs : un clic montre la ligne dans tout le journal.
+  const [revealed, setRevealed] = useState<number>();
+  const revealLine = (index: number) => {
+    setLevel("all");
+    setMatchPos(-1);
+    setFollow(false);
+    setRevealed(index);
+    reveal.current = index;
+  };
+
   // --- Copie : la sélection faite dans le journal, sinon tout le journal.
   const [hasSelection, setHasSelection] = useState(false);
   useEffect(() => {
@@ -401,8 +505,7 @@ export function LogViewer({
   useEffect(() => () => clearTimeout(copyTimer.current), []);
   const copy = async () => {
     const selection = document.getSelection();
-    const text =
-      hasSelection && selection ? selection.toString() : store.lines.map((_, index) => store.text(index)).join("\n");
+    const text = hasSelection && selection ? selection.toString() : displayedText();
     try {
       await copyText(text);
       setCopied("copied");
@@ -421,19 +524,21 @@ export function LogViewer({
   const digits = String(store.dropped + total).length;
   const rows: ReactNode[] = [];
   for (let index = first; index < last; index += 1) {
-    const line = store.lines[index];
+    const at = lineAt(index);
+    const line = store.lines[at];
     if (!line) continue;
     const classes = ["ui-log-viewer__line"];
     if (line.stderr) classes.push("is-stderr");
-    if (index === currentLine) classes.push("is-current");
-    else if (deferred && matches.length && store.text(index).toLocaleLowerCase("fr-FR").includes(deferred))
+    if (levelInfo && levelCache.current.levels[at]) classes.push(`is-${levelCache.current.levels[at]}`);
+    if (index === currentLine || (!view && at === revealed && currentLine === undefined)) classes.push("is-current");
+    else if (deferred && matches.length && store.text(at).toLocaleLowerCase("fr-FR").includes(deferred))
       classes.push("is-match");
     rows.push(
       <div
-        key={store.dropped + index}
+        key={store.dropped + at}
         className={classes.join(" ")}
         data-index={index}
-        data-number={store.dropped + index + 1}
+        data-number={store.dropped + at + 1}
         data-time={timesShown && line.time !== undefined ? timeFormat.format(line.time) : undefined}
       >
         <span className="ui-log-viewer__text">
@@ -456,9 +561,40 @@ export function LogViewer({
     .filter(Boolean)
     .join(" ");
   const empty = total === 0;
+  const viewEmpty = shownCount === 0;
+  const pageView: LogViewerView = { text: displayedText, level, empty: viewEmpty };
   return (
     <section className={classes} aria-label={label} onKeyDown={onKeyDown}>
       <div className="ui-log-viewer__bar" role="toolbar" aria-label="Outils du journal">
+        {tools}
+        {levelInfo ? (
+          <ChoiceGroup label="Niveau" appearance="segmented">
+            {LEVEL_CHOICES.map(([value, choice, choiceLabel]) => (
+              <ChoiceButton
+                key={value}
+                label={choiceLabel}
+                variant="label"
+                size="compact"
+                selected={level === value}
+                onClick={() => {
+                  setLevel(value);
+                  setMatchPos(-1);
+                  setRevealed(undefined);
+                }}
+              >
+                {choice}{" "}
+                <span className="ui-log-viewer__level-count">
+                  {(value === "all"
+                    ? total
+                    : value === "warning"
+                      ? levelInfo.alerts.length
+                      : levelInfo.errors.length
+                  ).toLocaleString("fr-FR")}
+                </span>
+              </ChoiceButton>
+            ))}
+          </ChoiceGroup>
+        ) : null}
         <SearchField
           label="Rechercher dans le journal"
           placeholder="Rechercher…"
@@ -499,6 +635,25 @@ export function LogViewer({
           <ChevronDown size={16} aria-hidden="true" />
         </IconButton>
         <span className="ui-log-viewer__spacer" />
+        {streaming ? (
+          <ChoiceButton
+            label={follow ? "Suspendre le suivi (Fin pour reprendre)" : "Suivre la fin du journal (Fin)"}
+            variant="label"
+            size="compact"
+            selected={follow}
+            aria-keyshortcuts="End"
+            onClick={() => {
+              if (follow) setFollow(false);
+              else {
+                reveal.current = undefined;
+                setFollow(true);
+              }
+            }}
+          >
+            <ArrowDownToLine size={16} aria-hidden="true" />
+            Suivre
+          </ChoiceButton>
+        ) : null}
         <IconButton label="Retour à la ligne" aria-pressed={wrap} onClick={() => setWrap((value) => !value)}>
           <WrapText size={16} aria-hidden="true" />
         </IconButton>
@@ -507,57 +662,109 @@ export function LogViewer({
             <Clock size={16} aria-hidden="true" />
           </IconButton>
         ) : null}
-        <IconButton label={copyLabel} tooltip={copyTooltip} disabled={empty} onClick={() => void copy()}>
+        {levelInfo ? (
+          <IconButton
+            label="Liste des erreurs"
+            aria-pressed={errorsOpen}
+            aria-controls={`${searchId}-erreurs`}
+            onClick={() => setErrorsOpen((value) => !value)}
+          >
+            <ListX size={16} aria-hidden="true" />
+          </IconButton>
+        ) : null}
+        <IconButton label={copyLabel} tooltip={copyTooltip} disabled={viewEmpty} onClick={() => void copy()}>
           {copied === "copied" ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
         </IconButton>
+        {actions ? <span className="ui-log-viewer__actions">{actions(pageView)}</span> : null}
       </div>
       {empty ? (
         <div className="ui-log-viewer__empty">
-          <EmptyState
-            size="compact"
-            title={loading ? "Chargement du journal…" : streaming ? "En attente des premières lignes…" : emptyTitle}
-          />
+          {emptyState ?? (
+            <EmptyState
+              size="compact"
+              title={loading ? "Chargement du journal…" : streaming ? "En attente des premières lignes…" : emptyTitle}
+            />
+          )}
         </div>
       ) : null}
-      <div
-        ref={viewport}
-        className="ui-log-viewer__viewport"
-        hidden={empty}
-        role="log"
-        aria-live="off"
-        aria-label={`${label}, ${count(total, "ligne", "lignes")}`}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: la zone qui défile se lit et se parcourt au clavier.
-        tabIndex={0}
-        onScroll={onScroll}
-        onWheel={(event) => {
-          reveal.current = undefined;
-          if (event.deltaY < 0) setFollow(false);
-        }}
-        onKeyDown={(event) => {
-          reveal.current = undefined;
-          if (["ArrowUp", "PageUp", "Home"].includes(event.key)) setFollow(false);
-          else if (event.key === "End" && !event.ctrlKey) {
-            event.preventDefault();
-            setFollow(true);
-          }
-        }}
-        style={{ "--ui-log-gutter": `${digits + 1}ch` } as CSSProperties}
-      >
-        <div className="ui-log-viewer__content" style={{ height: contentHeight }}>
-          <div
-            ref={windowRef}
-            className="ui-log-viewer__window"
-            style={{ transform: `translateY(${offsetOf(first)}px)` }}
-          >
-            {rows}
+      <div className="ui-log-viewer__body" hidden={empty}>
+        {viewEmpty && !empty ? (
+          <div className="ui-log-viewer__empty">
+            <EmptyState size="compact" title="Aucune ligne de ce niveau." />
+          </div>
+        ) : null}
+        <div
+          ref={viewport}
+          className="ui-log-viewer__viewport"
+          hidden={viewEmpty}
+          role="log"
+          aria-live="off"
+          aria-label={`${label}, ${count(total, "ligne", "lignes")}`}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: la zone qui défile se lit et se parcourt au clavier.
+          tabIndex={0}
+          onScroll={onScroll}
+          onWheel={(event) => {
+            reveal.current = undefined;
+            if (event.deltaY < 0) setFollow(false);
+          }}
+          onKeyDown={(event) => {
+            reveal.current = undefined;
+            if (["ArrowUp", "PageUp", "Home"].includes(event.key)) setFollow(false);
+            else if (event.key === "End" && !event.ctrlKey) {
+              event.preventDefault();
+              setFollow(true);
+            }
+          }}
+          style={{ "--ui-log-gutter": `${digits + 1}ch` } as CSSProperties}
+        >
+          <div className="ui-log-viewer__content" style={{ height: contentHeight }}>
+            <div
+              ref={windowRef}
+              className="ui-log-viewer__window"
+              style={{ transform: `translateY(${offsetOf(first)}px)` }}
+            >
+              {rows}
+            </div>
           </div>
         </div>
+        {levelInfo && errorsOpen ? (
+          <aside className="ui-log-viewer__errors" id={`${searchId}-erreurs`} aria-label="Erreurs du journal">
+            <h2>Erreurs · {levelInfo.errors.length.toLocaleString("fr-FR")}</h2>
+            {levelInfo.errors.length ? (
+              <ul>
+                {levelInfo.errors.slice(0, ERROR_LIST_LIMIT).map((index) => (
+                  <li key={store.dropped + index}>
+                    <button type="button" onClick={() => revealLine(index)}>
+                      <small>Ligne {(store.dropped + index + 1).toLocaleString("fr-FR")}</small>
+                      <code>{store.text(index).trim()}</code>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <EmptyState size="compact" title="Aucune erreur relevée dans ce journal." />
+            )}
+            {levelInfo.errors.length > ERROR_LIST_LIMIT ? (
+              <p>Seules les {ERROR_LIST_LIMIT} premières erreurs sont listées.</p>
+            ) : null}
+          </aside>
+        ) : null}
       </div>
       <div className="ui-log-viewer__status">
         <span className="ui-log-viewer__count">
           {count(total, "ligne", "lignes")}
           {store.dropped ? ` (${count(store.dropped, "plus ancienne oubliée", "plus anciennes oubliées")})` : ""}
         </span>
+        {levelInfo?.errors.length ? (
+          <span className="ui-log-viewer__count ui-log-viewer__count--error">
+            {count(levelInfo.errors.length, "erreur", "erreurs")}
+          </span>
+        ) : null}
+        {levelInfo?.warnings ? (
+          <span className="ui-log-viewer__count ui-log-viewer__count--warning">
+            {count(levelInfo.warnings, "alerte", "alertes")}
+          </span>
+        ) : null}
         {status ? (
           <span className={`ui-log-viewer__state ui-log-viewer__state--${status.tone}`}>
             <StatusDot tone={status.tone} />
@@ -581,6 +788,7 @@ export function LogViewer({
             </Button>
           </span>
         )}
+        {extraStatus ? <span className="ui-log-viewer__extra">{extraStatus}</span> : null}
       </div>
     </section>
   );

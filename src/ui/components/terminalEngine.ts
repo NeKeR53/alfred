@@ -10,6 +10,16 @@ export interface TerminalEngine {
   write(data: string | Uint8Array): void;
   focus(): void;
   size(): { cols: number; rows: number };
+  /** Vide l’écran et l’historique ; l’invite courante reste. */
+  clear(): void;
+  /** Texte de l’historique et de l’écran, ses `lines` dernières lignes seulement si précisé. */
+  text(lines?: number): string;
+  /** Texte sélectionné, vide sans sélection. */
+  selection(): string;
+  /** Colle le texte comme l’utilisateur (collage encadré si le programme l’a demandé). */
+  paste(value: string): void;
+  /** Le programme a demandé le collage encadré (`ESC [?2004h`) : un texte sur plusieurs lignes ne s’exécute pas. */
+  bracketedPaste(): boolean;
   dispose(): void;
 }
 
@@ -207,6 +217,18 @@ export function openTerminal(element: HTMLElement, options: TerminalEngineOption
     write: (value) => instance.write(value),
     focus: () => instance.focus(),
     size: () => ({ cols: instance.cols, rows: instance.rows }),
+    clear: () => instance.clear(),
+    text: (lines) => {
+      const buffer = instance.buffer.active;
+      const all: string[] = [];
+      for (let index = 0; index < buffer.length; index += 1)
+        all.push(buffer.getLine(index)?.translateToString(true) ?? "");
+      while (all.length && !all[all.length - 1]) all.pop();
+      return (lines ? all.slice(-lines) : all).join("\n");
+    },
+    selection: () => instance.getSelection(),
+    paste: (value) => instance.paste(value),
+    bracketedPaste: () => instance.modes.bracketedPasteMode,
     dispose: () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();

@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseAnsi, stripAnsi } from "./ansi";
-import { LogViewer } from "./LogViewer";
+import { LogViewer, type LogViewerView } from "./LogViewer";
+import { logLineLevel } from "./logLines";
 
 // jsdom ne dispose rien : la zone qui défile mesure 360 px, son contenu la hauteur que le composant lui donne.
 const VIEWPORT = "ui-log-viewer__viewport";
@@ -68,6 +69,72 @@ describe("LogViewer", () => {
     expect(screen.queryByText(/Suivi en pause/)).not.toBeInTheDocument();
     expect(rendered(container)).toContain(100_005);
     expect(log.scrollTop).toBe(18 * 100_005 - 360);
+  });
+
+  it("niveaux : filtre Tous / Alertes / Erreurs avec compteurs, liste des erreurs, outils et actions de la page", async () => {
+    const user = userEvent.setup();
+    const lines = [
+      "démarrage",
+      "WARN cache froid",
+      "level=error base injoignable",
+      "prêt",
+      "java.lang.IllegalStateException: x",
+    ];
+    const seen: LogViewerView[] = [];
+    const actions = vi.fn((view: LogViewerView) => {
+      seen.push(view);
+      return <button type="button">Télécharger</button>;
+    });
+    const { container } = render(
+      <LogViewer
+        label="Journal"
+        lines={lines}
+        levels
+        live
+        tools={<span>Lignes 300</span>}
+        actions={actions}
+        status={<span>Actualisé</span>}
+      />,
+    );
+    expect(screen.getByText("Lignes 300")).toBeInTheDocument();
+    expect(screen.getByText("Actualisé")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Toutes les lignes" })).toHaveTextContent("Tous 5");
+    expect(screen.getByRole("radio", { name: "Alertes et erreurs" })).toHaveTextContent("Alertes 3");
+    expect(screen.getByRole("radio", { name: "Erreurs" })).toHaveTextContent("Erreurs 2");
+    expect(screen.getByText("2 erreurs")).toBeInTheDocument();
+    expect(screen.getByText("1 alerte")).toBeInTheDocument();
+    expect(container.querySelector('[data-number="2"]')).toHaveClass("is-warning");
+    expect(container.querySelector('[data-number="3"]')).toHaveClass("is-error");
+
+    await user.click(screen.getByRole("radio", { name: "Erreurs" }));
+    expect(rendered(container)).toEqual([3, 5]);
+    expect(seen.at(-1)?.level).toBe("error");
+    expect(seen.at(-1)?.text()).toBe("level=error base injoignable\njava.lang.IllegalStateException: x");
+
+    // La liste des erreurs mène à la ligne dans tout le journal.
+    await user.click(screen.getByRole("button", { name: "Liste des erreurs" }));
+    const liste = screen.getByRole("complementary", { name: "Erreurs du journal" });
+    expect(within(liste).getAllByRole("listitem")).toHaveLength(2);
+    await user.click(within(liste).getByRole("button", { name: /Ligne 5/ }));
+    expect(screen.getByRole("radio", { name: "Toutes les lignes" })).toHaveAttribute("aria-checked", "true");
+    expect(rendered(container)).toEqual([1, 2, 3, 4, 5]);
+    expect(container.querySelector('[data-number="5"]')).toHaveClass("is-current");
+
+    // « Suivre » : le suivi de la fin se suspend et se reprend depuis la barre.
+    const suivre = screen.getByRole("button", { name: /Suivre la fin du journal|Suspendre le suivi/ });
+    expect(suivre).toHaveTextContent("Suivre");
+  });
+
+  it("niveaux : sans ligne du niveau choisi, un état le dit ; un état vide fourni par la page remplace le défaut", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<LogViewer label="Journal" lines={["tout va bien"]} levels />);
+    await user.click(screen.getByRole("radio", { name: "Erreurs" }));
+    expect(screen.getByText("Aucune ligne de ce niveau.")).toBeInTheDocument();
+    rerender(<LogViewer label="Journal" lines={[]} levels emptyState={<p>Journal effacé</p>} />);
+    expect(screen.getByText("Journal effacé")).toBeInTheDocument();
+    expect(logLineLevel("[warn] lent")).toBe("warning");
+    expect(logLineLevel("exit code 2")).toBe("error");
+    expect(logLineLevel("info")).toBeUndefined();
   });
 
   it("cherche une ligne et passe à la précédente et à la suivante", async () => {

@@ -348,3 +348,124 @@
     outline: 1px solid Highlight;
   }
 }
+
+/* Journal à niveaux (`levels`) : erreurs et alertes teintées, liste des erreurs à droite, compteurs. */
+.ui-log-viewer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.ui-log-viewer__body[hidden] {
+  display: none;
+}
+.ui-log-viewer__body > .ui-log-viewer__viewport,
+.ui-log-viewer__body > .ui-log-viewer__empty {
+  min-width: 0;
+}
+.ui-log-viewer__line.is-error .ui-log-viewer__text {
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__line.is-warning .ui-log-viewer__text {
+  color: var(--color-warning-ink);
+}
+.ui-log-viewer__level-count {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ui-log-viewer__actions,
+.ui-log-viewer__extra {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-log-viewer__extra {
+  margin-left: auto;
+}
+.ui-log-viewer__paused + .ui-log-viewer__extra {
+  margin-left: 0;
+}
+.ui-log-viewer__count--error {
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__count--warning {
+  color: var(--color-warning-ink);
+}
+.ui-log-viewer__errors {
+  flex: 0 0 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+  padding: 8px;
+  border-left: 1px solid var(--line);
+  background: var(--color-bg);
+  font-size: var(--font-size-secondary);
+}
+.ui-log-viewer__errors h2 {
+  margin: 0 0 4px;
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+}
+.ui-log-viewer__errors ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-log-viewer__errors button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-log-viewer__errors button:hover {
+  background: var(--color-hover, color-mix(in oklch, var(--color-ink) 6%, transparent));
+}
+.ui-log-viewer__errors button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.ui-log-viewer__errors small {
+  color: var(--color-muted);
+}
+.ui-log-viewer__errors code {
+  overflow: hidden;
+  color: var(--color-danger-ink);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-log-viewer__errors p {
+  margin: 4px 0 0;
+  color: var(--color-muted);
+}
+/* Avec des outils de page (niveaux, nombre de lignes, actions), la barre passe sur deux lignes plutôt que de tasser. */
+.ui-log-viewer__bar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.ui-log-viewer__bar > .choice-group {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.ui-log-viewer__bar .choice-button--label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-log-viewer__bar > .form-field--inline {
+  flex: none;
+}
+.ui-log-viewer__bar > .form-field {
+  width: auto;
+}
+.ui-log-viewer__bar > .form-field > [data-slot="field-label"] {
+  flex: none;
+}

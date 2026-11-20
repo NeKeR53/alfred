@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { copyText } from "./clipboard";
 import { StatusDot, type StatusDotTone } from "./StatusDot";
 import type { TerminalEngine } from "./terminalEngine";
@@ -38,6 +38,26 @@ export interface TerminalProps {
   readOnly?: boolean;
   /** Occupe la hauteur restante d’une `Page fill`. */
   fill?: boolean;
+  /**
+   * Poignée pour les outils de la page autour du terminal : « Effacer la console », « Copier la session », une
+   * commande proposée collée sans être validée. Ses méthodes ne font rien tant que xterm n’est pas chargé.
+   */
+  ref?: Ref<TerminalHandle>;
+}
+
+/** Poignée d’un `Terminal` (prop `ref`). */
+export interface TerminalHandle {
+  /** Vide l’écran et l’historique. */
+  clear(): void;
+  /** Texte affiché, historique compris ; les `lines` dernières lignes seulement si précisé. */
+  text(lines?: number): string;
+  /** Texte sélectionné, vide sans sélection. */
+  selection(): string;
+  /** Colle le texte comme l’utilisateur : il est envoyé au service, sans Entrée ajoutée. */
+  paste(value: string): void;
+  /** Le programme a demandé le collage encadré : un texte sur plusieurs lignes collé ne s’exécute pas d’office. */
+  bracketedPaste(): boolean;
+  focus(): void;
 }
 
 function decode(data: string) {
@@ -62,7 +82,7 @@ function leave(container: HTMLElement, direction: "forward" | "backward") {
  * Terminal interactif (xterm.js) branché sur un canal WebSocket ou sur une paire écriture/lecture : saisie au clavier,
  * copier-coller, taille envoyée au service et thèmes d’Alfred. xterm se charge à la première ouverture.
  */
-export function Terminal({ label, channel, connection, onResize, readOnly = false, fill = false }: TerminalProps) {
+export function Terminal({ label, channel, connection, onResize, readOnly = false, fill = false, ref }: TerminalProps) {
   const container = useRef<HTMLElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<TerminalEngine | null>(null);
@@ -74,6 +94,19 @@ export function Terminal({ label, channel, connection, onResize, readOnly = fals
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
   const latest = useRef({ channel, connection, onResize, readOnly });
   latest.current = { channel, connection, onResize, readOnly };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clear: () => engine.current?.clear(),
+      text: (lines) => engine.current?.text(lines) ?? "",
+      selection: () => engine.current?.selection() ?? "",
+      paste: (value) => engine.current?.paste(value),
+      bracketedPaste: () => engine.current?.bracketedPaste() ?? false,
+      focus: () => engine.current?.focus(),
+    }),
+    [],
+  );
 
   const output = useCallback((data: string | Uint8Array) => {
     if (engine.current) engine.current.write(data);

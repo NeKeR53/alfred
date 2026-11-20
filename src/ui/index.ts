@@ -11,9 +11,11 @@ export { Button, type ButtonProps, type ButtonVariant, IconButton, type IconButt
 export { ChoiceButton, type ChoiceButtonProps, ChoiceGroup } from "./components/ChoiceButton";
 export { Combobox, MultiSelectCombobox, SearchCombobox } from "./components/Combobox";
 export { ConfirmDialog, type ConfirmOptions, useConfirm } from "./components/ConfirmDialog";
+export { copyText } from "./components/clipboard";
 export { Code, Divider, Image } from "./components/Content";
 export {
   DataTable,
+  type DataTableCellMenu,
   type DataTableCellTone,
   type DataTableColumn,
   type DataTableEditor,
@@ -49,7 +51,14 @@ export { InlineEdit } from "./components/InlineEdit";
 export { Link } from "./components/Link";
 export { List, ListItem } from "./components/List";
 export { LoadingSkeleton } from "./components/LoadingSkeleton";
-export { type LogChannel, type LogLine, LogViewer, type LogViewerProps } from "./components/LogViewer";
+export {
+  type LogChannel,
+  type LogLevelFilter,
+  type LogLine,
+  LogViewer,
+  type LogViewerProps,
+  type LogViewerView,
+} from "./components/LogViewer";
 export { Markdown } from "./components/Markdown";
 export {
   MarkdownEditor,
@@ -90,6 +99,7 @@ export {
   Terminal,
   type TerminalChannel,
   type TerminalConnection,
+  type TerminalHandle,
   type TerminalProps,
 } from "./components/Terminal";
 export { type TreeAction, type TreeNode, TreeView } from "./components/TreeView";

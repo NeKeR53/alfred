@@ -194,6 +194,72 @@ describe("variantes de la grille", () => {
     expect(document.querySelector("output")).toHaveTextContent("");
   });
 
+  it("menu de case : clic ou Entrée ouvrent un menu ancré (titre, groupe, entrées) ; une case sans menu est inerte", async () => {
+    const user = userEvent.setup();
+    const logs = vi.fn();
+    render(
+      <FrameServicesContext.Provider value={frame}>
+        <Page>
+          <DataTable
+            variant="grid"
+            label="Variables"
+            columns={[
+              { key: "nom", header: "Variable" },
+              {
+                key: "env",
+                header: "Recette",
+                render: (v) => (v.id === "c" ? "—" : "1.2.0"),
+                cellTitle: (v) => `${v.nom} · registre/atom:1.2.0`,
+                menu: (v) =>
+                  v.id === "c"
+                    ? undefined
+                    : {
+                        label: `Actions pour ${v.nom}`,
+                        title: `${v.nom} · Recette`,
+                        group: "En marche",
+                        items: [
+                          { label: "Voir les logs", onClick: () => logs(v.id) },
+                          { label: "Ouvrir une console", disabled: true, onClick: noop },
+                        ],
+                      },
+              },
+            ]}
+            rows={variables}
+            rowKey={(v) => v.id}
+          />
+        </Page>
+      </FrameServicesContext.Provider>,
+    );
+    const cases = screen.getAllByRole("gridcell").filter((td) => td.getAttribute("aria-colindex") === "2");
+    expect(cases[0]).toHaveAttribute("aria-haspopup", "menu");
+    expect(cases[0]).toHaveAttribute("aria-expanded", "false");
+    expect(cases[0]).toHaveAttribute("title", "DB_PASSWORD · registre/atom:1.2.0");
+    expect(cases[2]).toHaveAttribute("aria-disabled", "true");
+    expect(cases[2]).not.toHaveAttribute("aria-haspopup");
+
+    await user.click(cases[0]);
+    const menu = await screen.findByRole("menu", { name: "Actions pour DB_PASSWORD" });
+    expect(menu).toHaveTextContent("DB_PASSWORD · Recette");
+    expect(screen.getByRole("group", { name: "En marche" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ouvrir une console" })).toBeDisabled();
+    expect(cases[0]).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("menuitem", { name: "Voir les logs" }));
+    await waitFor(() => expect(logs).toHaveBeenCalledWith("a"));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+    // Au clavier : Entrée sur la case ouvre le menu, Échap le ferme et rend le focus à la case.
+    cases[1].focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("menu", { name: "Actions pour DB_USER" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(cases[1]).toHaveFocus();
+
+    // Une case sans menu ne l’ouvre pas.
+    await user.click(cases[2]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("action de ligne directe : corbeille rouge, confirmée avant de s’exécuter", async () => {
     const user = userEvent.setup();
     const supprimer = vi.fn();

@@ -156,3 +156,24 @@ export function findLines(store: LineStore, query: string): number[] {
   }
   return found;
 }
+
+export type LogLevel = "error" | "warning";
+
+const errorWord = /\b(?:ERROR|ERR|FATAL|CRITICAL|CRIT|SEVERE|PANIC|EMERG|ALERT|FAILURE|FAILED)\b/;
+/** Formes usuelles : exceptions Java, `Error:` en préfixe, code de sortie non nul. */
+const errorPhrase = /Exception\b|Error:|exit code [1-9]/;
+const warningWord = /\b(?:WARN|WARNING)\b/;
+const errorField =
+  /(?:\b(?:level|lvl|severity|loglevel)["']?\s*[=:]\s*["']?(?:error|err|fatal|critical|crit|severe|panic)\b|[[<(](?:error|err|fatal|crit|critical|severe)[\]>)])/i;
+const warningField =
+  /(?:\b(?:level|lvl|severity|loglevel)["']?\s*[=:]\s*["']?(?:warn|warning)\b|[[<(](?:warn|warning)[\]>)])/i;
+
+/**
+ * Niveau d’une ligne de journal (texte sans ANSI) : mot-clé en majuscules (`ERROR`, `FAILURE`, `WARN`…), champ
+ * `level=error` ou `[warn]`, exception ou code de sortie non nul ; sinon aucun.
+ */
+export function logLineLevel(line: string): LogLevel | undefined {
+  if (errorWord.test(line) || errorField.test(line) || errorPhrase.test(line)) return "error";
+  if (warningWord.test(line) || warningField.test(line)) return "warning";
+  return undefined;
+}

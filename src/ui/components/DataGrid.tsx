@@ -9,10 +9,13 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DataTableColumn, DataTableProps } from "./DataTable";
+import { type Action, useRunAction } from "../templates/actions";
+import { AnchoredMenu } from "./AnchoredMenu";
+import type { DataTableCellMenu, DataTableColumn, DataTableProps } from "./DataTable";
 import { ariaSort, FilterControl, fromInnerControl, NoMatch, SortHeader } from "./dataTableParts";
 import { cellValue, columnLabel, useTableView } from "./dataTableView";
 import { EmptyState } from "./EmptyState";
+import { MenuGroup, MenuItem } from "./Menu";
 import "./data-table.css";
 import "./data-grid.css";
 
@@ -159,6 +162,17 @@ export function DataGrid<Row>({
   const headerRow = useRef<HTMLTableRowElement>(null);
   const focusPending = useRef(false);
   const mounted = useRef(true);
+  // Menu ouvert par une case (`column.menu`) : la case qui l’ancre et son contenu, lu à l’ouverture.
+  const menuId = useId();
+  const [cellMenu, setCellMenu] = useState<{ anchor: HTMLElement; menu: DataTableCellMenu; cell: string }>();
+  const { run: runAction } = useRunAction();
+  const openMenu = (row: Row, column: DataTableColumn<Row>, anchor: HTMLElement) => {
+    const menu = column.menu?.(row);
+    if (!menu) return false;
+    const id = cellId(rowKey(row), column.key);
+    setCellMenu((current) => (current?.cell === id ? undefined : { anchor, menu, cell: id }));
+    return true;
+  };
   useEffect(
     () => () => {
       mounted.current = false;
@@ -369,8 +383,10 @@ export function DataGrid<Row>({
         else if (event.key === "F2") handled = startEdit(cell.row, cell.col);
         else if (event.key === " ") {
           if (column.editor?.type === "check") startEdit(cell.row, cell.col);
+          else if (column.menu) handled = openMenu(row, column, td);
           else handled = false;
         } else if (column.editor) startEdit(cell.row, cell.col);
+        else if (column.menu) handled = openMenu(row, column, td);
         else if (onRowClick && !fromInnerControl(event)) onRowClick(row);
         else handled = false;
         break;
@@ -528,6 +544,8 @@ export function DataGrid<Row>({
 
     const toneOf = column.tone;
     const tone = toneOf && !groupRows?.isGroup(row) ? toneOf(row) : undefined;
+    const hasMenu = Boolean(column.menu && !groupRows?.isGroup(row) && column.menu(row));
+    const menuOpen = cellMenu?.cell === id;
     const classes = [
       "al-datagrid__cell",
       column.align === "end" ? "al-table__end" : "",
@@ -538,6 +556,7 @@ export function DataGrid<Row>({
       busy ? "al-datagrid__cell--pending" : "",
       toneOf ? `al-datagrid__cell--${column.toneStyle ?? "fill"}` : "",
       tone ? `al-datagrid__cell--tone-${tone}` : "",
+      column.menu ? (hasMenu ? "al-datagrid__cell--menu" : "al-datagrid__cell--inert") : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -551,12 +570,16 @@ export function DataGrid<Row>({
         aria-readonly={readOnly || undefined}
         aria-busy={busy || undefined}
         aria-invalid={error ? true : undefined}
+        aria-haspopup={hasMenu ? "menu" : undefined}
+        aria-expanded={hasMenu ? menuOpen : undefined}
+        aria-disabled={column.menu && !hasMenu ? true : undefined}
+        data-menu-anchor={menuOpen ? menuId : undefined}
         data-row={rowIndex}
         data-col={colIndex}
         tabIndex={isEditing || focusInside ? undefined : isActive ? 0 : -1}
         className={classes + frozenClass(colIndex)}
         style={stick(colIndex)}
-        title={error}
+        title={error ?? (column.cellTitle && !groupRows?.isGroup(row) ? column.cellTitle(row) : undefined)}
         onFocus={(event) => {
           if (event.target === event.currentTarget || event.target.hasAttribute("data-cell-focus"))
             if (!isActive) setActive({ row: rowIndex, col: colIndex });
@@ -568,6 +591,10 @@ export function DataGrid<Row>({
           if (isEditing) return;
           if (editor?.type === "check") {
             startEdit(rowIndex, colIndex);
+            return;
+          }
+          if (column.menu && !fromInnerControl(event)) {
+            openMenu(row, column, event.currentTarget);
             return;
           }
           if (!editor && onRowClick && !fromInnerControl(event)) onRowClick(row);
@@ -742,6 +769,42 @@ export function DataGrid<Row>({
           {editing.error}
         </div>
       ) : null}
+      {cellMenu ? (
+        <AnchoredMenu
+          id={menuId}
+          anchor={cellMenu.anchor}
+          label={cellMenu.menu.label}
+          title={cellMenu.menu.title}
+          placement="below"
+          align="start"
+          onClose={(restoreFocus) => {
+            const anchor = cellMenu.anchor;
+            setCellMenu(undefined);
+            if (restoreFocus) anchor.focus();
+          }}
+        >
+          <CellMenuItems menu={cellMenu.menu} run={runAction} />
+        </AnchoredMenu>
+      ) : null}
     </div>
   );
+}
+
+function CellMenuItems({ menu, run }: { menu: DataTableCellMenu; run: (action: Action) => unknown }) {
+  const items = menu.items
+    .filter((action) => !action.hidden)
+    .map((action) => {
+      const Icon = action.icon;
+      return (
+        <MenuItem
+          key={action.label}
+          tone={action.danger ? "danger" : "default"}
+          disabled={action.disabled}
+          onClick={() => void run(action)}
+        >
+          {Icon ? <Icon size={15} aria-hidden="true" /> : null} {action.label}
+        </MenuItem>
+      );
+    });
+  return menu.group ? <MenuGroup label={menu.group}>{items}</MenuGroup> : items;
 }
