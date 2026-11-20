@@ -375,6 +375,8 @@ Tout ce qu’une page affiche existe déjà dans `@alfred/ui`, dessiné et acces
 |---|---|---|
 | Résumé de la page dans la barre du haut, après le titre (« 3 personnes · 2 en écart ») | `useTopBarSummary` du SDK | `texte` ; vide, il disparaît |
 | Actions de la page dans la barre du haut (icônes, « ⋯ », action principale) | `Page actions`, ou `useTopBarActions` du SDK pour une page sans `Page` | les `Action` habituelles ; jusqu’à 4 icônes, le reste et les actions `danger` dans « ⋯ », tout dans « ⋯ » sous 1100 px. Une page racine sans `header` n’a plus de seconde barre si elle n’a ni `bar` ni recherche propre |
+| Bascule de vue dans la barre du haut (tableau / arborescence, kanban / équipes) | `Page actions` dont deux à quatre actions partagent un `group` | chaque action : `icon`, `group`, `selected` sur la vue affichée ; boutons accolés avant les autres icônes |
+| Colonne teintée qui porte des cartes (kanban) | `Surface tone="sunken"` | fond teinté sans bordure, marge 8 px ; les cartes restent des `Surface` bordées |
 | Recherche dans la page, placée par Alfred dans la barre du haut | `useTopBarSearch` du SDK, ou `Page search` | `label`, `placeholder?` ; `recherche.matches(champ, …)` filtre sans accents, chaque mot exigé. Le texte est retenu au retour. Jamais un `SearchField` en tête de page : il ne sert que dans un bloc (une recherche propre à une liste secondaire) |
 | Recherche à étiquettes : suggestions pendant la frappe, Entrée pose la première (ou le texte saisi s’il n’y en a pas, ou après Échap), la croix ou Retour arrière la retire | `TagSearchField` | `label`, `tags`, `onTagsChange`, `suggestions?`, `formatTag?` (`ville:lyon` → « Ville : Lyon »), `allowFreeText?` (vrai), `onQueryChange?` |
 | Filtre à plusieurs valeurs d’une liste connue (états, responsables) | `MultiSelectCombobox` | `label`, `values`, `options`, `onChange`, `formatOption?`, `valueMode?` (`"custom"` accepte une valeur saisie), `display?` |
@@ -575,6 +577,9 @@ Variantes de la grille, cumulables, sans effet sur une grille qui ne les demande
 - `groups={{ by, title?, defaultCollapsed? }}` : une ligne de titre (nom, nombre de lignes, chevron) avant chaque groupe, dans l’ordre des lignes données ; clic, Entrée ou Espace la replient. Les tris et filtres de colonne sont alors coupés.
 - `selection={{ selected, onChange }}` : une case par ligne (clic, Espace ou Entrée sur la case active) et « Tout sélectionner » dans l’en-tête, à l’état mixte quand une partie est cochée. `selected` contient des `rowKey`.
 - `rowAction={(row) => action}` : une action directe en bout de ligne, en icône ; `danger` la dessine en corbeille rouge (icône `Trash2` par défaut) et la confirme comme toute `Action`. Sans action pour une ligne, la case reste vide.
+- `density="compact"` : lignes de 25 px (41 px avec `rowHeight="double"`), en-tête de 28 px, cases à 4 × 8 px, pour un tableau dense qui occupe la page. Avec `appearance="plain"`, un trait court sépare les en-têtes et les cases touchent les bords. Un en-tête trop long se termine par « … » dans toute grille.
+- `groups.appearance: "text"` : titre de groupe en gras sans teinte ni chevron, suivi de « · 2 variables » (`countLabel`) ; le clic replie toujours le groupe.
+- Colonne `tone={(row) => "danger" | "warning" | "success" | "neutral" | undefined}` : teinte la case d’une ligne (secret manquant, conteneur arrêté). `toneStyle="frame"` dessine un cadre arrondi teinté dans la case au lieu de teinter toute la case.
 
 ## 6. Couleurs et thèmes
 

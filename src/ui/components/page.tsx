@@ -309,6 +309,7 @@ export function Surface({
   onOpen,
   openLabel,
   selected = false,
+  tone = "default",
 }: {
   children: ReactNode;
   title?: string;
@@ -316,10 +317,17 @@ export function Surface({
   onOpen?: () => void;
   openLabel?: string;
   selected?: boolean;
+  /**
+   * `sunken` : fond teinté sans bordure, marge de 8 px, pour un conteneur qui porte d’autres surfaces (la colonne
+   * d’un kanban et ses cartes) ; `default` : surface bordée sur le fond de la page.
+   */
+  tone?: "default" | "sunken";
 }) {
   const openable = typeof onOpen === "function";
   return (
-    <div className={`al-surface${openable ? " al-surface--openable" : ""}${selected ? " is-selected" : ""}`}>
+    <div
+      className={`al-surface${tone === "sunken" ? " al-surface--sunken" : ""}${openable ? " al-surface--openable" : ""}${selected ? " is-selected" : ""}`}
+    >
       {openable ? (
         <button
           type="button"

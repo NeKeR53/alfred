@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Page } from "../components/page";
 import { installDialogPolyfill } from "../dialog.test-helper";
 import { type FrameServices, FrameServicesContext } from "./services";
+import { describeActions } from "./topBarActions";
 
 const noop = () => undefined;
 beforeAll(() => installDialogPolyfill());
@@ -70,5 +71,21 @@ describe("actions de page dans la barre du haut", () => {
       </FrameServicesContext.Provider>,
     );
     expect(screen.getByRole("button", { name: "Exporter" })).toBeInTheDocument();
+  });
+
+  it("une bascule de vue garde son groupe et la vue affichée dans la description envoyée", () => {
+    const vue = { onClick: () => undefined, icon: Download, group: "Vue" };
+    expect(
+      describeActions(
+        [
+          { ...vue, label: "Tableau", selected: true },
+          { ...vue, label: "Arbre" },
+        ],
+        null,
+      ),
+    ).toEqual([
+      expect.objectContaining({ label: "Tableau", group: "Vue", selected: true }),
+      expect.objectContaining({ label: "Arbre", group: "Vue", selected: false }),
+    ]);
   });
 });

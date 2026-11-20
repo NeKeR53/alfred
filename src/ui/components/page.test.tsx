@@ -93,3 +93,12 @@ describe("Surface ouvrable", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 });
+
+describe("Surface en creux", () => {
+  it("`sunken` porte sa classe ; sans elle, la surface reste bordée", () => {
+    const { container, rerender } = render(<Surface tone="sunken">Colonne</Surface>);
+    expect(container.firstChild).toHaveClass("al-surface", "al-surface--sunken");
+    rerender(<Surface>Colonne</Surface>);
+    expect(container.firstChild).not.toHaveClass("al-surface--sunken");
+  });
+});

@@ -74,6 +74,83 @@ describe("variantes de la grille", () => {
     expect(container.querySelector(".al-datagrid-frame")).toHaveClass("al-datagrid-frame--plain");
   });
 
+  it("densité compacte : la grille porte sa classe ; sans elle, rien ne change", () => {
+    const { container, rerender } = render(
+      <DataTable
+        variant="grid"
+        density="compact"
+        label="Variables"
+        columns={columns}
+        rows={variables}
+        rowKey={(v) => v.id}
+      />,
+    );
+    expect(container.querySelector(".al-datagrid-frame")).toHaveClass("al-datagrid-frame--compact");
+    rerender(<DataTable variant="grid" label="Variables" columns={columns} rows={variables} rowKey={(v) => v.id} />);
+    expect(container.querySelector(".al-datagrid-frame")).not.toHaveClass("al-datagrid-frame--compact");
+  });
+
+  it("en-tête texte : le libellé est dans une étiquette qui se termine par « … »", () => {
+    const { container } = render(
+      <DataTable variant="grid" label="Variables" columns={columns} rows={variables} rowKey={(v) => v.id} />,
+    );
+    expect(container.querySelector("th .al-table__label")).toHaveTextContent("Variable");
+  });
+
+  it("groupes en texte : titre puis « · 2 variables », sans chevron, et le clic replie toujours", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <DataTable
+        variant="grid"
+        label="Variables"
+        columns={columns}
+        rows={variables}
+        rowKey={(v) => v.id}
+        groups={{ by: (v) => v.secret, appearance: "text", countLabel: (n) => `${n} variable${n > 1 ? "s" : ""}` }}
+      />,
+    );
+    const groupe = screen.getByRole("gridcell", { name: /atom\/api, 2 lignes/ });
+    expect(groupe).toHaveTextContent("atom/api· 2 variables");
+    expect(groupe.closest("tr")).toHaveClass("al-datagrid__group--text");
+    expect(groupe.querySelector("svg")).toBeNull();
+    await user.click(groupe);
+    expect(screen.queryByText("DB_USER")).not.toBeInTheDocument();
+    expect(container.querySelectorAll("tr.al-datagrid__group--text")).toHaveLength(2);
+  });
+
+  it("cases teintées : `fill` teinte la case, `frame` y pose un cadre ; une ligne sans teinte reste neutre", () => {
+    const { container } = render(
+      <DataTable
+        variant="grid"
+        label="Variables"
+        columns={[
+          { key: "nom", header: "Variable" },
+          {
+            key: "prod",
+            header: "Production",
+            render: (v) => v.nom,
+            tone: (v) => (v.id === "a" ? "danger" : undefined),
+          },
+          {
+            key: "etat",
+            header: "État",
+            render: (v) => v.id,
+            toneStyle: "frame",
+            tone: (v) => (v.id === "b" ? "warning" : undefined),
+          },
+        ]}
+        rows={variables}
+        rowKey={(v) => v.id}
+      />,
+    );
+    const lignes = container.querySelectorAll("tbody tr");
+    expect(lignes[0].children[1]).toHaveClass("al-datagrid__cell--fill", "al-datagrid__cell--tone-danger");
+    expect(lignes[1].children[1]).not.toHaveClass("al-datagrid__cell--tone-danger");
+    expect(lignes[1].children[2]).toHaveClass("al-datagrid__cell--frame", "al-datagrid__cell--tone-warning");
+    expect(lignes[1].children[2].querySelector(".al-datagrid__frame")).toHaveTextContent("b");
+    expect(lignes[0].children[2].querySelector(".al-datagrid__frame")).not.toBeNull();
+  });
+
   it("groupes : une ligne de titre avec son compteur, qui se replie au clic et au clavier", async () => {
     const user = userEvent.setup();
     const onRowClick = vi.fn();

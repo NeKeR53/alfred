@@ -1386,6 +1386,9 @@ export interface TopBarActionDescriptor {
   disabled?: boolean;
   /** L’action tourne (attente affichée sur son bouton). */
   running?: boolean;
+  /** Bascule de vue : les actions d’un même groupe sont des boutons accolés ; `selected` marque la vue affichée. */
+  group?: string;
+  selected?: boolean;
 }
 
 /** Une action de la barre du haut telle que la page l’écrit (la forme d’une `Action` de `@alfred/ui`). */
@@ -1397,6 +1400,9 @@ export interface TopBarAction {
   danger?: boolean;
   disabled?: boolean;
   hidden?: boolean;
+  /** Bascule de vue : même `group` pour ses boutons, `selected` pour la vue affichée. */
+  group?: string;
+  selected?: boolean;
   confirm?: string;
   confirmMessage?: string;
   success?: string;
@@ -1423,6 +1429,7 @@ export function describeTopBarActions(
         ...(action.danger ? { danger: true } : {}),
         ...(action.disabled ? { disabled: true } : {}),
         ...(running === id ? { running: true } : {}),
+        ...(action.group ? { group: action.group, selected: action.selected === true } : {}),
       };
     });
 }

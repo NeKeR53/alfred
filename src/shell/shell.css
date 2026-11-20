@@ -672,3 +672,22 @@
   gap: 4px;
   margin-left: 8px;
 }
+/* Bascule de vue d’une page dans la barre du haut (comme OneApp) : cadre sans bordure, boutons de 30 × 26 px, la vue
+   affichée sur un fond plus soutenu, sans relief. */
+.shell-topbar__actions .choice-segmented {
+  flex: none;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 8px;
+}
+.shell-topbar__actions .choice-segmented .choice-button {
+  width: 30px;
+  min-width: 30px;
+  height: 26px;
+  border-radius: 6px;
+}
+.shell-topbar__actions .choice-segmented .choice-button.is-selected {
+  background: var(--color-surface-strong);
+  box-shadow: none;
+  font-weight: 400;
+}

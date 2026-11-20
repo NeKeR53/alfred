@@ -3,7 +3,9 @@ import { Button } from "./Button";
 import { columnLabel, type TableView, type ViewColumn } from "./dataTableView";
 
 export function HeaderContent<Row>({ column }: { column: ViewColumn<Row> }) {
-  if (typeof column.header === "string" || !column.headerLabel) return <>{column.header}</>;
+  // Un libellé texte se termine par « … » quand la colonne est trop étroite, au lieu d’être coupé net.
+  if (typeof column.header === "string") return <span className="al-table__label">{column.header}</span>;
+  if (!column.headerLabel) return <>{column.header}</>;
   return (
     <>
       <span aria-hidden="true">{column.header}</span>

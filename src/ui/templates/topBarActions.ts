@@ -11,6 +11,8 @@ export interface TopBarActionDescriptor {
   danger?: boolean;
   disabled?: boolean;
   running?: boolean;
+  group?: string;
+  selected?: boolean;
 }
 
 const iconName = (icon: Action["icon"]) => {
@@ -32,6 +34,7 @@ export function describeActions(actions: ReadonlyArray<Action>, running: string 
         ...(action.danger ? { danger: true } : {}),
         ...(action.disabled ? { disabled: true } : {}),
         ...(running === action.label ? { running: true } : {}),
+        ...(action.group ? { group: action.group, selected: action.selected === true } : {}),
       };
     });
 }

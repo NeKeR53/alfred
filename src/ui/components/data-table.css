@@ -141,3 +141,13 @@
   gap: 12px;
   color: var(--color-muted);
 }
+/* Libellé texte d’un en-tête : « … » quand la colonne est trop étroite. */
+.al-table th > :is(button, .al-table__header) {
+  min-width: 0;
+}
+.al-table__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

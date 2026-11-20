@@ -226,3 +226,106 @@
   margin: 0;
   accent-color: var(--color-primary);
 }
+/* `appearance="plain"` : un trait court entre les en-têtes (le séparateur de colonnes de OneApp), et des cases
+   collées aux bords du tableau. */
+.al-datagrid-frame--plain .al-datagrid thead tr:first-child > th {
+  position: sticky;
+}
+.al-datagrid-frame--plain .al-datagrid thead tr:first-child > th:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 1px;
+  height: 12px;
+  transform: translateY(-50%);
+  background: color-mix(in oklch, var(--color-muted) 24%, transparent);
+}
+.al-datagrid-frame--plain .al-datagrid :is(th, td):first-child,
+.al-datagrid-frame--plain .al-datagrid :is(th, td):first-child > :is(button, .al-table__header) {
+  padding-left: 0;
+}
+.al-datagrid-frame--plain .al-datagrid :is(th, td):last-child,
+.al-datagrid-frame--plain .al-datagrid :is(th, td):last-child > :is(button, .al-table__header) {
+  padding-right: 0;
+}
+/* `density="compact"` : lignes de 25 px (41 px en double), en-tête de 28 px, cases à 4 × 8 px. */
+.al-datagrid-frame--compact .al-datagrid td {
+  height: 25px;
+  padding: 4px 8px;
+}
+.al-datagrid-frame--compact.al-datagrid-frame--double .al-datagrid td {
+  height: 41px;
+}
+.al-datagrid-frame--compact .al-datagrid thead tr:first-child > th {
+  height: 28px;
+}
+.al-datagrid-frame--compact .al-datagrid th > :is(button, .al-table__header) {
+  min-height: 28px;
+  padding: 0 8px;
+}
+.al-datagrid-frame--compact .al-datagrid thead tr.al-table__filters > td {
+  top: 28px;
+}
+/* Groupe `appearance: "text"` : titre en gras sans teinte ni chevron, « · 2 variables » atténué, filet dessous. */
+.al-datagrid tr.al-datagrid__group--text > td {
+  height: 32px;
+  padding: 12px 0 4px;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  vertical-align: bottom;
+}
+.al-datagrid tr.al-datagrid__group--text .al-datagrid__group-title {
+  gap: 4px;
+}
+.al-datagrid tr.al-datagrid__group--text .al-datagrid__group-count {
+  font-size: inherit;
+  font-weight: 400;
+}
+/* Cases teintées (`tone`) : `fill` teinte toute la case ; `frame` dessine un cadre arrondi teinté dans la case. */
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-danger {
+  background: color-mix(in oklch, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
+}
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-warning {
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+  color: var(--color-warning-ink);
+}
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-success {
+  background: color-mix(in oklch, var(--color-success) 8%, transparent);
+}
+.al-datagrid td.al-datagrid__cell--frame {
+  padding: 4px;
+}
+.al-datagrid__frame {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.al-datagrid__cell--tone-danger > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-danger) 60%, transparent);
+  background: color-mix(in oklch, var(--color-danger) 10%, transparent);
+}
+.al-datagrid__cell--tone-warning > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-warning) 60%, transparent);
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+}
+.al-datagrid__cell--tone-success > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-success) 60%, transparent);
+  background: color-mix(in oklch, var(--color-success) 10%, transparent);
+}
+.al-datagrid__cell--tone-neutral > .al-datagrid__frame {
+  border-color: var(--line);
+}
+@media (forced-colors: active) {
+  .al-datagrid td[class*="al-datagrid__cell--tone-"]:not(.al-datagrid__cell--tone-neutral) {
+    outline: 1px solid CanvasText;
+    outline-offset: -2px;
+  }
+}

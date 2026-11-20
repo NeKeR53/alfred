@@ -42,7 +42,16 @@ export interface DataTableColumn<Row> {
   rowHeader?: boolean;
   /** Grille seulement : édition dans la cellule (texte, choix, case). */
   editor?: DataTableEditor<Row>;
+  /**
+   * Grille seulement : teinte d’une case selon sa ligne (un secret manquant, un conteneur arrêté) ; sans teinte pour
+   * une ligne, la case reste neutre. `toneStyle` : `fill` teinte toute la case, `frame` dessine un cadre arrondi teinté
+   * dans la case (toutes les cases de la colonne gardent alors la même marge).
+   */
+  tone?: (row: Row) => DataTableCellTone | undefined;
+  toneStyle?: "fill" | "frame";
 }
+
+export type DataTableCellTone = "danger" | "warning" | "success" | "neutral";
 
 export type { DataTableEditor, DataTableFilter, DataTableFilters, DataTableSort };
 
@@ -90,6 +99,11 @@ export interface DataTableProps<Row> {
    * dessous : courriel, conteneur, date), comme les tableaux de OneApp.
    */
   rowHeight?: "single" | "double";
+  /**
+   * Grille seulement : `compact` resserre les lignes (25 px, 41 px en `double`), l’en-tête (28 px) et la marge des
+   * cases (4 × 8 px), comme les tableaux denses de OneApp ; `comfortable` (par défaut) garde 36 et 44 px.
+   */
+  density?: "comfortable" | "compact";
   /** Tris en cours (contrôlé) ; sans lui, le tableau garde les siens. */
   sort?: ReadonlyArray<DataTableSort>;
   defaultSort?: ReadonlyArray<DataTableSort>;
@@ -112,6 +126,13 @@ export interface DataTableProps<Row> {
     by: (row: Row) => string;
     title?: (group: string, rows: ReadonlyArray<Row>) => ReactNode;
     defaultCollapsed?: ReadonlyArray<string>;
+    /**
+     * `band` (par défaut) : ligne teintée, chevron, nombre en pastille. `text` : titre en gras sans teinte ni chevron,
+     * suivi de « · 2 variables » (`countLabel`), comme les groupes de OneApp ; le clic replie toujours le groupe.
+     */
+    appearance?: "band" | "text";
+    /** Texte du nombre de lignes en `text` : `(n) => \`${n} variable${n > 1 ? "s" : ""}\`` ; par défaut « n lignes ». */
+    countLabel?: (count: number) => string;
   };
   /**
    * Grille seulement : une case par ligne en tête, et une case « Tout sélectionner » dans l’en-tête. Clic, Espace
@@ -273,6 +294,8 @@ function Grid<Row>({ groups, selection, rowAction, ...props }: DataTableProps<Ro
             count,
             collapsed: collapsed.has(name),
             label: name,
+            appearance: groups.appearance ?? "band",
+            countText: groups.countLabel ? groups.countLabel(count) : `${count} ligne${count > 1 ? "s" : ""}`,
           };
         },
         toggle: (row: Row | GroupMarker) => {

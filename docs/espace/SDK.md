@@ -775,6 +775,8 @@ useTopBarSummary(donnees ? `${personnes.length} personnes · ${ecarts} en écart
 
 Les `actions` d’une `Page` racine vont d’elles-mêmes dans la barre du haut d’Alfred, à droite : jusqu’à quatre icônes, l’action `primary` en bouton, le reste et les actions `danger` dans « ⋯ » ; sous 1100 px de large, toutes passent dans « ⋯ ». Les clés (Tab, Entrée, flèches dans le menu) et les confirmations (`confirm`) restent celles d’une `Action`. Une page sans `bar` ni recherche propre n’a alors plus de seconde barre. Un panneau garde les siennes dans son en-tête.
 
+Deux à quatre actions qui partagent un `group` (avec une icône) forment une bascule de vue à boutons accolés, avant les autres icônes ; `selected` marque la vue affichée : `{ label: "Arborescence", icon: ListTree, group: "Vue", selected: vue === "arbre", onClick: () => setVue("arbre") }`.
+
 `useTopBarActions(actions, { run? })` fait la même chose pour une page qui ne passe pas par `Page`. La coquille ne reçoit que des descriptions (libellé, nom d’icône lucide, `primary`, `danger`, `disabled`, état en cours) et renvoie l’identifiant de l’action choisie : aucune fonction ne quitte le cadre.
 
 ```tsx

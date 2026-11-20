@@ -17,7 +17,13 @@ vi.mock("../lib/native", async (importOriginal) => ({
 }));
 
 import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
-import { arrangeTopBarActions, onTopBarAction, TopBarActions, useTopBarActionStore } from "./topBarActions";
+import {
+  arrangeTopBarActions,
+  onTopBarAction,
+  setTopBarActions,
+  TopBarActions,
+  useTopBarActionStore,
+} from "./topBarActions";
 
 const page: FrameIdentity = { kind: "page", module: "atom", reference: "atom/acces" };
 const actions = [
@@ -78,5 +84,26 @@ describe("TopBarActions", () => {
       "Nouvel environnement",
     ]);
     expect(arranged.dangerous.map((a) => a.label)).toEqual(["Vider"]);
+  });
+
+  it("bascule de vue : les actions d’un même groupe sont des boutons accolés, la vue affichée est cochée", async () => {
+    const user = userEvent.setup();
+    const chosen = vi.fn();
+    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
+    onTopBarAction("atom/secrets", chosen);
+    setTopBarActions("atom/secrets", [
+      { id: "0:Tableau", label: "Tableau", icon: "Grid2x2Check", group: "Vue des secrets", selected: true },
+      { id: "1:Arborescence", label: "Arborescence", icon: "ListTree", group: "Vue des secrets" },
+      { id: "2:Actualiser", label: "Actualiser", icon: "RefreshCw" },
+      { id: "3:Sans icône", label: "Sans icône", group: "Vue des secrets" },
+    ]);
+    const arranged = arrangeTopBarActions(useTopBarActionStore.getState().actions["atom/secrets"], true);
+    expect(arranged.toggles[0].map((a) => a.label)).toEqual(["Tableau", "Arborescence"]);
+    expect(arranged.menu.map((a) => a.label)).toEqual(["Actualiser", "Sans icône"]);
+    render(<TopBarActions reference="atom/secrets" />);
+    const groupe = screen.getByRole("radiogroup", { name: "Vue des secrets" });
+    expect(within(groupe).getByRole("radio", { name: "Tableau" })).toHaveAttribute("aria-checked", "true");
+    await user.click(within(groupe).getByRole("radio", { name: "Arborescence" }));
+    expect(chosen).toHaveBeenCalledWith("1:Arborescence");
   });
 });

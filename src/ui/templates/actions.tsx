@@ -35,6 +35,12 @@ export interface Action {
   disabled?: boolean;
   /** L’action n’existe pas dans cet état (« Terminer » sur une tâche terminée). */
   hidden?: boolean;
+  /**
+   * Barre du haut seulement : les actions d’un même `group` (deux à quatre, avec une icône) forment une bascule de vue
+   * à boutons accolés, avant les autres icônes ; `selected` marque la vue affichée. Ailleurs, elles restent des actions.
+   */
+  group?: string;
+  selected?: boolean;
 }
 
 /** Où se trouve la barre : chaque endroit a son nombre d’icônes visibles et son droit à un bouton principal. */

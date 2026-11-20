@@ -5,7 +5,7 @@
  * infobulle, menu « ⋯ » pour les actions sans icône et les actions destructrices, action principale en dernier ; une
  * fenêtre étroite range tout dans « ⋯ ».
  */
-import { Button, IconButton, MenuGroup, MenuItem, OverflowMenu } from "@alfred/ui";
+import { Button, ChoiceButton, ChoiceGroup, IconButton, MenuGroup, MenuItem, OverflowMenu } from "@alfred/ui";
 import { icons } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { create } from "zustand";
@@ -18,6 +18,9 @@ export interface TopBarActionDescriptor {
   danger?: boolean;
   disabled?: boolean;
   running?: boolean;
+  /** Bascule de vue : boutons accolés d’un même groupe, `selected` sur la vue affichée. */
+  group?: string;
+  selected?: boolean;
 }
 
 const MAX_ACTIONS = 12;
@@ -50,6 +53,9 @@ export function setTopBarActions(reference: string, value: unknown) {
         ...(raw.danger === true ? { danger: true } : {}),
         ...(raw.disabled === true ? { disabled: true } : {}),
         ...(raw.running === true ? { running: true } : {}),
+        ...(text(raw.group, 40) && icon in icons
+          ? { group: text(raw.group, 40), selected: raw.selected === true }
+          : {}),
       },
     ];
   });
@@ -82,13 +88,24 @@ export function useNarrowWindow() {
   return useSyncExternalStore(subscribeWidth, () => window.innerWidth < NARROW_WIDTH);
 }
 
-/** Répartit les actions : icônes visibles, menu « ⋯ » (dont les destructrices à part), action principale. */
+/**
+ * Répartit les actions : bascules de vue (boutons accolés, toujours visibles), icônes visibles, menu « ⋯ » (dont les
+ * destructrices à part), action principale.
+ */
 export function arrangeTopBarActions(list: ReadonlyArray<TopBarActionDescriptor>, narrow: boolean) {
-  const primary = narrow ? undefined : list.find((action) => action.primary && !action.danger);
-  const rest = list.filter((action) => action !== primary);
+  const toggles: TopBarActionDescriptor[][] = [];
+  for (const action of list.filter((item) => item.group && !item.danger)) {
+    const same = toggles.find((group) => group[0].group === action.group);
+    if (same) same.push(action);
+    else toggles.push([action]);
+  }
+  const grouped = new Set(toggles.flat());
+  const others = list.filter((action) => !grouped.has(action));
+  const primary = narrow ? undefined : others.find((action) => action.primary && !action.danger);
+  const rest = others.filter((action) => action !== primary);
   const icons = narrow ? [] : rest.filter((action) => action.icon && !action.danger).slice(0, VISIBLE_ICONS);
   const menu = rest.filter((action) => !icons.includes(action));
-  return { primary, icons, menu: menu.filter((a) => !a.danger), dangerous: menu.filter((a) => a.danger) };
+  return { toggles, primary, icons, menu: menu.filter((a) => !a.danger), dangerous: menu.filter((a) => a.danger) };
 }
 
 function Icon({ name }: { name?: string }) {
@@ -100,10 +117,26 @@ export function TopBarActions({ reference }: { reference: string }) {
   const list = useTopBarActionStore((state) => state.actions[reference]);
   const narrow = useNarrowWindow();
   if (!list?.length) return null;
-  const { primary, icons: shown, menu, dangerous } = arrangeTopBarActions(list, narrow);
+  const { toggles, primary, icons: shown, menu, dangerous } = arrangeTopBarActions(list, narrow);
   const run = (action: TopBarActionDescriptor) => activateTopBarAction(reference, action.id);
   return (
     <span className="shell-topbar__actions">
+      {toggles.map((group) => (
+        <ChoiceGroup key={group[0].group} label={group[0].group ?? "Vue"} appearance="segmented">
+          {group.map((action) => (
+            <ChoiceButton
+              key={action.id}
+              label={action.label}
+              size="compact"
+              selected={action.selected === true}
+              disabled={action.disabled}
+              onClick={() => run(action)}
+            >
+              <Icon name={action.icon} />
+            </ChoiceButton>
+          ))}
+        </ChoiceGroup>
+      ))}
       {shown.map((action) => (
         <IconButton
           key={action.id}

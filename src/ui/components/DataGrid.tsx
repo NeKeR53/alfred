@@ -52,7 +52,10 @@ export type DataTableEditor<Row> = (
   disabled?: (row: Row) => boolean;
 };
 
-const ROW_HEIGHTS = { single: 36, double: 44 } as const;
+const ROW_HEIGHTS = {
+  comfortable: { single: 36, double: 44 },
+  compact: { single: 25, double: 41 },
+} as const;
 
 /** Ligne vide qui réserve la hauteur des lignes non rendues. */
 function Spacer({ height, span }: { height: number; span: number }) {
@@ -103,7 +106,14 @@ function checked<Row>(column: DataTableColumn<Row>, row: Row) {
 export interface GroupRows<Row> {
   isGroup(row: Row): boolean;
   /** Titre, compteur et état replié du groupe. */
-  describe(row: Row): { title: ReactNode; count: number; collapsed: boolean; label: string };
+  describe(row: Row): {
+    title: ReactNode;
+    count: number;
+    collapsed: boolean;
+    label: string;
+    appearance?: "band" | "text";
+    countText?: string;
+  };
   toggle(row: Row): void;
 }
 
@@ -127,12 +137,13 @@ export function DataGrid<Row>({
   virtualizeFrom = 200,
   rowHeight = "single",
   appearance = "boxed",
+  density = "comfortable",
   groupRows,
 }: DataTableProps<Row> & {
   /** Lignes de titre d’un groupe (posées par `DataTable groups`) : une cellule sur toute la largeur, qui se replie. */
   groupRows?: GroupRows<Row>;
 }) {
-  const ROW_HEIGHT = ROW_HEIGHTS[rowHeight];
+  const ROW_HEIGHT = ROW_HEIGHTS[density][rowHeight];
   const view = useTableView({ columns, rows, sort, defaultSort, onSortChange, filters, onFiltersChange });
   const shown = view.view;
   const [active, setActive] = useState({ row: 0, col: 0 });
@@ -515,6 +526,8 @@ export function DataGrid<Row>({
       content = editor.options.find((option) => option.value === value)?.label ?? value;
     } else content = (cellValue(row, column.key) as ReactNode) ?? "";
 
+    const toneOf = column.tone;
+    const tone = toneOf && !groupRows?.isGroup(row) ? toneOf(row) : undefined;
     const classes = [
       "al-datagrid__cell",
       column.align === "end" ? "al-table__end" : "",
@@ -523,6 +536,8 @@ export function DataGrid<Row>({
       isEditing ? "al-datagrid__cell--editing" : "",
       error ? "al-datagrid__cell--error" : "",
       busy ? "al-datagrid__cell--pending" : "",
+      toneOf ? `al-datagrid__cell--${column.toneStyle ?? "fill"}` : "",
+      tone ? `al-datagrid__cell--tone-${tone}` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -561,7 +576,7 @@ export function DataGrid<Row>({
           if (editor && editor.type !== "check" && !isEditing) startEdit(rowIndex, colIndex);
         }}
       >
-        {content}
+        {toneOf && column.toneStyle === "frame" ? <span className="al-datagrid__frame">{content}</span> : content}
         {error ? <span className="sr-only">. Échec : {error}</span> : null}
       </td>
     );
@@ -571,7 +586,7 @@ export function DataGrid<Row>({
   const editingColumn = editing ? columns[editing.col] : undefined;
   return (
     <div
-      className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}${rowHeight === "double" ? " al-datagrid-frame--double" : ""}${appearance === "plain" ? " al-datagrid-frame--plain" : ""}`}
+      className={`al-datagrid-frame${fill ? " al-table-frame--fill" : ""}${rowHeight === "double" ? " al-datagrid-frame--double" : ""}${appearance === "plain" ? " al-datagrid-frame--plain" : ""}${density === "compact" ? " al-datagrid-frame--compact" : ""}`}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: délégation des touches de toutes les cellules de la grille. */}
       <div
@@ -665,7 +680,11 @@ export function DataGrid<Row>({
                 const isActive = cell.row === index;
                 const Chevron = group.collapsed ? ChevronRight : ChevronDown;
                 return (
-                  <tr key={key} aria-rowindex={headerRows + index + 1} className="al-datagrid__group">
+                  <tr
+                    key={key}
+                    aria-rowindex={headerRows + index + 1}
+                    className={`al-datagrid__group${group.appearance === "text" ? " al-datagrid__group--text" : ""}`}
+                  >
                     {/* biome-ignore lint/a11y/useKeyWithClickEvents: Entrée et Espace replient le groupe dans le clavier de la grille. */}
                     <td
                       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: titre d’un groupe de la grille, qui se replie.
@@ -684,11 +703,18 @@ export function DataGrid<Row>({
                         groupRows.toggle(row);
                       }}
                     >
-                      <span className="al-datagrid__group-title">
-                        <Chevron size={14} aria-hidden="true" />
-                        <span className="al-datagrid__group-name">{group.title}</span>
-                        <span className="al-datagrid__group-count">{group.count}</span>
-                      </span>
+                      {group.appearance === "text" ? (
+                        <span className="al-datagrid__group-title">
+                          <span className="al-datagrid__group-name">{group.title}</span>
+                          <span className="al-datagrid__group-count">· {group.countText}</span>
+                        </span>
+                      ) : (
+                        <span className="al-datagrid__group-title">
+                          <Chevron size={14} aria-hidden="true" />
+                          <span className="al-datagrid__group-name">{group.title}</span>
+                          <span className="al-datagrid__group-count">{group.count}</span>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

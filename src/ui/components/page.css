@@ -161,6 +161,12 @@
 }
 /* Une section suivie d’autres blocs prend la hauteur libre : ce qui la suit (le pied d’une carte) est collé au bas
    de la surface, et dans une Grid les pieds d’une rangée s’alignent, sans que la page ait à le demander. */
+/* Surface en creux (`tone="sunken"`) : la colonne teintée d’un kanban, qui porte des cartes bordées. */
+.al-surface--sunken {
+  padding: 8px;
+  border-color: transparent;
+  background: var(--color-surface);
+}
 .al-surface > .al-section:not(:last-child) {
   flex: 1 1 auto;
 }

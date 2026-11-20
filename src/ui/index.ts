@@ -14,6 +14,7 @@ export { ConfirmDialog, type ConfirmOptions, useConfirm } from "./components/Con
 export { Code, Divider, Image } from "./components/Content";
 export {
   DataTable,
+  type DataTableCellTone,
   type DataTableColumn,
   type DataTableEditor,
   type DataTableFilter,
