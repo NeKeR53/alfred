@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { AgentPage } from "./features/agent/AgentPage";
-import { isAgentsWindow, mirrorAgents } from "./features/agent/agentsWindow";
+import { isAgentsWindow } from "./features/agent/agentsWindow";
 import { checkHarnesses, useInstalledProviders } from "./features/agent/harness";
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
 import { useAgentSummary } from "./features/agent/summary";
@@ -47,7 +47,6 @@ export function App() {
   if (snapshot === undefined) return null;
   // Fenêtre Agent détachée : la page Agent seule ; ses conversations sont celles de la fenêtre principale.
   if (isAgentsWindow()) {
-    mirrorAgents();
     return (
       <>
         <AgentPage detached />

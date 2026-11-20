@@ -146,7 +146,8 @@ export async function serveAgentsWindow(transport?: Transport): Promise<() => vo
     };
     void run().then(
       (result) => channel.send(REPLY_EVENT, { id, result: result ?? null }),
-      (error: unknown) => channel.send(REPLY_EVENT, { id, error: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) =>
+        channel.send(REPLY_EVENT, { id, error: error instanceof Error ? error.message : String(error) }),
     );
   });
   return () => {
@@ -258,3 +259,6 @@ export async function openAgentsWindow(): Promise<void> {
     throw toError(error);
   }
 }
+
+// La fenêtre détachée devient miroir dès le chargement du module, avant le premier rendu.
+if (typeof window !== "undefined" && isAgentsWindow()) mirrorAgents();

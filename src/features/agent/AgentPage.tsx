@@ -10,13 +10,14 @@ import {
   PageTopBar,
   TextInput,
 } from "@alfred/ui";
-import { Archive, Bot, Code2, FolderOpen } from "lucide-react";
+import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "../../lib/native";
+import { inTauri, invoke } from "../../lib/native";
 import { NotificationBell } from "../../shell/NotificationCenter";
 import { notify } from "../../shell/notifications";
 import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
+import { openAgentsWindow } from "./agentsWindow";
 import { Composer } from "./Composer";
 import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
 import { setCoordinator } from "./delegation";
@@ -42,7 +43,8 @@ const noFolder = "Aucun dossier de travail";
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
 /** Page Agent : les conversations de l’espace à gauche, la conversation ouverte au centre. */
-export function AgentPage() {
+/** `detached` : la page Agent seule, dans sa fenêtre (`agentsWindow.ts`). */
+export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const spacePath = useShell((state) => state.snapshot?.path);
   const headers = useAgents((state) => state.headers);
   const activeId = useAgents((state) => state.activeId);
@@ -255,7 +257,25 @@ export function AgentPage() {
                 )}
               </OverflowMenu>
             ) : null}
-            <NotificationBell />
+            {/* La page Agent dans sa propre fenêtre : les conversations restent celles de cette fenêtre. */}
+            {!detached && inTauri ? (
+              <IconButton
+                label="Ouvrir la page Agent dans une fenêtre"
+                tooltip="Ouvrir dans une fenêtre"
+                onClick={() =>
+                  void openAgentsWindow().catch((error: unknown) =>
+                    notify({
+                      title: "Fenêtre Agent non ouverte",
+                      description: error instanceof Error ? error.message : String(error),
+                      tone: "error",
+                    }),
+                  )
+                }
+              >
+                <AppWindow size={15} aria-hidden="true" />
+              </IconButton>
+            ) : null}
+            {detached ? null : <NotificationBell />}
           </PageTopBar>
           <section
             className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}

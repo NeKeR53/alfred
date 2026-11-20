@@ -88,6 +88,7 @@ Déjà fait dans Alfred, donc non listé comme manquant : Entrée envoie tout de
 | Saisie verrouillée tant que conversations ou brouillons ne sont pas prêts | `src/hooks/useAgents.ts:198` | absent | — | A |
 | Citer un passage dans la réponse (citation Markdown en fin de saisie, curseur à la fin) | `src/pages/agents/AgentsPage.tsx:142-164` | partiel | OneApp cite la sélection si elle existe, sinon tout le message ; Alfred cite tout le message. | A |
 | Fonctions de la saisie de lancement réservées à la fenêtre principale | `src/components/agents/AgentLaunchComposer.tsx:35-45` | absent | Alfred n’a qu’une fenêtre d’agents. | B |
+| Fenêtre Agents détachée (ADR 0021 de OneApp) : affichage et commandes, la fenêtre principale reste le moteur | `src/lib/agentsWindowBridge.ts` | identique | `agentsWindow.ts` : bouton « Ouvrir dans une fenêtre » de la page Agent, fenêtre `page-agents` (`agents/window.rs`). La principale publie l’état (ce qui a changé seulement) et exécute les actions ; la conversation ouverte reste propre à chaque fenêtre. Non vérifié dans une vraie fenêtre native. | B |
 
 ## 3. Rendu de la conversation
 
