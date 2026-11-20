@@ -1,362 +1,364 @@
-# Ce qu’il faut ajouter à Alfred avant de créer les modules
+# Socle d’Alfred : ce qui manque pour accueillir OneApp
 
-Livrable 3 sur 4. Les manques viennent de [correspondance.md](correspondance.md) ; chacun est un **chantier** livrable seul, avec sa justification, l’API proposée, sa taille et sa place dans l’ordre. Les codes C1 à C13 sont ceux de la correspondance.
+Livrable 3 sur 4, réécrit le 20 novembre 2026 après les décisions de l’utilisateur. Seules restent les **fonctions de base d’Alfred** qui manquent, celles du cœur de la plateforme (menu, coque, comptes, coffre, natif, agents). L’organisation des modules et le marketplace viendront plus tard, module par module.
 
-Tailles, pour un développement fait avec un agent de code et ses vérifications (tests, typecheck, interface Vite branchée sur Alfred debug) : **S** ≤ 2 jours, **M** 3 à 5 jours, **L** 1 à 2 semaines, **XL** plus de 2 semaines.
+Décisions prises en compte :
+
+- **Partage d’équipe** : il reste fondé sur des fichiers dans des dossiers (les dépôts `.oneapp/` actuels). Alfred y accède comme à des dossiers du poste ; aucun format de synchronisation propre n’est à porter. L’ancien chantier « synchronisation d’équipe étendue » disparaît ; il n’en reste que l’accès aux dossiers et Git local (S2).
+- **Navigation** : une page peut créer des entrées dans le menu de gauche, en plus de ses onglets, regroupées dans une zone qu’elle personnalise, sous un petit séparateur (S1, prioritaire).
+- **Jetons** : ressaisis dans le trousseau une fois les modules en place ; aucune reprise automatique.
+- **Anciennes conversations de OneApp** : non gardées.
+- **Délégation entre agents** : à porter (S11).
+- **MCP** : rien à ajouter ; les fonctions d’Alfred remplacent le MCP de OneApp. L’association de clients externes est retirée.
+- **Agents lancés depuis une page** : dossier de travail et mode imposables (S3).
+- Marketplace et gabarit PDF d’entreprise : hors sujet ici.
+
+Les identifiants de fonctions (`PRD-01`, `AGT-07`…) renvoient à [fonctions-oneapp.md](fonctions-oneapp.md) ; le statut de chacune est dans [correspondance.md](correspondance.md).
+
+Tailles, pour un développement fait avec un agent de code et ses vérifications (tests, typecheck, interface Vite branchée sur Alfred debug) : **S** ≤ 2 jours, **M** 3 à 5 jours, **L** 1 à 2 semaines.
 
 ## Vue d’ensemble
 
-| Ordre | Code | Chantier | Famille | Taille | Débloque |
+| Ordre | Code | Manque de base | Taille | Dépend de | Fonctions de OneApp |
 |---|---|---|---|---|---|
-| 1 | C1 | Secrets scellés et jetons émis par les services | Sécurité, comptes et coffre | L | `openbao`, `secrets`, `portainer` (mot de passe), absences ICS |
-| 2 | C2 | Paramètres de compte et comptes partagés en équipe | Comptes et coffre | M | `keycloak`, `openbao`, `portainer`, partage des connexions |
-| 3 | C3 | Transport des clients : binaire, multipart, flux, WebSocket | Natif Rust, SDK | L | artefacts, pièces jointes, images Confluence, journaux et console de conteneur |
-| 4 | C4 | Dossiers du poste et Git local | Natif Rust, SDK | M | `depots`, Git de la vue produit, spécifications, change log, architecture |
-| 5 | C5 | Coque : entrées fournies par un module, notifications à actions, fenêtres paramétrées, sondes rapides, agents dans la barre de gauche | Coque et navigation | L | toutes les pages « produit », fenêtres de journal, notifications de CI |
-| 6 | C6 | Composants `@alfred/ui` manquants | Coque et navigation | L | cartes d’état, kanban, planning, journaux, arbres, terminal, diff |
-| 7 | C8 | Moteur d’agents natif (Rust) | Agents, natif Rust | L | C9, C10 ; corrige le jeton MCP en ligne de commande |
-| 8 | C9 | Agents de travail sur un dossier, outils limités, réglages, confidentialité | Agents | L | `agents-produits`, actions « Envoyer à un agent » |
-| 9 | C10 | Suivis et automatisations d’agents | Agents | M | `automatisations`, relances de fin de CI |
-| 10 | C7 | Synchronisation d’équipe étendue | Synchronisation d’équipe | XL | partage du catalogue entre équipes, reprise des dépôts `.oneapp/` |
-| — | C12 | Parité Windows | Windows | M, au fil de l’eau | tout, sur les postes de l’équipe |
-| option | C11 | Délégation (orchestrateur) | Agents | L | seulement si l’utilisateur la veut |
-| option | C13 | MCP ouvert aux clients externes | Agents, sécurité | S | Codex ou Claude lancés hors d’Alfred |
+| 1 | S1 | Entrées du menu de gauche créées par une page | M | — | 5 |
+| 2 | S2 | Dossiers du poste et Git local | M | — | 23 |
+| 3 | S3 | Agents lancés par une page : dossier, mode et outils imposés | L | S2 | 8 |
+| 4 | S4 | Secrets scellés et jetons émis par les services | L | — (S2 pour le `.env`) | 9 |
+| 5 | S5 | Paramètres non secrets d’un compte | S | — | 4 |
+| 6 | S6 | Transport des clients : binaire, multipart, flux, WebSocket | L | — | 5 |
+| 7 | S7 | Notifications à actions, fenêtres paramétrées, relevés rapides | M | — | 8 |
+| 8 | S8 | Composants `@alfred/ui` manquants | L | — | 13 |
+| 9 | S10 | Suivis : relancer un agent sur un événement | M | S3, S7 | 2 |
+| 10 | S11 | Délégation entre agents | L | S3, S10 | 1 |
+| 11 | S9 | Pilotage des agents depuis Rust | L | — (après S3 de préférence) | 1 |
+| — | S12 | Parité Windows | M, au fil des autres | chacun | 1 et tous |
 
-Total sans les options : environ 12 à 16 semaines de développement assisté, dont une bonne part parallélisable (C3, C4, C6 et C8 ne touchent pas les mêmes fichiers).
+Total : environ 12 à 15 semaines de développement assisté. S1, S2, S4, S6 et S8 ne touchent pas les mêmes fichiers et peuvent avancer en parallèle.
 
-C7 est placé en dernier exprès : la reprise des données de OneApp peut se faire par un import ponctuel (module `reprise-oneapp`, [plan.md](plan.md)) sans attendre la synchronisation étendue ; C7 ne devient indispensable que lorsque plusieurs équipes partagent le catalogue depuis Alfred.
-
----
-
-## Vérifications demandées
-
-### La garantie de sécurité des secrets
-
-**Garantie de OneApp** (`AGENTS.md` § Security, `src-tauri/src/secret_references.rs`) : le webview ne voit jamais un secret. Il reçoit une référence opaque `oneapp-secret-ref:v1:<nonce>` que le transport natif remplace, seulement dans un en-tête d’authentification (`authorization`, `x-api-key`, `private-token`, `x-vault-token`, `x-jfrog-art-api`) ou le corps d’une connexion, et seulement vers l’origine de la connexion propriétaire. Les jetons émis par les services (Keycloak, Portainer, OpenBao, vérificateur et code PKCE) sont capturés nativement et ne parviennent au webview que comme références. Les valeurs des secrets OpenBao arrivent aussi comme références et ne se montrent que par `reveal_secret_value` ou s’écrivent par `save_environment_file`.
-
-**Garantie d’Alfred** (`src-tauri/src/clients.rs`, SDK § 6) : plus forte sur un point, plus faible sur deux.
-
-| Point | OneApp | Alfred | Écart |
-|---|---|---|---|
-| Qui construit la requête | le webview, avec des références | une fonction de connecteur ; la page ne peut pas appeler un client | Alfred est plus strict : aucune page n’atteint un service. |
-| Où va le secret | en-têtes d’authentification de l’origine propriétaire | posé par Rust en dernier, en-têtes réservés refusés à l’appelant, `path` confiné sous l’adresse de base (ni `//`, `..`, `@`) | équivalent. |
-| Écho d’un secret dans la réponse | — | `redact` retire le secret (texte, JSON échappé, base64) des en-têtes et du corps | Alfred est plus strict. |
-| Jeton OAuth 2 et `clientCredentials` | natif (Keycloak) | natif, renouvelé sur 401 (`credential`, `renewable`) | équivalent. |
-| Jeton rendu par une **connexion par identifiant** (Portainer `/api/auth`, OpenBao userpass/LDAP/OIDC, Keycloak mot de passe) | capturé nativement, référence au webview | **aucun mécanisme** : la fonction devrait poster l’identifiant et lirait le jeton dans le corps | **manque** (C1). |
-| **Valeurs** de secrets rendues par un service (OpenBao KV) | références, `reveal_secret_value`, `save_environment_file` | rendues en clair dans le corps à la fonction | **manque** (C1). |
-| Cadre qui exécute la fonction | webview principal | cadre invisible, sans réseau ni disque, sous le pont du SDK | Alfred isole mieux : même si une valeur arrive, elle ne sort que par le pont. |
-| Jeton du serveur MCP local passé au CLI | variable d’environnement (OneApp, `ONEAPP_MCP_TOKEN`) | Codex et OpenCode : variable `ALFRED_MCP_TOKEN` ; **Claude Code : en clair dans l’argument `--mcp-config`** (`agents.rs` l. 314-316), lisible par tout processus de l’utilisateur | **défaut** à corriger (C8). |
-
-Conclusion : la garantie tient pour tous les services à jeton fixe, OAuth 2 et `clientCredentials` (Jira, Bitbucket, Confluence, Jenkins, GitLab, SonarQube, Artifactory, Grafana, Portainer par clé d’API, OpenBao par jeton fixe, Keycloak par PKCE). Elle ne tient pas pour les jetons rendus par une connexion par identifiant ni pour les valeurs OpenBao : C1 les ferme.
-
-### Les jetons fournis par les services
-
-| Service | Méthode chez OneApp | Ce qu’Alfred sait faire | Ajout |
-|---|---|---|---|
-| Keycloak | PKCE au navigateur, accès hors ligne, royaume par connexion (`keycloak_auth.rs`) | `oauth2` avec `clientId` public et PKCE (`88b78e8`), `{url}` dans les adresses | paramètre `{realm}` dans `authorizationUrl` et `tokenUrl` (C2) ; vérifier le renouvellement d’un jeton hors ligne (`offline_access`). |
-| Portainer | clé d’API, ou identifiant + mot de passe → JWT | clé d’API (`apiKey`, `X-API-Key`) | méthode `session` (C1) ; endpoint par compte (C2). |
-| OpenBao | jeton, ou `bao login -method=oidc` lancé nativement | jeton fixe (`apiKey`, `X-Vault-Token`) | méthode `session` pour userpass et LDAP (C1) ; OIDC : méthode `session` avec `kind: "oidc"` (rappel au navigateur par la boucle locale d’`oauth.rs`) ou commande `bao login` lancée nativement (`fromCommand` ne suffit pas : le jeton expire) ; montage KV et rôle par compte (C2). |
-
-### Le pilotage des agents de OneApp absent d’Alfred
-
-| Élément | OneApp | Alfred | Chantier |
-|---|---|---|---|
-| `opencode serve` en Rust | serveur privé sur 127.0.0.1, mot de passe aléatoire en environnement, appairage `/api/pair` → jeton, SSE `/api/event`, rattrapage par `session.message.list` ; webview limité à des commandes fermées (ADR 0022, `src-tauri/src/agents/opencode/`) | `opencode acp` sur stdio, protocole parlé par l’interface | C8 |
-| Demandes confidentielles | cadenas par demande, modèles « Autorisé pour les actions secret », refus de router | — | C9 |
-| Orchestrateur global | `oneapp_threads` (dispatch, status, send, rapports), contrat JSON ; remplacé par l’ADR 0010 | — | C11 (option) |
-| Automatisations | déclencheurs internes, cron, script ; confirmation ; journal | webhooks, planifications, événements entre modules ; pas d’action « lancer un agent » | C10 |
-| Relances de fin de CI | `watch_completion`, suivis persistés avec l’agent | — | C10 |
-| Agents sur un produit | dossier du produit, MCP limité au produit, réglages par produit et source | agent de l’espace ; `ai.startAgent` limité au module | C9 |
-
-### La navigation
-
-OneApp : produits et agents dans la barre de gauche, un panneau de droite unique. Alfred : le menu de gauche liste les **pages de l’utilisateur**, faites à partir des modèles des modules ; une entrée « Agent » ; un panneau de droite par page, qui laisse la place à la conversation d’un agent lancé par la page (`AppShell.tsx` l. 164-296).
-
-- **Panneau de droite unique** : déjà là. Une page n’a qu’un panneau, ses blocs se replient et se déplacent, leur disposition est retenue, sa largeur est le choix de l’utilisateur (340, 460, large). Rien à ajouter.
-- **Produits dans la barre de gauche** : impossible aujourd’hui sans que l’utilisateur crée à la main une page par produit. C5 ajoute des entrées fournies par un module.
-- **Agents dans la barre de gauche** : C5.
-
-### Le partage d’équipe et les dépôts `.oneapp/`
-
-Alfred range une ligne par fichier (`<module>/<table>/<clé>.json`) dans **un** dépôt par module ; la version de l’équipe l’emporte. OneApp range une déclaration par fichier (`.oneapp/products/<id>.json` avec ses composants et liaisons, `connections/`, `environments/`, `settings/access.json`, `settings/agents.json`) dans **plusieurs** sources actives, avec rapprochement par identité métier, champs personnels, aperçu, choix et confirmation.
-
-Les deux formats ne sont pas compatibles. Deux voies :
-
-1. **Migration** (recommandée) : un module `reprise-oneapp` lit une fois les dépôts `.oneapp/` (clonés ou locaux) et remplit les tables des modules et les comptes ; chaque équipe relie ensuite ses modules à un nouveau dépôt Alfred. OneApp et Alfred ne partagent plus rien après la bascule. Aucun chantier de plateforme ne la bloque, hormis C2 pour recréer les comptes et C4 pour lire un dépôt local.
-2. **Compatibilité** : C7 avec une disposition déclarée (`sync.layout`) qui écrit les fichiers au format `.oneapp/`. Elle permet une cohabitation OneApp / Alfred dans la même équipe, au prix de recopier dans Alfred les règles de OneApp (identité métier, champs personnels, documents imbriqués). C’est l’essentiel de la taille XL de C7.
-
-La question est posée dans [plan.md](plan.md).
-
-### La parité Windows
-
-Voir C12.
+Le correctif de sécurité de S9 (jeton du serveur local passé en clair à Claude Code) est petit et peut partir tout de suite, à part du reste de S9.
 
 ---
 
-## C1 · Secrets scellés et jetons émis par les services
+## S1 · Entrées du menu de gauche créées par une page
 
-**Famille** : sécurité, comptes et coffre. **Taille** : L. **Ordre** : 1.
+**Taille** : M. **Ordre** : 1, prioritaire. **Dépend de** : rien.
 
-**Justification** : sans lui, `openbao` ferait arriver les valeurs des secrets dans les fonctions, et `portainer` ou `openbao` par identifiant feraient lire le jeton de session par la fonction. C’est la seule régression de sécurité par rapport à OneApp.
+**Ce qui manque.** Le menu de gauche d’Alfred ne liste que les pages de l’utilisateur et l’entrée Agent. Une page ne peut pas y faire apparaître ses propres éléments.
 
-**API proposée** :
+**Pourquoi OneApp en a besoin.** Le produit logiciel est l’unité de navigation de OneApp : une entrée par produit, avec une pastille d’état (PRD-01, VUE-01, VUE-02, TIC-01). La section Agents de OneApp, sous les produits, en est le premier exemple (AGT-12).
 
-1. **Méthode d’authentification `session`** (dans `methods[]` et `auth`) : Alfred fait lui-même la requête de connexion, garde le jeton au coffre et le pose sur chaque requête ; renouvelle sur 401 ou à l’expiration.
-   ```json
-   { "id": "motdepasse", "label": "Identifiant et mot de passe", "type": "session",
-     "login": { "method": "POST", "path": "/api/auth", "body": { "username": "{username}", "password": "{password}" },
-                "token": "jwt", "expiresIn": null },
-     "apply": { "header": "Authorization", "prefix": "Bearer " } }
-   ```
-   OpenBao userpass : `"path": "/v1/auth/userpass/login/{username}"`, `"token": "auth.client_token"`, `"expiresIn": "auth.lease_duration"`, `"apply": { "header": "X-Vault-Token" }`. Le coffre garde l’identifiant (`basic`) et le jeton ; le jeton n’apparaît dans aucune réponse rendue (il est ajouté à la liste de `redact`).
-2. **Réponses scellées** : un client déclare les champs de réponse qui sont des secrets ; Alfred les remplace par une référence opaque `alfred-secret-ref:v1:<nonce>` avant de rendre la réponse.
-   ```json
-   "sealed": [{ "path": "/v1/{mount}/data/**", "fields": ["data.data.*"] }]
-   ```
-   Une référence vaut pour le compte, le module et la session d’Alfred ; elle expire (5 minutes, comme `VALUE_CACHE_TTL` de OneApp) et ne se résout que par :
-   - `secrets.reveal(ref)` : page ou panneau seulement, sur un geste de l’utilisateur ; rend la valeur à afficher (comme `reveal_secret_value`) ; journalisé (`kind: "secret"`, sans valeur) ;
-   - `secrets.writeEnvFile({ folder, file, entries: [{ name, ref }] })` : écrit un `.env` dans un dossier accordé (C4), sans que la valeur passe par la page (comme `save_environment_file`) ;
-   - `secrets.copy({ from: ref, client, instance, path, field })` : écrit la valeur vers un autre compte du **même service** par une requête native, sans corps fourni par l’appelant (copie d’une clé d’un environnement à l’autre).
-   Une référence placée dans le corps ou un paramètre d’une requête ordinaire n’est **pas** substituée : elle partirait telle quelle (règle de OneApp : substitution limitée aux en-têtes d’authentification).
-3. **Méthode « adresse secrète »** (`type: "secretUrl"`) : toute l’adresse du compte est au coffre (agenda ICS publié par Outlook, avec son jeton dans l’URL) ; `client(id).get("/")` la lit.
-4. **`ai` et références** : une référence passée à `ai.oneShot` ou à un agent reste une chaîne opaque ; aucun appel ne la résout.
+**Comportement proposé.**
 
-**Fichiers** : `src-tauri/src/clients.rs` (méthode `session`, `sealed`), `src-tauri/src/vault.rs` (jeton de session), nouveau `src-tauri/src/secret_refs.rs`, `src/sdk/` (`secrets`), `docs/espace/SDK.md`, `docs/espace/AGENTS.md`, onboarding (méthode `session` : champs identifiant et mot de passe).
+- Une page crée des **entrées** dans le menu de gauche, en plus de ses onglets. Elles sont regroupées dans **sa zone**, affichée sous l’entrée de la page et séparée du reste du menu par un **petit séparateur**.
+- La page **personnalise sa zone** : un titre facultatif (« Produits », « Agents »), l’ordre des entrées (le sien ou celui de l’utilisateur), un nombre d’entrées visibles avec « Afficher plus », le repli de la zone.
+- Une **entrée** a un identifiant, un libellé, une icône (Lucide ou logo du module), une couleur facultative, un **état** (`ok`, `warning`, `error`, `running`, `waiting`) rendu en pastille, et un compteur facultatif (comme `badge`).
+- Un clic sur une entrée ouvre la page (ou une autre page du module) **avec cette entrée** : la page lit `usePageContext().entry`. Les onglets de la page suivent l’entrée ouverte.
+- Une entrée peut porter des **actions au survol** (icônes compactes : renommer en place, ouvrir dans une fenêtre, archiver), reçues par la page ou par une fonction du module.
+- Les entrées **durent** d’un lancement à l’autre ; une fonction (planifiée, abonnée à un événement) peut les mettre à jour quand la page est fermée.
+- L’utilisateur garde la main : il replie ou masque la zone, la déplace dans Réglages › Ordre du menu ; masquer une page masque sa zone.
+- La page **Agent** d’Alfred utilise ce même mécanisme pour ses conversations non archivées (état : au travail, réponse attendue, en échec, à consulter, en veille ; réponse attendue et échec en tête).
 
-**Tests** : un faux Portainer rend un JWT, la fonction ne le voit jamais et les requêtes suivantes le portent ; un faux OpenBao rend des valeurs, la fonction reçoit des références, `reveal` rend la valeur sur un geste et refuse depuis une fonction ; `writeEnvFile` refuse un dossier non accordé ; une référence en corps n’est pas substituée.
-
-## C2 · Paramètres de compte et comptes partagés en équipe
-
-**Famille** : comptes et coffre. **Taille** : M. **Ordre** : 2.
-
-**Justification** : OneApp garde par connexion des réglages non secrets que les adresses et les fonctions utilisent : royaume Keycloak, montage KV et rôle OpenBao, endpoint Portainer, projet Grafana. Et une connexion (type + adresse, sans secret) voyage avec l’équipe : un collègue n’ajoute que son jeton.
-
-**API proposée** :
-
-1. **Paramètres d’une méthode** : `methods[].params` déclare des champs non secrets saisis avec le compte ; ils se substituent dans les adresses (`{realm}`, `{mount}`, `{endpoint}`) et se lisent dans les fonctions.
-   ```json
-   { "id": "pkce", "type": "oauth2", "clientId": "alfred",
-     "params": [{ "id": "realm", "label": "Royaume", "example": "equipe" }],
-     "authorizationUrl": "{url}/realms/{realm}/protocol/openid-connect/auth",
-     "tokenUrl": "{url}/realms/{realm}/protocol/openid-connect/token", "scopes": ["openid", "offline_access"] }
-   ```
-   `client(id, { instance }).params()` → `{ realm: "equipe" }` ; `{param}` aussi permis en tête de `path` d’une requête (`/admin/realms/{realm}/users`). L’onboarding affiche ces champs dans l’assistant, l’état « à vérifier » les couvre.
-2. **Comptes partagés** : une option « Partager ce compte avec l’équipe » range sa définition (libellé, adresse, méthode, paramètres non marqués `personal`, jamais le secret) dans le dépôt de partage de l’espace ; chez un collègue, le compte apparaît « Mot de passe manquant » et l’onboarding lui demande seulement son jeton. Identité d’un compte : type + adresse + paramètres d’identité (`params[].identity: true`, par exemple le royaume), pour rapprocher au lieu de dupliquer (ADR 0012 de OneApp). Les réglages personnels (méthode choisie, TLS non vérifié) restent locaux.
-
-**Fichiers** : `src-tauri/src/clients.rs`, `src-tauri/src/team_sync.rs` (ou C7), `src/features/clients/`, onboarding, SDK.md.
-
-## C3 · Transport des clients : binaire, multipart, flux, WebSocket
-
-**Famille** : natif Rust, SDK. **Taille** : L. **Ordre** : 3.
-
-**Justification** : `perform` lit la réponse en texte (`String::from_utf8_lossy`), 20 Mo et 60 s au plus, sans envoi de fichier ni connexion longue. OneApp télécharge des artefacts, lit et envoie des pièces jointes, lit les images de Confluence, suit les journaux Docker (multiplexés en binaire) et ouvre la console d’exec de Portainer en WebSocket.
-
-**API proposée** :
-
-1. **Téléchargement vers un fichier du module** : `client(id).download(path, { name, query?, maxBytes? })` → `FileInfo` ; le corps va directement dans `.alfred/files/<module>/` (limite portée à 2 Go, en flux), sans passer par la fonction ; SHA-256 calculé. La page propose `files.export`.
-2. **Réponse binaire** : `request({ …, responseType: "base64" })` pour un petit binaire (≤ 5 Mo), par exemple une image de Confluence ou un journal Docker multiplexé.
-3. **Envoi multipart** : `body: { multipart: [{ name: "file", file: "<id d’un fichier du module>" }, { name: "comment", value: "…" }] }`.
-4. **Canaux** (flux et WebSocket) : une fonction de connecteur ouvre un canal ; la page lit et écrit par le canal, sans jamais joindre le client.
-   ```ts
-   // fonction du connecteur portainer
-   const canal = await client("portainer", { instance }).socket(`/api/websocket/exec?id=${exec}&endpointId=${endpoint}`);
-   return { canal: canal.id };
-   // page
-   channels.read(canal, { after }) // { chunks: [{ seq, data }], closed }
-   channels.write(canal, texte);
-   channels.close(canal);
-   ```
-   Même règle pour un flux HTTP (`client.stream(path)` : SSE, `follow=1` de Docker). Un canal appartient au module qui l’a ouvert, se ferme avec le cadre de la page et après 10 minutes sans lecture ; 64 Kio par écriture (comme `MAX_INPUT_BYTES` de OneApp).
-5. **Proxy et certificats d’entreprise** : `git_network.rs` gère déjà proxy et certificats du système pour git. Vérifier que `shared_http` de `clients.rs` passe aussi par le proxy du système et le magasin de certificats sous Windows (non vérifié dans cette étude).
-
-**Fichiers** : `src-tauri/src/clients.rs`, `src-tauri/src/module_files.rs`, nouveau `src-tauri/src/channels.rs`, `src/sdk/`, SDK.md (§ 6, nouveau § canaux), `script_sdk.rs` (méthodes `clients.download`, `channels.*` sur le pont des scripts).
-
-## C4 · Dossiers du poste et Git local
-
-**Famille** : natif Rust, SDK. **Taille** : M. **Ordre** : 4.
-
-**Justification** : la moitié de OneApp travaille dans l’**espace local** d’un produit : état Git, fetch, pull, commit, push, branches, dernier tag, `docs/index.md`, `CHANGELOG.md`, `.oneapp/specifications/`, images de documents, compose, commandes locales. Alfred n’offre aujourd’hui que `commands.run` (dossier courant = dossier du module) et les fonctions en script, sans notion de dossier accordé : rien n’empêche un module de lire n’importe où, et rien ne permet à une page de choisir un dossier.
-
-**API proposée** :
-
-1. **Dossiers accordés** : `folders.pick({ title })` (page, geste) → `{ id, path, label }` ; l’accord est gardé pour le module, visible et révocable dans sa fiche ; `folders.list()`.
-2. **Fichiers texte d’un dossier accordé** : `folders.readText(id, relatif)`, `folders.writeText(id, relatif, texte)` (écriture atomique), `folders.list(id, relatif, { glob })`, `folders.exists`, `folders.mkdir`, `folders.remove` (corbeille du système), `folders.readFile` (base64, 20 Mo) ; chemins relatifs confinés (ni `..` ni lien sortant, comme `agent_artifacts.rs` de OneApp).
-3. **`commands.run` dans un dossier accordé** : option `cwd: { folder: id, path?: relatif }` ; refus hors d’un dossier accordé.
-4. **Git natif, en lecture et en écriture courantes** : `git.status(folder)`, `git.branches`, `git.log({ since, path, limit })`, `git.tags`, `git.diff`, `git.show(ref, path)`, `git.fetch`, `git.pull`, `git.push`, `git.commit({ message, paths })`, `git.switch(branch)`, `git.clone(url, folder, relatif)` ; mêmes règles que le git de l’espace (aucun crochet, refus d’un `.git/config` qui lance un programme, proxy et certificats de `git_network.rs`). Une commande par appel, rendue en JSON.
-5. **Terminal du poste** : `terminal.open({ folder, path?, command?, envFile? })` ouvre Terminal, Windows Terminal ou Git Bash dans le dossier (commandes locales de OneApp, `local_shell.rs`).
-
-**Fichiers** : nouveau `src-tauri/src/folders.rs`, `src-tauri/src/git.rs` (fonctions de dépôt à part de celles de l’espace), `src-tauri/src/commands.rs` (`cwd`), `src-tauri/src/permissions.rs`, `src/sdk/`, SDK.md, fiche du module (dossiers accordés).
-
-## C5 · Coque : entrées fournies par un module, notifications, fenêtres, sondes, agents
-
-**Famille** : coque et navigation. **Taille** : L (trois livraisons possibles : C5a M, C5b S, C5c M). **Ordre** : 5.
-
-**C5a · Entrées du menu fournies par un module** (M). Le produit logiciel est l’unité de navigation de OneApp. Un module déclare une section **par élément** de ses données ; l’utilisateur garde la main sur l’ordre et le masquage.
-
-```json
-"sections": [{ "id": "produit", "label": "Produit", "icon": "box",
-  "entries": { "function": "lister-entrees", "everyMinutes": 1 } }]
-```
-
-`lister-entrees` rend `[{ key: "alpha", label: "Alpha", icon?, color?, status?: "ok" | "warning" | "error" | "running", badge? }]`. Chaque entrée ouvre les onglets de la section ; la page lit `usePageContext().entry` (`{ key, label }`). L’état colore la pastille de l’entrée (point bleu d’une exécution, rouge d’un échec) en plus du compteur `badge`. `shell.navigate("cockpit/composants#alpha")` ouvre l’entrée. Les pages de l’utilisateur restent le modèle : une section à entrées est une page de l’utilisateur que le module « déplie ».
-
-**C5b · Notifications à actions et fenêtres paramétrées** (S).
-- `shell.notify({ …, persistent?: boolean, actions?: [{ label, navigate?: "module/page#entry", window?: { page, params }, function?: { id, input } }] })` : « Journal », « Lancer », « Voir l’agent » ; une notification persistante reste au centre jusqu’à son action ou sa fermeture. Une fonction planifiée peut en émettre.
-- `shell.openWindow(reference, { params, key })` : la fenêtre reçoit `usePageContext().params` (`{ build: 412 }`) ; la même `key` ramène la fenêtre existante au premier plan.
-
-**C5b bis · Sondes rapides** (S). La plus petite planification est d’une minute ; OneApp sonde toutes les 10 s, 3 s pendant une exécution. `declare_schedule` accepte `everySeconds` (au moins 5) et une fonction peut rendre `{ nextInSeconds }` pour se rapprocher pendant une exécution et s’espacer au repos.
-
-**C5c · Agents dans la barre de gauche et fenêtre Agents** (M). Une section « Agents » sous les entrées du menu : conversations non archivées avec leur état (au travail, réponse attendue, en échec, à consulter, en veille), tri (réponse attendue et échec en tête, puis les plus récentes), Renommer, Fenêtre, Archiver au survol ; notification qui ouvre l’agent. Fenêtre Agents détachée : la page Agent seule dans sa fenêtre, le moteur restant dans la fenêtre principale (ADR 0021 de OneApp). Le prototype et les choix de la session `agents-nav` de OneApp (`SidebarSection`, `SidebarRow`, navigation réduite de la fenêtre) se reprennent.
-
-**Fichiers** : `src/shell/AppShell.tsx`, `src-tauri/src/menu.rs`, `src-tauri/src/schedules.rs`, `src/shell/notifications.ts`, `src-tauri/src/system_notifications.rs`, `src-tauri/src/page_windows.rs`, `src/features/navigation/`, `src/features/agent/ConversationList.tsx`, `DESIGN.md`, SDK.md § 8, AGENTS.md.
-
-## C6 · Composants `@alfred/ui` manquants
-
-**Famille** : coque et navigation. **Taille** : L. **Ordre** : 6 (parallèle à C3, C4, C8).
-
-**Justification** : la règle 4 d’AGENTS.md interdit tout style propre ; une librairie ne peut dessiner que son propre contenu. OneApp a des surfaces qu’aucun composant de `src/ui/components/` ne couvre. Chaque composant se reprend de `src/components/` de OneApp, dans le style d’Alfred (`DESIGN.md`).
-
-| Composant | Sert à | Reprend de OneApp |
-|---|---|---|
-| `StatusCardGrid` / `StatusCard` | cartes d’état des composants, pastilles d’état avec icône, carte grisée | `ComponentCard.tsx`, `component-cards.css` |
-| `Board` | kanban à colonnes, glisser-déposer au clavier et à la souris | `ProjectKanban.tsx`, `ReorderHandle.tsx` |
-| `Timeline` | planning par personne, frise d’activité | `ProjectPlanning.tsx`, `HistoryTimeline.tsx` |
-| `TreeView` | groupes Keycloak, secrets OpenBao, pages Confluence | `KeycloakGroupTreePane.tsx`, `OpenBaoSecretTree.tsx`, `ConfluencePageTree.tsx` |
-| `LogViewer` | journaux CI et conteneur : niveaux avec compteurs, recherche, suivi, retour à la ligne, horodatage, copie, fenêtrage des longues sorties | `src/components/logs/*`, `useWindowedList.ts` |
-| `Terminal` | console de conteneur (enveloppe de `@xterm/xterm`) | `TerminalEmulator.tsx` |
-| `MarkdownEditor` | documentation, change log, chapitres SRS | `MarkdownEditor.tsx` |
-| `DiffView` | versions des spécifications, modifications des agents | `SpecificationGitDiffDialog.tsx` |
-| `Matrix` (mode de `DataTable`) | liaisons, accès, secrets × environnements : cases d’état cliquables, en-têtes figés | `ComponentLiaisonTable.tsx`, `AccessOverviewTable.tsx`, `ComponentSecretsDialog.tsx` |
-
-**Fichiers** : `src/ui/components/`, `src/ui/index.ts`, `DESIGN.md` § 5, `src-tauri/src/design_lint.rs` (règles du nouveau catalogue).
-
-## C7 · Synchronisation d’équipe étendue
-
-**Famille** : synchronisation d’équipe. **Taille** : XL (L sans la disposition `.oneapp/`). **Ordre** : 10.
-
-**Justification** : `team_sync.rs` relie un module à un dépôt, une ligne par fichier, la version de l’équipe l’emporte. OneApp exige plusieurs sources actives, des champs personnels, le rapprochement par identité métier, un aperçu avec choix (récupérer, publier, conflit, suppression à confirmer) et des dépendances qui suivent leur produit.
-
-**API proposée** (`module.json`) :
-
-```json
-"sync": {
-  "tables": ["produits_produits", "produits_composants", "produits_liaisons", "produits_environnements"],
-  "documents": [{ "root": "produits_produits", "children": ["produits_composants", "produits_liaisons"] }],
-  "personal": { "produits_produits": ["ordre", "dossier_local"], "produits_composants": ["dossier_local"] },
-  "identity": { "produits_environnements": ["url_base"] },
-  "conflicts": "ask",
-  "sources": "many"
-}
-```
-
-- `sources: "many"` : le module se relie à plusieurs dépôts ; chaque ligne racine porte sa source (colonne réservée `_source`) ; un même identifiant dans deux sources est un conflit ; déplacer une ligne entre sources est une action de la fiche du module.
-- `documents` : une ligne racine et ses enfants vont dans un même fichier (un produit et ses composants), comme une déclaration partagée.
-- `personal` : colonnes jamais publiées ni écrasées ; une ligne reçue prend les valeurs par défaut.
-- `identity` : colonnes qui rapprochent une ligne locale d’une ligne reçue au lieu de la dupliquer.
-- `conflicts: "ask"` : un écart des deux côtés attend un choix (« Ma version », « La version de l’équipe ») dans un aperçu de la fiche du module ; une suppression locale à venir attend une confirmation ; « Récupérer » et « Publier » n’agissent que dans leur sens.
-- **Option de compatibilité `.oneapp/`** : `"layout": "oneapp"` écrit et lit les fichiers au format des déclarations de OneApp (`.oneapp/products/<id>.json`…). Seulement si l’utilisateur veut une cohabitation (question de [plan.md](plan.md)).
-
-**Fichiers** : `src-tauri/src/team_sync.rs` (découpé), `src/features/teamSync/`, SDK.md § 17, AGENTS.md.
-
-## C8 · Moteur d’agents natif (Rust)
-
-**Famille** : agents, natif Rust, sécurité. **Taille** : L. **Ordre** : 7.
-
-**Justification** : OneApp a accepté l’ADR 0022 (pilotage natif depuis Rust) et proposé l’ADR 0023 (bibliothèque commune `agents-kit`, que la session `agents-lib-analysis` décrit dans `docs/agents-lib/analyse.md` de OneApp). Alfred parle encore les protocoles dans l’interface (`agents.rs` : « Le protocole de chaque CLI est parlé côté interface, ligne à ligne »), lance `opencode acp` et passe le jeton MCP de Claude en argument.
-
-**API proposée** (commandes fermées, comme OneApp) : `agent_session_start({ harness, model, effort, folder, instructions, tools, autonomy })`, `agent_session_send`, `agent_session_respond` (autorisation, question), `agent_session_cancel`, `agent_session_close`, `agent_read_history`, `agent_list_models` ; événements typés par tour (`seq` durable, permissions à options typées, `files-changed`), sur un `Channel` par tour.
-
-- OpenCode : `opencode serve` privé (mot de passe aléatoire en environnement, appairage, SSE, rattrapage par `session.message.list`), une demande envoyée après la fin de la précédente ; reprendre `src-tauri/src/agents/opencode/` de OneApp et son générateur.
-- Codex : `codex app-server` piloté depuis Rust (types générés du schéma JSON, prototype `prototypes/agent-protocols`).
-- Claude Code : `claude -p --input-format stream-json` ; jeton MCP par variable d’environnement (`Bearer ${ALFRED_MCP_TOKEN}` dans `--mcp-config`, prouvé par le prototype) au lieu de la valeur en argument.
-- Décision à prendre : écrire ce moteur dans Alfred, ou dans la bibliothèque commune `agents-kit` de l’ADR 0023 de OneApp, partagée par les deux applications pendant la transition (chantier desktop-kit en pause). Voir les questions.
-
-**Fichiers** : `src-tauri/src/agents.rs` (devient un dossier `agents/`), `src/features/agent/harness/*` (deviennent des adaptateurs d’affichage), `src/features/agent/store.ts`.
-
-## C9 · Agents de travail sur un dossier, outils limités, réglages, confidentialité
-
-**Famille** : agents. **Taille** : L. **Ordre** : 8.
-
-**Justification** : un agent de OneApp travaille dans le dossier d’un produit ou d’un composant, avec les outils de OneApp limités à ce produit, les consignes et skills du produit et de sa source, et une confidentialité choisie par demande.
-
-**API proposée** :
+**API proposée.**
 
 ```ts
-agents.start({
-  title: "Corriger la CI d’Alpha",
-  folder: "<id d’un dossier accordé>", path?: "alpha-api",   // C4
-  scope: { module: "produits", entry: "alpha", component?: "api" },
-  instructions?: string,                                     // consignes du produit et de sa source
-  skills?: string[],                                         // sélection, sinon tous
-  tools?: string[],                                          // fonctions "module/fonction" offertes
-  sensitivity?: "normal" | "secret",
-  message: string, context?: unknown,                        // contexte de page, fichier joint à cet agent seul
-}): Promise<{ conversationId }>;
+menu.setZone(options: { title?: string; order?: "page" | "user"; visible?: number }): Promise<void>;
+menu.setEntries(entries: MenuEntry[]): Promise<void>;   // remplace la liste de la zone
+menu.updateEntry(id: string, patch: Partial<MenuEntry>): Promise<void>;
+menu.removeEntry(id: string): Promise<void>;
+useMenuEntryAction(handler: (event: { entry: string; action: string }) => void): void;
+
+interface MenuEntry {
+  id: string;
+  label: string;
+  icon?: string;
+  color?: "steel" | "blue" | "violet" | "pink" | "red" | "orange" | "green" | "teal";
+  status?: "ok" | "warning" | "error" | "running" | "waiting";
+  badge?: number;
+  page?: string;            // autre page du module ouverte au clic, sinon celle-ci
+  actions?: Array<{ id: string; label: string; icon: string }>;
+}
+// PageContext gagne : entry: { id: string; label: string } | null
 ```
 
-- La conversation apparaît dans la page Agent et dans la barre de gauche (C5c), rattachée à son entrée (`scope`).
-- **Outils limités** : les fonctions `tool: true` reçoivent `scope` en entrée imposée (`input.produit = "alpha"`, non modifiable par le modèle) ; une fonction peut déclarer `scope: "entry"` pour n’être offerte qu’aux agents d’une entrée. C’est le filtrage par rôle du MCP de OneApp, sans second serveur.
-- **Autonomie** : un niveau « dossier du produit » (modifications et commandes dans le dossier sans carte d’accord, le reste demandé), à côté des niveaux existants ; l’accès complet reste un choix explicite.
-- **Confidentialité** : Réglages › Agent marque des modèles « Autorisé pour les demandes confidentielles » ; un cadenas dans la saisie et sur `agents.start` ; refus de lancer ou de poursuivre un agent dont le modèle n’est pas marqué, y compris quand il reçoit le résultat d’une demande confidentielle.
-- **Propositions** : `agents.propose({ … })` depuis un agent ou une fonction : une carte « Lancer l’agent / Ignorer » dans la conversation, rien ne part sans clic.
-- **Références `#`** : un module déclare une source de références (`references: { function: "chercher" }`) que la saisie de l’agent propose après `#` (ticket, produit, composant).
-- Simultanéité et plafond d’agents réglables (Alfred plafonne aujourd’hui à 32 sessions en dur, `MAX_SESSIONS`).
+`menu.*` est permis à une fonction, qui nomme la page (`{ page: "produits" }`), comme `badge`. Une copie de page de l’utilisateur (« liste@recette ») a sa propre zone.
 
-**Fichiers** : `src/features/agent/`, `src-tauri/src/mcp.rs` (entrées imposées, filtrage), `src-tauri/src/agent_workspace.rs`, `src/features/agentSettings/`, `src/sdk/` (`agents`), SDK.md § 7, AGENTS.md.
+**Fichiers touchés.** `src/shell/AppShell.tsx`, `src/features/navigation/`, `src-tauri/src/menu.rs`, `src/sdk/`, `src/features/agent/ConversationList.tsx` (zone de la page Agent), `DESIGN.md` (zone et séparateur), `docs/espace/SDK.md` § 8, `docs/espace/AGENTS.md`. Le prototype de la session `agents-nav` de OneApp (`SidebarSection`, `SidebarRow`, actions au survol) se reprend pour le rendu.
 
-## C10 · Suivis et automatisations d’agents
+## S2 · Dossiers du poste et Git local
 
-**Famille** : agents. **Taille** : M. **Ordre** : 9.
+**Taille** : M. **Ordre** : 2. **Dépend de** : rien.
 
-**Justification** : OneApp relance un agent à la fin d’une exécution (ADR 0018) et lance des agents sur déclencheur (ADR 0009, 0011). Alfred a déjà les briques (événements entre modules livrés même après fermeture, planifications, webhooks, fonctions en script) mais pas l’action « parler à un agent ».
+**Ce qui manque.** Une page n’a pas de disque, et rien ne lui permet de choisir un dossier du poste. Une fonction peut lancer `commands.run("git", …)` ou un script, mais toujours depuis le dossier du module, sans notion de dossier accordé : rien ne borne ce qu’elle lit, rien ne le montre à l’utilisateur.
 
-**API proposée** :
+**Pourquoi OneApp en a besoin.** L’espace local d’un produit (PRD-06), Git dans la vue produit (VUE-04, VUE-07), les commandes locales (PRD-13), la documentation, le change log et l’architecture dans les dépôts (DOC-02, DOC-03, DOC-04, DOC-08), les spécifications (SPE-01 à SPE-03, SPE-05 à SPE-07), le compose (PTN-04). Et, depuis la décision sur le partage, **toute la synchronisation d’équipe** : les dépôts `.oneapp/` sont des dossiers Git du poste que le module lit, écrit, tire et pousse (SYN-01, SYN-02, SYN-05 à SYN-09).
 
-1. **Suivi** : `agents.watch({ conversationId, event: "ci/execution-terminee", match: { execution: "412" }, timeoutMinutes: 60 })` ; offert aux agents comme outil `watch_event` / `cancel_watch`. À la livraison de l’événement (ou à l’échéance), Alfred dépose un message dans la conversation avec le contenu de l’événement et relance l’agent ; le suivi survit à la fermeture ; archiver arrête ses suivis ; une ligne « Relance à la fin de … · au plus tard … » au-dessus de la saisie, avec sa croix.
-2. **Automatisation** : un module abonné à un événement peut rendre `{ agent: { start | send, … } }` au lieu de traiter lui-même ; ou plus simplement une fonction appelle `agents.start` / `agents.send` (C9). Le module `automatisations` porte les règles (déclencheur, périmètre, consigne, confidentialité, confirmation) et leur journal ; la plateforme ajoute seulement : la confirmation avant lancement (notification persistante « Lancer », C5b), la règle « une fois par occurrence observée » (identifiant d’occurrence dans `events.publish`, dédoublonné), et la proposition d’une automatisation par un agent (enregistrée inactive).
+**API proposée.**
 
-**Fichiers** : `src-tauri/src/module_events.rs`, `src/features/agent/store.ts`, `src-tauri/src/mcp.rs`, `src/features/automations/`.
+```ts
+folders.pick(options?: { title?: string }): Promise<Folder | null>;    // page, sur un geste
+folders.list(): Promise<Folder[]>;                                   // dossiers accordés au module
+folders.readText(folder: string, path: string): Promise<string>;
+folders.writeText(folder: string, path: string, text: string): Promise<void>;  // écriture atomique
+folders.readFile(folder: string, path: string): Promise<{ data: string }>;     // base64, 20 Mo
+folders.entries(folder: string, path?: string, options?: { glob?: string }): Promise<Entry[]>;
+folders.mkdir(folder: string, path: string): Promise<void>;
+folders.remove(folder: string, path: string): Promise<void>;          // vers la corbeille du système
+interface Folder { id: string; path: string; label: string }
 
-## C11 · Délégation (orchestrateur), en option
+git.status(folder, path?); git.branches(folder, path?); git.tags(folder, path?);
+git.log(folder, { path?, since?, limit? }); git.diff(folder, { path?, from?, to? }); git.show(folder, ref, file);
+git.fetch(folder); git.pull(folder); git.push(folder); git.commit(folder, { message, paths });
+git.switch(folder, branch); git.clone(url, folder, path);
 
-**Famille** : agents. **Taille** : L. **Ordre** : après C10, seulement sur décision.
+terminal.open(options: { folder: string; path?: string; command?: string }): Promise<void>;
+// commands.run gagne l’option cwd: { folder, path? }
+```
 
-OneApp a remplacé l’Assistant global par des agents autonomes (ADR 0010) ; la délégation n’y sert plus qu’à relire l’historique. La porter n’a de sens que si l’utilisateur veut qu’un agent répartisse le travail entre plusieurs produits. Proposition minimale : un outil `delegate` réservé à une conversation marquée coordinatrice (tâches, cible `scope`, dépendances acycliques, contrat de retour JSON `status`, `summary`, `artifacts`, `questions`, rapports par fichier en lecture paginée), sur la base de C9.
+- Un dossier se choisit par `folders.pick` (ou s’accorde d’avance par l’agent avec `grant_access`, `folder`) ; l’accord est gardé pour le module, visible et révocable dans sa fiche.
+- Chemins relatifs confinés au dossier : ni `..`, ni lien symbolique qui en sort.
+- Git suit les règles du git de l’espace : aucun crochet, refus d’un `.git/config` qui lancerait un programme, proxy et certificats du système (`git_network.rs`).
+- Les fonctions en script reçoivent les mêmes méthodes par le pont du SDK.
 
-## C12 · Parité Windows
+**Fichiers touchés.** Nouveau `src-tauri/src/folders.rs`, `src-tauri/src/git.rs` (fonctions de dépôt à part de celles de l’espace), `src-tauri/src/commands.rs`, `src-tauri/src/permissions.rs`, `src-tauri/src/script_sdk.rs`, `src/sdk/`, fiche du module (dossiers accordés), SDK.md.
 
-**Famille** : Windows. **Taille** : M, réparti sur les autres chantiers. **Ordre** : en continu.
+## S3 · Agents lancés par une page : dossier, mode et outils imposés
 
-À vérifier ou faire, chantier par chantier :
+**Taille** : L. **Ordre** : 3. **Dépend de** : S2 (dossier accordé). S9 n’est pas requis : les modes se traduisent dans les options des harnais actuels.
 
-- **Coffre** : Gestionnaire d’identifiants Windows (limite de taille par entrée : déjà découpée en parts UTF-16 dans `vault.rs`) ; jetons de session de C1 compris.
-- **CLI d’agents** : recherche des `.cmd` et `.ps1` des CLI installés par npm (défaut relevé chez OneApp par l’analyse de l’ADR 0023 : recherche dans le PATH seul) ; arrêt de tout l’arbre de processus (`process_tree.rs`, `windows_process_tree.rs` de OneApp).
-- **PowerShell** : Windows PowerShell 5.1 en STA pour le COM d’Outlook (absences, brouillon avec pièce jointe) ; accents (`[Console]::OutputEncoding`) ; le module `outlook` le fait déjà.
-- **Git** : Git Bash (jamais celui de WSL) pour les scripts `bash` ; performance de `git status` sur de gros dépôts (`docs/git-performance.md` de OneApp) pour C4.
-- **Chemins** : lecteurs, partages UNC, chemins longs dans les dossiers accordés (C4) ; refus des chemins relatifs et de `~` comme dans l’ADR 0014 de OneApp.
-- **Affichage** : échelle 100, 125, 150 %, contraste élevé (`forced-colors`) des nouveaux composants (C6) ; fenêtres secondaires (C5b) et mémorisation de leur taille.
-- **Réseau d’entreprise** : proxy et magasin de certificats Windows pour les clients (C3, point 5).
-- **Terminal du poste** (C4, point 5) : Windows Terminal, à défaut `conhost`, ou Git Bash.
-- **Outlook sur macOS** : le COM n’existe pas ; les absences n’y viennent que d’un agenda publié (ICS, C1 point 3).
+**Ce qui manque.** `ai.startAgent` lance une conversation bornée au module de la page, en autonomie stricte (chaque action demandée), sans dossier de travail ni outils autres que les fonctions du module. Un agent de OneApp travaille dans le dossier d’un produit, avec les outils limités à ce produit et une politique d’autorisation choisie.
 
-## C13 · MCP ouvert aux clients externes, en option
+**Pourquoi OneApp en a besoin.** Agents sur un produit ou un composant (AGT-01), outils de OneApp donnés aux agents (AGT-07, désormais des fonctions d’Alfred), demandes confidentielles (AGT-05), demandes depuis les pages et « Envoyer à un agent » (AGT-15, TIC-07), propositions d’agent (AGT-11), modifications de l’agent dans son dossier (AGT-16).
 
-**Famille** : agents, sécurité. **Taille** : S.
+**Comportement proposé.**
 
-OneApp permet d’associer un client MCP externe (Réglages › MCP, credential remis une fois, révocable). Alfred sert son MCP à ses propres conversations. Ajouter une association externe n’est utile que si l’utilisateur lance encore Codex ou Claude hors d’Alfred sur ses produits.
+- **Dossier imposé** : la page donne un dossier accordé (S2) et un sous-chemin ; l’agent y démarre et y travaille. Sans dossier, il reste dans l’espace, comme aujourd’hui.
+- **Mode imposé** : la page choisit un mode parmi une liste fermée ; Alfred le traduit pour chaque harnais. Proposition :
+
+  | Mode | Lecture | Écriture de fichiers | Commandes | Hors du dossier | Demandes |
+  |---|---|---|---|---|---|
+  | `strict` (actuel) | oui | demandée | demandée | demandé | chaque action |
+  | `lecture` | oui | non | lecture seule | non | aucune ; le reste est refusé |
+  | `ecriture` | oui | dans le dossier | demandées | demandé | commandes et hors dossier |
+  | `dossier` | oui | dans le dossier | dans le dossier | demandé | seulement hors du dossier |
+  | `complet` | oui | partout | partout | oui | **aucune** |
+
+  Traduction indicative : Codex `sandbox` (`read-only`, `workspace-write`, `danger-full-access`) et `approvalPolicy` (`on-request`, `never`) ; Claude Code `--permission-mode` (`plan`, `acceptEdits`, `bypassPermissions`) ; OpenCode `permission` (`edit`, `bash`, `external_directory` à `ask`, `allow` ou `deny`).
+- **Accord** : la première fois, l’utilisateur accorde à la page le droit de lancer un agent **dans ce mode et ce dossier** ; la carte d’accord nomme les deux. `complet` exige un accord explicite à part, révocable dans la fiche du module ; l’agent d’Alfred ne peut pas l’accorder d’avance (`grant_access` le refuse).
+- **Outils imposés** : la page offre des fonctions (`"module/fonction"`) avec des **entrées imposées** que le modèle ne peut pas changer (`{ produit: "alpha" }`) : l’agent ne voit que son périmètre. C’est le filtrage par rôle de OneApp, sans serveur MCP de plus.
+- **Consignes et skills** : la page passe des consignes (celles du produit et de sa source) et une sélection de skills (les autres sont masqués à l’agent).
+- **Modèle et confidentialité** : la page peut imposer un harnais et un modèle, ou exiger un modèle « habilité aux demandes confidentielles » (marqué dans Réglages › Agent) ; Alfred refuse de lancer ou de poursuivre l’agent sinon, y compris quand il reçoit le résultat d’une demande confidentielle.
+- **Contexte privé** : `context` peut être un fichier joint à cet agent seul (contexte d’une page, détail d’un ticket), jamais recopié dans le fil visible.
+- **Propositions** : `ai.proposeAgent(options)` affiche une carte « Lancer l’agent / Ignorer » dans la conversation d’où vient la proposition ; rien ne part sans clic.
+- La conversation apparaît dans la page Agent et dans sa zone du menu (S1) ; la page qui l’a lancée peut aussi créer une entrée pour elle dans sa propre zone.
+- La simultanéité et le plafond de sessions deviennent réglables (`MAX_SESSIONS` vaut 32 en dur dans `agents.rs`).
+
+**API proposée.**
+
+```ts
+ai.startAgent<Result>(options: {
+  instruction: string;
+  context?: unknown;
+  title?: string;
+  folder?: { id: string; path?: string };                          // S2
+  mode?: "strict" | "lecture" | "ecriture" | "dossier" | "complet"; // "strict" par défaut
+  functions?: Array<string | { name: string; input: Record<string, unknown> }>; // entrées imposées
+  instructions?: string;
+  skills?: string[];
+  harness?: "claude" | "codex" | "opencode";
+  model?: string;
+  confidential?: boolean;
+  resultSchema?: Record<string, unknown>;
+}): Promise<{ conversationId: string; message: string; result?: Result }>;
+ai.sendToAgent(conversationId: string, message: string): Promise<void>;
+ai.proposeAgent(options: Omit<Parameters<typeof ai.startAgent>[0], "resultSchema"> & { reason: string }): Promise<void>;
+```
+
+**Fichiers touchés.** `src/features/agent/pageAgent.tsx`, `src/features/agent/store.ts`, `src/features/agent/harness/*` (traduction des modes), `src-tauri/src/agents.rs` (dossier de départ, options de permission), `src-tauri/src/mcp.rs` (entrées imposées des fonctions offertes, sans nouvel outil), `src-tauri/src/permissions.rs`, `src/features/agentSettings/` (modèles habilités, simultanéité), SDK.md § 7, AGENTS.md (« Conversation lancée par une page »).
+
+## S4 · Secrets scellés et jetons émis par les services
+
+**Taille** : L. **Ordre** : 4. **Dépend de** : rien ; `secrets.writeEnvFile` utilise un dossier de S2.
+
+**Ce qui manque.** La garantie d’Alfred tient pour les jetons fixes, OAuth 2 et `clientCredentials` : Rust pose l’authentification, aucune page n’atteint un service, un secret renvoyé en écho est effacé (`redact`). Elle ne tient pas pour deux cas :
+
+1. un **jeton rendu par une connexion par identifiant** (Portainer `/api/auth`, OpenBao userpass, LDAP ou OIDC) : la fonction devrait poster l’identifiant et lirait le jeton dans la réponse ;
+2. les **valeurs de secrets** rendues par un service (OpenBao KV) : elles arrivent en clair dans la fonction.
+
+OneApp les traite par des références opaques remplacées nativement, `reveal_secret_value` et `save_environment_file` (`src-tauri/src/secret_references.rs`, `commands/secret_values.rs`).
+
+**Pourquoi OneApp en a besoin.** OpenBao (SEC-01 à SEC-06, VUE-11), Portainer par identifiant (PTN-01), commandes locales avec `.env` (PRD-13), agenda publié dont l’adresse porte un jeton (PRJ-06).
+
+**API proposée.**
+
+- **Méthode d’authentification `session`** : Alfred fait la requête de connexion, garde le jeton au trousseau, le pose sur chaque requête, le renouvelle sur 401 ou à l’expiration ; le jeton est ajouté à ce que `redact` efface.
+  ```json
+  { "id": "motdepasse", "label": "Identifiant et mot de passe", "type": "session",
+    "login": { "method": "POST", "path": "/api/auth",
+               "body": { "username": "{username}", "password": "{password}" }, "token": "jwt" },
+    "apply": { "header": "Authorization", "prefix": "Bearer " } }
+  ```
+  OpenBao userpass : `"path": "/v1/auth/userpass/login/{username}"`, `"token": "auth.client_token"`, `"expiresIn": "auth.lease_duration"`, `"apply": { "header": "X-Vault-Token" }`. OIDC : même méthode avec un retour au navigateur par la boucle locale d’`oauth.rs`.
+- **Réponses scellées** : le client déclare les champs secrets d’une réponse (`"sealed": [{ "path": "/v1/{mount}/data/**", "fields": ["data.data.*"] }]`) ; Alfred les remplace par une référence opaque (`alfred-secret-ref:v1:<nonce>`), valable pour ce compte, ce module et cette session, 5 minutes. Elle ne se résout que par :
+  - `secrets.reveal(ref)` : page ou panneau, sur un geste de l’utilisateur, journalisé sans la valeur ;
+  - `secrets.writeEnvFile({ folder, path, entries: [{ name, ref }] })` : `.env` écrit dans un dossier accordé (S2) ;
+  - `secrets.copy({ from: ref, instance, path, field })` : écrit la valeur vers un autre compte du même service par une requête native.
+  Une référence placée dans un corps ou un paramètre ordinaire n’est **jamais** substituée.
+- **Méthode `secretUrl`** : toute l’adresse du compte est au trousseau (agenda ICS publié).
+
+**Fichiers touchés.** `src-tauri/src/clients.rs`, `src-tauri/src/vault.rs`, nouveau `src-tauri/src/secret_refs.rs`, `src/sdk/`, onboarding (champs identifiant et mot de passe de la méthode `session`), SDK.md § 6, AGENTS.md.
+
+## S5 · Paramètres non secrets d’un compte
+
+**Taille** : S. **Ordre** : 5. **Dépend de** : rien.
+
+**Ce qui manque.** Un compte Alfred a une adresse, une méthode et un secret. OneApp garde en plus, par connexion, des réglages non secrets que les adresses et les requêtes utilisent.
+
+**Pourquoi OneApp en a besoin.** Royaume Keycloak dans les adresses PKCE (KC-01), montage KV et rôle OpenBao (SEC-01), endpoint Portainer (PTN-01), saisie d’une connexion complète (PRD-09).
+
+**API proposée.** `methods[].params` déclare des champs saisis avec le compte (`{ "id": "realm", "label": "Royaume", "example": "equipe" }`) ; `{realm}` se substitue dans `authorizationUrl`, `tokenUrl` et en tête du `path` d’une requête ; `client(id, { instance }).params()` les rend aux fonctions. L’onboarding les demande dans l’assistant ; les modifier remet le compte « à vérifier ». Vérifier au passage le renouvellement d’un jeton Keycloak hors ligne (`offline_access`).
+
+Le partage des comptes avec l’équipe n’est plus nécessaire : les adresses partagées se lisent dans les fichiers `.oneapp/` (S2) et chacun ressaisit son jeton.
+
+**Fichiers touchés.** `src-tauri/src/clients.rs`, `src-tauri/src/oauth.rs`, `src/features/clients/`, onboarding, SDK.md § 6.
+
+## S6 · Transport des clients : binaire, multipart, flux, WebSocket
+
+**Taille** : L. **Ordre** : 6. **Dépend de** : rien.
+
+**Ce qui manque.** `perform` (`clients.rs`) lit la réponse en texte (`from_utf8_lossy`), 20 Mo et 60 secondes au plus ; pas d’envoi de fichier, pas de connexion longue.
+
+**Pourquoi OneApp en a besoin.** Téléchargement d’artefacts (VUE-08), pièces jointes en lecture et en envoi (TIC-06), images de Confluence (DOC-01), journaux Docker multiplexés et suivis en direct (PTN-02), console d’exec Portainer en WebSocket (PTN-03).
+
+**API proposée.**
+
+- `client(id).download(path, { name, query? })` → `FileInfo` : le corps va en flux dans les fichiers du module (jusqu’à 2 Go), avec son SHA-256, sans passer par la fonction.
+- `request({ …, responseType: "base64" })` pour un petit binaire (5 Mo au plus).
+- Corps multipart : `body: { multipart: [{ name: "file", file: "<id d’un fichier du module>" }, { name: "comment", value: "…" }] }`.
+- **Canaux** : une fonction du connecteur ouvre un flux (`client(id).stream(path)`, SSE ou réponse longue) ou un WebSocket (`client(id).socket(path)`) et rend l’identifiant du canal ; la page lit et écrit par `channels.read(id, { after })`, `channels.write(id, text)`, `channels.close(id)`, sans jamais joindre le client. Un canal appartient au module, se ferme avec le cadre de la page ou après 10 minutes sans lecture ; 64 Kio par écriture.
+- Vérifier que les clients passent par le proxy et le magasin de certificats du système, comme git le fait déjà (`git_network.rs`) ; non vérifié dans cette étude.
+
+**Fichiers touchés.** `src-tauri/src/clients.rs`, `src-tauri/src/module_files.rs`, nouveau `src-tauri/src/channels.rs`, `src-tauri/src/script_sdk.rs`, `src/sdk/`, SDK.md § 6.
+
+## S7 · Notifications à actions, fenêtres paramétrées, relevés rapides
+
+**Taille** : M. **Ordre** : 7. **Dépend de** : rien.
+
+**Ce qui manque.**
+
+- `shell.notify` n’a ni action ni notification persistante.
+- `shell.openWindow` ouvre une page sans paramètre et ne sait pas ouvrir la page Agent.
+- La plus petite planification est d’une minute.
+
+**Pourquoi OneApp en a besoin.** Fin d’exécution CI avec « Journal » (CI-04), centre de notifications à actions (GEN-01), sonde de 10 s, 3 s pendant une exécution (CI-05), fenêtres de journal CI, de journaux et de console de conteneur, de spécifications ouvertes sur l’élément précis (CI-07, PTN-02, PTN-05, SPE-08), fenêtre Agents détachée (AGT-13). Confirmation avant le lancement d’une automatisation (avec S10).
+
+**API proposée.**
+
+- `shell.notify({ …, persistent?: boolean, actions?: [{ label, navigate?: "module/page", entry?: string, window?: { page, params }, function?: { id, input } }] })` ; permis à une fonction planifiée.
+- `shell.openWindow(reference, { params, key })` : la fenêtre lit `usePageContext().params` ; la même `key` ramène la fenêtre existante. `shell.openWindow("agent", { params: { conversation } })` ouvre la page Agent seule dans sa fenêtre, le moteur restant dans la fenêtre principale.
+- `declare_schedule` accepte `everySeconds` (au moins 5) ; une fonction planifiée peut rendre `{ nextInSeconds }` pour se rapprocher pendant une exécution et s’espacer au repos.
+
+**Fichiers touchés.** `src/shell/notifications.ts`, `src/shell/NotificationCenter.tsx`, `src-tauri/src/system_notifications.rs`, `src-tauri/src/page_windows.rs`, `src/shell/PageWindow.tsx`, `src-tauri/src/schedules.rs`, SDK.md § 8, AGENTS.md.
+
+## S8 · Composants `@alfred/ui` manquants
+
+**Taille** : L. **Ordre** : 8. **Dépend de** : rien.
+
+**Ce qui manque.** La règle 4 d’AGENTS.md interdit tout style propre ; une librairie ne dessine que son propre contenu. Plusieurs surfaces de OneApp n’ont pas de composant dans `src/ui/components/`.
+
+**Pourquoi OneApp en a besoin, et composant proposé.**
+
+| Composant | Fonctions | Reprend de OneApp |
+|---|---|---|
+| `StatusCardGrid`, `StatusCard` | VUE-01 | `ComponentCard.tsx` |
+| `Board` (kanban, glisser au clavier et à la souris) | PRJ-01 | `ProjectKanban.tsx`, `ReorderHandle.tsx` |
+| `Timeline` (planning, frise d’activité) | PRJ-04, VUE-13 | `ProjectPlanning.tsx`, `HistoryTimeline.tsx` |
+| `TreeView` | KC-02, SEC-04 | `KeycloakGroupTreePane.tsx`, `OpenBaoSecretTree.tsx` |
+| `LogViewer` (niveaux et compteurs, recherche, suivi, fenêtrage des longues sorties) | CI-07, PTN-02 | `src/components/logs/*`, `useWindowedList.ts` |
+| `Terminal` (enveloppe de `@xterm/xterm`) | PTN-03 | `TerminalEmulator.tsx` |
+| `MarkdownEditor` | DOC-02, DOC-04 | `MarkdownEditor.tsx` |
+| `DiffView` | SPE-07 | `SpecificationGitDiffDialog.tsx` |
+| `Matrix` (mode de `DataTable` : cases d’état cliquables, en-têtes figés) ; panneau dans une modale | SEC-03 | `ComponentSecretsDialog.tsx`, `AccessOverviewTable.tsx` |
+
+**Fichiers touchés.** `src/ui/components/`, `src/ui/index.ts`, `DESIGN.md` § 5, `src-tauri/src/design_lint.rs`.
+
+## S10 · Suivis : relancer un agent sur un événement
+
+**Taille** : M. **Ordre** : 9. **Dépend de** : S3 (`ai.sendToAgent`), S7 (confirmation par notification).
+
+**Ce qui manque.** Les événements entre modules sont déjà livrés après coup, même après une fermeture ; mais rien ne relie un événement à une conversation d’agent.
+
+**Pourquoi OneApp en a besoin.** Relance d’un agent à la fin d’une exécution CI ou d’une automatisation (AGT-08, ADR 0018) ; automatisations qui lancent un agent ou lui parlent, avec confirmation (AGT-09).
+
+**API proposée.**
+
+- `ai.watch({ conversationId, event: "module/evenement", match?: Record<string, unknown>, timeoutMinutes })` → `{ id }` ; `ai.cancelWatch(id)`. Offert à l’agent comme fonction de la plateforme (`attendre-evenement`, `annuler-attente`). À la livraison (ou à l’échéance), Alfred dépose un message avec le contenu de l’événement dans la conversation et la relance. Le suivi survit à la fermeture ; archiver la conversation arrête ses suivis ; une ligne « Relance à la fin de … · au plus tard … » au-dessus de la saisie, avec sa croix.
+- `events.publish(event, payload, { occurrence })` : un identifiant d’occurrence dédoublonné, pour la règle « une fois par occurrence observée ».
+- Le reste des automatisations (règles, périmètre, journal) appartient à un module, qui appelle `ai.startAgent` ou `ai.sendToAgent` depuis une fonction abonnée.
+
+**Fichiers touchés.** `src-tauri/src/module_events.rs`, `src/features/agent/store.ts`, `src/features/agent/Composer.tsx` (ligne de relance), `src-tauri/src/mcp.rs` (deux fonctions de la plateforme offertes aux agents, sans outil MCP de plus pour les modules).
+
+## S11 · Délégation entre agents
+
+**Taille** : L. **Ordre** : 10. **Dépend de** : S3, S10.
+
+**Ce qui manque.** Une conversation d’Alfred ne peut pas confier une partie de son travail à d’autres agents et suivre leurs résultats.
+
+**Pourquoi OneApp en a besoin.** L’orchestrateur de OneApp (AGT-04, `docs/orchestrateur-global.md`) : à porter, décision de l’utilisateur.
+
+**Comportement proposé.**
+
+- Une conversation **coordinatrice** (marquée par l’utilisateur, ou lancée par une page avec `coordinator: true`) reçoit les fonctions de la plateforme `deleguer`, `etat-des-taches`, `relancer-tache`, `lire-rapport`.
+- `deleguer` reçoit de 1 à 50 tâches : objectif, cible (dossier et mode de S3, entrées imposées des fonctions), harnais et modèle parmi ceux autorisés, dépendances acycliques ; le lot est validé en entier avant tout lancement ; un `requestId` rend la même réponse si la demande est répétée.
+- Chaque agent délégué finit par un **contrat de retour** : `status` (`success`, `partial`, `failed`, `needs_information`, `cancelled`), `summary` (600 caractères), `artifacts` (chemins relatifs vérifiés dans son dossier), `questions` (pour la coordinatrice ou pour l’utilisateur). Le rapport complet est rangé à part et lu par pages ; les dépendants attendent un succès.
+- Les délégués apparaissent sous leur coordinatrice dans la zone Agents du menu (S1) ; un retour se replie dans le fil de la coordinatrice avec « Voir l’agent » ; l’utilisateur peut reprendre la main sur un délégué ; arrêter la coordinatrice arrête ses délégués.
+- Les délégués n’ont pas `deleguer` ; la confidentialité de S3 s’applique à toute la chaîne.
+
+**Fichiers touchés.** `src/features/agent/store.ts`, `src/features/agent/model.ts`, `src/features/agent/Transcript.tsx`, nouveau `src/features/agent/delegation.ts`, `src-tauri/src/mcp.rs`, nouveau `src-tauri/src/agent_reports.rs`.
+
+## S9 · Pilotage des agents depuis Rust
+
+**Taille** : L, plus un correctif S à faire tout de suite. **Ordre** : 11 (le correctif : dès maintenant). **Dépend de** : rien ; de préférence après S3 pour ne pas refaire la traduction des modes.
+
+**Ce qui manque.** Alfred parle les protocoles des harnais dans l’interface (`agents.rs` : « Le protocole de chaque CLI est parlé côté interface ») et lance `opencode acp` ; OneApp a accepté l’ADR 0022 (pilotage depuis Rust, `opencode serve`, mot de passe, appairage et jeton restant dans Rust).
+
+**Correctif de sécurité (S, immédiat).** Pour Claude Code, le jeton du serveur local d’Alfred est passé en clair dans l’argument `--mcp-config` (`src-tauri/src/agents.rs`, lignes 314 à 316), lisible par tout processus de l’utilisateur. Le passer par une variable d’environnement (`Bearer ${ALFRED_MCP_TOKEN}` dans `--mcp-config`, comme Codex et OpenCode, démontré par le prototype `agent-protocols` de OneApp).
+
+**Pourquoi OneApp en a besoin.** Pilotage des CLI (AGT-02) ; socle plus sûr pour les modes imposés (S3) et la délégation (S11).
+
+**API proposée.** Commandes fermées (`agent_session_start`, `send`, `respond`, `cancel`, `close`, `read_history`, `list_models`), événements typés par tour sur un `Channel` (`seq` durable, permissions à options typées, `files-changed`). OpenCode par `opencode serve` (reprendre `src-tauri/src/agents/opencode/` de OneApp et son générateur), Codex `app-server` et Claude `stream-json` depuis Rust. À trancher : l’écrire dans Alfred, ou dans la bibliothèque commune `agents-kit` (ADR 0023 de OneApp, chantier desktop-kit en pause).
+
+**Fichiers touchés.** `src-tauri/src/agents.rs` (devient `agents/`), `src/features/agent/harness/*`, `src/features/agent/store.ts`.
+
+## S12 · Parité Windows
+
+**Taille** : M, répartie sur les autres manques. **Ordre** : en continu.
+
+**Pourquoi OneApp en a besoin.** L’équipe travaille sur Windows (GEN-12, ADR 0014).
+
+À vérifier pour chaque manque :
+
+- **Trousseau** : Gestionnaire d’identifiants Windows (taille par entrée déjà découpée dans `vault.rs`), jetons de session de S4 compris.
+- **Agents** : `.cmd` et `.ps1` des CLI installés par npm ; arrêt de tout l’arbre de processus ; traduction des modes de S3 sous Windows (bac à sable de Codex).
+- **PowerShell 5.1 en STA** pour le COM d’Outlook ; accents.
+- **Git** : Git Bash (jamais celui de WSL), performance de `git status` sur de gros dépôts (S2).
+- **Chemins** : lecteurs, partages UNC, chemins longs dans les dossiers accordés (S2).
+- **Affichage** : échelle 100, 125 et 150 %, contraste élevé pour la zone du menu (S1), les composants (S8) et les fenêtres (S7).
+- **Réseau d’entreprise** : proxy et certificats du système pour les clients (S6).
+- **Terminal du poste** (S2) : Windows Terminal, à défaut Git Bash.
 
 ---
 
-## Ce qui n’a pas besoin d’être ajouté
+## Retiré de l’analyse précédente
 
-Pour ne pas surestimer le travail, ce qu’Alfred offre déjà et qui couvre OneApp :
+| Ancien chantier | Raison |
+|---|---|
+| Synchronisation d’équipe étendue | Le partage reste fondé sur des fichiers dans des dossiers ; il n’en reste que S2. |
+| Comptes partagés en équipe (moitié de l’ancien C2) | Adresses lues dans les fichiers `.oneapp/`, jetons ressaisis. |
+| MCP ouvert aux clients externes | Les fonctions d’Alfred remplacent le MCP. |
+| Reprise des jetons et des conversations de OneApp | Jetons ressaisis, conversations non gardées. |
+| Module de reprise, organisation des 25 modules, marketplace | Viendront plus tard, module par module. |
 
-- Panneau de droite unique, blocs repliables et déplaçables, disposition retenue.
-- Comptes à plusieurs instances, choix du compte par page et par onglet, onboarding guidé, test d’office, TLS non vérifié accepté par compte, OAuth 2 PKCE avec application publique.
-- Cache des lectures, tables comme cache, rechargement après écriture et après arrivée de données de l’équipe.
-- Historique des lignes et retour en arrière, sauvegardes quotidiennes et avant migration, restauration par module.
-- Événements entre modules livrés après coup, planifications, webhooks, tâches de fond, fonctions en script (PowerShell, bash, Python), `commands.run`.
-- `ai.oneShot` (appel unique), `ai.decide`, `ai.startAgent` limité au module, voix.
-- Documents PDF simples, CSV, Excel, extraction de texte ; librairies npm par module (PDF riche, diagrammes, Tiptap) dans le cadre de la règle 4.
-- Notifications dans Alfred et au système, compteurs sur les entrées du menu, palette, accueil, données d’exemple pour développer sans compte.
-- Le module `atlassian` couvre déjà l’essentiel de Jira, Bitbucket et Confluence ; `jenkins` les états, journaux et relances ; `outlook` la boîte et le COM.
+## Ce qu’Alfred offre déjà
+
+Panneau de droite unique avec blocs repliables et déplaçables ; comptes à plusieurs instances, choix du compte par page, onboarding guidé, test d’office, OAuth 2 PKCE ; cache des lectures ; historique des lignes et sauvegardes ; événements entre modules, planifications, webhooks, tâches de fond, fonctions en script ; `commands.run` ; `ai.oneShot`, `ai.decide`, `ai.startAgent` ; documents simples et librairies par module ; notifications, compteurs, palette, accueil ; données d’exemple ; fonctions offertes aux agents (`tool: true`).

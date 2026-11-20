@@ -4,6 +4,8 @@
 
 Chaque fonction porte un identifiant (`PRD-03`, `CI-07`…) repris dans [correspondance.md](correspondance.md). Les chemins sont relatifs au dépôt OneApp. Le vocabulaire suit `CONTEXT.md` de OneApp : *produit logiciel*, *composant logiciel*, *liaison*, *connexion*, *environnement*, *exécution*, *artefact*, *source de configuration partagée*, *déclaration partagée*, *agent*, *automatisation*, *suivi*.
 
+Décisions de l’utilisateur du 20 novembre 2026 qui touchent cet inventaire (statuts dans [correspondance.md](correspondance.md)) : le partage d’équipe (§ 12) reste fondé sur des fichiers dans des dossiers ; le serveur MCP de OneApp (AGT-07) est remplacé par les fonctions d’Alfred, sans association externe ; l’orchestrateur (AGT-04) est à porter ; les anciennes conversations d’agents ne sont pas gardées ; les jetons seront ressaisis dans le trousseau.
+
 Ordre de grandeur du code : 168 700 lignes TypeScript (`src/`), 50 200 lignes Rust (`src-tauri/src/`), 63 outils MCP, 23 ADR.
 
 ## Navigation générale de OneApp
