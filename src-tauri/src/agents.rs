@@ -20,6 +20,9 @@ const MAX_SESSIONS: usize = 32;
 /// Marqueur de la configuration OpenCode, remplacé par le vrai jeton au lancement : l’interface ne le connaît jamais.
 /// Il n’est jamais remplacé dans ce qui est écrit vers l’agent, qui peut contenir un texte venu d’une page.
 pub const TOKEN_PLACEHOLDER: &str = "__ALFRED_MCP_TOKEN__";
+/// Variable d’environnement qui porte le jeton du serveur local à l’agent ; seule sa référence figure dans les
+/// arguments et les configurations.
+pub const MCP_TOKEN_ENV: &str = "ALFRED_MCP_TOKEN";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -256,7 +259,7 @@ fn simple_value(name: &str, value: &str) -> AppResult<()> {
 
 fn claude_arguments(
     options: &ClaudeOptions,
-    mcp: Option<(&str, u16)>,
+    mcp_port: Option<u16>,
     prompt_file: Option<&Path>,
 ) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
@@ -307,11 +310,13 @@ fn claude_arguments(
     for dir in &options.add_dirs {
         args.extend(["--add-dir".to_string(), checked_dir(dir)?.to_string()]);
     }
-    if let Some((token, port)) = mcp {
+    if let Some(port) = mcp_port {
+        // Le jeton n’est jamais sur la ligne de commande, lisible par tout processus du poste : Claude Code résout
+        // `${ALFRED_MCP_TOKEN}` depuis son environnement, où `spawn` l’a placé.
         let config = json!({ "mcpServers": { "alfred": {
             "type": "http",
             "url": format!("http://127.0.0.1:{port}/mcp"),
-            "headers": { "Authorization": format!("Bearer {token}") },
+            "headers": { "Authorization": format!("Bearer ${{{MCP_TOKEN_ENV}}}") },
         }}});
         args.extend(["--mcp-config".to_string(), config.to_string()]);
     }
@@ -423,16 +428,15 @@ pub fn spawn(state: &Arc<AppState>, args: &Value, output: Output) -> AppResult<V
                 Some(prompt) if prompt.len() <= 200_000 => Some(write_prompt(state, &id, prompt)?),
                 _ => None,
             };
-            command.args(claude_arguments(
-                &options,
-                token.as_deref().map(|token| (token, server.port)),
-                prompt.as_deref(),
-            )?);
+            command.args(claude_arguments(&options, token.as_ref().map(|_| server.port), prompt.as_deref())?);
+            if let Some(token) = &token {
+                command.env(MCP_TOKEN_ENV, token);
+            }
         }
         Provider::Codex => {
             command.arg("app-server");
             if let Some(token) = &token {
-                command.env("ALFRED_MCP_TOKEN", token);
+                command.env(MCP_TOKEN_ENV, token);
             }
         }
         Provider::Opencode => {
@@ -653,16 +657,18 @@ mod tests {
                 resume: Some("7a0c1c1e-5b0e-4a51-9d0f-0a3b0c9a1f10".into()),
                 ..ClaudeOptions::default()
             },
-            Some(("jeton", 4242)),
+            Some(4242),
             None,
         )
         .unwrap();
         assert!(session.windows(2).any(|pair| pair == ["--permission-mode", "manual"]));
-        assert!(session.iter().any(|value| value.contains("http://127.0.0.1:4242/mcp") && value.contains("Bearer jeton")));
+        assert!(session
+            .iter()
+            .any(|value| value.contains("http://127.0.0.1:4242/mcp") && value.contains("Bearer ${ALFRED_MCP_TOKEN}")));
 
         let one_shot = claude_arguments(
             &ClaudeOptions { one_shot: true, json_schema: Some(json!({ "type": "object" })), ..ClaudeOptions::default() },
-            Some(("jeton", 4242)),
+            Some(4242),
             None,
         )
         .unwrap();
@@ -688,7 +694,7 @@ mod tests {
             ..ClaudeOptions::default()
         };
         let file = Path::new("/donnees/consignes/session.md");
-        let args = claude_arguments(&options, Some(("jeton", 4242)), Some(file)).unwrap();
+        let args = claude_arguments(&options, Some(4242), Some(file)).unwrap();
         assert!(args.windows(2).any(|pair| pair[0] == "--append-system-prompt-file" && pair[1] == file.to_string_lossy()));
         assert!(!args.iter().any(|value| value == "--append-system-prompt"));
         assert!(!args.iter().any(|value| value.contains('\n') || value.contains('\r')), "{args:?}");
