@@ -1,11 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { ModulesSettings } from "./ModulesSettings";
+import { useModulesSections } from "./ModulesSettings";
 import type { SplitPlan } from "./reorganize";
+import { renderSections } from "./settingsHarness";
 
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -136,65 +138,69 @@ function desk() {
   return calls;
 }
 
-const list = () => screen.getByRole("table", { name: /Modules de l.espace/ });
+const list = () => screen.getByRole("region", { name: "Modules installés" });
 
-function openModuleMenu(name: string) {
-  fireEvent.click(screen.getByRole("button", { name: `Actions du module ${name}` }));
+async function openModuleMenu(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const actions = screen.getByRole("group", { name: `Actions sur ${name}` });
+  await user.click(within(actions).getByRole("button", { name: "Plus d'actions" }));
 }
 
 beforeEach(() => useNotifications.getState().clear());
 
 describe("fusionner et scinder des modules", () => {
   it("fusionne un module local dans un autre, choisi parmi les modules locaux seulement", async () => {
+    const user = userEvent.setup();
     const calls = desk();
-    render(<ModulesSettings />);
+    renderSections(useModulesSections, "Modules");
     await waitFor(() => within(list()).getByText("Notes"));
 
-    openModuleMenu("Notes");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Fusionner avec…" }));
-    const dialog = screen.getByRole("dialog", { name: "Fusionner Notes" });
-    const target = within(dialog).getByRole("combobox", { name: "Module qui l’accueille" });
-    expect(within(target).queryByRole("option", { name: "Achats" })).toBeNull();
-    expect(within(target).getByRole("option", { name: "Ventes" })).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Fusionner" }));
+    await openModuleMenu(user, "Notes");
+    await user.click(await screen.findByRole("menuitem", { name: "Fusionner avec…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Fusionner Notes" });
+    await user.click(within(dialog).getByRole("button", { name: /Module qui l’accueille/ }));
+    const options = await screen.findByRole("listbox");
+    expect(within(options).queryByRole("option", { name: "Achats" })).toBeNull();
+    await user.click(within(options).getByRole("option", { name: "Ventes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Fusionner" }));
 
     await waitFor(() => expect(useNotifications.getState().items[0]?.title).toBe("Notes fusionné dans Ventes"));
     expect(calls).toContainEqual({ command: "modules.merge", args: { source: "notes", target: "ventes" } });
   });
 
   it("un module installé ne propose ni fusion ni scission", async () => {
+    const user = userEvent.setup();
     desk();
-    render(<ModulesSettings />);
+    renderSections(useModulesSections, "Modules");
     await waitFor(() => within(list()).getByText("Achats"));
-    openModuleMenu("Achats");
+    await openModuleMenu(user, "Achats");
+    await screen.findByRole("menuitem", { name: "Détacher…" });
     expect(screen.queryByRole("menuitem", { name: "Fusionner avec…" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Scinder…" })).toBeNull();
   });
 
   it("scinde un module : montre ce qui part, bloque ce qui n’est pas sûr, puis crée le module", async () => {
+    const user = userEvent.setup();
     const calls = desk();
-    render(<ModulesSettings />);
+    renderSections(useModulesSections, "Modules");
     await waitFor(() => within(list()).getByText("Ventes"));
 
-    openModuleMenu("Ventes");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Scinder…" }));
-    const dialog = screen.getByRole("dialog", { name: "Scinder Ventes" });
+    await openModuleMenu(user, "Ventes");
+    await user.click(await screen.findByRole("menuitem", { name: "Scinder…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Scinder Ventes" });
     const create = within(dialog).getByRole("button", { name: "Créer le module" });
-    fireEvent.change(within(dialog).getByRole("textbox", { name: "Nom du nouveau module" }), {
-      target: { value: "Archives" },
-    });
+    await user.type(within(dialog).getByRole("textbox", { name: "Nom du nouveau module" }), "Archives");
 
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Factures" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Factures" }));
     await within(dialog).findByText(/ventes_lignes/);
     expect(create).toBeDisabled();
 
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Factures" }));
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Archives" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Factures" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Archives" }));
     await within(dialog).findByText("Table ventes_archives (avec ses données)");
     expect(within(dialog).getByText("Fonction archiver")).toBeTruthy();
     expect(within(dialog).getByText("Fonction formater")).toBeTruthy();
     await waitFor(() => expect(create).toBeEnabled());
-    fireEvent.click(create);
+    await user.click(create);
 
     await waitFor(() => expect(useNotifications.getState().items[0]?.title).toBe("Module Archives créé"));
     expect(calls).toContainEqual({

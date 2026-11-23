@@ -1,51 +1,39 @@
+import { ArrowLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Button,
-  ChoiceButton,
-  ChoiceGroup,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  MenuItem,
-  OverflowMenu,
-  Page,
-  RefreshButton,
+  type Action,
   SearchField,
-  Section,
-  Spinner,
-  StatusBadge,
-  SwitchControl,
-  Text,
+  Select,
+  type Setting,
+  type SettingsSection,
+  type SettingTag,
   useConfirm,
-} from "@alfred/ui";
-import { ArrowLeft, Boxes } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+} from "socle-ui";
+import { Row } from "../../kit";
 import type { ModuleSummary } from "../../lib/types";
-import { SectionIcon } from "../../shell/icons";
 import { applyLayoutChange } from "../../shell/navigationEditing";
 import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { ModuleAutomations } from "../automations/ModuleAutomations";
+import { useAutomationsSection } from "../automations/ModuleAutomations";
 import type { ClientNeedItem } from "../clients/api";
 import { serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
-import { ModuleFolders } from "../folders/ModuleFolders";
-import { ModuleJobs } from "../jobs/ModuleJobs";
+import { useFoldersSection } from "../folders/ModuleFolders";
+import { useJobsSection } from "../jobs/ModuleJobs";
 import { MODULE_FOCUS } from "../settings/open";
 import { remainingSummary, type SetupStep } from "../setup/api";
 import { openOnboarding, useOnboarding } from "../setup/Onboarding";
 import { verify } from "../setup/SetupGate";
 import { useModuleSetup } from "../setup/useModuleSetup";
+import { ModuleExportDialog } from "../space/ModuleDataDialog";
 import { TeamSync } from "../teamSync/TeamSync";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
-import { ModuleContents } from "./ModuleContents";
-import { ModulePart } from "./ModulePart";
+import { useModuleContentSections } from "./ModuleContents";
 import { MergeDialog, modulePages, SplitDialog } from "./reorganize";
 import { countPendingUpdates, useModuleUpdatesStore } from "./useModuleUpdates";
-import "./modules.css";
-import { ModuleExportDialog } from "../space/ModuleDataDialog";
 
 export { useModuleUpdates } from "./useModuleUpdates";
 
@@ -80,6 +68,8 @@ export function openMarketplaces() {
   useShell.getState().setActiveTab(SETTINGS_SECTION, "marketplace");
 }
 
+const icon16 = { size: 16, "aria-hidden": true } as const;
+
 /**
  * D’où vient un module : importé d’un marketplace, développé ici (et publié, et où), ou détaché de son
  * marketplace.
@@ -103,21 +93,12 @@ function originLabel(
 }
 
 /**
- * Entrée de menu dont l’action part dès la phase de capture. `OverflowMenu` ferme le menu pendant cette phase, et
- * dans une vraie fenêtre React le démonte avant la remontée du clic : un `onClick` ordinaire n’est alors jamais
- * appelé (les tests jsdom ne le voient pas, le clic y étant simulé d’un seul tenant).
+ * Rubrique « Modules » des Réglages, décrite par sections : les modules installés dans l’espace de travail (une
+ * ligne chacun : activer, mettre à jour, publier, retirer), et la fiche de chacun avec tout ce qu’il contient :
+ * pages, services et comptes, fonctions, automatisations, tâches de fond, dossiers, dépendances. Importer un module
+ * se fait dans la rubrique Marketplace (`useMarketplaceSections`).
  */
-function MenuAction({ onSelect, children }: { onSelect: () => void; children: ReactNode }) {
-  return <MenuItem onClickCapture={onSelect}>{children}</MenuItem>;
-}
-
-/**
- * Onglet « Modules » des Réglages : les modules installés dans l’espace de travail, en tableau (activer, mettre à
- * jour, publier, retirer), et la fiche de chacun avec tout ce qu’il contient : pages, fonctions, services et comptes,
- * webhooks, planifications, tâches de fond, dépendances. Importer un module se fait dans la rubrique Marketplace
- * (`MarketplaceSettings`).
- */
-export function ModulesSettings() {
+export function useModulesSections(): SettingsSection[] {
   const modules = useShell((state) => state.snapshot?.modules) ?? NO_MODULES;
   const refreshSpace = useShell((state) => state.refresh);
   const updates = useModuleUpdatesStore((state) => state.updates);
@@ -126,13 +107,10 @@ export function ModulesSettings() {
 
   const [marketplaces, setMarketplaces] = useState<Marketplace[] | null>(null);
   const [publications, setPublications] = useState<ModulePublication[]>([]);
-  /** Opération en cours, pour désactiver ce qui la doublerait : `all`, `module:<id>`. */
-  const [busy, setBusy] = useState<string | null>(null);
-  /** Test des comptes d’une fiche en cours ; modules dont les comptes ont déjà été testés d’office. */
-  const [testing, setTesting] = useState(false);
+  /** Modules dont les comptes ont déjà été testés d’office. */
   const autoTested = useRef(new Set<string>());
   const [opened, setOpened] = useState<Opened | null>(null);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
   const snapshot = useShell((state) => state.snapshot);
   const services = useClients();
   // Relu avec les services et l’espace : ce sont eux qui font avancer la configuration des modules.
@@ -142,7 +120,6 @@ export function ModulesSettings() {
     if (services.overview || snapshot) void reloadSetups();
   }, [services.overview, snapshot, reloadSetups]);
   const [editingService, setEditingService] = useState<ServiceEditing>();
-  /** Vue affichée : la liste des modules, la fiche d’un module, ou l’import depuis un marketplace. */
   const [screen, setScreen] = useState<Screen>({ kind: "list" });
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
@@ -197,54 +174,43 @@ export function ModulesSettings() {
     await Promise.all([refreshSpace().catch(() => undefined), loadUpdates(false).catch(() => undefined)]);
   };
 
-  const run = async (key: string, action: () => Promise<void>, failureTitle: string) => {
-    setBusy(key);
+  const run = async (action: () => Promise<void>, failureTitle: string) => {
     try {
       await action();
     } catch (failure) {
       notify({ title: failureTitle, description: errorMessage(failure), tone: "error" });
-    } finally {
-      setBusy(null);
     }
   };
 
   const updateAll = () =>
-    run(
-      "all",
-      async () => {
-        const result = await marketplaceApi.updateAll();
-        await afterSpaceChange();
-        if (result.updated.length > 0) {
-          notify({
-            title: `${plural(result.updated.length, "module")} mis à jour`,
-            description: result.updated.map((entry) => `${entry.name} v${entry.to}`).join(", "),
-            tone: "success",
-          });
-        }
-        for (const failure of result.failed) {
-          notify({ title: `Mise à jour de ${failure.name} impossible`, description: failure.message, tone: "error" });
-        }
-        if (result.updated.length === 0 && result.failed.length === 0) notify({ title: "Tout est déjà à jour" });
-      },
-      "Mise à jour impossible",
-    );
-
-  const togglePin = (module: ModuleSummary, pinned: boolean) =>
-    run(
-      `module:${module.id}`,
-      async () => {
-        await marketplaceApi.pin(module.id, pinned);
-        await afterSpaceChange();
+    run(async () => {
+      const result = await marketplaceApi.updateAll();
+      await afterSpaceChange();
+      if (result.updated.length > 0) {
         notify({
-          title: pinned ? `${module.name} figé sur la v${module.version}` : `${module.name} libéré`,
-          description: pinned
-            ? "Ses mises à jour restent signalées, mais « Tout mettre à jour » le laisse de côté."
-            : "« Tout mettre à jour » le prend de nouveau en compte.",
+          title: `${plural(result.updated.length, "module")} mis à jour`,
+          description: result.updated.map((entry) => `${entry.name} v${entry.to}`).join(", "),
           tone: "success",
         });
-      },
-      "Changement impossible",
-    );
+      }
+      for (const failure of result.failed) {
+        notify({ title: `Mise à jour de ${failure.name} impossible`, description: failure.message, tone: "error" });
+      }
+      if (result.updated.length === 0 && result.failed.length === 0) notify({ title: "Tout est déjà à jour" });
+    }, "Mise à jour impossible");
+
+  const togglePin = (module: ModuleSummary, pinned: boolean) =>
+    run(async () => {
+      await marketplaceApi.pin(module.id, pinned);
+      await afterSpaceChange();
+      notify({
+        title: pinned ? `${module.name} figé sur la v${module.version}` : `${module.name} libéré`,
+        description: pinned
+          ? "Ses mises à jour restent signalées, mais « Tout mettre à jour » le laisse de côté."
+          : "« Tout mettre à jour » le prend de nouveau en compte.",
+        tone: "success",
+      });
+    }, "Changement impossible");
 
   const detach = async (module: ModuleSummary) => {
     const accepted = await confirm({
@@ -252,23 +218,19 @@ export function ModulesSettings() {
       message:
         "Le module devient le vôtre et modifiable. Il garde la trace de son origine, mais ne recevra plus aucune mise à jour de son marketplace.",
       confirmLabel: "Détacher",
+      tone: "default",
     });
     if (!accepted) return;
-    await run(
-      `module:${module.id}`,
-      async () => {
-        await marketplaceApi.detach(module.id);
-        await afterSpaceChange();
-        notify({ title: `${module.name} détaché`, description: "Il est maintenant modifiable.", tone: "success" });
-      },
-      "Détachement impossible",
-    );
+    await run(async () => {
+      await marketplaceApi.detach(module.id);
+      await afterSpaceChange();
+      notify({ title: `${module.name} détaché`, description: "Il est maintenant modifiable.", tone: "success" });
+    }, "Détachement impossible");
   };
 
   const openedUpdate = opened?.kind === "update" ? updateOf.get(opened.module) : undefined;
-
-  // La fiche ouverte : ce qui lui reste à faire, et ses comptes à tester (avant tout retour anticipé : des hooks).
-  const openedId = screen.kind === "module" ? screen.id : undefined;
+  const openedModule = screen.kind === "module" ? modules.find((module) => module.id === screen.id) : undefined;
+  const openedId = openedModule?.id;
   const focusedSetup = openedId ? setups.of(openedId) : undefined;
   // Les comptes d’un service à un seul compte n’ont pas de nom à eux : la phrase nomme le service seul.
   const accountsOfStep = (step: SetupStep) => {
@@ -290,37 +252,56 @@ export function ModulesSettings() {
     void runTestsRef.current(false);
   }, [openedId, untested]);
   const runTests = async (again: boolean) => {
-    setTesting(true);
     try {
       await verify(openedLeft, again);
     } catch (failure) {
       notify({ title: "Le test n’a pas pu être lancé", description: errorMessage(failure), tone: "error" });
     } finally {
-      setTesting(false);
       await services.load();
       await reloadSetups();
     }
   };
   runTestsRef.current = runTests;
 
+  const nameOf = (id: string) => modules.find((candidate) => candidate.id === id)?.name || id;
+  const hiddenOf = (module: ModuleSummary) => (snapshot ? isModuleHidden(snapshot, module.id) : module.hidden);
+
+  // Les crochets des parties de la fiche tournent toujours ; sans fiche ouverte, ils ne rendent rien.
+  const contentSections = useModuleContentSections({
+    module: editingService ? undefined : openedModule,
+    modules,
+    snapshot: snapshot ?? null,
+    services,
+    onEditService: setEditingService,
+    hidden: openedModule ? hiddenOf(openedModule) : false,
+    nameOf,
+  });
+  const fiche = editingService ? undefined : openedModule;
+  const foldersSection = useFoldersSection(fiche ? { id: fiche.id, name: fiche.name } : undefined);
+  const automationsSection = useAutomationsSection(fiche?.id);
+  const jobsSection = useJobsSection(fiche?.id);
+
   if (editingService) {
-    return (
-      <ServiceEditor
-        editing={editingService}
-        redirectUri={services.overview?.redirectUri ?? null}
-        onDone={() => {
-          setEditingService(undefined);
-          void services.load();
-        }}
-      />
-    );
+    return [
+      {
+        id: "account",
+        content: (
+          <ServiceEditor
+            editing={editingService}
+            redirectUri={services.overview?.redirectUri ?? null}
+            onDone={() => {
+              setEditingService(undefined);
+              void services.load();
+            }}
+          />
+        ),
+      },
+    ];
   }
 
   const clients = services.overview?.clients ?? [];
   const needs = services.overview?.needs ?? [];
-  const nameOf = (id: string) => modules.find((candidate) => candidate.id === id)?.name || id;
   const clientOf = (need: ClientNeedItem) => clients.find((client) => client.id === need.client);
-  const hiddenOf = (module: ModuleSummary) => (snapshot ? isModuleHidden(snapshot, module.id) : module.hidden);
   // Un module est « à configurer » tant que son parcours n’est pas terminé (services prêts et testés, dépendances
   // comprises) ; avant la première lecture de ce parcours, on s’en tient à l’état de ses services.
   const needsAttention = (module: ModuleSummary) => {
@@ -343,23 +324,6 @@ export function ModulesSettings() {
     if (filter === "off" && !hiddenOf(module)) return false;
     return !folded || fold(`${module.name} ${module.description} ${module.id}`).includes(folded);
   });
-  const opened_ = screen.kind === "module" ? modules.find((module) => module.id === screen.id) : undefined;
-  const back = (
-    <Button variant="subtle" onClick={() => setScreen({ kind: "list" })}>
-      <ArrowLeft size={16} aria-hidden="true" />
-      Tous les modules
-    </Button>
-  );
-
-  /** Icône du module : celle de sa première section dans le menu, dans sa couleur. */
-  const moduleIcon = (module: ModuleSummary) => {
-    const section = snapshot?.sections.find((candidate) => candidate.module === module.id);
-    return (
-      <span className={`module-row__icon product-color--${section?.color ?? "steel"}`} aria-hidden="true">
-        {section?.icon ? <SectionIcon section={section} size={15} /> : <Boxes size={15} />}
-      </span>
-    );
-  };
 
   const marketplaceName = (url: string) =>
     marketplaces?.find((marketplace) => marketplace.url.replace(/(\.git)?\/?$/, "") === url.replace(/(\.git)?\/?$/, ""))
@@ -367,13 +331,13 @@ export function ModulesSettings() {
   const publishedOf = (module: ModuleSummary) => publications.filter((publication) => publication.module === module.id);
 
   /** Résumé en mots simples : d’où vient le module, ce qu’il contient. */
-  const moduleSummary = (module: ModuleSummary, withVersion: boolean) => {
+  const moduleSummary = (module: ModuleSummary) => {
     const update = updateOf.get(module.id);
     const installed = module.origin !== null && !module.origin.detached;
     const serviceCount = needs.filter((need) => need.module === module.id).length;
     return [
       originLabel(module, update, publishedOf(module), marketplaceName),
-      withVersion ? `version ${module.version}` : null,
+      `version ${module.version}`,
       plural(module.pages, "page"),
       module.functions > 0 ? plural(module.functions, "fonction") : null,
       serviceCount > 0 ? plural(serviceCount, "service") : null,
@@ -383,104 +347,91 @@ export function ModulesSettings() {
       .join(" · ");
   };
 
-  /** Pastilles d’état : ce qui demande l’attention de l’utilisateur. */
-  const moduleBadges = (module: ModuleSummary) => {
+  /** Étiquettes d’état : ce qui demande l’attention de l’utilisateur. */
+  const moduleTags = (module: ModuleSummary): SettingTag[] => {
     const update = updateOf.get(module.id);
-    return (
-      <>
-        {hiddenOf(module) ? <StatusBadge size="compact">Désactivé</StatusBadge> : null}
-        {needsAttention(module) ? (
-          <StatusBadge tone="pending" size="compact">
-            À configurer
-          </StatusBadge>
-        ) : null}
-        {update?.available ? (
-          update.blocked ? (
-            <StatusBadge size="compact" title={update.blocked}>
-              v{update.available} bloquée
-            </StatusBadge>
-          ) : (
-            <StatusBadge tone="pending" size="compact">
-              Mise à jour v{update.available}
-            </StatusBadge>
-          )
-        ) : null}
-        {publishedOf(module).some((publication) => publication.modified) ? (
-          <StatusBadge size="compact" title="Le module a changé depuis sa dernière publication.">
-            Modifié depuis la publication
-          </StatusBadge>
-        ) : null}
-        {update?.pinned ? <StatusBadge size="compact">Figé</StatusBadge> : null}
-        {update?.locallyModified ? (
-          <StatusBadge tone="warning" size="compact" title="Le dossier du module diffère de ce qui a été installé.">
-            Modifié sur place
-          </StatusBadge>
-        ) : null}
-        {update?.sourceMissing ? (
-          <StatusBadge tone="danger" size="compact" title={`Marketplace d’origine : ${update.source}`}>
-            Sans marketplace
-          </StatusBadge>
-        ) : null}
-        {update?.withdrawn ? (
-          <StatusBadge tone="danger" size="compact">
-            Retiré de son marketplace
-          </StatusBadge>
-        ) : null}
-      </>
-    );
+    const tags: Array<SettingTag | null> = [
+      hiddenOf(module) ? { label: "Désactivé", tone: "neutral" } : null,
+      needsAttention(module) ? { label: "À configurer", tone: "pending" } : null,
+      update?.available
+        ? update.blocked
+          ? { label: `v${update.available} bloquée`, tone: "neutral" }
+          : { label: `Mise à jour v${update.available}`, tone: "pending" }
+        : null,
+      publishedOf(module).some((publication) => publication.modified)
+        ? { label: "Modifié depuis la publication", tone: "neutral" }
+        : null,
+      update?.pinned ? { label: "Figé", tone: "neutral" } : null,
+      update?.locallyModified ? { label: "Modifié sur place", tone: "warning" } : null,
+      update?.sourceMissing ? { label: "Sans marketplace", tone: "danger" } : null,
+      update?.withdrawn ? { label: "Retiré de son marketplace", tone: "danger" } : null,
+    ];
+    return tags.filter((tag): tag is SettingTag => tag !== null);
   };
 
-  /** Interrupteur, mise à jour et menu « … » d’un module : les mêmes dans la liste et dans sa fiche. */
-  const moduleActions = (module: ModuleSummary) => {
+  const setHidden = (module: ModuleSummary, hidden: boolean) =>
+    applyLayoutChange((current) => setModuleHidden(current, module.id, hidden));
+
+  /** Actions d’un module : les mêmes dans la liste et dans sa fiche, sauf l’ouverture. */
+  const moduleActions = (module: ModuleSummary, inList: boolean): Action[] => {
     const update = updateOf.get(module.id);
     const installed = module.origin !== null && !module.origin.detached;
-    const working = busy === `module:${module.id}`;
-    return (
-      <div className="modules-list__actions module-row__actions modules-table__actions">
-        {update?.available ? (
-          <Button
-            variant="secondary"
-            disabled={busy !== null}
-            onClick={() => setOpened({ kind: "update", module: module.id })}
-          >
-            Mettre à jour
-          </Button>
-        ) : null}
-        {working ? <Spinner label={`Opération en cours sur ${module.name}`} /> : null}
-        <SwitchControl
-          label=""
-          aria-label={`Activer le module ${module.name}`}
-          checked={!hiddenOf(module)}
-          onChange={(event) =>
-            void applyLayoutChange((current) => setModuleHidden(current, module.id, !event.target.checked))
-          }
-        />
-        <OverflowMenu label={`Actions du module ${module.name}`} disabled={busy !== null}>
-          <MenuAction onSelect={() => openOnboarding(module.id, "intro")}>Configurer…</MenuAction>
-          <MenuAction onSelect={() => setOpened({ kind: "export", module })}>Exporter les données…</MenuAction>
-          {installed ? (
-            <>
-              <MenuAction onSelect={() => void togglePin(module, !module.origin?.pinned)}>
-                {module.origin?.pinned ? "Libérer" : "Figer sur cette version"}
-              </MenuAction>
-              <MenuAction onSelect={() => void detach(module)}>Détacher…</MenuAction>
-            </>
-          ) : (
-            <>
-              <MenuAction onSelect={() => setOpened({ kind: "publish", module })}>Publier…</MenuAction>
-              <MenuAction onSelect={() => setOpened({ kind: "merge", module })}>Fusionner avec…</MenuAction>
-              <MenuAction onSelect={() => setOpened({ kind: "split", module })}>Scinder…</MenuAction>
-            </>
-          )}
-          <MenuAction onSelect={() => setOpened({ kind: "uninstall", module })}>
-            {installed ? "Retirer de l’espace de travail…" : "Supprimer…"}
-          </MenuAction>
-        </OverflowMenu>
-      </div>
-    );
+    const hidden = hiddenOf(module);
+    return [
+      ...(inList
+        ? [
+            {
+              id: "open",
+              label: `Ouvrir la fiche de ${module.name}`,
+              icon: <ChevronRight {...icon16} />,
+              onPress: () => setScreen({ kind: "module", id: module.id }),
+            },
+          ]
+        : []),
+      ...(update?.available
+        ? [
+            {
+              id: "update",
+              label: `Mettre à jour ${module.name}`,
+              icon: <Download {...icon16} />,
+              onPress: () => setOpened({ kind: "update", module: module.id }),
+            },
+          ]
+        : []),
+      ...(inList
+        ? [
+            {
+              id: "toggle",
+              label: hidden ? "Activer le module" : "Désactiver le module",
+              onPress: () => setHidden(module, !hidden),
+            },
+          ]
+        : []),
+      { id: "configure", label: "Configurer…", onPress: () => openOnboarding(module.id, "intro") },
+      { id: "export", label: "Exporter les données…", onPress: () => setOpened({ kind: "export", module }) },
+      ...(installed
+        ? [
+            {
+              id: "pin",
+              label: module.origin?.pinned ? "Libérer" : "Figer sur cette version",
+              onPress: () => togglePin(module, !module.origin?.pinned),
+            },
+            { id: "detach", label: "Détacher…", onPress: () => detach(module) },
+          ]
+        : [
+            { id: "publish", label: "Publier…", onPress: () => setOpened({ kind: "publish", module }) },
+            { id: "merge", label: "Fusionner avec…", onPress: () => setOpened({ kind: "merge", module }) },
+            { id: "split", label: "Scinder…", onPress: () => setOpened({ kind: "split", module }) },
+          ]),
+      {
+        id: "uninstall",
+        label: installed ? "Retirer de l’espace de travail…" : "Supprimer…",
+        onPress: () => setOpened({ kind: "uninstall", module }),
+      },
+    ];
   };
 
-  /** D’où vient le module, en un mot pour le tableau. */
+  /** D’où vient le module, en un mot pour la liste. */
   const originShort = (module: ModuleSummary) => {
     if (module.origin && !module.origin.detached)
       return updateOf.get(module.id)?.marketplaceName ?? marketplaceName(module.origin.marketplace);
@@ -488,257 +439,8 @@ export function ModulesSettings() {
     return publishedOf(module).length > 0 ? "Local, publié" : "Local";
   };
 
-  /**
-   * Tableau des modules installés : une ligne par module, qui ouvre sa fiche. Trois colonnes seulement, pour tenir
-   * sans défilement horizontal à toute largeur des Réglages : la version et l’origine passent sous le nom, avec la
-   * description, sur une ligne coupée par des points de suspension.
-   */
-  const columns: DataTableColumn<ModuleSummary>[] = [
-    {
-      key: "name",
-      header: "Module",
-      sortValue: (module) => module.name,
-      render: (module) => {
-        const meta = [`v${module.version}`, originShort(module), module.description].filter(Boolean).join(" · ");
-        return (
-          <span className="modules-table__module">
-            {moduleIcon(module)}
-            <span className="modules-table__text">
-              <span className="modules-table__name">{module.name}</span>
-              <span className="modules-table__description" title={meta}>
-                {meta}
-              </span>
-            </span>
-          </span>
-        );
-      },
-    },
-    {
-      key: "state",
-      header: "État",
-      width: "130px",
-      sortable: false,
-      render: (module) => <span className="modules-table__badges">{moduleBadges(module)}</span>,
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      headerLabel: "Actions",
-      align: "end",
-      width: "1%",
-      sortable: false,
-      render: (module) => moduleActions(module),
-    },
-  ];
-
-  /**
-   * Fiche d’un module, rangée par la hiérarchie : ce qui manque, puis ce qu’il ajoute au menu, ses services (comptes
-   * et fonctions de chacun), ses autres fonctions, ses automatismes, ses données partagées et ses dépendances.
-   */
-  const moduleBody = (module: ModuleSummary) => {
-    const hidden = hiddenOf(module);
-    const update = updateOf.get(module.id);
-    return (
-      <div className="module-page__body">
-        {update?.sourceMissing ? (
-          <Text size="meta" tone="muted">
-            Son marketplace ({update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace pour
-            recevoir les mises à jour, ou détacher le module.
-          </Text>
-        ) : null}
-        {hidden ? (
-          <Text size="meta" tone="muted">
-            Module désactivé : ses pages n’apparaissent pas dans le menu.
-            {module.requiredBy.length > 0
-              ? ` Ses services restent utilisés par ${module.requiredBy.map(nameOf).join(", ")}.`
-              : ""}
-          </Text>
-        ) : null}
-        <ModuleContents
-          module={module}
-          modules={modules}
-          snapshot={snapshot ?? null}
-          services={services}
-          onEditService={setEditingService}
-          hidden={hidden}
-          nameOf={nameOf}
-        />
-        <ModuleFolders module={module.id} name={module.name} />
-        <TeamSync module={module} />
-        <ModuleAutomations module={module.id} />
-        <ModuleJobs module={module.id} />
-        {module.requires.length > 0 || module.requiredBy.length > 0 ? (
-          <ModulePart
-            part="dependencies"
-            title="Dépendances"
-            description="Les modules dont celui-ci se sert, et ceux qui se servent de lui."
-          >
-            <ul className="modules-facts">
-              {module.requires.map((required) => (
-                <li key={`requires:${required.module}`}>
-                  Utilise les fonctions et les services de{" "}
-                  <button
-                    type="button"
-                    className="setup-flow__link"
-                    onClick={() => setScreen({ kind: "module", id: required.module })}
-                  >
-                    {nameOf(required.module)}
-                  </button>
-                  {required.minVersion ? ` (v${required.minVersion} ou plus)` : ""}
-                </li>
-              ))}
-              {module.requiredBy.map((user) => (
-                <li key={`by:${user}`}>
-                  Utilisé par{" "}
-                  <button
-                    type="button"
-                    className="setup-flow__link"
-                    onClick={() => setScreen({ kind: "module", id: user })}
-                  >
-                    {nameOf(user)}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </ModulePart>
-        ) : null}
-      </div>
-    );
-  };
-
-  const filters: Array<{ id: Filter; label: string; count?: number }> = [
-    { id: "all", label: "Tous" },
-    { id: "attention", label: "À configurer", count: counts.attention },
-    { id: "updates", label: "Mises à jour", count: counts.updates },
-    { id: "off", label: "Désactivés", count: counts.off },
-  ];
-
-  const listScreen = (
+  const dialogs = (
     <>
-      <Section
-        title="Modules installés"
-        description="Ouvrez un module pour voir tout ce qu’il contient et connecter ses services."
-        actions={
-          <>
-            {checking ? <Spinner label="Vérification des mises à jour" /> : null}
-            <RefreshButton label="Vérifier les mises à jour" disabled={checking} onClick={() => void checkNow()} />
-            {pending > 0 ? (
-              <Button
-                variant="secondary"
-                loading={busy === "all"}
-                disabled={busy !== null}
-                onClick={() => void updateAll()}
-              >
-                Tout mettre à jour ({pending})
-              </Button>
-            ) : null}
-            <Button variant="primary" onClick={openMarketplaces}>
-              Parcourir le marketplace
-            </Button>
-          </>
-        }
-      >
-        {modules.length === 0 ? (
-          <EmptyState
-            size="compact"
-            title="Aucun module"
-            description="Demandez une page à l’agent : il crée un module pour vous. Vous pouvez aussi en importer un depuis le Marketplace."
-          />
-        ) : (
-          <div className="module-list-view">
-            {counts.attention > 0 && filter !== "attention" ? (
-              // Une ligne compacte, sans encadré : pas de bandeau dans une rubrique.
-              <div className="module-list-view__notice">
-                <StatusBadge tone="pending" size="compact">
-                  {counts.attention > 1 ? `${counts.attention} modules à configurer` : "1 module à configurer"}
-                </StatusBadge>
-                <Button onClick={() => setFilter("attention")}>Les afficher</Button>
-              </div>
-            ) : null}
-            {modules.length > 5 || filter !== "all" || query ? (
-              <div className="module-list-view__tools">
-                <SearchField
-                  label="Rechercher un module"
-                  placeholder="Rechercher un module…"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <ChoiceGroup label="Afficher" appearance="segmented">
-                  {filters
-                    .filter((choice) => choice.id === "all" || choice.id === filter || (choice.count ?? 0) > 0)
-                    .map((choice) => (
-                      <ChoiceButton
-                        key={choice.id}
-                        variant="label"
-                        size="compact"
-                        label={choice.count ? `${choice.label} (${choice.count})` : choice.label}
-                        selected={filter === choice.id}
-                        onClick={() => setFilter(choice.id)}
-                      >
-                        {choice.count ? `${choice.label} (${choice.count})` : choice.label}
-                      </ChoiceButton>
-                    ))}
-                </ChoiceGroup>
-              </div>
-            ) : null}
-            {shown.length === 0 ? (
-              <EmptyState
-                size="compact"
-                title="Aucun module ne correspond"
-                description="Changez la recherche ou le filtre."
-              />
-            ) : (
-              <DataTable
-                label="Modules de l’espace de travail"
-                columns={columns}
-                rows={shown}
-                rowKey={(module) => module.id}
-                onRowClick={(module) => setScreen({ kind: "module", id: module.id })}
-              />
-            )}
-          </div>
-        )}
-      </Section>
-    </>
-  );
-
-  const openedSetup = opened_ ? setups.of(opened_.id) : undefined;
-  const moduleScreen = opened_ ? (
-    <Section title={opened_.name} description={opened_.description || undefined} actions={back}>
-      <div className="module-page" data-module={opened_.id}>
-        <div className="module-row module-row--header">
-          {moduleIcon(opened_)}
-          <div className="module-row__main">
-            <p className="module-row__summary">
-              <span>{moduleSummary(opened_, true)}</span>
-              {moduleBadges(opened_)}
-            </p>
-            {openedSetup && !openedSetup.ready ? (
-              <p className="module-row__todo">{remainingSummary(openedSetup, accountsOfStep)}</p>
-            ) : null}
-          </div>
-          {openedSetup && !openedSetup.ready ? (
-            onlyTests ? (
-              <Button variant="primary" loading={testing} onClick={() => void runTests(true)}>
-                Tester les comptes
-              </Button>
-            ) : (
-              <Button variant="primary" onClick={() => openOnboarding(opened_.id)}>
-                Terminer la configuration
-              </Button>
-            )
-          ) : null}
-          {moduleActions(opened_)}
-        </div>
-        {moduleBody(opened_)}
-      </div>
-    </Section>
-  ) : null;
-
-  return (
-    <Page>
-      {screen.kind === "module" && moduleScreen ? moduleScreen : listScreen}
-
       {openedUpdate ? (
         <UpdateDialog
           update={openedUpdate}
@@ -762,6 +464,7 @@ export function ModulesSettings() {
           onConfirm={async (deleteData) => {
             await marketplaceApi.uninstall(opened.module.id, deleteData);
             setOpened(null);
+            setScreen({ kind: "list" });
             await afterSpaceChange();
             notify({
               title: `${opened.module.name} retiré de l’espace de travail`,
@@ -827,8 +530,213 @@ export function ModulesSettings() {
       {opened?.kind === "export" ? (
         <ModuleExportDialog modules={modules} initial={opened.module.id} onClose={() => setOpened(null)} />
       ) : null}
-      {confirmDialog}
-      {services.confirmDialog}
-    </Page>
+    </>
   );
+
+  if (openedModule) {
+    const module = openedModule;
+    const hidden = hiddenOf(module);
+    const update = updateOf.get(module.id);
+    const setup = setups.of(module.id);
+    const tags = moduleTags(module);
+    const settings: Setting[] = [
+      { type: "info", id: "summary", label: "Origine et contenu", value: moduleSummary(module) },
+      ...(tags.length > 0 ? [{ type: "item" as const, id: "state", label: "État", tags }] : []),
+      ...(setup && !setup.ready
+        ? [
+            {
+              type: "info" as const,
+              id: "todo",
+              label: "Reste à faire",
+              value: remainingSummary(setup, accountsOfStep),
+            },
+          ]
+        : []),
+      {
+        type: "switch",
+        id: "enabled",
+        label: "Module activé",
+        description: hidden
+          ? `Module désactivé : ses pages n’apparaissent pas dans le menu.${
+              module.requiredBy.length > 0
+                ? ` Ses services restent utilisés par ${module.requiredBy.map(nameOf).join(", ")}.`
+                : ""
+            }`
+          : "Ses pages apparaissent dans le menu.",
+        value: !hidden,
+        onChange: (on) => setHidden(module, !on),
+      },
+      ...(update?.sourceMissing
+        ? [
+            {
+              type: "info" as const,
+              id: "source",
+              label: "Marketplace d’origine",
+              value: `Son marketplace (${update.source}) n’est plus branché : l’ajouter de nouveau dans Réglages › Marketplace pour recevoir les mises à jour, ou détacher le module.`,
+            },
+          ]
+        : []),
+    ];
+    const head: SettingsSection = {
+      id: "module",
+      title: module.name,
+      description: module.description || undefined,
+      actions: [
+        {
+          id: "back",
+          label: "Tous les modules",
+          icon: <ArrowLeft {...icon16} />,
+          onPress: () => setScreen({ kind: "list" }),
+        },
+        ...(setup && !setup.ready
+          ? [
+              onlyTests
+                ? { id: "test", label: "Tester les comptes", primary: true, onPress: () => runTests(true) }
+                : {
+                    id: "finish",
+                    label: "Terminer la configuration",
+                    primary: true,
+                    onPress: () => openOnboarding(module.id),
+                  },
+            ]
+          : []),
+        ...moduleActions(module, false),
+      ],
+      settings,
+      content: dialogs,
+    };
+    const dependencies: SettingsSection | null =
+      module.requires.length > 0 || module.requiredBy.length > 0
+        ? {
+            id: "dependencies",
+            title: "Dépendances",
+            description: "Les modules dont celui-ci se sert, et ceux qui se servent de lui.",
+            settings: [
+              ...module.requires.map((required) => ({
+                type: "item" as const,
+                id: `requires:${required.module}`,
+                label: nameOf(required.module),
+                description: `Ce module utilise ses fonctions et ses services${required.minVersion ? ` (v${required.minVersion} ou plus)` : ""}.`,
+                actions: [
+                  {
+                    id: "open",
+                    label: `Ouvrir la fiche de ${nameOf(required.module)}`,
+                    icon: <ChevronRight {...icon16} />,
+                    onPress: () => setScreen({ kind: "module", id: required.module }),
+                  },
+                ],
+              })),
+              ...module.requiredBy.map((user) => ({
+                type: "item" as const,
+                id: `by:${user}`,
+                label: nameOf(user),
+                description: "Se sert de ce module.",
+                actions: [
+                  {
+                    id: "open",
+                    label: `Ouvrir la fiche de ${nameOf(user)}`,
+                    icon: <ChevronRight {...icon16} />,
+                    onPress: () => setScreen({ kind: "module", id: user }),
+                  },
+                ],
+              })),
+            ],
+          }
+        : null;
+    return [
+      head,
+      ...contentSections,
+      ...(foldersSection ? [foldersSection] : []),
+      { id: "team", content: <TeamSync module={module} /> },
+      ...(automationsSection ? [automationsSection] : []),
+      ...(jobsSection ? [jobsSection] : []),
+      ...(dependencies ? [dependencies] : []),
+    ];
+  }
+
+  const filters: Array<{ id: Filter; label: string; count?: number }> = [
+    { id: "all", label: "Tous" },
+    { id: "attention", label: "À configurer", count: counts.attention },
+    { id: "updates", label: "Mises à jour", count: counts.updates },
+    { id: "off", label: "Désactivés", count: counts.off },
+  ];
+  const tools = modules.length > 5 || filter !== "all" || query;
+  const listSettings: Setting[] = [
+    ...(counts.attention > 0 && filter !== "attention"
+      ? [
+          {
+            type: "action" as const,
+            id: "attention",
+            label: counts.attention > 1 ? `${counts.attention} modules à configurer` : "1 module à configurer",
+            action: { id: "show", label: "Les afficher", onPress: () => setFilter("attention") },
+          },
+        ]
+      : []),
+    ...shown.map((module) => ({
+      type: "item" as const,
+      id: module.id,
+      label: module.name,
+      code: `v${module.version}`,
+      description: [originShort(module), module.description].filter(Boolean).join(" · "),
+      tags: moduleTags(module),
+      actions: moduleActions(module, true),
+    })),
+  ];
+  return [
+    ...(tools
+      ? [
+          {
+            id: "tools",
+            content: (
+              <Row gap="md" wrap>
+                <SearchField label="les modules" onChange={({ text }) => setQuery(text)} />
+                <Select
+                  label="Afficher"
+                  width="sm"
+                  value={filter}
+                  options={filters
+                    .filter((choice) => choice.id === "all" || choice.id === filter || (choice.count ?? 0) > 0)
+                    .map((choice) => ({
+                      id: choice.id,
+                      label: choice.count ? `${choice.label} (${choice.count})` : choice.label,
+                    }))}
+                  onChange={(id) => setFilter((id as Filter | null) ?? "all")}
+                />
+              </Row>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: "installed",
+      title: "Modules installés",
+      description: "Ouvrez un module pour voir tout ce qu’il contient et connecter ses services.",
+      actions: [
+        {
+          id: "check",
+          label: "Vérifier les mises à jour",
+          icon: <RefreshCw {...icon16} />,
+          isDisabled: checking,
+          onPress: checkNow,
+        },
+        ...(pending > 0
+          ? [
+              {
+                id: "update-all",
+                label: `Tout mettre à jour (${pending})`,
+                icon: <Download {...icon16} />,
+                onPress: updateAll,
+              },
+            ]
+          : []),
+        { id: "browse", label: "Parcourir le marketplace", primary: true, onPress: openMarketplaces },
+      ],
+      settings: listSettings,
+      emptyMessage:
+        modules.length === 0
+          ? "Aucun module. Demandez une page à l’agent : il crée un module pour vous. Vous pouvez aussi en importer un depuis le Marketplace."
+          : "Aucun module ne correspond. Changez la recherche ou le filtre.",
+      content: dialogs,
+    },
+  ];
 }

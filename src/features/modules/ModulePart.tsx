@@ -1,11 +1,12 @@
-import { Section } from "@alfred/ui";
 import type { ReactNode } from "react";
+import { Row, Stack, Text } from "../../kit";
 
 /**
- * Groupe de la fiche d’un module (Réglages → Modules) ou de sa fiche de marketplace : un titre de section, une
- * courte phrase qui dit ce qu’il contient, des actions éventuelles à droite, puis ses éléments. Dans les menus,
- * services, fonctions, webhooks, planifications, tâches de fond et dépendances d’un module s’affichent tous ainsi,
- * l’un sous l’autre, séparés par un trait : le titre se distingue nettement des éléments qu’il range.
+ * Partie titrée (titre `h3`, HTML d’app aux tokens Socle) dans le contenu libre d’une section des Réglages (fiche d’un module) : un titre, une courte phrase,
+ * des actions éventuelles à droite, puis ses éléments. Composant local : `SettingsSection` n’a pas de sous-partie
+ * titrée dans son contenu libre (voir les manques de la migration). Les parties de la fiche décrites par l’app
+ * passent plutôt par une `SettingsSection` à elles ; celle-ci sert aux parties rendues par un autre dossier
+ * (synchronisation d’équipe).
  */
 export function ModulePart({
   title,
@@ -22,10 +23,21 @@ export function ModulePart({
   children: ReactNode;
 }) {
   return (
-    <div className="module-part" data-part={part}>
-      <Section title={title} description={description} actions={actions}>
+    <section data-part={part} aria-label={title}>
+      <Stack gap="sm">
+        <Row justify="between" wrap>
+          <Stack gap="none">
+            <h3 className="m-0 font-semibold text-fg text-md">{title}</h3>
+            {description ? (
+              <Text size="meta" tone="muted">
+                {description}
+              </Text>
+            ) : null}
+          </Stack>
+          {actions ? <Row gap="sm">{actions}</Row> : null}
+        </Row>
         {children}
-      </Section>
-    </div>
+      </Stack>
+    </section>
   );
 }

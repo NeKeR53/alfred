@@ -1,32 +1,18 @@
 /**
- * Fonctions d’un module, dans sa fiche (Réglages → Modules), par groupe : ce que le module fait avec chacun de ses
+ * Fonctions d’un module, dans sa fiche (Réglages → Modules), une section par groupe : ce que le module fait avec chacun de ses
  * services, puis ses autres fonctions ; chaque groupe dit ses lectures, ses écritures et l’état de ses tests, et
  * « Vérifier… » lance ses tests fonction par fonction sous les yeux de l’utilisateur.
  */
-import {
-  Button,
-  Dialog,
-  Disclosure,
-  FeedbackBanner,
-  Markdown,
-  Row,
-  Spinner,
-  Stack,
-  StatusBadge,
-  Text,
-  TextInput,
-  useConfirm,
-} from "@alfred/ui";
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ShieldCheck } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Code, Dialog, Disclosure, type SettingsSection, StatusBadge, TextField, useConfirm } from "socle-ui";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
-import { DialogHeader } from "../../shell/DialogHeader";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { FunctionItem, stateOf, TryDialog } from "./FunctionParts";
+import { functionRow, stateOf, TryDialog } from "./FunctionParts";
 import { type FunctionTests, functionTestsApi, type TestResult } from "./tests";
-import "../vault/settings-dialog.css";
-import "./functions.css";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -34,12 +20,6 @@ function errorMessage(error: unknown): string {
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
-}
-
-function codeBlock(content: string) {
-  const longest = Math.max(0, ...(content.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}json\n${content}\n${fence}`;
 }
 
 /** Un test de la checklist : la fonction, le test, et ce qu’il faut pour le lancer. */
@@ -80,38 +60,38 @@ function casesOf(functions: ResolvedFunction[]): Case[] {
 function ResultLine({ item, live, children }: { item: Case; live: Live | undefined; children?: ReactNode }) {
   const badge =
     live?.status === "running" ? (
-      <Spinner label={`Test « ${item.name} » en cours`} />
+      <StatusBadge tone="pending">En cours</StatusBadge>
     ) : live?.status === "passed" ? (
-      <StatusBadge tone="success" size="compact">
-        Réussi
-      </StatusBadge>
+      <StatusBadge tone="success">Réussi</StatusBadge>
     ) : live?.status === "failed" ? (
-      <StatusBadge tone="danger" size="compact">
-        Échec
-      </StatusBadge>
+      <StatusBadge tone="danger">Échec</StatusBadge>
     ) : live?.status === "skipped" || item.blocked ? (
-      <StatusBadge size="compact">Passé</StatusBadge>
+      <StatusBadge>Passé</StatusBadge>
     ) : (
-      <StatusBadge size="compact">En attente</StatusBadge>
+      <StatusBadge>En attente</StatusBadge>
     );
   const note = item.blocked ?? (live && live.status !== "running" && live.status !== "passed" ? live.message : "");
   return (
-    <li className="function-check" data-test={item.key}>
-      <div className="function-check__line">
-        <span className="function-row__name">{item.fn.id}</span>
-        <span className="function-check__name" title={item.name}>
+    <li data-test={item.key} className="flex min-w-0 flex-col gap-1 border-line border-b py-2 last:border-b-0">
+      <Row gap="sm" wrap>
+        <Text as="span" weight="medium">
+          {item.fn.id}
+        </Text>
+        <Text as="span" tone="muted">
           {item.name}
-        </span>
+        </Text>
         {badge}
-      </div>
+      </Row>
       {note ? (
         <Text size="meta" tone={live?.status === "failed" ? "danger" : "muted"}>
           {note}
         </Text>
       ) : null}
       {live && live.status === "failed" && live.output ? (
-        <Disclosure appearance="subtle" label="Sortie reçue">
-          <Markdown>{codeBlock(live.output)}</Markdown>
+        <Disclosure title="Sortie reçue">
+          <Code block label="Sortie reçue">
+            {live.output}
+          </Code>
         </Disclosure>
       ) : null}
       {children}
@@ -132,8 +112,6 @@ function VerifyDialog({
   functions: ResolvedFunction[];
   onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
   const cases = useMemo(() => casesOf(functions), [functions]);
   const reads = cases.filter((item) => item.read);
   const writes = cases.filter((item) => !item.read);
@@ -141,7 +119,7 @@ function VerifyDialog({
   const [running, setRunning] = useState(false);
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [writesStarted, setWritesStarted] = useState(false);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
   const cancelled = useRef(false);
 
   const runAll = async (items: Case[], approved: boolean) => {
@@ -170,8 +148,6 @@ function VerifyDialog({
   const started = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: une seule série par ouverture.
   useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
     if (started.current) return;
     started.current = true;
     void runAll(reads, false);
@@ -194,93 +170,84 @@ function VerifyDialog({
   const failed = done.filter((result) => result.status === "failed").length;
   const passed = done.filter((result) => result.status === "passed").length;
 
+  const close = () => {
+    cancelled.current = true;
+    onClose();
+  };
+  const list = "m-0 flex list-none flex-col p-0";
+
   return (
     <Dialog
-      ref={dialog}
-      className="settings-dialog function-verify-dialog"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        if (running) event.preventDefault();
+      isOpen
+      size="lg"
+      title={`Vérifier les fonctions de ${module.name}`}
+      isBusy={running}
+      onOpenChange={(open) => {
+        if (!open) close();
       }}
-      onClose={(event) => {
-        // La confirmation des écritures est une modale dans celle-ci : sa fermeture ne ferme pas la checklist.
-        if (event.target !== event.currentTarget) return;
-        cancelled.current = true;
-        onClose();
-      }}
+      footer={
+        <>
+          <Button isDisabled={running} onPress={close}>
+            Fermer
+          </Button>
+          {writes.length > 0 && !writesStarted ? (
+            <Button variant="primary" isDisabled={running || missingTarget} onPress={() => void launchWrites()}>
+              Lancer les écritures
+            </Button>
+          ) : null}
+        </>
+      }
     >
-      <DialogHeader title={`Vérifier les fonctions de ${module.name}`} titleId={titleId} dialogRef={dialog} />
-      <div className="settings-dialog__body">
-        <Stack gap="md">
-          <Text tone="muted" aria-live="polite">
+      <Stack gap="md">
+        <div aria-live="polite">
+          <Text tone="muted">
             {running
               ? `Vérification en cours : ${passed} réussi${passed > 1 ? "s" : ""}, ${failed} en échec.`
               : done.length > 0
                 ? `${passed} réussi${passed > 1 ? "s" : ""}, ${failed} en échec, sur ${plural(cases.length, "test")}.`
                 : `${plural(cases.length, "test")} déclaré${cases.length > 1 ? "s" : ""}.`}
           </Text>
-          {reads.length > 0 ? (
-            <section aria-label="Tests de lecture">
-              <Text weight="medium">Lectures</Text>
-              <ul className="function-checks">
-                {reads.map((item) => (
-                  <ResultLine key={item.key} item={item} live={live[item.key]} />
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          {writes.length > 0 ? (
-            <section aria-label="Tests d’écriture">
+        </div>
+        {reads.length > 0 ? (
+          <section aria-label="Tests de lecture">
+            <Text weight="medium">Lectures</Text>
+            <ul className={list}>
+              {reads.map((item) => (
+                <ResultLine key={item.key} item={item} live={live[item.key]} />
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {writes.length > 0 ? (
+          <section aria-label="Tests d’écriture">
+            <Stack gap="sm">
               <Text weight="medium">Écritures</Text>
               {writesStarted ? null : (
-                <FeedbackBanner tone="warning" appearance="contained">
+                <Notice tone="warning">
                   Ces tests modifient le service : ils ne se lancent qu’avec votre accord. Indiquez pour chacun une
                   cible de test (un ticket ou un message jetable).
-                </FeedbackBanner>
+                </Notice>
               )}
-              <ul className="function-checks">
+              <ul className={list}>
                 {writes.map((item) => (
                   <ResultLine key={item.key} item={item} live={live[item.key]}>
                     {item.target && !writesStarted && !item.blocked ? (
-                      <div className="function-check__target">
-                        <TextInput
-                          aria-label={`${item.target.label} pour « ${item.name} »`}
-                          placeholder={item.target.hint || item.target.label}
-                          value={targets[item.key] ?? ""}
-                          onChange={(event) =>
-                            setTargets((current) => ({ ...current, [item.key]: event.target.value }))
-                          }
-                        />
-                        <Text size="meta" tone="muted">
-                          {item.target.label}
-                        </Text>
-                      </div>
+                      <TextField
+                        label={`${item.target.label} pour « ${item.name} »`}
+                        isRequired
+                        description={item.target.label}
+                        placeholder={item.target.hint || item.target.label}
+                        value={targets[item.key] ?? ""}
+                        onChange={(value) => setTargets((current) => ({ ...current, [item.key]: value }))}
+                      />
                     ) : null}
                   </ResultLine>
                 ))}
               </ul>
-            </section>
-          ) : null}
-        </Stack>
-      </div>
-      <footer className="settings-dialog__footer">
-        <Row justify="end">
-          <Button disabled={running} onClick={() => dialog.current?.close()}>
-            Fermer
-          </Button>
-          {writes.length > 0 && !writesStarted ? (
-            <Button
-              variant="primary"
-              disabled={running || missingTarget}
-              title={missingTarget ? "Indiquez d’abord la cible de chaque test." : undefined}
-              onClick={() => void launchWrites()}
-            >
-              Lancer les écritures
-            </Button>
-          ) : null}
-        </Row>
-      </footer>
-      {confirmDialog}
+            </Stack>
+          </section>
+        ) : null}
+      </Stack>
     </Dialog>
   );
 }
@@ -302,53 +269,30 @@ function summaryOf(functions: ResolvedFunction[], tests: FunctionTests[] | undef
     .join(", ");
 }
 
-/**
- * Un groupe de fonctions dans la fiche d’un module : ce que le module fait avec un service, ou ses autres
- * fonctions. Replié sous son titre et son nombre quand il est long ; ouvert, une ligne de bilan (lectures,
- * écritures, état des tests) avec « Vérifier… », qui lance les tests du groupe, puis une ligne par fonction.
- */
-export function FunctionGroup({
-  module,
-  functions,
-  tests,
-  label,
-  open,
-}: {
-  module: ModuleSummary;
-  functions: ResolvedFunction[];
-  /** État des tests des fonctions du module (`useFunctionTests`), lu une fois pour toute la fiche. */
-  tests: FunctionTests[] | undefined;
-  /** Titre du groupe ; le nombre de fonctions s’y ajoute. */
+/** Un groupe de fonctions de la fiche : ce que le module fait avec un service, ou ses autres fonctions. */
+export interface FunctionGroupSpec {
+  key: string;
   label: string;
-  /** Ouvert d’entrée ; par défaut, seulement s’il est court. */
-  open?: boolean;
-}) {
+  functions: ResolvedFunction[];
+}
+
+/**
+ * Sections « Fonctions » de la fiche d’un module : une par groupe, avec une ligne de bilan (lectures, écritures, état
+ * des tests), « Vérifier… » qui lance les tests du groupe, puis une ligne par fonction. Les modales (essai,
+ * vérification) vont dans le contenu libre de la dernière section.
+ */
+export function useFunctionSections(
+  module: ModuleSummary | undefined,
+  groups: FunctionGroupSpec[],
+  tests: FunctionTests[] | undefined,
+): SettingsSection[] {
   const [trying, setTrying] = useState<ResolvedFunction>();
-  const [verifying, setVerifying] = useState(false);
-  const { confirm, confirmDialog } = useConfirm();
-  if (functions.length === 0) return null;
+  const [verifying, setVerifying] = useState<FunctionGroupSpec>();
+  const shown = groups.filter((group) => group.functions.length > 0);
+  if (!module || shown.length === 0) return [];
 
-  const reads = functions.filter((fn) => fn.effect === "read").length;
-  // Repliée, la ligne dit encore ce qui demande l’attention : des tests à refaire ou en échec.
-  const failing = functions.filter(
-    (fn) => tests?.find((item) => item.function === fn.reference)?.state === "failed",
-  ).length;
-  const toVerify = functions.filter((fn) => {
-    const state = tests?.find((item) => item.function === fn.reference)?.state;
-    return state === "toVerify" || state === "partial";
-  }).length;
-  const testCount = functions.reduce((total, fn) => total + (fn.tests?.length ?? 0), 0);
   const testsOf = (fn: ResolvedFunction) => tests?.find((item) => item.function === fn.reference);
-
   const remove = async (fn: ResolvedFunction) => {
-    const confirmed = await confirm({
-      title: `Supprimer la fonction « ${fn.id} » ?`,
-      message:
-        "Son fichier et sa déclaration sont retirés du module ; les pages qui l’appellent échoueront. La suppression est enregistrée dans l’historique de l’espace et peut y être annulée.",
-      confirmLabel: "Supprimer",
-      tone: "danger",
-    });
-    if (!confirmed) return;
     try {
       await invoke("functions.remove", { reference: fn.reference });
       await useShell.getState().refresh();
@@ -357,52 +301,49 @@ export function FunctionGroup({
     }
   };
 
-  return (
-    <div className="function-group" data-part="functions">
-      <Disclosure
-        appearance="subtle"
-        open={open ?? functions.length <= 5}
-        label={
-          <span className="function-group__label">
-            {label}
-            <span className="function-group__count">({functions.length})</span>
-            {failing > 0 ? <span className="function-group__alert">{failing} en échec</span> : null}
-            {toVerify > 0 ? <span className="function-group__note">{toVerify} à vérifier</span> : null}
-          </span>
-        }
-      >
-        <div className="function-group__bar">
-          <Text size="meta" tone="muted">
-            {[
-              reads ? `${reads} en lecture` : null,
-              functions.length - reads ? `${functions.length - reads} en écriture` : null,
-              summaryOf(functions, tests),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </Text>
-          {testCount > 0 ? (
-            <Button variant="secondary" aria-label={`Vérifier : ${label}`} onClick={() => setVerifying(true)}>
-              Vérifier…
-            </Button>
-          ) : null}
-        </div>
-        <ul className="function-list">
-          {functions.map((fn) => (
-            <FunctionItem
-              key={fn.reference}
-              fn={fn}
-              readOnly={module.readOnly}
-              tests={testsOf(fn)}
-              onTry={() => setTrying(fn)}
-              onRemove={() => void remove(fn)}
-            />
-          ))}
-        </ul>
-      </Disclosure>
-      {verifying ? <VerifyDialog module={module} functions={functions} onClose={() => setVerifying(false)} /> : null}
+  const dialogs = (
+    <>
+      {verifying ? (
+        <VerifyDialog module={module} functions={verifying.functions} onClose={() => setVerifying(undefined)} />
+      ) : null}
       {trying ? <TryDialog key={trying.reference} fn={trying} onClose={() => setTrying(undefined)} /> : null}
-      {confirmDialog}
-    </div>
+    </>
   );
+
+  return shown.map((group, index) => {
+    const { functions, label } = group;
+    const reads = functions.filter((fn) => fn.effect === "read").length;
+    const testCount = functions.reduce((total, fn) => total + (fn.tests?.length ?? 0), 0);
+    return {
+      id: `functions:${group.key}`,
+      title: `${label} (${functions.length})`,
+      description: [
+        reads ? `${reads} en lecture` : null,
+        functions.length - reads ? `${functions.length - reads} en écriture` : null,
+        summaryOf(functions, tests),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      actions:
+        testCount > 0
+          ? [
+              {
+                id: "verify",
+                label: `Vérifier : ${label}`,
+                icon: <ShieldCheck size={16} aria-hidden="true" />,
+                onPress: () => setVerifying(group),
+              },
+            ]
+          : undefined,
+      settings: functions.map((fn) =>
+        functionRow(fn, {
+          readOnly: module.readOnly,
+          tests: testsOf(fn),
+          onTry: () => setTrying(fn),
+          onRemove: () => remove(fn),
+        }),
+      ),
+      content: index === shown.length - 1 ? dialogs : undefined,
+    };
+  });
 }

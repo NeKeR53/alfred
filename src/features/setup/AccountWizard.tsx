@@ -7,9 +7,10 @@
  * Le secret va dans le coffre, comme depuis la fiche du module. Le compte enregistré est remis à l’étape (`onSaved`)
  * dès sa création, même si son test échoue ensuite : la reprise le retrouve.
  */
-import { Button, CheckboxControl, FormField, RadioControl, Stack, Text, TextInput } from "@alfred/ui";
-import { Check, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { Button, Checkbox, RadioGroup, TextField } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { openExternal } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
 import { urlError } from "../clients/AccountEditor";
@@ -349,48 +350,45 @@ export function AccountWizard({
   const certificate = failure?.reason === "certificate" || address.reason === "certificate" || trust;
 
   return (
-    <form
-      id={formId}
-      className="setup-wizard"
-      noValidate
-      onSubmit={submit}
-      aria-label={`Connecter un compte ${plan.label}`}
-    >
+    <form id={formId} noValidate onSubmit={submit} aria-label={`Connecter un compte ${plan.label}`}>
       <Stack gap="md">
         {!simple ? (
-          <FormField label="Nom du compte" hint="Pour le reconnaître dans le menu." error={errors.name}>
-            <TextInput
-              value={name}
-              autoComplete="off"
-              disabled={busy}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </FormField>
+          <TextField
+            label="Nom du compte"
+            isRequired
+            description="Pour le reconnaître dans le menu."
+            error={errors.name}
+            autoComplete="off"
+            isDisabled={busy}
+            value={name}
+            onChange={setName}
+          />
         ) : null}
         {methods.length > 1 ? (
-          <fieldset className="setup-wizard__methods" disabled={busy}>
-            <legend>Comment vous connectez-vous ?</legend>
+          <RadioGroup
+            label="Comment vous connectez-vous ?"
+            isDisabled={busy}
+            value={method?.id ?? null}
+            onChange={(id) => {
+              setMethodId(id);
+              setLogin("");
+              setSecret("");
+              setErrors({});
+              setFailure(undefined);
+            }}
+          >
             {methods.map((item) => (
-              <RadioControl
-                key={item.id}
-                name={`${formId}-methode`}
-                label={item.label || item.id}
-                checked={item.id === method?.id}
-                onChange={() => {
-                  setMethodId(item.id);
-                  setLogin("");
-                  setSecret("");
-                  setErrors({});
-                  setFailure(undefined);
-                }}
-              />
+              <RadioGroup.Option key={item.id} value={item.id}>
+                {item.label || item.id}
+              </RadioGroup.Option>
             ))}
-          </fieldset>
+          </RadioGroup>
         ) : null}
         {askUrl ? (
-          <FormField
+          <TextField
             label="Adresse"
-            hint={
+            isRequired={!fixedUrl}
+            description={
               example
                 ? `Par exemple ${example}`
                 : fixedUrl
@@ -398,22 +396,17 @@ export function AccountWizard({
                   : "L’adresse où vous vous connectez d’habitude."
             }
             error={errors.url}
-          >
-            <TextInput
-              value={url}
-              placeholder={example ?? fixedUrl ?? "https://"}
-              autoComplete="off"
-              spellCheck={false}
-              inputMode="url"
-              disabled={busy}
-              onChange={(event) => {
-                setUrl(event.target.value);
-                setErrors((current) => ({ ...current, url: undefined }));
-                setAddress({ state: "idle" });
-              }}
-              onBlur={() => void checkAddress()}
-            />
-          </FormField>
+            placeholder={example ?? fixedUrl ?? "https://"}
+            autoComplete="off"
+            isDisabled={busy}
+            value={url}
+            onChange={(value) => {
+              setUrl(value);
+              setErrors((current) => ({ ...current, url: undefined }));
+              setAddress({ state: "idle" });
+            }}
+            onBlur={() => void checkAddress()}
+          />
         ) : null}
         {address.state === "checking" ? (
           <Text size="meta" tone="muted">
@@ -421,7 +414,7 @@ export function AccountWizard({
           </Text>
         ) : address.state === "ok" ? (
           <Text size="meta" tone="success">
-            <Check size={12} aria-hidden="true" /> L’adresse répond.
+            L’adresse répond.
           </Text>
         ) : address.state === "failed" ? (
           <Text size="meta" tone="danger">
@@ -429,15 +422,16 @@ export function AccountWizard({
           </Text>
         ) : null}
         {certificate ? (
-          <CheckboxControl
-            label="Faire confiance à ce serveur"
-            checked={trust}
-            disabled={busy}
-            onChange={(event) => {
-              setTrust(event.target.checked);
-              if (address.state === "failed") void checkAddress(url, event.target.checked);
+          <Checkbox
+            isSelected={trust}
+            isDisabled={busy}
+            onChange={(checked) => {
+              setTrust(checked);
+              if (address.state === "failed") void checkAddress(url, checked);
             }}
-          />
+          >
+            Faire confiance à ce serveur
+          </Checkbox>
         ) : null}
         <ParamFields
           params={declaredParams}
@@ -455,13 +449,12 @@ export function AccountWizard({
         />
         {advice && (fields.secret || fields.login || browser) ? <Text tone="muted">{advice}</Text> : null}
         {tokenPage && fields.secret ? (
-          <div className="setup-wizard__token">
+          <Row gap="sm" wrap>
             <Button
-              variant="secondary"
-              disabled={!tokenLink || busy}
-              onClick={() => tokenLink && void openExternal(tokenLink)}
+              icon={<ExternalLink size={16} aria-hidden="true" />}
+              isDisabled={!tokenLink || busy}
+              onPress={() => tokenLink && void openExternal(tokenLink)}
             >
-              <ExternalLink size={14} aria-hidden="true" />
               Créer mon jeton
             </Button>
             {!tokenLink ? (
@@ -469,42 +462,39 @@ export function AccountWizard({
                 Saisissez d’abord l’adresse.
               </Text>
             ) : null}
-          </div>
+          </Row>
         ) : null}
         {fields.login ? (
-          <FormField label={fields.login.label} error={errors.login}>
-            <TextInput
-              value={login}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={busy}
-              onChange={(event) => setLogin(event.target.value)}
-            />
-          </FormField>
+          <TextField
+            label={fields.login.label}
+            isRequired
+            error={errors.login}
+            autoComplete="off"
+            isDisabled={busy}
+            value={login}
+            onChange={setLogin}
+          />
         ) : null}
         {fields.secret ? (
-          <FormField
+          <TextField
+            type="password"
             label={fields.secret.label}
-            hint={
+            isRequired={!keepsSecret}
+            description={
               keepsSecret
                 ? "Laissez vide pour garder celui enregistré. Il reste sur cet ordinateur."
                 : "Il reste sur cet ordinateur, dans le coffre."
             }
             error={errors.secret}
-          >
-            <TextInput
-              type="password"
-              value={secret}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={busy}
-              onChange={(event) => setSecret(event.target.value)}
-            />
-          </FormField>
+            autoComplete="off"
+            isDisabled={busy}
+            value={secret}
+            onChange={setSecret}
+          />
         ) : null}
         {browser && !method?.clientId && services.overview?.redirectUri ? (
           <Text size="meta" tone="muted">
-            Adresse de retour à donner au service : {services.overview.redirectUri}
+            {`Adresse de retour à donner au service : ${services.overview.redirectUri}`}
           </Text>
         ) : null}
         {phase === "browser" ? (
@@ -518,22 +508,23 @@ export function AccountWizard({
             </Text>
           </div>
         ) : null}
-        <div className="setup-wizard__actions">
+        <Row justify="between">
           {onBack ? (
-            <Button disabled={phase === "saving" || phase === "testing"} onClick={onBack}>
+            <Button isDisabled={phase === "saving" || phase === "testing"} onPress={onBack}>
               Retour
             </Button>
-          ) : null}
-          <span className="setup-flow__spacer" />
+          ) : (
+            <span />
+          )}
           <Button
             type="submit"
             variant="primary"
-            loading={phase === "saving" || phase === "testing"}
-            disabled={phase === "browser"}
+            isPending={phase === "saving" || phase === "testing"}
+            isDisabled={phase === "browser"}
           >
             {browser ? `Se connecter avec ${plan.label}` : failure ? "Réessayer" : "Connecter"}
           </Button>
-        </div>
+        </Row>
       </Stack>
     </form>
   );

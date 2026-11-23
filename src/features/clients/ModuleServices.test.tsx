@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -8,7 +8,8 @@ import { invoke, onNativeEvent, openExternal } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction, ResolvedPage, ResolvedSection, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { ModulesSettings } from "../modules/ModulesSettings";
+import { useModulesSections } from "../modules/ModulesSettings";
+import { renderSections } from "../modules/settingsHarness";
 import type { VaultEntry } from "../vault/api";
 import type {
   AuthType,
@@ -329,19 +330,47 @@ function renderModules(
     ...extra,
   };
   useShell.setState({ snapshot });
-  return render(<ModulesSettings />);
+  return renderSections(useModulesSections, "Modules");
 }
 
 /** Ouvre la fiche d’un module. */
 async function openModule(user: ReturnType<typeof userEvent.setup>, name: string) {
-  const table = await screen.findByRole("table", { name: /Modules de l.espace/ });
-  await user.click(await within(table).findByText(name));
+  const list = await screen.findByRole("region", { name: "Modules installés" });
+  await user.click(await within(list).findByRole("button", { name: `Ouvrir la fiche de ${name}` }));
+}
+
+/** Section d’un service dans la fiche : son nom en titre, une ligne par compte. */
+const _serviceOf = (name: string) => screen.findByRole("region", { name });
+
+/** Actions d’une ligne de compte : « Jira » (service à un seul compte) ou « Jira — Prod ». */
+function rowActions(subject: string) {
+  const [service, account] = subject.split(" — ");
+  const region = screen.getAllByRole("region", { name: service }).at(-1) as HTMLElement;
+  return account
+    ? within(region).getByRole("group", { name: `Actions sur ${account}` })
+    : (within(region).getAllByRole("group", { name: /^Actions sur / })[0] as HTMLElement);
 }
 
 /** Ouvre le menu « … » d’une ligne (service ou compte) et rend l’entrée demandée. */
 async function menuItem(user: ReturnType<typeof userEvent.setup>, subject: string, item: string) {
-  await user.click(screen.getByRole("button", { name: `Actions de ${subject}` }));
+  if (subject.startsWith("l’onglet ") || subject.startsWith("la page ")) {
+    // Pages et onglets de la fiche : un menu « … » par ligne.
+    await user.click(screen.getByRole("button", { name: `Actions de ${subject}` }));
+  } else if (subject.startsWith("la fonction ")) {
+    const actions = screen.getByRole("group", { name: `Actions sur ${subject.slice("la fonction ".length)}` });
+    await user.click(within(actions).getByRole("button", { name: "Plus d'actions" }));
+  } else {
+    await user.click(within(rowActions(subject)).getByRole("button", { name: "Plus d'actions" }));
+  }
   return screen.findByRole("menuitem", { name: item });
+}
+
+/** Choix d’un compte (`Select` de Socle) : le bouton, nommé par son libellé, qui montre la valeur choisie. */
+const picker = (scope: HTMLElement, name: string) => within(scope).getByRole("button", { name: new RegExp(name) });
+
+async function choose(user: ReturnType<typeof userEvent.setup>, button: HTMLElement, option: string | RegExp) {
+  await user.click(button);
+  await user.click(await screen.findByRole("option", { name: option }));
 }
 
 /** Fait utiliser le service `client` par un module « Outils », dont on ouvre ensuite la fiche. */
@@ -437,13 +466,13 @@ it("ajoute le compte d’un service décrit par le module : seulement la clé, r
 
   // Options avancées : propres au compte, pour une subtilité que le module ne prévoit pas.
   await user.click(screen.getByText("Options avancées"));
-  await user.type(screen.getByLabelText("En-têtes en plus (facultatif)"), "X-Tenant: acme");
+  await user.type(screen.getByLabelText(/^En-têtes en plus/), "X-Tenant: acme");
   await user.click(screen.getByLabelText("Accepter un certificat non vérifié"));
   await user.type(screen.getByLabelText("Clé d’API"), "cle-secrete");
   await user.click(screen.getByRole("button", { name: "Enregistrer" }));
 
   // La clé va au coffre ; le compte n’en garde que le nom.
-  await screen.findByRole("group", { name: "Comptes Jira" });
+  await screen.findByRole("region", { name: "Jira" });
   expect(lastCall("vault.save")).toEqual({ label: "Jira", kind: "token", meta: {}, secrets: { value: "cle-secrete" } });
   expect(lastCall("clients.saveInstance")).toEqual({
     client: "tickets",
@@ -464,7 +493,7 @@ it("ajoute le compte d’un service décrit par le module : seulement la clé, r
   await user.click(screen.getByRole("button", { name: "Tester Jira" }));
   await waitFor(() => expect(notifications()).toContain("Jira : le service répond"));
   expect(lastCall("clients.test")).toEqual({ id: "tickets" });
-  await user.click(screen.getByRole("button", { name: "Actions de Jira" }));
+  await user.click(within(rowActions("Jira")).getByRole("button", { name: "Plus d'actions" }));
   expect(await screen.findByRole("menuitem", { name: "Modifier le compte…" })).toBeInTheDocument();
   expect(screen.queryByRole("menuitem", { name: /service/ })).not.toBeInTheDocument();
 });
@@ -489,7 +518,7 @@ it("connecte un client OAuth 2 dans le navigateur et se met à jour au retour", 
   usedByModule("portail", "Portail");
   renderModules();
   await openModule(user, "Outils");
-  const table = await screen.findByRole("group", { name: "Comptes Portail" });
+  const table = await screen.findByRole("region", { name: "Portail" });
   expect(within(table).getByText("À connecter")).toBeInTheDocument();
 
   // Se connecter ouvre l’adresse d’autorisation dans le navigateur du système.
@@ -558,15 +587,16 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
   await openModule(user, "Outils");
 
   // À valider : l’état le dit, et le test est impossible tant que rien n’est approuvé.
-  const table = await screen.findByRole("group", { name: "Comptes Jira" });
+  const table = await screen.findByRole("region", { name: "Jira" });
   expect(within(table).getByText("À approuver")).toBeInTheDocument();
   expect(within(table).getByText(/Modifié hors des Réglages/)).toBeInTheDocument();
-  expect(await menuItem(user, "Jira", "Tester")).toBeDisabled();
+  // Une seule action reste sur la ligne (approuver) ; le test, dans « … », est désactivé.
+  expect(await menuItem(user, "Jira", "Tester Jira")).toHaveAttribute("aria-disabled", "true");
   await user.keyboard("{Escape}");
 
   // Valider montre l’avant et l’après avant de confirmer ; annuler ne valide rien.
   await user.click(screen.getByRole("button", { name: "Approuver Jira" }));
-  const dialog = screen.getByRole("alertdialog");
+  const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Approuver le service « Jira » ?")).toBeInTheDocument();
   expect(within(dialog).getByText("Avant : https://jira.exemple.com")).toBeInTheDocument();
   expect(within(dialog).getByText("Maintenant : https://ailleurs.exemple.com")).toBeInTheDocument();
@@ -577,7 +607,7 @@ it("montre un client modifié hors des Réglages et ne le valide qu’après rel
 
   // Confirmer renvoie au backend exactement les valeurs affichées.
   await user.click(screen.getByRole("button", { name: "Approuver Jira" }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Approuver" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Approuver" }));
   await waitFor(() => expect(within(table).queryByText("À approuver")).not.toBeInTheDocument());
   expect(lastCall("clients.validate")).toEqual({ id: "jira", fingerprint });
   expect(notifications()).toContain("Jira est approuvé");
@@ -661,7 +691,7 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   await user.type(screen.getByLabelText("Adresse de votre compte"), "https://jira.acme.fr");
   await user.type(screen.getByLabelText("Jeton d’accès"), "pat-123");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
-  await screen.findByRole("group", { name: "Comptes Jira" });
+  await screen.findByRole("region", { name: "Jira" });
   expect(lastCall("clients.saveInstance")).toEqual({
     client: "jira",
     create: true,
@@ -675,7 +705,7 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   });
 
   // La fiche montre les comptes du seul service du module, avec l’entrée du menu que chacun alimente.
-  const accounts = await screen.findByRole("group", { name: "Comptes Jira" });
+  const accounts = await screen.findByRole("region", { name: "Jira" });
   expect(screen.getByRole("heading", { name: "Pages" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Comptes" })).toBeInTheDocument();
   expect(within(accounts).getByText("Utilisé par « Tickets — Acme ».")).toBeInTheDocument();
@@ -683,13 +713,11 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   // Un deuxième compte, par l’autre façon de se connecter : identifiant et mot de passe.
   await user.click(screen.getByRole("button", { name: "Ajouter un compte à Jira" }));
   await user.type(await screen.findByLabelText("Adresse de votre compte"), "https://acme.atlassian.net");
-  await user.selectOptions(screen.getByLabelText("Connexion"), "jira-cloud");
+  await choose(user, screen.getByRole("button", { name: /Connexion/ }), /Jira Cloud/);
   await user.type(screen.getByLabelText("Identifiant"), "cloud");
   await user.type(screen.getByLabelText("Mot de passe"), "p4ss");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
-  expect(
-    await within(await screen.findByRole("group", { name: "Comptes Jira" })).findByText("cloud"),
-  ).toBeInTheDocument();
+  expect(await within(await screen.findByRole("region", { name: "Jira" })).findByText("cloud")).toBeInTheDocument();
   expect(lastCall("vault.save")).toEqual({
     label: "Jira — cloud",
     kind: "basic",
@@ -720,7 +748,7 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
   };
   listeners.get("clients:changed")?.({ client: "jira" });
   await user.click(await screen.findByRole("button", { name: "Approuver Jira — cloud" }));
-  const dialog = screen.getByRole("alertdialog");
+  const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("cloud · Adresse du service")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Approuver" }));
   await waitFor(() => expect(notifications()).toContain("Jira est approuvé"));
@@ -731,9 +759,9 @@ it("ajoute plusieurs comptes à un service qui en accepte plusieurs, et les gèr
 
   // Supprimer un compte est confirmé et ne touche pas aux autres.
   await user.click(await menuItem(user, "Jira — jira.acme.fr", "Supprimer le compte…"));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("clients.deleteInstance")).toEqual({ client: "jira", instance: "compte" }));
-  expect(screen.getByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Jira" })).toBeInTheDocument();
 });
 
 it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs", async () => {
@@ -765,9 +793,7 @@ it("nomme chaque service au-dessus de ses comptes quand le module en a plusieurs
   expect(await screen.findByRole("heading", { name: "Jira" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Bitbucket" })).toBeInTheDocument();
   // Sous chaque nom, le compte de ce service.
-  expect(
-    within(screen.getByRole("group", { name: "Comptes Bitbucket" })).getByText("Votre compte"),
-  ).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Bitbucket" })).getByText("Votre compte")).toBeInTheDocument();
 });
 
 it("range la fiche par la hiérarchie : menu, puis chaque service avec ses comptes et ses fonctions, puis le reste", async () => {
@@ -857,42 +883,31 @@ it("range la fiche par la hiérarchie : menu, puis chaque service avec ses compt
     ["Comptes", /partagés par les pages qui s’en servent/],
     ["Fonctions", /rangé par service/],
   ] as const) {
-    const heading = screen.getByRole("heading", { name: title, level: 2 });
+    const heading = screen.getByRole("heading", { name: title, level: 3 });
     expect(within(heading.closest("section") as HTMLElement).getByText(explanation)).toBeInTheDocument();
   }
 
   // La page d’abord : l’entrée avec son icône dans sa couleur, comme dans le menu de gauche, ses onglets en retrait,
   // et le panneau de l’onglet qui en a un.
-  const group = screen.getByRole("group", { name: "Page Développement" });
-  const menu = group;
+  const menu = screen.getByRole("region", { name: "Page Développement" });
   const menuEntry = within(menu).getByText("Développement");
-  expect(menuEntry).toHaveClass("module-entry", "product-color--violet");
-  expect(menuEntry.querySelector(".module-entry__icon svg")).not.toBeNull();
-  expect(within(menu).getByText("Tickets").closest(".setting-row--nested")).not.toBeNull();
+  expect(menuEntry.parentElement?.querySelector("svg")).not.toBeNull();
+  expect(within(menu).getByText("Tickets")).toBeInTheDocument();
   expect(within(menu).getByText("2 onglets.")).toBeInTheDocument();
   expect(within(menu).getByText("Avec le panneau « Ticket » à droite.")).toBeInTheDocument();
-
   // Puis les comptes, un bloc par service, partagés par les pages.
-  expect(await screen.findByRole("group", { name: "Comptes Jira" })).toBeInTheDocument();
-  expect(screen.getByRole("group", { name: "Comptes Bitbucket" })).toBeInTheDocument();
-
+  expect(await screen.findByRole("region", { name: "Jira" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Bitbucket" })).toBeInTheDocument();
   // Les fonctions sont rangées par service, à part des pages.
-  const functions = document.querySelector('[data-part="functions"]') as HTMLElement;
-  const jira = within(functions).getByText("Ce que le module fait avec Jira").closest(".function-group") as HTMLElement;
+  const jira = screen.getByRole("region", { name: "Ce que le module fait avec Jira (2)" });
   expect(within(jira).getByText("lister-tickets")).toBeInTheDocument();
   expect(within(jira).getByText("commenter")).toBeInTheDocument();
   expect(within(jira).queryByText("lister-revues")).not.toBeInTheDocument();
-  const bitbucket = within(functions)
-    .getByText("Ce que le module fait avec Bitbucket")
-    .closest(".function-group") as HTMLElement;
+  const bitbucket = screen.getByRole("region", { name: "Ce que le module fait avec Bitbucket (1)" });
   expect(within(bitbucket).getByText("lister-revues")).toBeInTheDocument();
-
-  // La fonction qui ne passe par aucun service est rangée à part, repliée.
-  const others = document.querySelector('[data-part="other-functions"]') as HTMLElement;
-  expect(within(others).getByText("Sans service")).toBeInTheDocument();
-  expect(others.querySelector("details")).not.toHaveAttribute("open");
+  // La fonction qui ne passe par aucun service est rangée à part.
+  const others = screen.getByRole("region", { name: "Sans service (1)" });
   expect(within(others).getByText("resumer")).toBeInTheDocument();
-
   // Les actions restent là : tester un compte d’un bouton visible, agir sur une fonction.
   expect(screen.getByRole("button", { name: "Tester Jira" })).toBeVisible();
   expect(await menuItem(user, "la fonction commenter", "Essayer…")).toBeInTheDocument();
@@ -993,16 +1008,16 @@ it("montre chaque page du module avec ses onglets et le compte de chacun, et les
   const user = userEvent.setup();
   prefectSpace();
   await openModule(user, "Prefect");
-  const page = await screen.findByRole("group", { name: "Page Prefect" });
+  const page = await screen.findByRole("region", { name: "Page Prefect" });
   expect(within(page).getByText("2 onglets.")).toBeInTheDocument();
-  expect(within(page).getByRole("combobox", { name: "Compte Prefect de Déploiements" })).toHaveValue("prod");
-  expect(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" })).toHaveValue("recette");
-  const accounts = await screen.findByRole("group", { name: "Comptes Prefect" });
+  expect(picker(page, "Compte Prefect de Déploiements")).toHaveTextContent(/^Prod/);
+  expect(picker(page, "Compte Prefect de Recette")).toHaveTextContent(/^Recette/);
+  const accounts = (await screen.findAllByRole("region", { name: "Prefect" })).at(-1) as HTMLElement;
   expect(within(accounts).getByText("Utilisé par « Prefect › Déploiements ».")).toBeInTheDocument();
   expect(within(accounts).getByText("Utilisé par « Prefect › Recette ».")).toBeInTheDocument();
 
   // Changer le compte d’un onglet.
-  await user.selectOptions(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" }), "prod");
+  await choose(user, picker(page, "Compte Prefect de Recette"), /^Prod ·/);
   await waitFor(() =>
     expect(lastCall("space.menu.configure")).toEqual({
       target: "prefect/deploiements@recette",
@@ -1038,9 +1053,9 @@ it("ajoute une deuxième page Prefect pour un autre compte, puis un onglet à un
   await user.click(await screen.findByRole("button", { name: "Ajouter une page" }));
   const dialog = await screen.findByRole("dialog", { name: "Ajouter une page Prefect" });
   expect(within(dialog).getByRole("radio", { name: "Prefect" })).toBeChecked();
-  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Compte Prefect" }), "recette");
+  await choose(user, picker(dialog, "Compte Prefect"), /^Recette ·/);
   // Une page Prefect existe déjà : le nom proposé dit le compte.
-  expect(within(dialog).getByLabelText("Nom")).toHaveValue("Prefect Recette");
+  expect(within(dialog).getByLabelText(/^Nom/)).toHaveValue("Prefect Recette");
   await user.click(within(dialog).getByRole("radio", { name: "flask-conical" }));
   await user.click(within(dialog).getByRole("button", { name: "Ajouter la page" }));
   await waitFor(() =>
@@ -1056,7 +1071,7 @@ it("ajoute une deuxième page Prefect pour un autre compte, puis un onglet à un
   await user.click(await menuItem(user, "la page Prefect", "Ajouter un onglet…"));
   const tab = await screen.findByRole("dialog", { name: "Ajouter un onglet à « Prefect »" });
   expect(within(tab).getByRole("radio", { name: "Déploiements" })).toBeChecked();
-  await user.selectOptions(within(tab).getByRole("combobox", { name: "Compte Prefect" }), "prod");
+  await choose(user, picker(tab, "Compte Prefect"), /^Prod ·/);
   await user.click(within(tab).getByRole("button", { name: "Ajouter l’onglet" }));
   await waitFor(() =>
     expect(lastCall("space.menu.addTab")).toEqual({
@@ -1070,8 +1085,8 @@ it("crée un compte sur place depuis un onglet, qui en devient le compte", async
   const user = userEvent.setup();
   prefectSpace();
   await openModule(user, "Prefect");
-  const page = await screen.findByRole("group", { name: "Page Prefect" });
-  await user.selectOptions(within(page).getByRole("combobox", { name: "Compte Prefect de Recette" }), "__nouveau__");
+  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  await choose(user, picker(page, "Compte Prefect de Recette"), "Ajouter un compte…");
   await user.type(await screen.findByLabelText("Adresse de votre compte"), "https://dev.acme.fr");
   await user.click(screen.getByRole("button", { name: "Ajouter" }));
   await waitFor(() =>
@@ -1088,21 +1103,14 @@ it("ne devine aucun compte : « Ajouter la page » attend qu’on en choisisse u
   await openModule(user, "Prefect");
   await user.click(await screen.findByRole("button", { name: "Ajouter une page" }));
   const dialog = await screen.findByRole("dialog", { name: "Ajouter une page Prefect" });
-  const picker = within(dialog).getByRole("combobox", { name: "Compte Prefect" });
-  expect(picker).toHaveValue("");
-  expect(within(picker).getByRole("option", { name: "Choisir un compte…" })).toBeDisabled();
+  const account = picker(dialog, "Compte Prefect");
+  expect(account).toHaveTextContent("Choisir un compte…");
   expect(within(dialog).getByRole("button", { name: "Ajouter la page" })).toBeDisabled();
   // Chaque compte dit son service et son état ; « Ajouter un compte… » reste en bas.
-  const options = within(picker)
-    .getAllByRole("option")
-    .map((option) => option.textContent);
-  expect(options).toEqual([
-    "Choisir un compte…",
-    "Prod · Prefect · connecté",
-    "Recette · Prefect · connecté",
-    "Ajouter un compte…",
-  ]);
-  await user.selectOptions(picker, "prod");
+  await user.click(account);
+  const options = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(options).toEqual(["Prod · Prefect · connecté", "Recette · Prefect · connecté", "Ajouter un compte…"]);
+  await user.click(screen.getByRole("option", { name: "Prod · Prefect · connecté" }));
   expect(within(dialog).getByRole("button", { name: "Ajouter la page" })).toBeEnabled();
 });
 
@@ -1119,12 +1127,9 @@ it("propose le compte d’un autre module du même type, et l’enregistre avec 
   });
   listeners.get("clients:changed")?.({ client: "prefect-equipe" });
   await openModule(user, "Prefect");
-  const page = await screen.findByRole("group", { name: "Page Prefect" });
-  const picker = within(page).getByRole("combobox", { name: "Compte Prefect de Recette" });
-  await waitFor(() =>
-    expect(within(picker).getByRole("option", { name: "Partagé · Prefect (équipe) · connecté" })).toBeInTheDocument(),
-  );
-  await user.selectOptions(picker, "prefect-equipe/partage");
+  const page = await screen.findByRole("region", { name: "Page Prefect" });
+  await user.click(picker(page, "Compte Prefect de Recette"));
+  await user.click(await screen.findByRole("option", { name: "Partagé · Prefect (équipe) · connecté" }));
   await waitFor(() =>
     expect(lastCall("space.menu.configure")).toEqual({
       target: "prefect/deploiements@recette",

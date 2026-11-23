@@ -3,8 +3,8 @@
  * d’un module, ou quand l’utilisateur lance la configuration d’un module (sa fiche, la page d’attente d’une page). Il
  * présente le module, laisse choisir ses pages, puis guide, page par page, le choix ou la connexion de leurs comptes.
  */
-import { Dialog } from "@alfred/ui";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { Dialog } from "socle-ui";
 import { create } from "zustand";
 import { onNativeEvent } from "../../lib/native";
 import { useShell } from "../../shell/store";
@@ -64,21 +64,15 @@ function OnboardingPanel({ module, start, step }: { module: string; start: "intr
   useEffect(() => {
     if (services.overview || snapshot) void reload();
   }, [services.overview, snapshot, reload]);
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
   const name = modules.find((candidate) => candidate.id === module)?.name ?? module;
 
   return (
     <Dialog
-      ref={dialog}
-      className="onboarding-panel"
-      aria-label={`Configurer ${name}`}
-      onCancel={(event) => {
-        event.preventDefault();
-        closeOnboarding();
+      isOpen
+      size="xl"
+      title={`Configurer ${name}`}
+      onOpenChange={(open) => {
+        if (!open) closeOnboarding();
       }}
     >
       <SetupFlow
@@ -93,7 +87,6 @@ function OnboardingPanel({ module, start, step }: { module: string; start: "intr
           useShell.getState().setView({ kind: "section", id });
         }}
       />
-      {services.confirmDialog}
     </Dialog>
   );
 }

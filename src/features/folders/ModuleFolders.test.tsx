@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -23,7 +23,13 @@ HTMLDialogElement.prototype.close = function () {
 };
 
 import { invoke } from "../../lib/native";
-import { type GrantedFolder, ModuleFolders } from "./ModuleFolders";
+import { renderSections } from "../modules/settingsHarness";
+import { type GrantedFolder, useFoldersSection } from "./ModuleFolders";
+
+const useSections = () => {
+  const section = useFoldersSection({ id: "produits", name: "Produits" });
+  return section ? [section] : [];
+};
 
 let granted: GrantedFolder[];
 
@@ -43,18 +49,22 @@ beforeEach(() => {
 });
 
 it("montre les dossiers accordés et retire un accès après confirmation", async () => {
-  render(<ModuleFolders module="produits" name="Produits" />);
-  expect(await screen.findByText("/Users/moi/alpha/api")).toBeTruthy();
+  renderSections(useSections);
+  expect(await screen.findByText(/\/Users\/moi\/alpha\/api/)).toBeTruthy();
   expect(screen.getByText(/par l’agent/)).toBeTruthy();
-  await userEvent.click(screen.getByRole("button", { name: "Retirer l’accès à Équipe" }));
-  await userEvent.click(screen.getAllByRole("button", { name: "Retirer l’accès" }).at(-1) as HTMLElement);
-  await waitFor(() => expect(screen.queryByText("/Users/moi/equipe")).toBeNull());
+  const row = screen.getByRole("group", { name: "Actions sur Équipe" });
+  await userEvent.click(within(row).getByRole("button", { name: "Plus d'actions" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Retirer l’accès à Équipe" }));
+  await userEvent.click(
+    within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Retirer l’accès" }),
+  );
+  await waitFor(() => expect(screen.queryByText(/\/Users\/moi\/equipe/)).toBeNull());
   expect(invoke).toHaveBeenCalledWith("folders.revoke", { module: "produits", folder: "equipe" });
 });
 
 it("ne montre rien quand le module n’a aucun dossier", async () => {
   granted = [];
-  const { container } = render(<ModuleFolders module="produits" name="Produits" />);
+  renderSections(useSections);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("folders.list", { module: "produits" }));
-  expect(container.textContent).toBe("");
+  expect(screen.queryByRole("region", { name: "Dossiers du poste" })).toBeNull();
 });

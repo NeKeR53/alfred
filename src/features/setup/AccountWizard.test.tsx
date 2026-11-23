@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -25,6 +25,7 @@ vi.mock("../vault/api", async (importOriginal) => ({
 
 import type { ClientItem } from "../clients/api";
 import type { ClientsController } from "../clients/useClients";
+import { renderWithSocle } from "../modules/settingsHarness";
 import { AccountWizard } from "./AccountWizard";
 
 const portainer = {
@@ -66,7 +67,7 @@ beforeEach(() => {
 describe("assistant de compte", () => {
   it("demande l’identifiant, le mot de passe et les paramètres d’un compte à session", async () => {
     const connected = vi.fn();
-    render(
+    renderWithSocle(
       <AccountWizard
         plan={{ key: "docker/portainer", module: "docker", need: "portainer", label: "Portainer" }}
         modules={[]}

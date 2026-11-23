@@ -2,10 +2,12 @@
  * État et actions des services (clients) de l’espace : lecture, test, connexion OAuth, validation, comptes
  * (instances). Partagé par la liste complète des services et par la fiche de chaque module.
  */
-import { Button, KeyValueList, Stack, StatusBadge, Text, useConfirm } from "@alfred/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type SettingTag, useConfirm } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import { onNativeEvent, openExternal } from "../../lib/native";
 import { notify } from "../../shell/notifications";
+import { KeyValues } from "../modules/lists";
 import { errorMessage } from "../vault/api";
 import {
   authTypeLabel,
@@ -70,7 +72,7 @@ export function useClients() {
   const [connecting, setConnecting] = useState<string>();
   const connectingRef = useRef<string | undefined>(undefined);
   const overviewRef = useRef<ClientsOverview | undefined>(undefined);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -173,7 +175,7 @@ export function useClients() {
               ? "Ce service a été modifié hors des Réglages. Une fois approuvé, Alfred enverra son mot de passe ou sa clé selon ces nouvelles valeurs."
               : "Ce service a été créé hors des Réglages. Une fois approuvé, Alfred enverra son mot de passe ou sa clé aux adresses ci-dessous."}
           </Text>
-          <KeyValueList
+          <KeyValues
             items={validation.changes.map((change) => ({
               label: change.instanceLabel ? `${change.instanceLabel} · ${change.label}` : change.label,
               value: validation.everValidated ? (
@@ -262,105 +264,25 @@ export function useClients() {
     }
   };
 
-  /** Pastille d’état d’un service ou d’un compte, à côté de son nom. */
-  const statusBadge = (item: Pick<ClientItem, "status" | "problem">) => {
+  /** Étiquette d’état d’un service ou d’un compte, à côté de son nom. */
+  const statusTag = (item: Pick<ClientItem, "status">): SettingTag => {
     const status = STATUS[item.status];
-    return (
-      <StatusBadge tone={status.tone} size="compact" title={item.problem ?? undefined}>
-        {status.label}
-      </StatusBadge>
-    );
+    return { label: status.label, tone: status.tone };
   };
 
-  /** Ce qui explique l’état (problème, accord attendu, navigateur, dernier test), en lignes grises. */
-  const statusDetails = (item: Pick<ClientItem, "status" | "problem" | "validation">, key: string) => {
+  /** Ce qui explique l’état (problème, accord attendu, navigateur, dernier test), en phrases courtes. */
+  const statusDetails = (item: Pick<ClientItem, "status" | "problem" | "validation">, key: string): string[] => {
     const tested = tests[key];
-    const lines: Array<{ text: string; tone?: "danger" | "warning" | "success" }> = [];
-    if (item.problem) lines.push({ text: item.problem, tone: "danger" });
+    const lines: string[] = [];
+    if (item.problem) lines.push(item.problem);
     if (item.status === "toValidate")
-      lines.push({
-        text: `${item.validation?.everValidated ? "Modifié" : "Créé"} hors des Réglages : rien n’est envoyé avant votre accord.`,
-        tone: "warning",
-      });
-    if (connecting === key) lines.push({ text: "En attente du navigateur…" });
-    if (tested)
-      lines.push({
-        text: `Dernier test : ${tested.status ?? "sans réponse"} · ${tested.durationMs} ms`,
-        tone: tested.ok ? "success" : "danger",
-      });
-    return lines.map((line) => (
-      <span key={line.text} className={`service-detail${line.tone ? ` service-detail--${line.tone}` : ""}`}>
-        {line.text}
-      </span>
-    ));
-  };
-
-  /** État d’un service ou d’un compte, avec ce qui l’explique et le dernier test. */
-  const statusCell = (item: Pick<ClientItem, "status" | "problem" | "validation">, key: string, showsTest: boolean) => {
-    const status = STATUS[item.status];
-    const tested = showsTest ? tests[key] : undefined;
-    return (
-      <Stack gap="xs">
-        <span>
-          <StatusBadge tone={status.tone} size="compact" title={item.problem ?? undefined}>
-            {status.label}
-          </StatusBadge>
-        </span>
-        {item.problem ? (
-          <Text size="meta" tone="danger">
-            {item.problem}
-          </Text>
-        ) : null}
-        {item.status === "toValidate" ? (
-          <Text size="meta" tone="warning">
-            {item.validation?.everValidated ? "Modifié" : "Créé"} hors des Réglages : rien n’est envoyé avant votre
-            accord.
-          </Text>
-        ) : null}
-        {connecting === key ? (
-          <Text size="meta" tone="muted">
-            En attente du navigateur…
-          </Text>
-        ) : null}
-        {tested ? (
-          <Text size="meta" tone={tested.ok ? "success" : "danger"}>
-            Dernier test : {tested.status ?? "sans réponse"} · {tested.durationMs} ms
-          </Text>
-        ) : null}
-      </Stack>
-    );
-  };
-
-  /** Connexion et test d’un service à une seule adresse, ou d’un compte. */
-  const targetActions = (target: Target, state: Pick<ClientItem, "status" | "connected">, oauth: boolean) => {
-    const key = targetKey(target.client.id, target.instance?.id);
-    const label = targetLabel(target);
-    return (
-      <>
-        {oauth && state.status === "toConnect" ? (
-          <Button variant="primary" aria-label={`Se connecter à ${label}`} onClick={() => void connect(target)}>
-            Se connecter
-          </Button>
-        ) : null}
-        {oauth && state.connected ? (
-          <Button variant="secondary" aria-label={`Se déconnecter de ${label}`} onClick={() => void disconnect(target)}>
-            Se déconnecter
-          </Button>
-        ) : null}
-        <Button
-          variant="secondary"
-          aria-label={`Tester ${label}`}
-          loading={testing === key}
-          loadingLabel="Test…"
-          disabled={
-            state.status === "invalid" || state.status === "toValidate" || (testing !== undefined && testing !== key)
-          }
-          onClick={() => void test(target)}
-        >
-          Tester
-        </Button>
-      </>
-    );
+      lines.push(
+        `${item.validation?.everValidated ? "Modifié" : "Créé"} hors des Réglages : rien n’est envoyé avant votre accord.`,
+      );
+    if (connecting === key) lines.push("En attente du navigateur…");
+    if (testing === key) lines.push("Test en cours…");
+    if (tested) lines.push(`Dernier test : ${tested.status ?? "sans réponse"} · ${tested.durationMs} ms`);
+    return lines;
   };
 
   return {
@@ -377,11 +299,8 @@ export function useClients() {
     removeInstance,
     makeDefault,
     bind,
-    statusCell,
-    statusBadge,
+    statusTag,
     statusDetails,
-    targetActions,
-    confirmDialog,
   };
 }
 

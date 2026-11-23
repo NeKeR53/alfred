@@ -6,22 +6,10 @@
  * depuis leur menu « ⋯ ». Un compte se choisit parmi tous ceux de l’espace qui sont du bon type, quel que soit le
  * module qui les a créés ; rien n’est deviné quand il y en a plusieurs.
  */
-import {
-  Button,
-  FormField,
-  MenuItem,
-  Modal,
-  OverflowMenu,
-  RadioControl,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  Stack,
-  Text,
-  TextInput,
-} from "@alfred/ui";
-import { Boxes } from "lucide-react";
+import { Boxes, MoreHorizontal } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { Button, Dialog, IconButton, Menu, RadioGroup, Select, TextField } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import type {
   ModuleSummary,
   NewTab,
@@ -42,6 +30,7 @@ import type { ClientInstanceItem, ClientItem, ClientNeedItem } from "../clients/
 import type { ServiceEditing } from "../clients/ServiceEditor";
 import { type ClientsController, STATUS } from "../clients/useClients";
 import { DragHandle } from "../navigation/NavigationSettings";
+import "./modules.css";
 import { errorMessage } from "../vault/api";
 import { templateOfPage, userPages } from "./menuApi";
 
@@ -114,30 +103,32 @@ function optionLabel({ client, instance }: AccountOption): string {
   return `${instance.label} · ${client.label} · ${state}`;
 }
 
-/** Titre d’une page de l’utilisateur : son icône dans sa couleur, et son nom. */
+/** Titre d’une page de l’utilisateur : son icône, et son nom. */
 function EntryTitle({ section }: { section: ResolvedSection }) {
   return (
-    <span className={`module-entry module-entry--section product-color--${section.color ?? "steel"}`}>
-      <span className="module-entry__icon" aria-hidden="true">
+    <span className="flex min-w-0 items-center gap-2 font-medium text-fg">
+      <span aria-hidden="true" className="flex shrink-0 text-fg-2">
         {section.icon || section.iconUrl ? <SectionIcon section={section} size={16} /> : <Boxes size={16} />}
       </span>
-      {section.label}
+      <span className="truncate">{section.label}</span>
     </span>
   );
 }
 
 function TabTitle({ page }: { page: ResolvedPage }) {
   return (
-    <span className="module-entry module-entry--tab">
+    <span className="flex min-w-0 items-center gap-2 text-fg">
       {page.icon ? (
-        <span className="module-entry__icon" aria-hidden="true">
+        <span aria-hidden="true" className="flex shrink-0 text-fg-3">
           <NamedIcon name={page.icon} size={14} />
         </span>
       ) : null}
-      {page.title}
+      <span className="truncate">{page.title}</span>
     </span>
   );
 }
+
+const DEFAULT_ACCOUNT = "__defaut__";
 
 /**
  * Choix d’un compte pour un besoin, parmi tous ceux de l’espace qui sont du bon type. Sans choix : « Choisir un
@@ -150,6 +141,7 @@ function AccountPicker({
   label,
   onChange,
   disabled,
+  hideLabel = true,
 }: {
   options: AccountOption[];
   value: string;
@@ -157,30 +149,26 @@ function AccountPicker({
   label: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  hideLabel?: boolean;
 }) {
   const fallback = options.find((option) => !option.value.includes("/") && option.instance.default);
   return (
-    <SelectControl
-      aria-label={label}
-      value={value}
-      disabled={disabled}
-      width="auto"
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {follows ? (
-        <option value="" disabled>
-          Choisir un compte…
-        </option>
-      ) : (
-        <option value="">{fallback ? `Par défaut (${fallback.instance.label})` : "Par défaut"}</option>
-      )}
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {optionLabel(option)}
-        </option>
-      ))}
-      <option value={NEW_ACCOUNT}>Ajouter un compte…</option>
-    </SelectControl>
+    <Select
+      label={label}
+      hideLabel={hideLabel}
+      width={hideLabel ? "md" : "full"}
+      isDisabled={disabled}
+      placeholder="Choisir un compte…"
+      value={value || (follows ? null : DEFAULT_ACCOUNT)}
+      onChange={(id) => onChange(!id || id === DEFAULT_ACCOUNT ? "" : id)}
+      options={[
+        ...(follows
+          ? []
+          : [{ id: DEFAULT_ACCOUNT, label: fallback ? `Par défaut (${fallback.instance.label})` : "Par défaut" }]),
+        ...options.map((option) => ({ id: option.value, label: optionLabel(option) })),
+        { id: NEW_ACCOUNT, label: "Ajouter un compte…" },
+      ]}
+    />
   );
 }
 
@@ -315,26 +303,28 @@ function AddDialog({
   };
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      busy={pending}
+    <Dialog
+      isOpen
+      isBusy={pending}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
       title={mode === "page" ? `Ajouter une page ${module.name}` : `Ajouter un onglet à « ${target?.label ?? ""} »`}
       description={
         mode === "page"
           ? "Choisissez le modèle, son nom et ses comptes. Le même modèle peut servir plusieurs fois, avec d’autres comptes."
           : "Choisissez le modèle de l’onglet, son nom et ses comptes."
       }
-      actions={
+      footer={
         <>
-          <Button onClick={onClose} disabled={pending}>
+          <Button onPress={onClose} isDisabled={pending}>
             Annuler
           </Button>
           <Button
             variant="primary"
-            loading={pending}
-            disabled={!chosen || missing.length > 0}
-            onClick={() => void confirm()}
+            isPending={pending}
+            isDisabled={!chosen || missing.length > 0}
+            onPress={() => void confirm()}
           >
             {mode === "page" ? "Ajouter la page" : "Ajouter l’onglet"}
           </Button>
@@ -342,41 +332,22 @@ function AddDialog({
       }
     >
       <Stack gap="md">
-        <fieldset className="modules-choice">
-          <legend className="modules-choice__legend">Modèle</legend>
-          <Stack gap="none">
-            {choices.map((candidate) => (
-              <RadioControl
-                key={candidate.key}
-                name="modele"
-                label={
-                  candidate.hint ? (
-                    <span className="modules-choice__option">
-                      {candidate.label}
-                      <span className="modules-choice__hint">{candidate.hint}</span>
-                    </span>
-                  ) : (
-                    candidate.label
-                  )
-                }
-                checked={choice === candidate.key}
-                onChange={() => {
-                  setChoice(candidate.key);
-                  setName(undefined);
-                }}
-              />
-            ))}
-          </Stack>
-        </fieldset>
-        <FormField label="Nom">
-          <TextInput value={shownName} autoComplete="off" onChange={(event) => setName(event.target.value)} />
-        </FormField>
-        {mode === "page" && chosen ? (
-          <fieldset className="modules-choice">
-            <legend className="modules-choice__legend">Icône</legend>
-            <IconPicker value={icon} onChange={setIcon} fallback={chosen.section} />
-          </fieldset>
-        ) : null}
+        <RadioGroup
+          label="Modèle"
+          value={choice}
+          onChange={(value) => {
+            setChoice(value);
+            setName(undefined);
+          }}
+        >
+          {choices.map((candidate) => (
+            <RadioGroup.Option key={candidate.key} value={candidate.key} description={candidate.hint}>
+              {candidate.label}
+            </RadioGroup.Option>
+          ))}
+        </RadioGroup>
+        <TextField label="Nom" autoComplete="off" value={shownName} onChange={setName} />
+        {mode === "page" && chosen ? <IconPicker value={icon} onChange={setIcon} fallback={chosen.section} /> : null}
         {needs.map((need) => {
           const label = lookup.needOf(module.id, need)?.label ?? need;
           if (!lookup.clientOf(module.id, need))
@@ -386,19 +357,19 @@ function AddDialog({
               </Text>
             );
           return (
-            <FormField key={need} label={`Compte ${label}`}>
-              <AccountPicker
-                options={lookup.optionsOf(module.id, need)}
-                value={accounts[need] ?? ""}
-                follows={follows(need)}
-                label={`Compte ${label}`}
-                onChange={(value) => setAccounts((current) => ({ ...current, [need]: value }))}
-              />
-            </FormField>
+            <AccountPicker
+              key={need}
+              hideLabel={false}
+              options={lookup.optionsOf(module.id, need)}
+              value={accounts[need] ?? ""}
+              follows={follows(need)}
+              label={`Compte ${label}`}
+              onChange={(value) => setAccounts((current) => ({ ...current, [need]: value }))}
+            />
           );
         })}
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -408,23 +379,54 @@ function firstTabOf(id: string | undefined): string | undefined {
   return useShell.getState().snapshot?.sections.find((section) => section.id === id)?.pages[0]?.reference;
 }
 
-type Dialog =
+type Opened =
   | { kind: "add-page" }
   | { kind: "add-tab"; section: ResolvedSection }
   | { kind: "rename"; target: string; initial: string; what: string }
   | { kind: "icon"; section: ResolvedSection };
 
-/** Classes d’une ligne qu’on glisse : celle qu’on déplace, et l’endroit où elle tombera. */
+/** Classes d’une ligne qu’on glisse : celle qu’on déplace, et l’endroit où elle tombera (voir `modules.css`). */
 function dragClasses(drag: { draggedId?: string; dropTarget?: { id: string; placement: string } }, id: string) {
-  return `sortable-row${drag.draggedId === id ? " is-dragging" : ""}${drag.dropTarget?.id === id ? ` is-drop-${drag.dropTarget.placement}` : ""}`;
+  return `module-sortable${drag.draggedId === id ? " is-dragging" : ""}${drag.dropTarget?.id === id ? ` is-drop-${drag.dropTarget.placement}` : ""}`;
 }
 
-/** Une entrée de menu « ⋯ » : l’action part dès la capture, le menu se ferme avant la remontée du clic. */
-function Item({ label, run, disabled }: { label: string; run: () => void; disabled?: boolean }) {
+interface RowItem {
+  label: string;
+  run: () => void;
+  disabled?: boolean;
+}
+
+/** Menu « … » d’une page ou d’un onglet. */
+function RowMenu({ label, items }: { label: string; items: RowItem[] }) {
   return (
-    <MenuItem disabled={disabled} onClickCapture={run}>
-      {label}
-    </MenuItem>
+    <Menu label={label} trigger={<IconButton icon={<MoreHorizontal size={16} aria-hidden="true" />} label={label} />}>
+      {items.map((item) => (
+        <Menu.Item key={item.label} label={item.label} isDisabled={item.disabled} onAction={item.run} />
+      ))}
+    </Menu>
+  );
+}
+
+/** Une ligne de la liste des pages : titre et description à gauche, contrôles à droite. */
+function PageLine({
+  title,
+  description,
+  nested = false,
+  children,
+}: {
+  title: ReactNode;
+  description?: string;
+  nested?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`flex min-w-0 items-center gap-3 py-2 ${nested ? "pl-6" : ""}`}>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {title}
+        {description ? <span className="text-fg-2 text-sm">{description}</span> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
+    </div>
   );
 }
 
@@ -450,7 +452,7 @@ export function ModuleUserPages({
   loading?: ReactNode;
 }) {
   const lookup = useLookup(services, modules, snapshot);
-  const [dialog, setDialog] = useState<Dialog>();
+  const [dialog, setDialog] = useState<Opened>();
   const templates = snapshot.templates ?? [];
   const templateOf = (page: ResolvedPage) => templates.find((template) => template.reference === templateOfPage(page));
   const offered = templates.some((template) => template.module === module.id);
@@ -482,7 +484,12 @@ export function ModuleUserPages({
     const template = templateOf(page);
     const needs = choosableNeeds(template, lookup);
     if (needs.length === 0) return null;
-    if (loading) return loading;
+    if (loading)
+      return (
+        <Text size="meta" tone="muted">
+          {loading}
+        </Text>
+      );
     return needs.map((need) => {
       const label = lookup.needOf(page.module, need)?.label ?? need;
       const options = lookup.optionsOf(page.module, need);
@@ -519,8 +526,8 @@ export function ModuleUserPages({
   );
 
   return (
-    <>
-      <ul className="module-pages-list" aria-label={`Pages ${module.name}`}>
+    <Stack gap="sm">
+      <ul aria-label={`Pages ${module.name}`} className="m-0 flex list-none flex-col p-0">
         {entries.length === 0 ? (
           <li>
             <Text size="meta" tone="muted">
@@ -531,7 +538,7 @@ export function ModuleUserPages({
         {drag.orderedItems.map(({ section }, index) => (
           <li
             key={section.id}
-            className={dragClasses(drag, section.id)}
+            className={`${dragClasses(drag, section.id)} border-line border-b last:border-b-0`}
             data-sortable-scope={drag.scopeId}
             data-sortable-id={section.id}
           >
@@ -558,8 +565,8 @@ export function ModuleUserPages({
         ))}
       </ul>
       {offered ? (
-        <div className="module-groups__footer">
-          <Button variant="secondary" onClick={() => setDialog({ kind: "add-page" })}>
+        <div>
+          <Button size="sm" onPress={() => setDialog({ kind: "add-page" })}>
             Ajouter une page
           </Button>
         </div>
@@ -603,7 +610,7 @@ export function ModuleUserPages({
           }
         />
       ) : null}
-    </>
+    </Stack>
   );
 }
 
@@ -625,7 +632,7 @@ function EntryRows({
   last: boolean;
   offered: boolean;
   accountsOf: (page: ResolvedPage) => ReactNode;
-  onDialog: (dialog: Dialog) => void;
+  onDialog: (dialog: Opened) => void;
   act: (title: string, work: () => Promise<unknown>) => Promise<void>;
   handle: ReactNode;
 }) {
@@ -641,65 +648,70 @@ function EntryRows({
     .filter(Boolean)
     .join(" ");
   return (
-    <SettingRows label={`Page ${section.label}`}>
-      <SettingRow
+    <section aria-label={`Page ${section.label}`}>
+      <PageLine
         title={
-          <span className="module-pages-list__title">
+          <span className="flex min-w-0 items-center gap-1">
             {handle}
             <EntryTitle section={section} />
           </span>
         }
         description={facts || undefined}
       >
-        <OverflowMenu label={`Actions de la page ${section.label}`} size="small">
-          <Item
-            label="Renommer…"
-            run={() => onDialog({ kind: "rename", target: section.id, initial: section.label, what: "la page" })}
-          />
-          <Item label="Changer l’icône…" run={() => onDialog({ kind: "icon", section })} />
-          {offered ? <Item label="Ajouter un onglet…" run={() => onDialog({ kind: "add-tab", section })} /> : null}
-          <Item
-            label={section.hidden ? "Afficher dans le menu" : "Masquer du menu"}
-            run={() => void applyLayoutChange((current) => setSectionHidden(current, section.id, !section.hidden))}
-          />
-          <Item
-            label="Monter"
-            disabled={first}
-            run={() => void act("La page n’a pas été déplacée", () => userPages.move(section.id, -1))}
-          />
-          <Item
-            label="Descendre"
-            disabled={last}
-            run={() => void act("La page n’a pas été déplacée", () => userPages.move(section.id, 1))}
-          />
-          {removable ? (
-            <Item
-              label="Retirer du menu"
-              run={() =>
-                void act("La page n’a pas été retirée", async () => {
-                  await userPages.remove(section.id);
-                  notify({ title: `Page « ${section.label} » retirée du menu`, tone: "success" });
-                })
-              }
-            />
-          ) : null}
-        </OverflowMenu>
-      </SettingRow>
+        <RowMenu
+          label={`Actions de la page ${section.label}`}
+          items={[
+            {
+              label: "Renommer…",
+              run: () => onDialog({ kind: "rename", target: section.id, initial: section.label, what: "la page" }),
+            },
+            { label: "Changer l’icône…", run: () => onDialog({ kind: "icon", section }) },
+            ...(offered ? [{ label: "Ajouter un onglet…", run: () => onDialog({ kind: "add-tab", section }) }] : []),
+            {
+              label: section.hidden ? "Afficher dans le menu" : "Masquer du menu",
+              run: () => void applyLayoutChange((current) => setSectionHidden(current, section.id, !section.hidden)),
+            },
+            {
+              label: "Monter",
+              disabled: first,
+              run: () => void act("La page n’a pas été déplacée", () => userPages.move(section.id, -1)),
+            },
+            {
+              label: "Descendre",
+              disabled: last,
+              run: () => void act("La page n’a pas été déplacée", () => userPages.move(section.id, 1)),
+            },
+            ...(removable
+              ? [
+                  {
+                    label: "Retirer du menu",
+                    run: () =>
+                      void act("La page n’a pas été retirée", async () => {
+                        await userPages.remove(section.id);
+                        notify({ title: `Page « ${section.label} » retirée du menu`, tone: "success" });
+                      }),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </PageLine>
       {drag.orderedItems.map(({ page }, position) => (
         <div
           key={page.reference}
-          className={`setting-row--nested ${dragClasses(drag, page.reference)}`}
+          className={`module-tab ${dragClasses(drag, page.reference)}`}
           data-sortable-scope={drag.scopeId}
           data-sortable-id={page.reference}
         >
-          <SettingRow
+          <PageLine
+            nested
             title={
-              <span className="module-pages-list__title">
+              <span className="flex min-w-0 items-center gap-1">
                 {section.pages.length > 1 ? (
                   <DragHandle
                     subject={`l’onglet ${page.title}`}
                     onPointerDown={(event) => {
-                      const row = event.currentTarget.closest<HTMLElement>(".setting-row--nested");
+                      const row = event.currentTarget.closest<HTMLElement>(".module-tab");
                       if (row) drag.startDrag(event, page.reference, row);
                     }}
                   />
@@ -718,40 +730,45 @@ function EntryRows({
             }
           >
             {accountsOf(page)}
-            <OverflowMenu label={`Actions de l’onglet ${page.title}`} size="small">
-              <Item
-                label="Renommer…"
-                run={() => onDialog({ kind: "rename", target: page.reference, initial: page.title, what: "l’onglet" })}
-              />
-              <Item
-                label={page.hidden ? "Afficher dans le menu" : "Masquer du menu"}
-                run={() => void applyLayoutChange((current) => setPageHidden(current, page.reference, !page.hidden))}
-              />
-              <Item
-                label="Monter"
-                disabled={position === 0}
-                run={() => void act("L’onglet n’a pas été déplacé", () => userPages.move(page.reference, -1))}
-              />
-              <Item
-                label="Descendre"
-                disabled={position === section.pages.length - 1}
-                run={() => void act("L’onglet n’a pas été déplacé", () => userPages.move(page.reference, 1))}
-              />
-              {page.module === module.id ? (
-                <Item
-                  label="Retirer l’onglet"
-                  run={() =>
-                    void act("L’onglet n’a pas été retiré", async () => {
-                      await userPages.remove(page.reference);
-                      notify({ title: `Onglet « ${page.title} » retiré`, tone: "success" });
-                    })
-                  }
-                />
-              ) : null}
-            </OverflowMenu>
-          </SettingRow>
+            <RowMenu
+              label={`Actions de l’onglet ${page.title}`}
+              items={[
+                {
+                  label: "Renommer…",
+                  run: () =>
+                    onDialog({ kind: "rename", target: page.reference, initial: page.title, what: "l’onglet" }),
+                },
+                {
+                  label: page.hidden ? "Afficher dans le menu" : "Masquer du menu",
+                  run: () => void applyLayoutChange((current) => setPageHidden(current, page.reference, !page.hidden)),
+                },
+                {
+                  label: "Monter",
+                  disabled: position === 0,
+                  run: () => void act("L’onglet n’a pas été déplacé", () => userPages.move(page.reference, -1)),
+                },
+                {
+                  label: "Descendre",
+                  disabled: position === section.pages.length - 1,
+                  run: () => void act("L’onglet n’a pas été déplacé", () => userPages.move(page.reference, 1)),
+                },
+                ...(page.module === module.id
+                  ? [
+                      {
+                        label: "Retirer l’onglet",
+                        run: () =>
+                          void act("L’onglet n’a pas été retiré", async () => {
+                            await userPages.remove(page.reference);
+                            notify({ title: `Onglet « ${page.title} » retiré`, tone: "success" });
+                          }),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          </PageLine>
         </div>
       ))}
-    </SettingRows>
+    </section>
   );
 }

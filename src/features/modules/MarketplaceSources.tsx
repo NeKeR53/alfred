@@ -1,22 +1,11 @@
-import {
-  Button,
-  Disclosure,
-  EmptyState,
-  FormControlGroup,
-  FormField,
-  LoadingSkeleton,
-  RefreshButton,
-  Section,
-  StatusBadge,
-  TextInput,
-  useConfirm,
-} from "@alfred/ui";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type Action, Button, Code, Disclosure, type SettingsSection, TextField } from "socle-ui";
+import { Row, Stack } from "../../kit";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { errorMessage, type Marketplace, type ModulePublication, marketplaceApi } from "./api";
 import { useModuleUpdatesStore } from "./useModuleUpdates";
-import "./modules.css";
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
@@ -30,11 +19,19 @@ function checkedAt(iso: string | null) {
 }
 
 /**
- * Marketplaces branchés sur ce poste (rubrique Marketplace, écran « Sources ») : les catalogues de modules partagés
- * (dépôts git), communs à tous les espaces de travail. `onChanged` prévient le catalogue qu’un marketplace a été
- * ajouté, rafraîchi ou retiré.
+ * Marketplaces branchés sur ce poste (rubrique Marketplace, écran « Sources »), en une section : les catalogues de
+ * modules partagés (dépôts git), communs à tous les espaces de travail. `onChanged` prévient le catalogue qu’un
+ * marketplace a été ajouté, rafraîchi ou retiré. `active` faux : l’écran n’est pas affiché, rien n’est lu.
  */
-export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => void; actions?: ReactNode }) {
+export function useMarketplaceSourcesSection({
+  active,
+  onChanged,
+  back,
+}: {
+  active: boolean;
+  onChanged?: () => void;
+  back?: Action;
+}): SettingsSection | null {
   const updates = useModuleUpdatesStore((state) => state.updates);
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
   const spaceOpen = useShell((state) => Boolean(state.snapshot));
@@ -42,10 +39,7 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
   const [publications, setPublications] = useState<ModulePublication[]>([]);
   const [url, setUrl] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
-  /** Opération en cours : `add` ou `refresh:<id>`. */
-  const [busy, setBusy] = useState<string | null>(null);
-  const { confirm, confirmDialog } = useConfirm();
-  const addErrorId = useId();
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -58,14 +52,17 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
   }, []);
 
   useEffect(() => {
+    if (!active) return;
     void load();
     void loadUpdates(false).catch(() => undefined);
-  }, [load, loadUpdates]);
+  }, [active, load, loadUpdates]);
+
+  if (!active) return null;
 
   const add = async (event: FormEvent) => {
     event.preventDefault();
     if (!url.trim()) return;
-    setBusy("add");
+    setAdding(true);
     setAddError(null);
     try {
       const added = await marketplaceApi.add(url.trim());
@@ -76,23 +73,11 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
     } catch (failure) {
       setAddError(errorMessage(failure));
     } finally {
-      setBusy(null);
+      setAdding(false);
     }
   };
 
   const remove = async (marketplace: Marketplace) => {
-    const imported = updates.filter((update) => update.marketplace === marketplace.id).length;
-    const accepted = await confirm({
-      title: `Retirer ${marketplace.name} ?`,
-      message:
-        imported > 0
-          ? `Il est retiré pour tous vos espaces de travail. ${plural(imported, "module importé", "modules importés")} dans cet espace de travail ${imported > 1 ? "restent" : "reste"}, sans mise à jour tant que le marketplace n’est pas ajouté de nouveau.`
-          : "Il est retiré pour tous vos espaces de travail. Ses modules ne seront plus proposés ; vos espaces de travail gardent ce qu’ils en ont importé.",
-      confirmLabel: "Retirer",
-      tone: "danger",
-    });
-    if (!accepted) return;
-    setBusy(`refresh:${marketplace.id}`);
     try {
       await marketplaceApi.remove(marketplace.id);
       await Promise.all([load(), loadUpdates(false).catch(() => undefined)]);
@@ -100,13 +85,10 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
       notify({ title: `Marketplace ${marketplace.name} retiré` });
     } catch (failure) {
       notify({ title: "Retrait impossible", description: errorMessage(failure), tone: "error" });
-    } finally {
-      setBusy(null);
     }
   };
 
   const refresh = async (marketplace: Marketplace) => {
-    setBusy(`refresh:${marketplace.id}`);
     try {
       try {
         await marketplaceApi.refresh(marketplace.id);
@@ -122,8 +104,6 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
         description: errorMessage(failure),
         tone: "error",
       });
-    } finally {
-      setBusy(null);
     }
   };
 
@@ -142,100 +122,84 @@ export function MarketplaceSources({ onChanged, actions }: { onChanged?: () => v
       .concat(" dans cet espace de travail");
   };
 
-  return (
-    <>
-      <Section
-        title="Marketplaces branchés"
-        description="Chaque marketplace est un dépôt git de modules partagés, commun à tous vos espaces de travail. Alfred s’y connecte avec les accès git de ce poste."
-        actions={actions}
-      >
-        <form onSubmit={add}>
-          <FormControlGroup>
-            <FormField label="Adresse git du marketplace">
-              <TextInput
-                value={url}
-                onChange={(event) => {
-                  setUrl(event.target.value);
-                  setAddError(null);
-                }}
-                placeholder="git@exemple.fr:equipe/modules.git"
-                spellCheck={false}
-                autoCapitalize="off"
-                disabled={busy === "add"}
-                aria-invalid={addError ? true : undefined}
-                aria-describedby={addError ? addErrorId : undefined}
-              />
-            </FormField>
-            <Button
-              type="submit"
-              loading={busy === "add"}
-              loadingLabel="Ajout…"
-              disabled={!url.trim() || busy !== null}
-            >
+  const gitOutputs = (marketplaces ?? []).filter((marketplace) => marketplace.error && marketplace.errorDetail);
+
+  return {
+    id: "sources",
+    title: "Marketplaces branchés",
+    description:
+      "Chaque marketplace est un dépôt git de modules partagés, commun à tous vos espaces de travail. Alfred s’y connecte avec les accès git de ce poste.",
+    actions: back ? [back] : undefined,
+    emptyMessage:
+      marketplaces === null
+        ? "Chargement des marketplaces…"
+        : "Aucun marketplace. Ajoutez l’adresse du marketplace de votre équipe pour importer ses modules ou y publier les vôtres.",
+    settings: (marketplaces ?? []).map((marketplace) => {
+      const imported = updates.filter((update) => update.marketplace === marketplace.id).length;
+      return {
+        type: "item" as const,
+        id: marketplace.id,
+        label: marketplace.name,
+        description: [
+          `${marketplace.url} · ${checkedAt(marketplace.lastChecked)}`,
+          usage(marketplace),
+          marketplace.error,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        tags: marketplace.error ? [{ label: "Inaccessible", tone: "danger" as const }] : undefined,
+        actions: [
+          {
+            id: "refresh",
+            label: `Rafraîchir ${marketplace.name}`,
+            icon: <RefreshCw size={16} aria-hidden="true" />,
+            onPress: () => refresh(marketplace),
+          },
+          {
+            id: "remove",
+            label: `Retirer ${marketplace.name}`,
+            danger: true,
+            confirm: {
+              title: `Retirer ${marketplace.name} ?`,
+              message:
+                imported > 0
+                  ? `Il est retiré pour tous vos espaces de travail. ${plural(imported, "module importé", "modules importés")} dans cet espace de travail ${imported > 1 ? "restent" : "reste"}, sans mise à jour tant que le marketplace n’est pas ajouté de nouveau.`
+                  : "Il est retiré pour tous vos espaces de travail. Ses modules ne seront plus proposés ; vos espaces de travail gardent ce qu’ils en ont importé.",
+              confirmLabel: "Retirer",
+            },
+            onPress: () => remove(marketplace),
+          },
+        ],
+      };
+    }),
+    content: (
+      <Stack gap="md">
+        {gitOutputs.map((marketplace) => (
+          <Disclosure key={marketplace.id} title={`Message de git (${marketplace.name})`}>
+            <Code block>{marketplace.errorDetail}</Code>
+          </Disclosure>
+        ))}
+        <form noValidate onSubmit={add}>
+          <Row gap="sm">
+            <TextField
+              label="Adresse git du marketplace"
+              isRequired
+              placeholder="git@exemple.fr:equipe/modules.git"
+              autoComplete="off"
+              isDisabled={adding}
+              error={addError ?? undefined}
+              value={url}
+              onChange={(value) => {
+                setUrl(value);
+                setAddError(null);
+              }}
+            />
+            <Button type="submit" isPending={adding} isDisabled={!url.trim()}>
               Ajouter
             </Button>
-          </FormControlGroup>
-          {/* Sous le groupe entier : le bouton reste aligné sur le champ quand le message apparaît. */}
-          {addError ? (
-            <p id={addErrorId} role="alert" className="modules-list__meta modules-list__meta--danger modules-add-error">
-              {addError}
-            </p>
-          ) : null}
+          </Row>
         </form>
-        {marketplaces === null ? (
-          <LoadingSkeleton rows={2} label="Chargement des marketplaces" />
-        ) : marketplaces.length === 0 ? (
-          <EmptyState
-            size="compact"
-            title="Aucun marketplace"
-            description="Ajoutez l’adresse du marketplace de votre équipe pour importer ses modules ou y publier les vôtres."
-          />
-        ) : (
-          <ul className="modules-list" aria-label="Marketplaces">
-            {marketplaces.map((marketplace) => {
-              const used = usage(marketplace);
-              return (
-                <li key={marketplace.id}>
-                  <div className="modules-list__main">
-                    <div className="modules-list__title">
-                      <span>{marketplace.name}</span>
-                      {marketplace.error ? (
-                        <StatusBadge tone="danger" size="compact">
-                          Inaccessible
-                        </StatusBadge>
-                      ) : null}
-                    </div>
-                    <p className="modules-list__meta">
-                      {marketplace.url} · {checkedAt(marketplace.lastChecked)}
-                    </p>
-                    {used ? <p className="modules-list__meta">{used}</p> : null}
-                    {marketplace.error ? (
-                      <p className="modules-list__meta modules-list__meta--danger">{marketplace.error}</p>
-                    ) : null}
-                    {marketplace.error && marketplace.errorDetail ? (
-                      <Disclosure appearance="subtle" label="Message de git" className="modules-list__git-output">
-                        <pre>{marketplace.errorDetail}</pre>
-                      </Disclosure>
-                    ) : null}
-                  </div>
-                  <div className="modules-list__actions">
-                    <RefreshButton
-                      label={`Rafraîchir ${marketplace.name}`}
-                      loading={busy === `refresh:${marketplace.id}`}
-                      disabled={busy !== null}
-                      onClick={() => void refresh(marketplace)}
-                    />
-                    <Button disabled={busy !== null} onClick={() => void remove(marketplace)}>
-                      Retirer
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Section>
-      {confirmDialog}
-    </>
-  );
+      </Stack>
+    ),
+  };
 }

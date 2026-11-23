@@ -13,9 +13,10 @@
  * L’onboarding écrit les mêmes pages, onglets et comptes que la fiche du module (`space.menu.*`). Rien n’est
  * mémorisé : chaque étape se lit dans l’état réel, et la reprise repart de la première étape incomplète.
  */
-import { Button, Spinner, StatusBadge, StepList, Text, TextInput, useConfirm } from "@alfred/ui";
 import { ArrowLeft, Boxes, Check, Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, IconButton, Link, ProgressBar, StatusBadge, StepList, TextField, useConfirm } from "socle-ui";
+import { Text } from "../../kit";
 import type { ModuleSummary, ResolvedSection, Snapshot } from "../../lib/types";
 import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { notify } from "../../shell/notifications";
@@ -177,7 +178,7 @@ export function SetupFlow({
   const sticky = useRef<string | undefined>(undefined);
   /** Pages pour lesquelles « Vous avez un autre compte ? » a déjà été posé. */
   const asked = useRef(new Set<string>());
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
 
   const flow = useMemo(
     () => (setup && snapshot ? flowSteps(setup, snapshot, overview) : undefined),
@@ -194,7 +195,7 @@ export function SetupFlow({
 
   // Les comptes illisibles n’empêchent pas de présenter le module ni de choisir ses pages.
   if (!setup || !snapshot || !flow || !current || (overview === undefined && !services.error))
-    return <Spinner label="Chargement de la configuration" />;
+    return <ProgressBar label="Chargement de la configuration" />;
 
   const { ids, plans, orphans } = flow;
   // Une page retirée entre-temps : on reprend à l’étape suivante qui existe encore.
@@ -308,18 +309,14 @@ export function SetupFlow({
 
   const header = (
     <div className="setup-flow__header">
-      <Button variant="subtle" onClick={onClose}>
-        <ArrowLeft size={16} aria-hidden="true" />
+      <Button variant="subtle" icon={<ArrowLeft size={16} aria-hidden="true" />} onPress={onClose}>
         Terminer plus tard
       </Button>
-      <div className="setup-flow__title">
-        <h2>Configurer {setup.name}</h2>
-        <p>
-          {shown === INTRO
-            ? "Quelques minutes suffisent. Vous pouvez vous arrêter et reprendre plus tard."
-            : `Étape ${index + 1} sur ${ids.length}`}
-        </p>
-      </div>
+      <Text tone="muted">
+        {shown === INTRO
+          ? "Quelques minutes suffisent. Vous pouvez vous arrêter et reprendre plus tard."
+          : `Étape ${index + 1} sur ${ids.length}`}
+      </Text>
     </div>
   );
 
@@ -335,13 +332,18 @@ export function SetupFlow({
           return {
             id,
             title: page.entry.label,
-            hint: pageDone(page, snapshot, overview) ? "Prête" : "Compte à choisir",
+            description: pageDone(page, snapshot, overview) ? "Prête" : "Compte à choisir",
           };
         const lone = orphans.find((candidate) => accountStep(candidate.key) === id);
-        return { id, title: `Compte ${lone?.label ?? ""}`, hint: lone?.state === "ready" ? "Prêt" : "À connecter" };
+        return {
+          id,
+          title: `Compte ${lone?.label ?? ""}`,
+          description: lone?.state === "ready" ? "Prêt" : "À connecter",
+        };
       })}
       current={shown}
       onSelect={go}
+      orientation="vertical"
     />
   );
 
@@ -391,9 +393,7 @@ export function SetupFlow({
                     .join(" · ")}
                 </small>
               </span>
-              <StatusBadge tone={badge.tone} size="compact">
-                {badge.label}
-              </StatusBadge>
+              <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
             </button>
             {failure && checking !== key ? (
               <div className="setup-card__problem">
@@ -405,7 +405,11 @@ export function SetupFlow({
                     failure.message,
                   )}
                 </Text>
-                <Button variant="subtle" onClick={() => setSub({ view: "wizard", need: need.key, editing: option })}>
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  onPress={() => setSub({ view: "wizard", need: need.key, editing: option })}
+                >
                   Modifier ce compte
                 </Button>
               </div>
@@ -473,7 +477,7 @@ export function SetupFlow({
           <Text tone="muted">Vous aurez ces pages dans le menu de gauche :</Text>
           <ul className="setup-preview" aria-label="Aperçu des pages">
             {sectionChoices(snapshot, setup.module).map(({ section, templates }) => (
-              <li key={section.id} className={`product-color--${section.color ?? "steel"}`}>
+              <li key={section.id}>
                 <span className="setup-preview__icon" aria-hidden="true">
                   {section.icon || section.iconUrl ? <SectionIcon section={section} size={16} /> : <Boxes size={16} />}
                 </span>
@@ -492,7 +496,7 @@ export function SetupFlow({
   const pagesStep = drafts ? (
     <PagesChoice drafts={drafts} onChange={setDrafts} disabled={applying} />
   ) : (
-    <Spinner label="Chargement des pages" />
+    <ProgressBar label="Chargement des pages" />
   );
 
   /** Enregistre les cartes au menu : retraits, noms, ajouts, chacun comme depuis la fiche du module. */
@@ -552,7 +556,7 @@ export function SetupFlow({
               côte.
             </Text>
             <div className="setup-flow__inline-actions">
-              <Button onClick={() => setSub({ view: "extra", need: need.key })}>
+              <Button onPress={() => setSub({ view: "extra", need: need.key })}>
                 Ajouter un onglet pour un autre compte
               </Button>
             </div>
@@ -709,9 +713,7 @@ export function SetupFlow({
           {open.map((candidate, position) => (
             <span key={candidate.entry.id}>
               {position > 0 ? ", " : ""}
-              <button type="button" className="setup-flow__link" onClick={() => go(pageStep(candidate.entry.id))}>
-                {candidate.entry.label}
-              </button>
+              <Link onPress={() => go(pageStep(candidate.entry.id))}>{candidate.entry.label}</Link>
             </span>
           ))}
           . Ces pages vous le rappelleront.
@@ -726,33 +728,33 @@ export function SetupFlow({
   let footer: React.ReactNode;
   if (shown === INTRO) {
     footer = (
-      <Button variant="primary" onClick={next}>
+      <Button variant="primary" onPress={next}>
         Commencer
       </Button>
     );
   } else if (shown === PAGES) {
     const chosen = drafts?.filter((draft) => draft.checked).length ?? 0;
     footer = (
-      <Button variant="primary" loading={applying} onClick={() => void applyPages()}>
+      <Button variant="primary" isPending={applying} onPress={() => void applyPages()}>
         {chosen === 0 ? "Continuer sans page" : "Continuer"}
       </Button>
     );
   } else if (shown === DONE) {
     footer = firstEntry ? (
       <>
-        <Button onClick={onClose}>Fermer</Button>
-        <Button variant="primary" onClick={() => onOpenSection(firstEntry.id)}>
-          Ouvrir « {firstEntry.label} »
+        <Button onPress={onClose}>Fermer</Button>
+        <Button variant="primary" onPress={() => onOpenSection(firstEntry.id)}>
+          {`Ouvrir « ${firstEntry.label} »`}
         </Button>
       </>
     ) : (
-      <Button variant="primary" onClick={onClose}>
+      <Button variant="primary" onPress={onClose}>
         Terminer
       </Button>
     );
   } else if (plan && sub.view === "another") {
     footer = (
-      <Button variant="primary" onClick={next}>
+      <Button variant="primary" onPress={next}>
         Non, c’est tout
       </Button>
     );
@@ -765,7 +767,7 @@ export function SetupFlow({
     footer = (
       <Button
         variant={ready ? "primary" : "secondary"}
-        onClick={() => {
+        onPress={() => {
           const main = plan ? mainNeed(plan) : undefined;
           // Le premier compte de la page est là : avant de passer, une autre question.
           if (
@@ -816,14 +818,13 @@ export function SetupFlow({
                     : null}
           {footer !== null ? (
             <div className="setup-flow__footer">
-              {index > 0 && !(plan && sub.view !== "choose") ? <Button onClick={previous}>Précédent</Button> : null}
+              {index > 0 && !(plan && sub.view !== "choose") ? <Button onPress={previous}>Précédent</Button> : null}
               <span className="setup-flow__spacer" />
               {footer}
             </div>
           ) : null}
         </section>
       </div>
-      {confirmDialog}
     </div>
   );
 }
@@ -882,7 +883,7 @@ function PagesChoice({
                   onChange={(event) => update(draft.key, { checked: event.target.checked })}
                 />
               </label>
-              <span className={`setup-page__icon product-color--${draft.section.color ?? "steel"}`} aria-hidden="true">
+              <span className="setup-page__icon" aria-hidden="true">
                 {draft.section.icon || draft.section.iconUrl ? (
                   <SectionIcon section={draft.section} size={18} />
                 ) : (
@@ -891,50 +892,39 @@ function PagesChoice({
               </span>
               <span className="setup-page__text">
                 {renaming === draft.key ? (
-                  <TextInput
-                    aria-label={`Nom de la page ${draft.section.label}`}
+                  <TextField
+                    label={`Nom de la page ${draft.section.label}`}
+                    hideLabel
                     value={draft.label}
                     autoFocus
                     autoComplete="off"
-                    onChange={(event) => update(draft.key, { label: event.target.value })}
+                    onChange={(value) => update(draft.key, { label: value })}
                     onBlur={() => setRenaming(undefined)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === "Escape") {
-                        event.preventDefault();
-                        setRenaming(undefined);
-                      }
-                    }}
                   />
                 ) : (
                   <span className="setup-page__name">
                     <strong>{draft.label || draft.section.label}</strong>
-                    <button
-                      type="button"
-                      className="setup-page__rename"
-                      aria-label={`Renommer la page ${draft.label}`}
-                      title="Renommer"
-                      disabled={disabled}
-                      onClick={() => setRenaming(draft.key)}
-                    >
-                      <Pencil size={13} aria-hidden="true" />
-                    </button>
+                    <IconButton
+                      label={`Renommer la page ${draft.label}`}
+                      icon={<Pencil size={14} aria-hidden="true" />}
+                      isDisabled={disabled}
+                      onPress={() => setRenaming(draft.key)}
+                    />
                   </span>
                 )}
                 {description ? <small>{description}</small> : null}
                 {tabs ? <small>{tabs}</small> : null}
               </span>
               {drafts.filter((other) => other.section.id === draft.section.id).at(-1)?.key === draft.key ? (
-                <button
-                  type="button"
-                  className="setup-page__more"
-                  disabled={disabled}
+                <Button
+                  size="sm"
+                  icon={<Plus size={14} aria-hidden="true" />}
+                  isDisabled={disabled}
                   aria-label={`Une autre page « ${draft.section.label} »`}
-                  title={`Ajouter une autre page « ${draft.section.label} », pour un autre compte par exemple`}
-                  onClick={() => addCopy(draft)}
+                  onPress={() => addCopy(draft)}
                 >
-                  <Plus size={14} aria-hidden="true" />
                   Une autre
-                </button>
+                </Button>
               ) : null}
             </li>
           );
@@ -953,7 +943,7 @@ function MenuPreview({ snapshot, highlighted }: { snapshot: Snapshot; highlighte
         const mine = highlighted.has(section.id);
         return (
           <li key={section.id} className={mine ? "is-new" : undefined}>
-            <span className={`setup-menu__row product-color--${section.color ?? "steel"}`}>
+            <span className="setup-menu__row">
               <span className="setup-menu__icon" aria-hidden="true">
                 {section.icon || section.iconUrl ? <SectionIcon section={section} size={15} /> : <Boxes size={15} />}
               </span>

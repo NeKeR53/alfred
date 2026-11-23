@@ -2,9 +2,10 @@
  * Pages qui se servent d’un compte, dans sa fiche : un compte est créé une fois par service, et plusieurs pages ou
  * onglets peuvent l’utiliser. Le choix se fait page par page (Réglages → Modules, fiche du module) ; ici, on le lit.
  */
-import { Section, Text } from "@alfred/ui";
+import { Text } from "../../kit";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
+import { ModulePart } from "../modules/ModulePart";
 import type { ClientInstanceItem, ClientItem } from "./api";
 
 /** Noms des onglets qui se servent du compte : « Prefect », ou « Prefect › Recette » dans une page à onglets. */
@@ -39,8 +40,12 @@ export function AccountPages({
   if (client.simple) return null;
   const names = accountUsers(snapshot, client.id, instance.id);
   return (
-    <Section title="Pages de ce compte" description="Le compte d’une page se choisit dans la fiche de son module.">
+    <ModulePart
+      part="account-pages"
+      title="Pages de ce compte"
+      description="Le compte d’une page se choisit dans la fiche de son module."
+    >
       <Text tone="muted">{usageSentence(names)}</Text>
-    </Section>
+    </ModulePart>
   );
 }

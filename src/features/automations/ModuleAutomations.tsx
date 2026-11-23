@@ -6,27 +6,13 @@
  * exécution, l’identifiant, et ce qu’on peut y faire (mettre en pause, exécuter maintenant, l’adresse et le secret
  * d’un webhook). Rien quand le module n’a aucune automatisation.
  */
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  FeedbackBanner,
-  IconButton,
-  KeyValueList,
-  LoadingSkeleton,
-  Modal,
-  Row,
-  Stack,
-  StatusBadge,
-  SwitchControl,
-  Text,
-  useConfirm,
-} from "@alfred/ui";
-import { Copy } from "lucide-react";
+import { Copy, Eye, EyeOff, Info } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { Button, Dialog, IconButton, type SettingsSection, Skeleton, Switch, useConfirm } from "socle-ui";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
-import { ModulePart } from "../modules/ModulePart";
+import { KeyValues } from "../modules/lists";
 import {
   cadence,
   listSchedules,
@@ -38,7 +24,6 @@ import {
 } from "../schedules/api";
 import { errorMessage } from "../vault/api";
 import { getWebhookSecret, hookKey, listWebhooks, rotateWebhookSecret, type WebhookItem } from "../webhooks/api";
-import "./automations.css";
 
 export const MASK = "••••••••••••••••••••••••";
 
@@ -123,7 +108,7 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
   const [error, setError] = useState<string>();
   const [revealed, setRevealed] = useState(false);
   const [rotating, setRotating] = useState(false);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     try {
@@ -158,15 +143,11 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
 
   if (error)
     return (
-      <FeedbackBanner
-        tone="danger"
-        appearance="contained"
-        action={<Button onClick={() => void load()}>Réessayer</Button>}
-      >
-        Le secret n’a pas pu être lu. {error}
-      </FeedbackBanner>
+      <Notice tone="danger" action={<Button onPress={() => void load()}>Réessayer</Button>}>
+        {`Le secret n’a pas pu être lu. ${error}`}
+      </Notice>
     );
-  if (secret === undefined) return <LoadingSkeleton rows={1} label="Chargement du secret…" />;
+  if (secret === undefined) return <Skeleton width="60%" />;
   return (
     <Stack gap="sm">
       <Row gap="xs" wrap>
@@ -174,19 +155,19 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
           {revealed ? secret : MASK}
         </Text>
         <IconButton
+          label={revealed ? "Masquer le secret" : "Révéler le secret"}
+          icon={revealed ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+          isSelected={revealed}
+          onChange={setRevealed}
+        />
+        <IconButton
           label="Copier le secret"
-          tooltip="Copier"
-          size="small"
-          onClick={() => void copy(secret, "Secret copié", "Le secret n’a pas été copié")}
-        >
-          <Copy size={16} aria-hidden="true" />
-        </IconButton>
+          icon={<Copy size={16} aria-hidden="true" />}
+          onPress={() => void copy(secret, "Secret copié", "Le secret n’a pas été copié")}
+        />
       </Row>
       <Row gap="sm" wrap>
-        <Button variant="secondary" aria-pressed={revealed} onClick={() => setRevealed(!revealed)}>
-          {revealed ? "Masquer le secret" : "Révéler le secret"}
-        </Button>
-        <Button variant="danger" loading={rotating} loadingLabel="Régénération…" onClick={() => void rotate()}>
+        <Button variant="danger" size="sm" isPending={rotating} onPress={() => void rotate()}>
           Régénérer
         </Button>
       </Row>
@@ -194,7 +175,6 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
         Il se transmet dans l’en-tête X-Alfred-Secret, en Authorization: Bearer, dans le paramètre ?secret=, ou sert de
         clé à une signature HMAC-SHA256 du corps (X-Hub-Signature-256, format GitHub).
       </Text>
-      {confirmDialog}
     </Stack>
   );
 }
@@ -248,12 +228,9 @@ function Detail({
             <Text as="span">{hook.url}</Text>
             <IconButton
               label={`Copier l’adresse du webhook ${name}`}
-              tooltip="Copier"
-              size="small"
-              onClick={() => void copy(hook.url ?? "", "Adresse copiée", "L’adresse n’a pas été copiée")}
-            >
-              <Copy size={16} aria-hidden="true" />
-            </IconButton>
+              icon={<Copy size={16} aria-hidden="true" />}
+              onPress={() => void copy(hook.url ?? "", "Adresse copiée", "L’adresse n’a pas été copiée")}
+            />
           </Row>
         ) : (
           "Serveur local arrêté"
@@ -274,7 +251,15 @@ function Detail({
         ]
       : [entry.item.functionExists ? null : "Fonction introuvable : les appels échoueront."];
   return (
-    <Modal open onClose={onClose} title={name} description={`${state.label} · ${state.detail}`}>
+    <Dialog
+      isOpen
+      size="lg"
+      title={name}
+      description={`${state.label} · ${state.detail}`}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <Stack gap="md">
         {problems.filter(Boolean).map((problem) => (
           <Text key={problem} tone="danger">
@@ -283,24 +268,19 @@ function Detail({
         ))}
         {entry.kind === "schedule" ? (
           <Row gap="md" wrap>
-            <SwitchControl
-              label="Active"
-              aria-label={`Automatisation ${name} active`}
-              checked={entry.item.enabled}
-              onChange={(event) => onToggle(entry.item, event.target.checked)}
-            />
+            <Switch isSelected={entry.item.enabled} onChange={(enabled) => onToggle(entry.item, enabled)}>
+              Active
+            </Switch>
             <Button
-              variant="secondary"
               aria-label={`Exécuter maintenant ${name}`}
-              loading={running || entry.item.running === true}
-              loadingLabel="Exécution…"
-              onClick={() => onRun(entry.item)}
+              isPending={running || entry.item.running === true}
+              onPress={() => onRun(entry.item)}
             >
               Exécuter maintenant
             </Button>
           </Row>
         ) : null}
-        <KeyValueList items={items} />
+        <KeyValues items={items} label={`Détail de ${name}`} />
         {result ? (
           <Text size="meta" tone={result.ok ? "muted" : "danger"}>
             {result.ok ? `Sortie : ${summarize(result.output)}` : result.error}
@@ -317,21 +297,24 @@ function Detail({
           </>
         ) : null}
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }
 
-export function ModuleAutomations({ module }: { module: string }) {
+/**
+ * Section « Automatisations » de la fiche d’un module : une ligne par planification ou webhook, son déclencheur et
+ * son état ; « Voir le détail » ouvre la modale (pause, exécution, adresse et secret). Aucune section sans
+ * automatisation, ni sans fiche ouverte (`module` absent).
+ */
+export function useAutomationsSection(module: string | undefined): SettingsSection | null {
   const [schedules, setSchedules] = useState<ScheduleItem[]>();
   const [hooks, setHooks] = useState<WebhookItem[]>();
   const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(true);
   const [opened, setOpened] = useState<string>();
   const [runningNow, setRunningNow] = useState<string>();
   const [results, setResults] = useState<Record<string, RunResult>>({});
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const [nextSchedules, nextHooks] = await Promise.all([listSchedules(), listWebhooks()]);
       setSchedules(nextSchedules);
@@ -339,12 +322,11 @@ export function ModuleAutomations({ module }: { module: string }) {
       setError(undefined);
     } catch (failure) {
       setError(errorMessage(failure));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!module) return;
     void load();
     // Une exécution ou une réception écrit au journal : l’état et la date du dernier résultat changent.
     const stops = ["space:changed", "journal:changed", "schedules:changed"].map((name) =>
@@ -353,7 +335,7 @@ export function ModuleAutomations({ module }: { module: string }) {
     return () => {
       for (const stop of stops) stop();
     };
-  }, [load]);
+  }, [load, module]);
 
   const toggle = async (item: ScheduleItem, enabled: boolean) => {
     const key = scheduleKey(item);
@@ -396,12 +378,15 @@ export function ModuleAutomations({ module }: { module: string }) {
     }
   };
 
+  if (!module) return null;
   if (schedules === undefined || hooks === undefined) {
-    return error ? (
-      <Text size="meta" tone="danger">
-        Les automatisations n’ont pas pu être lues. {error}
-      </Text>
-    ) : null;
+    return error
+      ? {
+          id: "automations",
+          title: "Automatisations",
+          emptyMessage: `Les automatisations n’ont pas pu être lues. ${error}`,
+        }
+      : null;
   }
   const rows: Automation[] = [
     ...schedules.filter((item) => item.module === module).map((item) => ({ kind: "schedule" as const, item })),
@@ -410,63 +395,48 @@ export function ModuleAutomations({ module }: { module: string }) {
   if (rows.length === 0) return null;
   const current = rows.find((entry) => keyOf(entry) === opened);
 
-  const columns: DataTableColumn<Automation>[] = [
-    {
-      key: "name",
-      header: "Automatisation",
-      sortValue: nameOf,
-      render: (entry) => (
-        <span className="automation-cell" title={nameOf(entry)}>
-          {nameOf(entry)}
-        </span>
-      ),
-    },
-    { key: "trigger", header: "Déclencheur", width: "200px", sortValue: trigger, render: trigger },
-    {
-      key: "state",
-      header: "État",
-      width: "220px",
-      sortValue: (entry) => stateOf(entry).label,
-      render: (entry) => {
-        const state = stateOf(entry);
-        return (
-          <Row gap="xs" wrap>
-            <StatusBadge tone={state.tone} size="compact">
-              {state.label}
-            </StatusBadge>
-            <Text as="span" size="meta" tone="muted">
-              {state.detail}
-            </Text>
-          </Row>
-        );
-      },
-    },
-  ];
-
-  return (
-    <ModulePart
-      part="automations"
-      title="Automatisations"
-      description="Ce que le module lance de lui-même, tant qu’Alfred est ouvert. Ouvrez une ligne pour la mettre en pause, l’exécuter ou voir son détail."
-    >
-      <DataTable
-        label="Automatisations du module"
-        columns={columns}
-        rows={rows}
-        rowKey={keyOf}
-        loading={loading}
-        onRowClick={(entry) => setOpened(keyOf(entry))}
+  return {
+    id: "automations",
+    title: "Automatisations",
+    description:
+      "Ce que le module lance de lui-même, tant qu’Alfred est ouvert. Ouvrez une ligne pour la mettre en pause, l’exécuter ou voir son détail.",
+    settings: rows.map((entry) => {
+      const state = stateOf(entry);
+      return {
+        type: "item" as const,
+        id: keyOf(entry),
+        label: nameOf(entry),
+        description: `${trigger(entry)} · ${state.detail}`,
+        tags: [{ label: state.label, tone: state.tone }],
+        actions: [
+          {
+            id: "detail",
+            label: `Voir le détail de ${nameOf(entry)}`,
+            icon: <Info size={16} aria-hidden="true" />,
+            onPress: () => setOpened(keyOf(entry)),
+          },
+          ...(entry.kind === "schedule"
+            ? [
+                {
+                  id: "toggle",
+                  label: entry.item.enabled ? "Mettre en pause" : "Reprendre",
+                  onPress: () => toggle(entry.item, !entry.item.enabled),
+                },
+                { id: "run", label: "Exécuter maintenant", onPress: () => runNow(entry.item) },
+              ]
+            : []),
+        ],
+      };
+    }),
+    content: current ? (
+      <Detail
+        entry={current}
+        result={current.kind === "schedule" ? results[scheduleKey(current.item)] : undefined}
+        running={current.kind === "schedule" && runningNow === scheduleKey(current.item)}
+        onClose={() => setOpened(undefined)}
+        onToggle={(item, enabled) => void toggle(item, enabled)}
+        onRun={(item) => void runNow(item)}
       />
-      {current ? (
-        <Detail
-          entry={current}
-          result={current.kind === "schedule" ? results[scheduleKey(current.item)] : undefined}
-          running={current.kind === "schedule" && runningNow === scheduleKey(current.item)}
-          onClose={() => setOpened(undefined)}
-          onToggle={(item, enabled) => void toggle(item, enabled)}
-          onRun={(item) => void runNow(item)}
-        />
-      ) : null}
-    </ModulePart>
-  );
+    ) : undefined,
+  };
 }
