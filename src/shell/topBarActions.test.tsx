@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,14 +16,10 @@ vi.mock("../lib/native", async (importOriginal) => ({
   invoke: vi.fn().mockResolvedValue(null),
 }));
 
+import { ActionBar } from "socle-ui";
+import { frameActions } from "./AppShell";
 import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
-import {
-  arrangeTopBarActions,
-  onTopBarAction,
-  setTopBarActions,
-  TopBarActions,
-  useTopBarActionStore,
-} from "./topBarActions";
+import { onTopBarAction, setTopBarActions, useTopBarActionStore } from "./topBarActions";
 
 const page: FrameIdentity = { kind: "page", module: "atom", reference: "atom/acces" };
 const actions = [
@@ -54,56 +50,34 @@ describe("actions de la barre du haut, côté pont", () => {
   });
 });
 
-describe("TopBarActions", () => {
-  it("montre des icônes, un menu « ⋯ » (destructrices à part) et l’action principale, et renvoie le clic au cadre", async () => {
+describe("actions de la barre du haut, côté coquille", () => {
+  it("passent en `Action` de Socle : icônes, « … » et action principale, et renvoient le clic au cadre", async () => {
     const user = userEvent.setup();
     const chosen = vi.fn();
-    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
     onTopBarAction("atom/acces", chosen);
     await handleFrameRequest(page, "shell.actions.set", { actions });
-    render(<TopBarActions reference="atom/acces" />);
-    await user.click(screen.getByRole("button", { name: "Exporter" }));
-    expect(chosen).toHaveBeenCalledWith("0:Exporter");
+    const list = frameActions("atom/acces", useTopBarActionStore.getState().actions["atom/acces"]);
+    expect(list.map((action) => [action.label, action.primary ?? false])).toEqual([
+      ["Exporter", false],
+      ["Ajouter une personne", false],
+      ["Rapport détaillé", false],
+      ["Vider", false],
+      ["Nouvel environnement", true],
+    ]);
+    render(<ActionBar actions={list} zone="topbar" />);
     await user.click(screen.getByRole("button", { name: "Nouvel environnement" }));
     expect(chosen).toHaveBeenCalledWith("4:Nouveau");
-    await user.click(screen.getByRole("button", { name: "Autres actions de la page" }));
-    const menu = screen.getByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: "Rapport détaillé" })).toBeInTheDocument();
-    await user.click(within(menu).getByRole("menuitem", { name: "Vider" }));
-    expect(chosen).toHaveBeenCalledWith("3:Vider");
   });
 
-  it("range tout dans « ⋯ » quand la fenêtre est étroite", () => {
-    const arranged = arrangeTopBarActions(actions, true);
-    expect(arranged.icons).toEqual([]);
-    expect(arranged.primary).toBeUndefined();
-    expect(arranged.menu.map((a) => a.label)).toEqual([
-      "Exporter",
-      "Ajouter une personne",
-      "Rapport détaillé",
-      "Nouvel environnement",
-    ]);
-    expect(arranged.dangerous.map((a) => a.label)).toEqual(["Vider"]);
-  });
-
-  it("bascule de vue : les actions d’un même groupe sont des boutons accolés, la vue affichée est cochée", async () => {
-    const user = userEvent.setup();
-    const chosen = vi.fn();
-    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
-    onTopBarAction("atom/secrets", chosen);
+  it("une bascule de vue devient une action ordinaire, la vue affichée est désactivée", () => {
     setTopBarActions("atom/secrets", [
       { id: "0:Tableau", label: "Tableau", icon: "Grid2x2Check", group: "Vue des secrets", selected: true },
       { id: "1:Arborescence", label: "Arborescence", icon: "ListTree", group: "Vue des secrets" },
-      { id: "2:Actualiser", label: "Actualiser", icon: "RefreshCw" },
-      { id: "3:Sans icône", label: "Sans icône", group: "Vue des secrets" },
     ]);
-    const arranged = arrangeTopBarActions(useTopBarActionStore.getState().actions["atom/secrets"], true);
-    expect(arranged.toggles[0].map((a) => a.label)).toEqual(["Tableau", "Arborescence"]);
-    expect(arranged.menu.map((a) => a.label)).toEqual(["Actualiser", "Sans icône"]);
-    render(<TopBarActions reference="atom/secrets" />);
-    const groupe = screen.getByRole("radiogroup", { name: "Vue des secrets" });
-    expect(within(groupe).getByRole("radio", { name: "Tableau" })).toHaveAttribute("aria-checked", "true");
-    await user.click(within(groupe).getByRole("radio", { name: "Arborescence" }));
-    expect(chosen).toHaveBeenCalledWith("1:Arborescence");
+    const list = frameActions("atom/secrets", useTopBarActionStore.getState().actions["atom/secrets"]);
+    expect(list.map((action) => [action.label, action.isDisabled ?? false])).toEqual([
+      ["Tableau (affichée)", true],
+      ["Arborescence", false],
+    ]);
   });
 });

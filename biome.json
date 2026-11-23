@@ -50,46 +50,6 @@
           }
         }
       }
-    },
-    {
-      "includes": ["src/ui/components/DataTable.tsx"],
-      "linter": {
-        "rules": {
-          "a11y": {
-            "noRedundantRoles": "off",
-            "useSemanticElements": "off"
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/ui/**",
-        "src/features/functions/FunctionParts.tsx",
-        "src/features/functions/ModuleFunctions.tsx",
-        "src/features/modules/MarketplaceSources.tsx",
-        "src/features/modules/dialogs.tsx",
-        "src/features/modules/reorganize.tsx",
-        "src/features/setup/Onboarding.tsx",
-        "src/features/space/SpaceSwitcher.tsx",
-        "src/features/vault/SecretReveal.tsx",
-        "src/features/vault/VaultEntryDialog.tsx",
-        "src/features/navigation/PageHistory.tsx",
-        "src/features/palette/CommandPalette.tsx",
-        "src/features/space/ModelSourceSection.tsx",
-        "src/features/space/SpaceSwitcher.tsx",
-        "src/features/space/spaceActions.tsx",
-        "src/features/voice/DictationButton.tsx",
-        "src/runtime/screenshotPage.ts",
-        "src/shell/AppShell.tsx",
-        "src/shell/MenuZone.tsx",
-        "src/shell/NotificationCenter.tsx",
-        "src/shell/TopBarSearch.tsx",
-        "src/shell/navigationEditing.tsx"
-      ],
-      "linter": {
-        "enabled": false
-      }
     }
   ]
 }

@@ -1,5 +1,3 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -17,7 +15,7 @@ vi.mock("../lib/native", async (importOriginal) => ({
 }));
 
 import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
-import { clearTopBarSearches, onTopBarQuery, topBarQueryOf, useTopBarSearches } from "./topBarSearchStore";
+import { clearTopBarSearches, topBarQueryOf, useTopBarSearches } from "./topBarSearchStore";
 
 const page: FrameIdentity = { kind: "page", module: "suivi", reference: "suivi/taches" };
 

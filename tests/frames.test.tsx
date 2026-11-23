@@ -11,7 +11,7 @@ import { App } from "../src/App";
 import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { findNavigation } from "./support/shell";
 
 type Posted = {
   kind: string;
@@ -108,8 +108,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
 
   // Client HTTP : premier usage, l’utilisateur accorde ; la réponse revient au cadre.
   const pending = page.request("clients.request", { client: "jira", path: "/issues", method: "GET" });
-  const dialog = await screen.findByRole("alertdialog");
-  expect(within(dialog).getByText("Autoriser l’accès au client jira ?")).toBeVisible();
+  const dialog = await screen.findByRole("dialog", { name: "Autoriser l’accès au client jira ?" });
   await user.click(within(dialog).getByRole("button", { name: "Autoriser" }));
   expect((await pending).result).toMatchObject({ status: 200, body: { chemin: "/issues" } });
   expect(backend.grants).toEqual([expect.objectContaining({ subject: "page:suivi/taches", resource: "client:jira" })]);
@@ -143,8 +142,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   await user.click(within(navigation).getByRole("row", { name: "Notes" }));
   const carnet = frameOf(await screen.findByTitle("Carnet"));
   const refused = carnet.request("functions.call", { function: "suivi/synchroniser" });
-  const question = await screen.findByRole("alertdialog");
-  expect(within(question).getByText("Autoriser l’accès à la fonction suivi/synchroniser ?")).toBeVisible();
+  const question = await screen.findByRole("dialog", { name: "Autoriser l’accès à la fonction suivi/synchroniser ?" });
   await user.click(within(question).getByRole("button", { name: "Refuser" }));
   expect((await refused).error?.message).toMatch(/^Accès refusé/);
 

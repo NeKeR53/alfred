@@ -15,7 +15,7 @@ import { useShell } from "../src/shell/store";
 import { SUGGESTED_MARKETPLACE } from "../src/shell/welcome/ModulesStep";
 import { closeWelcome } from "../src/shell/welcome/store";
 import { FakeBackend } from "./support/fakeBackend";
-import { findNavigation, getNavigation } from "./support/shell";
+import { findNavigation } from "./support/shell";
 
 beforeEach(() => {
   closeWelcome();

@@ -2,7 +2,7 @@
  * S7 côté coquille : notifications à actions et persistantes, fenêtres ouvertes sur un élément précis (paramètres,
  * clé, titre, entrée du menu), et rythme à la seconde des planifications.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { NotificationCenter } from "socle-ui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cadence } from "../features/schedules/api";

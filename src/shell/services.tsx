@@ -3,8 +3,8 @@
  * les erreurs des pages affichées, et faire accorder un accès par l’utilisateur.
  */
 
-import { ConfirmDialog } from "@alfred/ui";
 import { useEffect, useState } from "react";
+import { Button, Dialog } from "socle-ui";
 import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
@@ -181,19 +181,25 @@ export function ShellServices() {
     <>
       <SnapshotFrames />
       <SecretRevealHost />
-      <ConfirmDialog
-        open={request !== undefined}
-        title={request ? `Autoriser l’accès ${toResource(request.label)} ?` : ""}
-        message={
-          request
-            ? `${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages → Général.`
-            : undefined
-        }
-        confirmLabel="Autoriser"
-        cancelLabel="Refuser"
-        onConfirm={() => answer(true)}
-        onCancel={() => answer(false)}
-      />
+      {request ? (
+        <Dialog
+          isOpen
+          size="sm"
+          title={`Autoriser l’accès ${toResource(request.label)} ?`}
+          description={`${subjectLabel(request)} veut utiliser ${request.label}. L’accord est mémorisé ; il se retire dans Réglages → Général.`}
+          onOpenChange={(open) => {
+            if (!open) answer(false);
+          }}
+          footer={
+            <>
+              <Button onPress={() => answer(false)}>Refuser</Button>
+              <Button variant="primary" autoFocus onPress={() => answer(true)}>
+                Autoriser
+              </Button>
+            </>
+          }
+        />
+      ) : null}
     </>
   );
 }

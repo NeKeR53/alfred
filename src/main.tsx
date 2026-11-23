@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { SocleProvider } from "socle-ui";
 import "socle-ui/styles.css";
 import "./styles.css";
-import "@alfred/ui";
 import { App } from "./App";
 import { notifications, soclePlatform, socleStorageKey } from "./shell/socle";
 

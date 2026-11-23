@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "paths": { "@alfred/ui": ["./src/ui/index.ts"], "@alfred/sdk": ["./src/sdk/index.ts"] },
+    "paths": { "@alfred/sdk": ["./src/sdk/index.ts"] },
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],

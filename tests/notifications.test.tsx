@@ -11,7 +11,7 @@ import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { useShell } from "../src/shell/store";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { findNavigation } from "./support/shell";
 
 it("une notification persistante à action ouvre la page qu’elle nomme", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());

@@ -11,7 +11,7 @@ import { App } from "../src/App";
 import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { findNavigation } from "./support/shell";
 
 it("la pastille suit le compteur réglé par la page", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());

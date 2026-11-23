@@ -2,21 +2,7 @@
  * Gestes de réorganisation de la navigation : application optimiste d’un nouveau `layout`, commit par
  * `space.updateLayout`, retour en arrière si le backend refuse ; menus contextuels et dialogues de la coquille.
  */
-import {
-  AppWindow,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowRightLeft,
-  ArrowUp,
-  EyeOff,
-  History,
-  icons,
-  Pencil,
-  Settings2,
-  Shapes,
-  Trash2,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, EyeOff, icons, Pencil, Settings2, Shapes } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { type Action, Button, Dialog, Menu, TextField, useConfirm, useOpenForm } from "socle-ui";
 import { create } from "zustand";

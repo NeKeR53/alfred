@@ -4,7 +4,6 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export const alias = {
-  "@alfred/ui": fileURLToPath(new URL("./src/ui/index.ts", import.meta.url)),
   "@alfred/sdk": fileURLToPath(new URL("./src/sdk/index.ts", import.meta.url)),
 };
 

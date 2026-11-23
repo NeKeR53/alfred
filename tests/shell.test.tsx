@@ -10,7 +10,7 @@ import { expect, it } from "vitest";
 import { App } from "../src/App";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { getNavigation } from "./support/shell";
 
 it("de l’accueil à un espace de travail construit : navigation, Réglages, palette et accord d’accès", async () => {
   const backend = new FakeBackend().install();
@@ -163,12 +163,14 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       label: "le client Jira",
     });
   });
-  const dialog = await screen.findByRole("alertdialog");
+  const dialog = await screen.findByRole("dialog", { name: "Autoriser l’accès au client Jira ?" });
   expect(within(dialog).getByText("Autoriser l’accès au client Jira ?")).toBeVisible();
   expect(within(dialog).getByText(/La page « Carnet » \(notes\/carnet\) veut utiliser le client Jira/)).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Autoriser" }));
   expect(await answer).toEqual({ result: { granted: true } });
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Autoriser l’accès au client Jira ?" })).not.toBeInTheDocument(),
+  );
 
   expect(backend.unknown, "commandes absentes du faux backend").toEqual([]);
 }, 20_000);

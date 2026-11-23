@@ -540,9 +540,8 @@ export function AppShell({
               status={row.status === "error" || row.status === "warning" ? "warning" : undefined}
               unread={Boolean(row.badge)}
               actions={
-                row.actions?.length ? (
-                  <>
-                    {row.actions.map((action) => (
+                row.actions?.length
+                  ? row.actions.map((action) => (
                       <Menu.Item
                         key={action.id}
                         label={action.label}
@@ -551,9 +550,8 @@ export function AppShell({
                           action.id === "rename" ? renameConversation(row) : agentZone.onAction(row.id, action.id)
                         }
                       />
-                    ))}
-                  </>
-                ) : undefined
+                    ))
+                  : undefined
               }
             />
           ))}

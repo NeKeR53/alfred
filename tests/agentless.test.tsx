@@ -12,7 +12,7 @@ import { render } from "../src/features/agent/socle.test-helper";
 import { useShell } from "../src/shell/store";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { findNavigation } from "./support/shell";
 
 it("sans agent installé, ni entrée Agent ni harnais absents : la première section s’affiche", async () => {
   useHarnesses.setState({ probes: {} });

@@ -11,7 +11,7 @@ import { render } from "../src/features/agent/socle.test-helper";
 import { useNotifications } from "../src/shell/notifications";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
-import { findNavigation, getNavigation } from "./support/shell";
+import { getNavigation } from "./support/shell";
 
 it("message, activités, accord, carte de placement, fin de tour enregistrée, puis annulation", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
