@@ -323,7 +323,12 @@ pub async fn install(client: &reqwest::Client, module_dir: &Path, wanted: &[Want
         let name = item.name.trim();
         let (package, sub) = split_name(name)
             .ok_or_else(|| AppError::new(format!("« {name} » n’est pas un nom de paquet npm valide.")))?;
-        if package == "react" || package == "react-dom" || name.starts_with("@alfred/") || package == "lucide-react" {
+        if package == "react"
+            || package == "react-dom"
+            || name.starts_with("@alfred/")
+            || package == "lucide-react"
+            || package == "socle-ui"
+        {
             return Err(AppError::new(format!("« {name} » est déjà fourni par Alfred : l’importer directement.")));
         }
         let version = match item.version.as_deref().map(str::trim).filter(|version| !version.is_empty()) {
@@ -496,9 +501,9 @@ mod tests {
     #[test]
     fn a_page_imports_a_library_by_its_name() {
         let libraries = BTreeMap::from([("@tiptap/react".to_string(), "abc-react.mjs".to_string())]);
-        let source = "import { useEditor } from \"@tiptap/react\";\nimport { Button } from \"@alfred/ui\";\n";
+        let source = "import { useEditor } from \"@tiptap/react\";\nimport { Button } from \"socle-ui\";\n";
         let linked = link(source, SourceType::tsx(), 1, &libraries).unwrap();
-        assert!(linked.contains("\"../vendor/abc-react.mjs\"") && linked.contains("\"@alfred/ui\""));
+        assert!(linked.contains("\"../vendor/abc-react.mjs\"") && linked.contains("\"socle-ui\""));
         assert!(link("import x from \"react\";", SourceType::tsx(), 1, &libraries).is_none());
         assert!(is_vendor_file("abc-react.mjs") && !is_vendor_file("../x.mjs") && !is_vendor_file("libraries.json"));
     }

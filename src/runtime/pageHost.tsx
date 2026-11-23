@@ -1,22 +1,33 @@
 /**
- * Hôte d’un cadre de page ou de panneau : charge le module de la page, l’affiche avec la bibliothèque d’Alfred et
- * rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur d’exécution).
+ * Hôte d’un cadre de page ou de panneau : charge le module de la page, l’affiche dans `SocleProvider` (thème de
+ * l’hôte, densité desktop) et rapporte à la coquille ce qui se passe (prêt, erreur de compilation, erreur
+ * d’exécution). Les notifications de la page partent à la coquille ; une confirmation reste dans le cadre.
  */
 
+import "./frame.css";
 import {
-  declareTopBarActions,
-  declareTopBarSearch,
   emitToShell,
-  files,
+  initPageState,
   onShellEvent,
   type PageContext,
   request,
+  setFrameConfirm,
   shell,
 } from "@alfred/sdk";
-import { EmptyState, type FrameServices, FrameServicesContext } from "@alfred/ui";
 import { Component, type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  Code,
+  createNotifications,
+  EmptyState,
+  type Notifications,
+  type NotifyOptions,
+  type Platform,
+  SocleProvider,
+  useConfirm,
+} from "socle-ui";
 import { frameShortcut, isShellShortcut } from "../sdk/protocol";
+import { accentColor } from "./accent";
 import { describePage, describeRegion } from "./describePage";
 import { screenshotPage } from "./screenshotPage";
 import { sealNetwork } from "./sealNetwork";
@@ -36,8 +47,16 @@ const moduleKey = params.get("key") ?? "";
 const pageId = params.get("page") ?? "";
 const base = new URL(".", import.meta.url).href.replace(/runtime\/$/, "");
 
+let accent: string | undefined = accentColor(params.get("accent"));
+const accentListeners = new Set<(accent: string | undefined) => void>();
+
 function applyTheme(context: Pick<PageContext, "theme"> & { accent?: string | null; surface?: string }) {
   document.documentElement.dataset.theme = context.theme;
+  const next = accentColor(context.accent);
+  if (next !== accent) {
+    accent = next;
+    for (const listener of accentListeners) listener(next);
+  }
   // Une page placée dans les Réglages prend leur style (titres de bloc, lignes, tableaux sans cadre).
   if (context.surface === "settings") document.documentElement.dataset.surface = "settings";
   else delete document.documentElement.dataset.surface;
@@ -66,15 +85,17 @@ function report(phase: "load" | "render" | "runtime", error: unknown) {
 
 function Failure({ title, error }: { title: string; error: unknown }) {
   const details = describe(error);
+  const text = details.diagnostics?.length
+    ? details.diagnostics.map((item) => `${item.line ? `ligne ${item.line} : ` : ""}${item.message}`).join("\n")
+    : details.message;
   return (
-    <div className="alfred-frame__failure">
-      <EmptyState title={title} description="Je peux corriger cette page : l’erreur m’a été transmise.">
-        <pre data-alfred-withheld="true">
-          {details.diagnostics?.length
-            ? details.diagnostics.map((item) => `${item.line ? `ligne ${item.line} : ` : ""}${item.message}`).join("\n")
-            : details.message}
-        </pre>
-      </EmptyState>
+    <div className="alfred-frame__failure flex min-h-full flex-col justify-center gap-3 p-6">
+      <EmptyState title={title} description="Je peux corriger cette page : l’erreur m’a été transmise." />
+      <div data-alfred-withheld="true" className="mx-auto w-full max-w-[760px] min-w-0">
+        <Code block label="Erreur de la page">
+          {text}
+        </Code>
+      </div>
     </div>
   );
 }
@@ -95,43 +116,72 @@ class Boundary extends Component<{ children: ReactNode }, { error?: unknown }> {
   }
 }
 
-/** Services des gabarits de `@alfred/ui`, branchés sur le pont : un échec d’appel n’interrompt jamais la page. */
 const quiet = (call: () => Promise<unknown>) => {
   call().catch(() => undefined);
 };
-const services: FrameServices = {
-  notify: (options) => quiet(() => shell.notify(options)),
-  publish: (selection) => quiet(() => shell.publish(selection)),
-  setPanelVisible: (visible) => quiet(() => shell.setPanelVisible(visible)),
-  openExternal: (url) => quiet(() => shell.openExternal(url)),
-  send: (message) => quiet(() => shell.send(message)),
-  readFile: async (id) => {
-    const { info, data } = await files.read(id);
-    return { name: info.name, mime: info.mime, data };
-  },
-  openFile: (id) => files.open(id),
-  onPeer: (handler) => onShellEvent("peer", handler),
-  // La recherche d’une page va dans la barre du haut d’Alfred ; un panneau garde la sienne.
-  ...(params.get("kind") === "panel"
-    ? {}
-    : { topBarSearch: (options, onQuery) => declareTopBarSearch(options, onQuery, () => undefined) }),
-  // Les actions d’une page vont dans la barre du haut ; un panneau et une capture gardent les leurs.
-  ...(params.get("kind") === "panel" || params.get("capture") === "1"
-    ? {}
-    : { topBarActions: (descriptors, onActivate) => declareTopBarActions(descriptors, onActivate) }),
-  onSelection: (handler) => {
-    let active = true;
-    void request<PageContext>("shell.context").then(
-      (context) => active && handler(context.selection),
-      () => undefined,
+
+/**
+ * File de notifications du cadre : `useNotify()` de `socle-ui` part à la coquille, qui l’affiche (toast et cloche).
+ * Aucun toast n’est dessiné dans le cadre. L’action d’une notification (`onAction`) ne traverse pas le pont.
+ */
+const local = createNotifications();
+let sent = 0;
+const notifications: Notifications = {
+  ...local,
+  toastQueue: local.toastQueue,
+  notify(options: NotifyOptions) {
+    sent += 1;
+    const tone = options.tone === "danger" ? "error" : options.tone;
+    quiet(() =>
+      shell.notify({
+        title: options.title,
+        ...(options.description ? { description: options.description } : {}),
+        ...(tone ? { tone } : {}),
+        ...(options.duration === null ? { persistent: true } : {}),
+      }),
     );
-    const stop = onShellEvent("context", (payload) => handler((payload as PageContext).selection));
-    return () => {
-      active = false;
-      stop();
-    };
+    return `cadre-${sent}`;
   },
 };
+
+function platform(): Platform {
+  const agent = navigator.userAgent;
+  if (/Mac/i.test(agent)) return "macos";
+  if (/Windows/i.test(agent)) return "windows";
+  return "web";
+}
+
+/** Branche la confirmation des actions de la barre du haut (`useTopBarActions`) sur la modale de `socle-ui`. */
+function ConfirmBridge() {
+  const confirm = useConfirm();
+  useEffect(() => {
+    setFrameConfirm((options) => confirm(options));
+    return () => setFrameConfirm(null);
+  }, [confirm]);
+  return null;
+}
+
+function Frame({ children }: { children: ReactNode }) {
+  const [current, setCurrent] = useState(accent);
+  useEffect(() => {
+    accentListeners.add(setCurrent);
+    return () => {
+      accentListeners.delete(setCurrent);
+    };
+  }, []);
+  return (
+    <SocleProvider
+      density="desktop"
+      platform={platform()}
+      storageKey={`alfred:${moduleId}:${pageId}`}
+      notifications={notifications}
+      {...(current ? { accent: current } : {})}
+    >
+      <ConfirmBridge />
+      {children}
+    </SocleProvider>
+  );
+}
 
 function Host() {
   const [loaded, setLoaded] = useState<{ Page?: ComponentType; error?: unknown }>();
@@ -146,13 +196,7 @@ function Host() {
     ]).then(
       ([module, initial]: [{ default?: ComponentType }, Record<string, unknown>]) => {
         if (!active) return;
-        services.state = {
-          initial,
-          set: (key, value) => {
-            initial[key] = value;
-            quiet(() => request("shell.state.set", { key, value }));
-          },
-        };
+        initPageState(initial);
         if (typeof module.default !== "function") {
           const error = new Error("La page doit exporter son composant par défaut : `export default function Page()`.");
           report("load", error);
@@ -179,11 +223,9 @@ function Host() {
   }
   const { Page } = loaded;
   return (
-    <FrameServicesContext.Provider value={services}>
-      <Boundary>
-        <Page />
-      </Boundary>
-    </FrameServicesContext.Provider>
+    <Boundary>
+      <Page />
+    </Boundary>
   );
 }
 
@@ -331,4 +373,9 @@ window.addEventListener("unhandledrejection", (event) => report("runtime", event
 void request<PageContext & { accent?: string | null }>("shell.context").then(applyTheme, () => undefined);
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<Host />);
+if (root)
+  createRoot(root).render(
+    <Frame>
+      <Host />
+    </Frame>,
+  );

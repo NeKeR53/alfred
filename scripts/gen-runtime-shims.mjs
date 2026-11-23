@@ -21,3 +21,7 @@ shim("react-dom.js", "react-dom");
 shim("react-dom-client.js", "react-dom/client");
 shim("jsx-runtime.js", "react/jsx-runtime", { withDefault: false });
 writeFileSync(new URL("lucide.js", out), 'export * from "lucide-react";\n');
+// socle-ui est déjà en modules ES : chaque entrée réexporte tout, et le runtime les bâtit ensemble.
+writeFileSync(new URL("socle.js", out), 'export * from "socle-ui";\n');
+writeFileSync(new URL("socle-markdown.js", out), 'export * from "socle-ui/markdown";\n');
+writeFileSync(new URL("socle-markdown-editor.js", out), 'export * from "socle-ui/markdown-editor";\n');

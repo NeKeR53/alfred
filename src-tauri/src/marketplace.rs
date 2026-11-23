@@ -2192,7 +2192,7 @@ mod tests {
     use super::*;
     use crate::space::{ClientNeed, FunctionDecl, PlaceTarget};
 
-    const PAGE: &str = "import { Page } from \"@alfred/ui\";\nexport default function Vue() {\n  return <Page>Bonjour</Page>;\n}\n";
+    const PAGE: &str = "import { Page, PageSection } from \"socle-ui\";\nexport default function Vue() {\n  return <Page><PageSection title=\"Bonjour\" /></Page>;\n}\n";
 
     /// Un fichier encore tenu (violation de partage sous Windows) est réessayé ; une autre erreur ne l’est pas.
     #[test]

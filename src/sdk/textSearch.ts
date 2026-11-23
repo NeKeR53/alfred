@@ -1,6 +1,6 @@
 /**
  * Recherche dans du texte, comme dans OneApp : sans casse ni accents, et chaque mot tapé doit apparaître. « eleve
- * paris » trouve « Élève inscrit à Paris ». Partagée par le SDK des pages et les gabarits de `@alfred/ui`.
+ * paris » trouve « Élève inscrit à Paris ». Partagée par le SDK des pages et par la coquille.
  */
 
 const fold = (value: string) =>
