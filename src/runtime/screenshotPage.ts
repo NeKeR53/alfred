@@ -205,8 +205,12 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canevas indisponible : capture impossible.");
   const background = getComputedStyle(document.body ?? root).backgroundColor;
+  // biome-ignore lint/plugin: valeurs calculées par le navigateur (fond transparent) et repli blanc du canevas, pas un style de page.
+  const transparent = "rgba(0, 0, 0, 0)";
+  // biome-ignore lint/plugin: repli blanc du canevas quand la page n’a aucun fond calculé.
+  const white = "#fff";
   context.fillStyle =
-    background && background !== "rgba(0, 0, 0, 0)" ? background : getComputedStyle(root).backgroundColor || "#fff";
+    background && background !== transparent ? background : getComputedStyle(root).backgroundColor || white;
   context.fillRect(0, 0, width, height);
   context.drawImage(image, 0, 0);
   const url = canvas.toDataURL("image/png");

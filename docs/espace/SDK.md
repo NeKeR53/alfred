@@ -11,10 +11,10 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | une fonction du connecteur (`functions.call`) ; `client(id)` dans les fonctions seulement |
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
-| `alert`, `confirm`, `prompt` | bloqués | Une `Action` avec `danger` et `confirm`, `confirmAction` (une confirmation), `openForm` (une saisie), `openModal` (un contenu) de `@alfred/ui` |
+| `alert`, `confirm`, `prompt` | bloqués | Une `Action` `danger` ou `confirm`, `useConfirm()` (une confirmation), `useOpenForm()` (une saisie), `Dialog` (un contenu) de `socle-ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
 | `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
-| `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `@alfred/ui` (DESIGN.md, section 5) |
+| `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `socle-ui` (DESIGN.md, section 8) |
 | un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |
 
 Le cadre d’une page est recréé quand l’utilisateur change d’onglet et chaque fois que l’espace de travail change : un état React ne dure pas. Ce qui doit durer va en base.
@@ -97,53 +97,60 @@ alfred db.query '{"sql":"SELECT count(*) AS n FROM compta_lignes"}'
 
 Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
 
-## 3. Charger des données : les gabarits, ou `useAsync`
+## 3. Charger des données : `useAsync` et les gabarits
 
-Les gabarits de `@alfred/ui` chargent eux-mêmes : `CollectionPage` et `SettingsPage` prennent `load`, `DetailPanel` prend `load(id)`. Ils affichent chargement, erreur et absence, rechargent après chaque `Action` et après une écriture faite dans l’autre cadre (page ou panneau). C’est le cas général :
+Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `DetailPanel`, `Page`), qui affiche chargement, erreur et absence :
 
 ```tsx
-import { Pencil } from "lucide-react";
-import { db } from "@alfred/sdk";
-import { CollectionPage, openForm } from "@alfred/ui";
+import { Pencil, Plus } from "lucide-react";
+import { db, notifyActionError, useAsync } from "@alfred/sdk";
+import { ListPage, useOpenForm } from "socle-ui";
 
 interface Note {
-  id: number;
+  id: string;
   texte: string;
   creee: string;
 }
 
-const formulaire = (note?: Note) => ({
-  title: note ? "Modifier la note" : "Nouvelle note",
-  fields: [{ name: "texte", label: "Texte", type: "textarea" as const }],
-  initial: note,
-  submitLabel: note ? "Enregistrer" : "Créer",
-  onSubmit: (v: Record<string, string>) =>
-    note
-      ? db.execute("UPDATE carnet_notes SET texte = ? WHERE id = ?", [v.texte, note.id])
-      : db.execute("INSERT INTO carnet_notes (texte) VALUES (?)", [v.texte]),
-});
-
 export default function NotesPage() {
+  const notes = useAsync(
+    () => db.query<Note>("SELECT CAST(id AS TEXT) AS id, texte, creee FROM carnet_notes ORDER BY id DESC LIMIT 200"),
+    [],
+  );
+  const openForm = useOpenForm();
+  const saisir = (note?: Note) =>
+    openForm({
+      title: note ? "Modifier la note" : "Nouvelle note",
+      fields: [{ type: "textarea", name: "texte", label: "Texte", isRequired: true }],
+      initialValues: note,
+      submitLabel: note ? "Enregistrer" : "Créer",
+      onSubmit: async (v) => {
+        await (note
+          ? db.execute("UPDATE carnet_notes SET texte = ? WHERE id = ?", [v.texte as string, note.id])
+          : db.execute("INSERT INTO carnet_notes (texte) VALUES (?)", [v.texte as string]));
+        notes.reload();
+      },
+    });
   return (
-    <CollectionPage<Note>
-      label="Notes"
-      load={() => db.query<Note>("SELECT id, texte, creee FROM carnet_notes ORDER BY id DESC LIMIT 200")}
-      rowKey={(note) => note.id}
+    <ListPage
+      title="Notes"
+      rows={notes.data}
       columns={[
-        { key: "texte", header: "Note" },
-        { key: "creee", header: "Créée", type: "relative" },
+        { id: "texte", label: "Note" },
+        { id: "creee", label: "Créée", type: "relative" },
       ]}
-      emptyTitle="Aucune note"
-      emptyDescription="Les notes ajoutées ici restent dans l’espace."
-      search={{ label: "Rechercher une note" }}
-      actions={[{ label: "Nouvelle note", primary: true, onClick: () => openForm(formulaire()) }]}
-      rowActions={(note) => [{ label: "Modifier", icon: Pencil, onClick: () => openForm(formulaire(note)) }]}
+      empty={{ title: "Aucune note", description: "Les notes ajoutées ici restent dans l’espace." }}
+      search={{ label: "les notes" }}
+      actions={[{ id: "nouvelle", label: "Nouvelle note", icon: <Plus size={16} />, primary: true, onPress: () => saisir() }]}
+      rowActions={(note) => [{ id: "modifier", label: "Modifier", icon: <Pencil size={16} />, onPress: () => saisir(note) }]}
+      isLoading={notes.loading}
+      hasError={Boolean(notes.error)}
+      onRetry={notes.reload}
+      onActionError={notifyActionError}
     />
   );
 }
 ```
-
-Une page composée (DESIGN.md, section 5) charge avec `useAsync` :
 
 ```ts
 function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>): {
@@ -154,7 +161,7 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 };
 ```
 
-`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. Exemple complet : DESIGN.md, section 12.4.
+`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
 
 ## 4. Base de données : `db`
 
@@ -480,25 +487,26 @@ export default function Journal() {
 
 Une console (`client("portainer").socket("/api/websocket/exec", { query: { id, endpointId } })`) se lit de même, et la page écrit ce que tape l’utilisateur par `journal.write(texte)`.
 
-**Afficher un canal.** Une page ne dessine ni journal ni console elle-même : `LogViewer` et `Terminal` de `@alfred/ui` lisent le résultat de `useChannel` tel quel (DESIGN.md, section 5).
+**Afficher un canal.** Une page ne dessine ni journal ni console elle-même : `LogViewer` et `Terminal` de `socle-ui` (DESIGN.md, section 8).
 
 ```tsx
 // pages/journal.tsx : 100 000 lignes et plus, couleurs ANSI, suivi de la fin, recherche.
 const journal = useChannel(ouvert.data?.canal, { keep: 5000 }); // un lot entier, jusqu’à 5 000 événements
 return (
   <Page fill>
-    <LogViewer label="Journal du conteneur web" channel={journal} fill />
+    <LogViewer label="Journal du conteneur web" lines={journal.events.map((event) => event.data ?? "")} live={!journal.closed} fill />
   </Page>
 );
 
 // pages/console.tsx : saisie, copier-coller, taille envoyée au service.
-const session = useChannel(ouverte.data?.canal);
+const console = useTerminalConnection(ouverte.data?.canal);
 return (
   <Page fill>
     <Terminal
       key={ouverte.data?.canal}
       label="Console du conteneur web"
-      channel={session}
+      engine={loadTerminal}
+      {...console}
       onResize={({ cols, rows }) => functions.call("redimensionner-console", { exec: ouverte.data?.exec, cols, rows })}
       fill
     />
@@ -506,7 +514,7 @@ return (
 );
 ```
 
-`LogViewer` garde lui-même ses lignes (500 000 au plus, `maxLines`) : `keep` n’a qu’à couvrir un lot. Quand le protocole du service encadre ses messages (Kubernetes : un octet de canal en tête ; ttyd : un préfixe), `Terminal` reçoit à la place du canal une paire écriture/lecture, mémorisée avec `useMemo` : `connection={{ send(texte), subscribe(ecrire) }}`. `send` encadre la saisie et l’écrit par `channels.write` ; `subscribe` est appelé une fois, reçoit la fonction qui écrit à l’écran (texte ou `Uint8Array`) et rend le désabonnement ; la page y passe ce qu’elle a décodé des événements du canal.
+`useTerminalConnection(canal)` rend `{ connection, state, reason }` : ce que le programme écrit s’affiche (texte ou base64), ce que tape l’utilisateur part par `channels.write`. `loadTerminal` charge xterm.js à la première ouverture. Quand le protocole du service encadre ses messages (Kubernetes : un octet de canal en tête ; ttyd : un préfixe), la page écrit sa propre paire, mémorisée avec `useMemo` : `connection={{ send(texte), subscribe(ecrire) }}`. `send` encadre la saisie et l’écrit par `channels.write` ; `subscribe` reçoit la fonction qui écrit à l’écran (texte ou `Uint8Array`) et rend le désabonnement.
 
 ## 7. IA
 
@@ -658,8 +666,9 @@ Tout tourne sur l’ordinateur : la transcription par whisper.cpp, la lecture pa
 Le micro est unique et réservé aux pages et panneaux. La première fois, l’utilisateur l’accorde à la page. `startListening` se résout quand l’écoute a commencé : au premier usage, après le chargement du modèle (quelques secondes), donc affiche un état en cours. Rejet si la dictée n’est pas réglée, si l’utilisateur refuse ou si le micro sert déjà ailleurs (la page Agent, une autre page) : montre `error.message`. Une transcription vide signifie que rien de net n’a été entendu. Le micro se ferme seul quand le cadre disparaît.
 
 ```tsx
-import { Button, FeedbackBanner, Page, Text } from "@alfred/ui";
 import { voice } from "@alfred/sdk";
+import { Notice, Text } from "@alfred/kit";
+import { Page, PageSection } from "socle-ui";
 import { useState } from "react";
 
 export default function Dicter() {
@@ -689,16 +698,24 @@ export default function Dicter() {
 
   return (
     <Page width="text">
-      <Button onClick={basculer} disabled={etat === "ouverture" || etat === "transcription"}>
-        {etat === "ecoute" ? "Terminer" : etat === "pret" ? "Dicter" : "Patientez…"}
-      </Button>
-      {erreur ? <FeedbackBanner tone="error">{erreur}</FeedbackBanner> : <Text>{texte}</Text>}
+      <PageSection
+        title="Dictée"
+        actions={[{
+          id: "dicter",
+          label: etat === "ecoute" ? "Terminer" : "Dicter",
+          primary: true,
+          isDisabled: etat === "ouverture" || etat === "transcription",
+          onPress: basculer,
+        }]}
+      >
+        {erreur ? <Notice tone="danger">{erreur}</Notice> : <Text>{texte}</Text>}
+      </PageSection>
     </Page>
   );
 }
 ```
 
-## 8. Coquille : `shell`, `usePageContext`, `usePeerMessage`, `useTopBarSearch`, `badge`, `menu`
+## 8. Coquille : `shell`, `usePageContext`, `useSelection`, `usePageState`, `useTopBarActions`, `badge`, `menu`
 
 ```ts
 shell.notify(options: NotifyOptions): Promise<void>;   // section « Notifications » ci-dessous : actions, persistante
@@ -711,6 +728,10 @@ shell.send(message: unknown): Promise<void>;            // page vers panneau, ou
 shell.openExternal(url: string): Promise<void>;         // http(s), navigateur du système, hôte accordé par l’utilisateur
 usePageContext(): PageContext | undefined;              // undefined le temps de la première réponse
 usePeerMessage(handler: (message: unknown) => void): void;
+useSelection<T>(): T | null | undefined;              // panneau : la sélection publiée par sa page
+announceChange(): Promise<void>;                        // prévient l’autre cadre : ses useAsync se relancent
+usePageState<T>(key: string, initial: T): [T, setter];  // comme useState, retenu quand on quitte la page
+notifyActionError(action: { label: string }, error?: unknown): void; // `onActionError` des gabarits
 
 interface PageContext {
   reference: string; // « module/page »
@@ -727,41 +748,32 @@ interface PageContext {
 }
 ```
 
-Page et panneau : `CollectionPage` avec `panel` publie `{ id }` de la ligne choisie et ouvre le panneau ; `DetailPanel` lit cette sélection, charge l’objet et, après une action, prévient la page, qui recharge sa liste (DESIGN.md, sections 4.1 et 4.2). Ces appels ne servent donc qu’à une page composée : `shell.publish({ id })` et `shell.setPanelVisible(true)` côté page, `usePageContext()?.selection` côté panneau, `shell.send(message)` et `usePeerMessage(handler)` pour se prévenir d’une écriture.
+Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, charge l’objet avec `useAsync` et le décrit dans un `DetailPanel`. Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections de `DetailPanel` mémorisent leur repli par leur `id`.
 
-Blocs du panneau : ceux de `DetailPanel` (`sections`) et de `PanelSections` (panneau composé) se replient et se déplacent ; Alfred retient leur ordre et leur repli pour la page, sur le poste, sous une clé `usePageState` réservée (`alfred.sections.<name>`). Les clés `alfred.*` ne sont pas pour la page ; les autres ne durent que tant qu’Alfred est ouvert. La largeur du panneau (340 px, 460 px, large) est réglée par l’utilisateur.
+`usePageState(clé, initial)` retient une petite valeur JSON (vue, onglet, élément ouvert) quand on quitte la page, et la rend au retour, tant qu’Alfred est ouvert.
 
 Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou une valeur de type `url` ou `email`, qui le fait seule). La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
 
-### Recherche de la barre du haut : `useTopBarSearch`, `matchesSearch`
+### Recherche : celle de `ListPage`, ou `matchesSearch`
 
-La recherche d’une page est dans la barre du haut d’Alfred, pas dans la page (DESIGN.md, section 2). La page la déclare ; Alfred affiche le champ (240 px, ⌘F ou Ctrl+F y mène, Échap l’efface) et lui renvoie chaque frappe. Le texte est retenu tant qu’Alfred est ouvert : en revenant sur la page, il est là.
+La barre du haut n’a pas de recherche. Une collection cherche avec `search` de `ListPage` (sans casse ni accents, chaque mot exigé). Une `Page` composée qui filtre elle-même pose un `SearchField` dans sa `toolbar` et filtre avec la même règle :
 
 ```ts
-useTopBarSearch(options?: { label?: string; placeholder?: string }): {
-  query: string;                        // texte tapé, tel quel
-  terms: string[];                      // ses mots, sans casse ni accents
-  matches(...fields: unknown[]): boolean; // chaque mot apparaît dans un des champs (textes, nombres, listes ; null ignoré)
-  setQuery(query: string): void;
-  clear(): void;                        // « Effacer la recherche » d’un état « Aucun résultat »
-};
 searchTerms(query: string): string[];
-matchesSearch(search: string | string[], fields: unknown[]): boolean; // la même règle, hors d’une page
+matchesSearch(search: string | string[], fields: unknown[]): boolean;
 ```
 
 ```tsx
-import { useAsync, useTopBarSearch } from "@alfred/sdk";
-
-const tickets = useAsync(() => db.query<Ticket>("SELECT * FROM support_tickets"), []);
-const recherche = useTopBarSearch({ label: "Rechercher un ticket", placeholder: "Titre, client, numéro…" });
-const visibles = (tickets.data ?? []).filter((ticket) => recherche.matches(ticket.titre, ticket.client, ticket.numero));
+const [texte, setTexte] = useState("");
+const visibles = (tickets.data ?? []).filter((ticket) => matchesSearch(texte, [ticket.titre, ticket.client, ticket.numero]));
+<Page toolbar={<SearchField label="les tickets" onChange={({ text }) => setTexte(text)} />}>…</Page>
 ```
 
-- « eleve paris » trouve « Élève inscrit à Paris » : casse et accents ignorés, chaque mot exigé, dans n’importe quel champ. Une recherche vide trouve tout.
-- `search` de `CollectionPage` et de `Page` passe déjà par là : ne déclare `useTopBarSearch` que pour une page composée qui filtre elle-même, et une seule par page. Une sous-page qui a la sienne prend la barre tant qu’elle est ouverte.
-- Elle filtre ce qui est chargé. Pour chercher dans toute une table (milliers de lignes, texte long), passe `recherche.query` à `search.query` (section 12) dans un `useAsync`.
-- Réservée à une page : dans un panneau de droite, `useTopBarSearch` est refusé (erreur de la page) ; un panneau garde un `SearchField` ou `Page search`.
-- Jamais de `SearchField` en tête d’une page ni de barre de filtres à part pour chercher : un `SearchField` ne sert que dans un bloc, pour une liste secondaire.
+Pour chercher dans toute une table (milliers de lignes, texte long), passer le texte à `search.query` (section 12) dans un `useAsync`, ou `remote` de `ListPage`.
+
+### Actions de la barre du haut : `useTopBarActions`
+
+`useTopBarActions(actions)` place des `Action` de `socle-ui` (`{ id, label, icon: <Download size={16} />, onPress, primary, danger, confirm }`) dans la barre du haut d’Alfred. La coquille les dessine (icônes, « … », action principale) ; un clic revient à la page, qui confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. Une seule série par page ; réservé à une page. À préférer seulement pour une `Page` composée : `ListPage` et `DetailPage` gardent leurs actions dans leur en-tête. Des vues ne sont pas des actions : prendre des `Tabs`.
 
 ### Résumé de la barre du haut : `useTopBarSummary`
 
@@ -942,7 +954,7 @@ files.open(id: string): Promise<void>;      // application du système
 
 Alfred range les fichiers du module hors de l’espace versionné (`.alfred/files/<module>/`), les copie avec les sauvegardes et les supprime avec le module. Chaque module ne voit que les siens. 50 Mo par fichier ; `mime` se déduit de l’extension du nom. Garde l’`id` dans une table du module pour relier le fichier à une ligne (une facture, un ticket). `files.open` montre dans le Finder, au lieu de l’ouvrir, un fichier qui s’exécuterait (script, application).
 
-Pour afficher un fichier du module dans une page (PDF, image, texte, Markdown), `<DocumentViewer file={fichier.id} label="…" />` de `@alfred/ui` le lit et l’affiche, avec page, zoom et ouverture dans l’application du système (DESIGN.md, section 5).
+Pour afficher un fichier du module (PDF, image), `DocumentViewer` de `socle-ui` reçoit ses octets : `const { info, data } = await files.read(id)`, puis `<DocumentViewer label={info.name} data={Uint8Array.from(atob(data), (c) => c.charCodeAt(0))} name={info.name} type={info.mime} loadPdf={loadPdf} onDownload={() => files.export(id)} />` (`loadPdf` de `@alfred/sdk` ; DESIGN.md, section 8). Un texte Markdown s’affiche avec `Markdown` de `socle-ui/markdown`.
 
 ```tsx
 import { db, files, shell } from "@alfred/sdk";
@@ -1067,22 +1079,21 @@ search.query(index: string, text: string, options?: { limit?: number; offset?: n
 - Une déclaration fausse (table ou colonne absente) apparaît dans `check` (`migrations`, fichier « module.json (search …) »).
 
 ```tsx
-import { db, search, useAsync } from "@alfred/sdk";
-import { SearchField, Stack, Text } from "@alfred/ui";
+import { search, useAsync } from "@alfred/sdk";
+import { List, Page, SearchField } from "socle-ui";
 import { useState } from "react";
 
-export function Recherche() {
+export default function Recherche() {
   const [texte, setTexte] = useState("");
   const trouves = useAsync(() => search.query<number>("notes", texte, { limit: 20 }), [texte]);
   return (
-    <Stack gap="sm">
-      <SearchField label="Chercher dans les notes" value={texte} onChange={(event) => setTexte(event.target.value)} />
-      {trouves.data?.results.map((resultat) => (
-        <Text key={resultat.key}>
-          {resultat.parts.map((part, i) => (part.match ? <strong key={i}>{part.text}</strong> : part.text))}
-        </Text>
-      ))}
-    </Stack>
+    <Page toolbar={<SearchField label="les notes" onChange={({ text }) => setTexte(text)} />}>
+      <List
+        selectionMode="none"
+        searchTerms={texte ? texte.split(/\s+/) : undefined}
+        items={(trouves.data?.results ?? []).map((resultat) => ({ id: String(resultat.key), title: resultat.snippet }))}
+      />
+    </Page>
   );
 }
 ```
@@ -1144,7 +1155,7 @@ interface Change { id: number; table: string; key: string | null; op: "insert" |
 
 - `key` : la clé primaire de la ligne (en texte : `key: 12` et `key: "12"` se valent), ou son `rowid` si la clé porte sur plusieurs colonnes.
 - `actor` : `page:module/page` (le panneau compte pour sa page), `function:module/fonction`, `agent` (requête de l’agent), `alfred` (import, restauration), suivi de « (annulation) » pour une remise en arrière.
-- `revert` remet **toute la ligne** dans son état d’avant ce changement : une insertion est retirée, une modification annulée, une suppression rétablie. La remise est un changement à son tour, qu’on peut annuler. Des modifications faites après celle qu’on annule sont écrasées : montre la ligne `before` et demande confirmation (`confirmAction` de `@alfred/ui`).
+- `revert` remet **toute la ligne** dans son état d’avant ce changement : une insertion est retirée, une modification annulée, une suppression rétablie. La remise est un changement à son tour, qu’on peut annuler. Des modifications faites après celle qu’on annule sont écrasées : montre la ligne `before` et demande confirmation (`useConfirm()` de `socle-ui`, ou une `Action` `danger`).
 - Alfred garde 90 jours et 10 000 changements par table. Les colonnes ajoutées par une migration sont suivies dès qu’elle passe. Une table absente apparaît dans `check` (`migrations`, « module.json (history …) »).
 
 ```tsx
@@ -1312,7 +1323,7 @@ interface GitCommit { id: string; message: string; date: string; author: string;
 - `git.clone` : https, http, ssh ou `utilisateur@hôte:chemin`, dans un sous-dossier neuf du dossier accordé.
 - Aucun crochet ne tourne (husky compris), ni filtre, éditeur ou aide d’identification réglé dans le dépôt : un `.git/config` qui ferait lancer un programme est refusé avec la clé en cause. Les fins de ligne restent celles du poste (`core.autocrlf`). Le réseau passe par les identifiants git, le proxy et les certificats du poste ; un échec dit quoi vérifier (`error.message`), la sortie de git restant dans `error.detail.stderr`.
 - Une opération à la fois par dépôt ; les écritures et les opérations réseau vont au journal (`kind: "git"`).
-- Pour montrer un diff : `<DiffView label="…" patch={diff.text} truncated={diff.truncated} />` de `@alfred/ui` lit le texte de `git.diff` tel quel (plusieurs fichiers, binaires, CRLF) ; pour comparer deux révisions d’un fichier, `before={await git.show(dossier, "HEAD", fichier)}` et `after={…}` (DESIGN.md, section 5).
+- Pour montrer un diff : `<DiffView label="…" patch={diff.text} truncated={diff.truncated} />` de `socle-ui` lit le texte de `git.diff` tel quel (plusieurs fichiers, binaires, CRLF) ; pour comparer deux révisions d’un fichier, `before={await git.show(dossier, "HEAD", fichier)}` et `after={…}` (DESIGN.md, section 5).
 
 ```tsx
 import { folders, git, shell } from "@alfred/sdk";

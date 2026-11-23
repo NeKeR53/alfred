@@ -89,7 +89,6 @@
         "src/features/vault/SecretReveal.tsx",
         "src/features/vault/VaultEntryDialog.tsx",
         "src/features/voice/DictationButton.tsx",
-        "src/runtime/screenshotPage.ts",
         "src/shell/AppShell.tsx",
         "src/shell/MenuZone.tsx",
         "src/shell/NotificationCenter.tsx",

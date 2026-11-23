@@ -935,6 +935,70 @@ export function useChannel(channel: string | null | undefined, options: { keep?:
 
 // --- Fonctions -------------------------------------------------------------------------------------------------
 
+/** Branchement de `<Terminal>` de `socle-ui` sur un canal (`useTerminalConnection`). */
+export interface TerminalLink {
+  /** À passer à `<Terminal connection>`. */
+  connection: {
+    send(data: string): unknown;
+    subscribe(write: (data: string | Uint8Array) => void): () => void;
+  };
+  /** À passer à `<Terminal state>`. */
+  state: "connecting" | "open" | "closed" | "error";
+  /** À passer à `<Terminal reason>`. */
+  reason: string | undefined;
+}
+
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/**
+ * Relie `<Terminal engine={loadTerminal} {...useTerminalConnection(id)} />` de `socle-ui` au WebSocket ouvert par une
+ * fonction du connecteur (`client(id).socket`) : ce que le programme écrit s’affiche, ce que l’utilisateur tape
+ * part par `channels.write`. `id` nul : en attente d’ouverture.
+ */
+export function useTerminalConnection(channel: string | null | undefined): TerminalLink {
+  const read = useChannel(channel);
+  const writers = useRef(new Set<(data: string | Uint8Array) => void>());
+  const backlog = useRef<{ channel: string | null | undefined; seq: number; chunks: (string | Uint8Array)[] }>({
+    channel,
+    seq: 0,
+    chunks: [],
+  });
+  if (backlog.current.channel !== channel) backlog.current = { channel, seq: 0, chunks: [] };
+  useEffect(() => {
+    const kept = backlog.current;
+    for (const event of read.events) {
+      if (event.seq <= kept.seq || event.type !== "data" || event.data === undefined) continue;
+      kept.seq = event.seq;
+      const chunk = event.base64 ? decodeBase64(event.data) : event.data;
+      kept.chunks.push(chunk);
+      if (kept.chunks.length > 2000) kept.chunks.shift();
+      for (const write of writers.current) write(chunk);
+    }
+  }, [read.events]);
+  const connection = useMemo(
+    () => ({
+      send: (data: string) => {
+        if (channel) void channels.write(channel, data).catch(() => undefined);
+      },
+      subscribe: (write: (data: string | Uint8Array) => void) => {
+        for (const chunk of backlog.current.chunks) write(chunk);
+        writers.current.add(write);
+        return () => {
+          writers.current.delete(write);
+        };
+      },
+    }),
+    [channel],
+  );
+  const state = !channel ? "connecting" : read.error ? "error" : read.closed ? "closed" : "open";
+  return { connection, state, reason: read.reason ?? read.error?.message ?? undefined };
+}
+
 export const functions = {
   /** Appelle une fonction de l’espace : « fonction » pour le module courant, « module/fonction » sinon. */
   call<Output = unknown>(reference: string, input: unknown = {}): Promise<Output> {
