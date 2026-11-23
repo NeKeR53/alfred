@@ -1,5 +1,5 @@
-import { Button, Disclosure } from "@alfred/ui";
 import { Paperclip } from "lucide-react";
+import { Button, Disclosure } from "socle-ui";
 import { conversationFileName, conversationFilePath, isPdfDocument } from "../lib/conversationFileKinds";
 import { PdfPreview } from "./PdfPreview";
 import { useConversationResources } from "./resources";
@@ -30,16 +30,16 @@ export function ConversationFile({
       </span>
       {available ? (
         <span className="agent-chat__file-actions">
-          <Button aria-label={`Ouvrir ${label}`} onClick={() => available.open(reference)}>
+          <Button size="sm" aria-label={`Ouvrir ${label}`} onPress={() => available.open(reference)}>
             Ouvrir
           </Button>
-          <Button aria-label={`Enregistrer une copie de ${label}`} onClick={() => available.save(reference)}>
+          <Button size="sm" aria-label={`Enregistrer… une copie de ${label}`} onPress={() => available.save(reference)}>
             Enregistrer…
           </Button>
         </span>
       ) : null}
       {available && isPdfDocument(reference) ? (
-        <Disclosure appearance="subtle" lazy label="Aperçu">
+        <Disclosure title="Aperçu">
           <PdfPreview label={`Aperçu de ${label}`} source={reference} generate={() => available.read(reference)} />
         </Disclosure>
       ) : null}

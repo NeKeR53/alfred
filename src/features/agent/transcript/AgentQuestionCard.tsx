@@ -1,6 +1,6 @@
-import { IconButton } from "@alfred/ui";
 import { ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { IconButton } from "socle-ui";
 import type { ApprovalRequest } from "../harness";
 import type { AgentQuestion } from "./agentQuestions";
 
@@ -59,9 +59,7 @@ export function AgentQuestionCard({
           {permission ? <ShieldCheck size={12} /> : "?"}
         </span>
         <span className="agent-question__kind">{kind}</span>
-        <IconButton size="small" label="Replier la question" onClick={() => setFolded(true)}>
-          <ChevronDown size={14} aria-hidden="true" />
-        </IconButton>
+        <IconButton icon={<ChevronDown size={14} />} label="Replier la question" onPress={() => setFolded(true)} />
       </header>
       <p className="agent-question__text">{text}</p>
       {permission?.detail ? <pre className="agent-card__detail">{permission.detail}</pre> : null}

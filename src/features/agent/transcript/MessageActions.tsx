@@ -1,6 +1,6 @@
-import { IconButton } from "@alfred/ui";
 import { CheckCheck, Copy, RotateCcw, Shuffle, TextQuote } from "lucide-react";
 import { type ReactNode, useRef } from "react";
+import { IconButton } from "socle-ui";
 import { notify } from "../../../shell/notifications";
 
 export type Delivery = { startedAt: number; status: "sent" | "pending" | "error" | "cancelled" };
@@ -53,7 +53,13 @@ export function MessageActions({
   return (
     <>
       <div className="agent-chat__message-body">{children}</div>
-      <fieldset ref={actions} className="agent-chat__message-actions" aria-label="Actions du message">
+      <fieldset
+        ref={actions}
+        className="agent-chat__message-actions"
+        aria-label="Actions du message"
+        // La sélection est relevée avant que l’appui ne déplace le focus.
+        onPointerDownCapture={readSelection}
+      >
         {delivery ? (
           <span className="agent-chat__message-delivery">
             {delivery.status === "sent" ? <CheckCheck size={12} aria-hidden="true" /> : null}
@@ -68,9 +74,10 @@ export function MessageActions({
           </span>
         ) : null}
         <IconButton
-          size="small"
+          icon={<Copy size={14} />}
           label="Copier le message"
-          onClick={() =>
+          tooltipPlacement="top"
+          onPress={() =>
             void navigator.clipboard.writeText(content).then(
               () => notify({ title: "Message copié", tone: "success" }),
               (error: unknown) =>
@@ -81,39 +88,36 @@ export function MessageActions({
                 }),
             )
           }
-        >
-          <Copy size={14} aria-hidden="true" />
-        </IconButton>
+        />
         {onQuote ? (
           <IconButton
-            size="small"
+            icon={<TextQuote size={14} />}
             label="Citer dans la réponse"
-            tooltip="Citer dans la réponse · le passage sélectionné, sinon tout le message"
-            onPointerDown={readSelection}
-            onClick={() => {
+            tooltipPlacement="top"
+            onPress={() => {
               if (!selectedPassage.current) readSelection();
               onQuote(selectedPassage.current || content);
               selectedPassage.current = "";
             }}
-          >
-            <TextQuote size={14} aria-hidden="true" />
-          </IconButton>
+          />
         ) : null}
         {onResend ? (
-          <IconButton size="small" label="Relancer le message" disabled={disabled} onClick={onResend}>
-            <RotateCcw size={14} aria-hidden="true" />
-          </IconButton>
+          <IconButton
+            icon={<RotateCcw size={14} />}
+            label="Relancer le message"
+            tooltipPlacement="top"
+            isDisabled={disabled}
+            onPress={onResend}
+          />
         ) : null}
         {onFork ? (
           <IconButton
-            size="small"
+            icon={<Shuffle size={14} />}
             label="Repartir d’ici"
-            tooltip="Repartir d’ici · nouvel agent avec la conversation jusqu’à ce message"
-            disabled={disabled}
-            onClick={onFork}
-          >
-            <Shuffle size={14} aria-hidden="true" />
-          </IconButton>
+            tooltipPlacement="top"
+            isDisabled={disabled}
+            onPress={onFork}
+          />
         ) : null}
       </fieldset>
     </>

@@ -1,5 +1,3 @@
-type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[] };
-
 /** Les chemins affichés dans une conversation restent limités à des références de fichiers. */
 export function isAgentFileReference(value: string): boolean {
   const text = value.trim();
@@ -54,33 +52,65 @@ export function citedLocalPaths(content: string, extensions: string): string[] {
   return [...new Set(found.sort((left, right) => left.index - right.index).map(({ reference }) => reference))];
 }
 
-/** Relie les noms de fichiers écrits en texte ou en code inline, sans modifier les blocs de code ni les liens existants. */
-export function agentFileLinks() {
-  const filePattern =
-    /(?<![\p{L}\p{N}_:/~])(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)?(?:[\p{L}\p{N}_@+.-]+[\\/])*[\p{L}\p{N}_@+-][\p{L}\p{N}_@+.-]*\.(?:md|txt|tsx?|jsx?|css|html?|json|ya?ml|toml|rs|py|java|kt|cs|go|sh|ps1|sql|xml|csv|pdf|png|jpe?g|svg|lock)(?::\d+(?::\d+)?)?/giu;
-  const walk = (node: MarkdownNode) => {
-    if (!node.children || ["link", "linkReference", "code", "image", "html"].includes(node.type)) return;
-    node.children = node.children.flatMap((child) => {
-      if (child.type === "inlineCode" && child.value && isAgentFileReference(child.value))
-        return [{ type: "link", url: child.value, children: [child] }];
-      if (child.type === "text" && child.value) {
-        const text = child.value;
-        const pieces: MarkdownNode[] = [];
-        let offset = 0;
-        for (const match of text.matchAll(filePattern)) {
-          const index = match.index;
-          if (index > offset) pieces.push({ type: "text", value: text.slice(offset, index) });
-          pieces.push({ type: "link", url: match[0], children: [{ type: "text", value: match[0] }] });
-          offset = index + match[0].length;
-        }
-        if (offset) {
-          if (offset < text.length) pieces.push({ type: "text", value: text.slice(offset) });
-          return pieces;
-        }
-      }
-      walk(child);
-      return [child];
-    });
-  };
-  return (tree: unknown) => walk(tree as MarkdownNode);
+/** Préfixe des liens de fichier : une ancre, que le Markdown garde telle quelle, même pour un chemin Windows (`C:\\`). */
+const FILE_LINK = "#fichier:";
+
+const fileLink = (path: string) => `${FILE_LINK}${encodeURIComponent(path)}`;
+
+/** Chemin d’un lien posé par `linkAgentFiles`, ou d’un lien Markdown qui vise déjà un fichier. */
+export function fileFromLink(href: string): string | undefined {
+  if (href.startsWith(FILE_LINK)) {
+    try {
+      return decodeURIComponent(href.slice(FILE_LINK.length));
+    } catch {
+      return undefined;
+    }
+  }
+  return isAgentFileReference(href) ? href : undefined;
+}
+
+const filePattern =
+  /(?<![\p{L}\p{N}_:/~])(?:[A-Za-z]:[\\/]|~?\/|\.{1,2}\/)?(?:[\p{L}\p{N}_@+.-]+[\\/])*[\p{L}\p{N}_@+-][\p{L}\p{N}_@+.-]*\.(?:md|txt|tsx?|jsx?|css|html?|json|ya?ml|toml|rs|py|java|kt|cs|go|sh|ps1|sql|xml|csv|pdf|png|jpe?g|svg|lock)(?::\d+(?::\d+)?)?/giu;
+
+/** Lien Markdown ou image, code inline, lien automatique `<…>`, adresse web : laissés tels quels, sauf leur cible. */
+const protectedPart =
+  /(!?)\[((?:[^\]\\\n]|\\.)*)\]\(\s*(<[^>\n]*>|[^\s)]*)((?:\s+"[^"]*")?\s*)\)|(`+)([^`][\s\S]*?)\5(?!`)|<[^>\n]+>|\b(?:https?:\/\/|mailto:|www\.)\S+/g;
+
+const escapeLabel = (text: string) => text.replace(/[\\`*_[\]<>]/g, (character) => `\\${character}`);
+
+function linkPlainText(text: string): string {
+  return text.replace(filePattern, (match) => `[${escapeLabel(match)}](${fileLink(match)})`);
+}
+
+function linkSegment(text: string): string {
+  let result = "";
+  let offset = 0;
+  for (const match of text.matchAll(protectedPart)) {
+    result += linkPlainText(text.slice(offset, match.index));
+    offset = match.index + match[0].length;
+    const [whole, bang, label, target, title, ticks, code] = match;
+    if (target !== undefined && !bang) {
+      const destination = target.replace(/^<|>$/g, "").trim();
+      result += isAgentFileReference(destination) ? `[${label}](${fileLink(destination)}${title})` : whole;
+    } else if (ticks && code !== undefined && isAgentFileReference(code.trim())) {
+      result += `[${whole}](${fileLink(code.trim())})`;
+    } else result += whole;
+  }
+  return result + linkPlainText(text.slice(offset));
+}
+
+/**
+ * Relie les noms de fichiers écrits en texte ou en code inline, et les liens Markdown qui visent un fichier, sans
+ * modifier les blocs de code ni les autres liens. Le lien posé se lit avec `fileFromLink`.
+ */
+export function linkAgentFiles(markdown: string): string {
+  const fence = /^( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1?\2[`~]*[ \t]*(?=\n|$)|$)/gm;
+  let result = "";
+  let offset = 0;
+  for (const match of markdown.matchAll(fence)) {
+    result += linkSegment(markdown.slice(offset, match.index));
+    result += match[0];
+    offset = match.index + match[0].length;
+  }
+  return result + linkSegment(markdown.slice(offset));
 }
