@@ -25,9 +25,7 @@ pub const ALLOWED_IMPORTS: [&str; 9] = [
     "@alfred/kit",
 ];
 
-/// Ancienne bibliothèque des pages, remplacée par `socle-ui`. Transition (2026-11-23) : le runtime la sert encore
-/// aux pages des espaces pas encore migrées ; l’import passe, et l’outil `check` le signale « à migrer vers
-/// socle-ui ». À retirer quand les espaces sont migrés.
+/// Ancienne bibliothèque des pages, remplacée par `socle-ui` : son import est refusé avec la marche à suivre.
 pub const RETIRED_UI: &str = "@alfred/ui";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -115,11 +113,7 @@ pub fn transpile_in(
         let specifier = specifier.as_str();
         let relative = specifier.starts_with("./") || specifier.starts_with("../");
         let outside = relative && depth != usize::MAX && escapes_module(specifier, depth);
-        if (relative && !outside)
-            || ALLOWED_IMPORTS.contains(&specifier)
-            || specifier == RETIRED_UI
-            || libraries.contains_key(specifier)
-        {
+        if (relative && !outside) || ALLOWED_IMPORTS.contains(&specifier) || libraries.contains_key(specifier) {
             continue;
         }
         for request in requests {
@@ -127,6 +121,8 @@ pub fn transpile_in(
             import_errors.push(Diagnostic {
                 message: if outside {
                     format!("Import interdit : « {specifier} » sort du module. Un module n’importe que ses propres fichiers.")
+                } else if specifier == RETIRED_UI {
+                    "Import interdit : « @alfred/ui » n’existe plus. Les composants et les gabarits viennent de `socle-ui` (`ListPage`, `DetailPanel`, `FormPage`, `useOpenForm`, `Page`, `DetailPage`…), l’écart et le texte de `@alfred/kit` (`Stack`, `Row`, `Text`, `Notice`), `usePageState` de `@alfred/sdk` (DESIGN.md, section 15 : correspondance).".to_string()
                 } else if specifier.starts_with("socle-ui/") {
                     format!("Import interdit : « {specifier} » est un chemin interne de socle-ui. Importer depuis `socle-ui`, `socle-ui/markdown` ou `socle-ui/markdown-editor`.")
                 } else {
@@ -200,8 +196,8 @@ export default function Page({ label }: Props) {
         assert_eq!(escaping.len(), 1, "seul l’import qui sort du module est refusé");
         assert!(escaping[0].message.contains("sort du module"));
 
-        // Transition : une page encore sur `@alfred/ui` se compile ; `check` la signale à migrer.
-        assert!(transpile("import { Page } from \"@alfred/ui\";\nexport default 1;", "page.tsx").is_ok());
+        let retired = transpile("import { Page } from \"@alfred/ui\";\nexport default 1;", "page.tsx").unwrap_err();
+        assert!(retired[0].message.contains("n’existe plus") && retired[0].message.contains("`socle-ui`"), "{retired:?}");
         let internal = transpile("import { Button } from \"socle-ui/dist/index.js\";\nexport default 1;", "page.tsx").unwrap_err();
         assert!(internal[0].message.contains("chemin interne"), "{internal:?}");
 

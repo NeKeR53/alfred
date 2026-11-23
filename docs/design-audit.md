@@ -39,10 +39,7 @@ Alfred est entièrement sur socle-ui. `@alfred/ui` (`src/ui/`, 130 exports) est 
 
 ## Écarts restants
 
-### à corriger — `@alfred/ui` servie en transition aux pages des espaces
-- Où : `src/runtime/transition/alfred-ui/` (copie de `src/ui/` au commit `eae37fa`), carte d’imports du cadre (`src-tauri/src/pages.rs`).
-- Constat : 80 fichiers de modules des espaces de l’utilisateur importent encore `@alfred/ui`. Depuis le 2026-11-23, le runtime la sert aux cadres, la coquille ne l’importe pas ; ses feuilles ne sont injectées que dans le cadre d’une page qui l’importe. Le transpileur l’accepte et l’outil `check` la signale « à migrer vers socle-ui ». Biome et `socle-check-css` excluent ce dossier.
-- Correction : migrer les pages des espaces vers socle-ui, puis supprimer le dossier, l’entrée `ui` du runtime, l’entrée de la carte d’imports et les exceptions.
+Note : le 2026-11-23, `@alfred/ui` a été servie quelques heures en transition aux pages des espaces, le temps de les migrer. Les espaces et le marketplace `alfred.place` sont passés à socle-ui ; la transition est retirée et l'import est de nouveau refusé.
 
 ### mineur — HTML stylé propre à Alfred
 - Où : transcript, compositeur et panneau d'informations de l'agent (`src/features/agent/**/*.css`, environ 1 850 lignes), parcours de configuration (`src/features/setup/setup.css`), grille d'icônes (`src/shell/iconPicker.css`), kit local (`src/kit`).
