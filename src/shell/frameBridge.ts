@@ -23,7 +23,6 @@ import { pageWindowParams, pageWindowReference } from "./pageWindowMode";
 import { useShell } from "./store";
 import { setTopBarActions } from "./topBarActions";
 import { declareTopBarSearch, removeTopBarSearch, setTopBarQuery, topBarQueryOf } from "./topBarSearchStore";
-import { setTopBarSummary } from "./topBarSummary";
 
 export interface FrameIdentity {
   kind: "page" | "panel" | "function";
@@ -242,7 +241,6 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
 export function releaseFrame(identity: FrameIdentity) {
   if (identity.kind === "page" && !identity.capture) {
     removeTopBarSearch(identity.reference);
-    setTopBarSummary(identity.reference, "");
     setTopBarActions(identity.reference, []);
   }
   void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
@@ -351,9 +349,9 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "shell.search.set":
       if (identity.kind === "page" && !identity.capture) setTopBarQuery(identity.reference, params.query, "page");
       return null;
-    // Résumé de la barre du haut (`useTopBarSummary`) : une page seulement ; un panneau ou une capture l’ignore.
+    // Résumé de la barre du haut (`useTopBarSummary`) : retiré de Socle (D-253). Le message d’une page plus ancienne
+    // reste accepté et ignoré.
     case "shell.summary.set":
-      if (identity.kind === "page" && !identity.capture) setTopBarSummary(identity.reference, params.text);
       return null;
     // Actions de la barre du haut (`useTopBarActions`) : leur description seule ; une page, jamais un panneau.
     case "shell.actions.set":

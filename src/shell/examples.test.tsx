@@ -13,40 +13,17 @@ vi.hoisted(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-import { Sidebar, AppShell as SocleShell } from "socle-ui";
 import { ExampleModePart } from "../features/modules/ExampleModePart";
 import type { SetupStep } from "../features/setup/api";
 import { SetupGate } from "../features/setup/SetupGate";
 import { invoke, onNativeEvent } from "../lib/native";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../lib/types";
-import { useExampleStatus } from "./AppShell";
-
-/** La barre du haut d’Alfred réduite à l’état de la page : la pastille « Exemple » et son menu. */
-function ExampleIndicator({ module }: { module: string }) {
-  const status = useExampleStatus(module);
-  return (
-    <SocleShell
-      pageTitle="Tickets"
-      pageStatus={status}
-      sidebar={
-        <Sidebar
-          selectedId="t"
-          onSelectionChange={() => undefined}
-          account={<Sidebar.Account name="A" onSettings={() => undefined} />}
-        >
-          <Sidebar.Item id="t" icon={<span />} label="Tickets" />
-        </Sidebar>
-      }
-    >
-      {null}
-    </SocleShell>
-  );
-}
+import { ExampleNotice } from "./AppShell";
 
 import { useShell } from "./store";
 
 /**
- * Mode « données d’exemple » : bouton de la page d’attente, interrupteur de la fiche du module, pastille de la barre.
+ * Mode « données d’exemple » : bouton de la page d’attente, interrupteur de la fiche du module, encart de la page.
  * Le faux backend garde la liste des modules en mode exemple, comme `src-tauri/src/examples.rs`.
  */
 let examples: string[];
@@ -149,7 +126,7 @@ it("la page d’attente propose les données d’exemple, qui affichent la page 
   const user = userEvent.setup();
   render(
     <>
-      <ExampleIndicator module="tickets" />
+      <ExampleNotice module="tickets" />
       <SetupGate module="tickets">
         <p>Vraie page</p>
       </SetupGate>
@@ -157,44 +134,42 @@ it("la page d’attente propose les données d’exemple, qui affichent la page 
   );
   expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
   expect(screen.queryByText("Vraie page")).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
+  expect(screen.queryByText("Données d’exemple")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Voir avec des données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([
     { module: "tickets", on: true },
   ]);
   expect(await screen.findByText("Vraie page")).toBeTruthy();
-  expect(screen.getByRole("button", { name: /^Exemple/ })).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent("Cette page affiche des données d’exemple");
   expect(screen.queryByText("Il manque un compte à cette page")).toBeNull();
 });
 
-it("la pastille « Exemple » de la barre dit le mode et son menu le quitte", async () => {
+it("l’encart « Données d’exemple » de la page dit le mode et son bouton le quitte", async () => {
   const user = userEvent.setup();
   examples = ["tickets"];
   useShell.setState({ snapshot: snapshot() });
   render(
     <>
-      <ExampleIndicator module="tickets" />
+      <ExampleNotice module="tickets" />
       <SetupGate module="tickets">
         <p>Vraie page</p>
       </SetupGate>
     </>,
   );
   expect(screen.getByText("Vraie page")).toBeTruthy();
-  const pill = screen.getByRole("button", { name: /^Exemple/ });
-  expect(pill).toHaveAccessibleName("Exemple : Cette page affiche des données d’exemple");
-  await user.click(pill);
-  await user.click(screen.getByRole("menuitem", { name: "Quitter les données d’exemple" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Cette page affiche des données d’exemple");
+  await user.click(screen.getByRole("button", { name: "Quitter les données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([
     { module: "tickets", on: false },
   ]);
-  // Hors du mode, la page d’attente revient (le compte manque toujours) et la pastille disparaît.
+  // Hors du mode, la page d’attente revient (le compte manque toujours) et l’encart disparaît.
   expect(await screen.findByText("Il manque un compte à cette page")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
+  expect(screen.queryByText("Données d’exemple")).toBeNull();
 });
 
-it("hors du mode, aucune pastille", () => {
-  render(<ExampleIndicator module="tickets" />);
-  expect(screen.queryByRole("button", { name: /^Exemple/ })).toBeNull();
+it("hors du mode, aucun encart", () => {
+  render(<ExampleNotice module="tickets" />);
+  expect(screen.queryByText("Données d’exemple")).toBeNull();
 });
 
 it("l’interrupteur de la fiche du module active et quitte les données d’exemple", async () => {

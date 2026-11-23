@@ -1,6 +1,6 @@
 # Audit design — Alfred — 2026-11-23 (après la migration)
 
-Version installée : socle-ui 0.3.0 (yalc) — dernière : 0.3.0 (tag `v0.3.0` du dépôt `../app-design/design-system`).
+Version installée : socle-ui 0.4.0 (yalc) — dernière : 0.4.0 (tag `v0.4.0` du dépôt `../app-design/design-system`).
 
 Périmètre : tout (tokens, composants, pages, comportements, garde-fous, pages de l'agent).
 
@@ -58,8 +58,9 @@ Note : le 2026-11-23, `@alfred/ui` a été servie quelques heures en transition 
 - Correction : proposition notée dans les manques.
 
 ## Ce qui est conforme
-- Coquille : `AppShell`, `Sidebar` (sections, sous-pages, conversations en `TreeItem`, pied), `views`, `pageSummary`, `pageStatus` (« Exemple »), `ActionBar zone="topbar"`, `NotificationCenter`, détail agrandissable.
+- Coquille : `AppShell`, `Sidebar` (sections, sous-pages, conversations en `TreeItem`, pied), `views`, `ActionBar zone="topbar"`, `NotificationCenter`, détail agrandissable.
 - Réglages : `Dialog` `xl` avec `SettingsPage` ; chaque rubrique décrit ses sections par données (`useSections`).
 - Notifications : file `createNotifications()` unique ; `notify()` d'Alfred s'appuie dessus.
+- Données d’exemple : encart `Notice` en haut de la page, avec « Quitter les données d’exemple » (D-253 : plus de résumé ni d’état dans la barre du haut).
 - Confirmations : `useConfirm` ; formulaires courts : `useOpenForm`.
 - Pages de l'agent : runtime `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit` ; `SocleProvider` dans chaque cadre ; `DESIGN.md` et l'outil `check` suivent Socle.

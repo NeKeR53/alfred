@@ -38,7 +38,7 @@ La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’a
 ```
 
 - Une entrée du menu de gauche ouvre une **section**. Ses pages sont les **onglets** de la barre du haut, après le titre de la section.
-- La barre du haut appartient à la coquille. Une page peut y mettre des actions (`useTopBarActions`) et un résumé court après le titre (`useTopBarSummary`) : voir section 4. Elle n’y met **pas de recherche** : la recherche d’une collection est celle de `ListPage`.
+- La barre du haut appartient à la coquille. Une page peut y mettre des actions (`useTopBarActions`) : voir section 4. Elle n’y met **ni résumé ni état** (D-253) : un chiffre clé va dans l’en-tête du gabarit ou dans le contenu, un état durable dans un encart en haut de la page. Elle n’y met **pas de recherche** : la recherche d’une collection est celle de `ListPage`.
 - Chaque page peut déclarer **un** panneau de droite. L’utilisateur l’affiche, le masque et choisit sa largeur.
 - Une page peut s’ajouter aux **Réglages** (section 7).
 - Une page peut ajouter sa **zone** au menu de gauche : des entrées sous l’entrée de sa section, une par objet suivi (`menu.setEntries`, SDK.md, section 8).
@@ -120,7 +120,7 @@ La zone fixe la forme. La page ne choisit rien :
 - Les gabarits ne notifient pas l’échec d’une action : passer `onActionError={notifyActionError}` (de `@alfred/sdk`) à `ListPage`, `DetailPage` et `DetailPanel`. Alfred affiche « « Supprimer » n’a pas abouti » avec la cause. `onActionDone` sert à recharger les données.
 - Après une écriture qui réussit, notifier seulement si le résultat ne se voit pas : `shell.notify({ title: "Tâche supprimée", tone: "success" })`.
 
-**Barre du haut.** `useTopBarActions(actions)` de `@alfred/sdk` place des actions de la page dans la barre du haut d’Alfred (zone `topbar`). Elle confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. À réserver à une `Page` composée, qui n’a pas d’en-tête ; une `ListPage` ou une `DetailPage` garde ses actions dans son en-tête. `useTopBarSummary("3 en retard · 12 ouvertes")` met un résumé court après le titre. Un panneau n’a ni l’un ni l’autre.
+**Barre du haut.** `useTopBarActions(actions)` de `@alfred/sdk` place des actions de la page dans la barre du haut d’Alfred (zone `topbar`). Elle confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. À réserver à une `Page` composée, qui n’a pas d’en-tête ; une `ListPage` ou une `DetailPage` garde ses actions dans son en-tête. Un panneau n’en a pas. `useTopBarSummary` est retiré (D-253) : il reste pour les pages anciennes et ne fait rien ; ne plus l’écrire.
 
 ## 5. `ListPage` — une collection
 
@@ -591,7 +591,7 @@ export default function Reglages() {
 ### 14.4 Page composée : `modules/suivi/pages/semaine.tsx`
 
 ```tsx
-import { useAsync, useTopBarSummary } from "@alfred/sdk";
+import { useAsync } from "@alfred/sdk";
 import { Text } from "@alfred/kit";
 import { List, Page, PageSection, Tabs } from "socle-ui";
 import { useState } from "react";
@@ -603,12 +603,11 @@ export default function Semaine() {
   const aujourdhui = new Date().toISOString().slice(0, 10);
   const enRetard = (taches.data ?? []).filter((t) => t.echeance && t.echeance < aujourdhui && t.etat !== "terminee");
   const bloquees = (taches.data ?? []).filter((t) => t.etat === "bloquee");
-  useTopBarSummary(taches.data ? `${enRetard.length} en retard · ${bloquees.length} bloquées` : null);
   const montrees = vue === "retard" ? enRetard : bloquees;
 
   return (
     <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} onRetry={taches.reload}
-      toolbar={<Tabs items={[{ id: "retard", label: "En retard" }, { id: "bloquees", label: "Bloquées" }]} selectedId={vue} onSelectionChange={setVue} />}>
+      toolbar={<Tabs items={[{ id: "retard", label: `En retard (${enRetard.length})` }, { id: "bloquees", label: `Bloquées (${bloquees.length})` }]} selectedId={vue} onSelectionChange={setVue} />}>
       <PageSection title={vue === "retard" ? "Tâches en retard" : "Tâches bloquées"}
         empty={montrees.length ? undefined : { title: "Rien à rattraper", description: "Toutes les tâches sont à jour." }}>
         <List selectionMode="none" items={montrees.map((t) => ({ id: t.id, title: t.titre, subtitle: t.responsable ?? undefined,

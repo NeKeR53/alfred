@@ -4,8 +4,9 @@
  * - Menu de gauche : une entrée par section (icône, compteur, menu « … »), les entrées de zone de ses pages en
  *   sous-pages, puis les conversations de l’agent ; en pied, l’entrée Agent, l’espace de travail ouvert et le compte,
  *   qui ouvre les Réglages.
- * - Barre du haut : nom de la section, résumé et état de la page affichée, onglets de ses pages (vues), actions de la
- *   page (`ActionBar` zone `topbar`), outils de la coquille et cloche du centre de notifications.
+ * - Barre du haut : nom de la section, onglets de ses pages (vues), actions de la page (`ActionBar` zone `topbar`),
+ *   outils de la coquille et cloche du centre de notifications. Le mode « données d’exemple » se dit par un encart en
+ *   haut de la page (D-253).
  * - Panneau de droite : le panneau déclaré par la page, ou la conversation d’agent qu’elle a lancée.
  */
 import { AppWindow, Bot, MoreHorizontal } from "lucide-react";
@@ -18,13 +19,13 @@ import {
   IconButton,
   Menu,
   NotificationCenter,
-  type PageStatus,
   Sidebar,
   AppShell as SocleShell,
   type TabItem,
 } from "socle-ui";
 import { SetupGate } from "../features/setup/SetupGate";
 import { spaceList, useSpaceActions } from "../features/space/spaceActions";
+import { Notice } from "../kit";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection } from "../lib/types";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
@@ -40,7 +41,6 @@ import { openZoneEntry, runZoneAction } from "./PageZones";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
 import { activateTopBarAction, type TopBarActionDescriptor, useTopBarActionStore } from "./topBarActions";
-import { useTopBarSummaries } from "./topBarSummary";
 import type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
 
 export type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
@@ -99,38 +99,39 @@ export function frameActions(reference: string, list: readonly TopBarActionDescr
 }
 
 /**
- * État « Exemple » de la barre du haut d’une page en mode « données d’exemple » : compact, après le titre ; son menu
- * quitte le mode (D-251). Hors de ce mode, rien.
+ * Encart « données d’exemple » en haut d’une page de ce mode : il dit le mode et le quitte (D-253 : un état durable se
+ * dit dans le contenu, par un encart local). Hors de ce mode, rien.
  */
-export function useExampleStatus(module: string): PageStatus | undefined {
+export function ExampleNotice({ module }: { module: string }) {
   const examples = useExampleMode(module);
-  if (!examples || !module) return undefined;
-  return {
-    label: "Exemple",
-    tone: "info",
-    description: EXAMPLE_HINT,
-    menu: (
-      <Menu.Item
-        label="Quitter les données d’exemple"
-        onAction={() =>
-          void setExampleMode(module, false).catch((error: unknown) =>
-            notify({
-              title: "Les données d’exemple n’ont pas pu être quittées",
-              description: error instanceof Error ? error.message : String(error),
-              tone: "error",
-            }),
-          )
-        }
-      />
-    ),
-  };
+  if (!examples || !module) return null;
+  return (
+    <Notice
+      title="Données d’exemple"
+      action={
+        <Button
+          onPress={() =>
+            void setExampleMode(module, false).catch((error: unknown) =>
+              notify({
+                title: "Les données d’exemple n’ont pas pu être quittées",
+                description: error instanceof Error ? error.message : String(error),
+                tone: "error",
+              }),
+            )
+          }
+        >
+          Quitter les données d’exemple
+        </Button>
+      }
+    >
+      {EXAMPLE_HINT}.
+    </Notice>
+  );
 }
 
 /** Ce que la coquille montre pour une section : la barre du haut, la page, et son panneau de droite. */
 export interface SectionFrame {
   pageTitle: string;
-  pageSummary?: string;
-  pageStatus?: PageStatus;
   views?: TabItem[];
   activeView?: string;
   onViewChange?: (id: string) => void;
@@ -194,16 +195,12 @@ export function useSectionFrame({
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.
   const agentConversation = useShell((state) => (page ? state.agentPanel[page.reference] : undefined));
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);
-  const summary = useTopBarSummaries((state) => (page ? state.summaries[page.reference] : undefined));
   const described = useTopBarActionStore((state) => (page ? state.actions[page.reference] : undefined));
   const main = useRef<HTMLDivElement>(null);
   const live = Boolean(page && !builtInTab && !waiting);
 
   const actions: Action[] = live && page ? [...frameActions(page.reference, described)] : [];
   if (live && page && pageActions) actions.push(...pageActions(page.reference));
-
-  const exampleStatus = useExampleStatus(page?.module ?? "");
-  const pageStatus = live ? exampleStatus : undefined;
 
   const body = builtInTab ? (
     builtInTab.render?.()
@@ -241,8 +238,6 @@ export function useSectionFrame({
 
   return {
     pageTitle: title,
-    pageSummary: live ? summary : undefined,
-    pageStatus,
     views: views.length > 1 ? views : undefined,
     activeView: activeId,
     onViewChange: (id) => setActiveTab(sectionId, id),
@@ -270,7 +265,12 @@ export function useSectionFrame({
     detail,
     main: (
       <div ref={main} className="flex h-full min-h-0 min-w-0 flex-col">
-        {body}
+        {live && page ? (
+          <div className="shrink-0 px-4 pt-3 empty:hidden">
+            <ExampleNotice module={page.module} />
+          </div>
+        ) : null}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
       </div>
     ),
   };
@@ -587,8 +587,6 @@ export function AppShell({
       <SocleShell
         sidebar={sidebar}
         pageTitle={onAgent ? "Agent" : frame.pageTitle}
-        pageSummary={onAgent ? undefined : frame.pageSummary}
-        pageStatus={onAgent ? undefined : frame.pageStatus}
         views={onAgent ? undefined : frame.views}
         activeView={onAgent ? undefined : frame.activeView}
         onViewChange={onAgent ? undefined : frame.onViewChange}

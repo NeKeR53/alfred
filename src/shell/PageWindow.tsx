@@ -56,8 +56,6 @@ export function PageWindow({
     <SocleShell
       sidebar={sidebar}
       pageTitle={frame.pageTitle}
-      pageSummary={frame.pageSummary}
-      pageStatus={frame.pageStatus}
       actions={frame.actions}
       detail={found ? frame.detail : undefined}
       detailExpandable

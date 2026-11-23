@@ -1665,15 +1665,11 @@ export function isExampleMode(): boolean {
 }
 
 /**
- * Résumé de la page dans la barre du haut, après son titre : « 3 personnes · 2 en écart · 6 environnements ». Une
- * ligne courte, recalculée avec les données ; un texte vide le retire. Réservé à une page : un panneau n’en a pas.
+ * Retiré : la barre du haut n’a plus de résumé (socle-ui 0.4.0, D-253). Le hook reste pour les pages plus anciennes et
+ * ne fait rien. Un chiffre clé va dans l’en-tête du gabarit ou dans le contenu de la page.
+ * @deprecated
  */
-export function useTopBarSummary(text: string | null | undefined) {
-  useEffect(() => {
-    void request<void>("shell.summary.set", { text: text ?? "" }).catch(() => undefined);
-  }, [text]);
-  useEffect(() => () => void request<void>("shell.summary.set", { text: "" }).catch(() => undefined), []);
-}
+export function useTopBarSummary(_text: string | null | undefined) {}
 
 export interface TopBarSearch {
   /** Texte tapé, tel quel. */

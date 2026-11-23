@@ -75,8 +75,8 @@ const noticeLabel: Record<NoticeTone, string> = {
 
 /**
  * Encart dans une zone : un message qui concerne cette zone seulement (une erreur de chargement, une précision). Ce
- * n’est jamais un bandeau pleine largeur sous la barre du haut (D-159) ; l’état durable d’une page passe par
- * `pageStatus`, le résultat d’une action par un toast.
+ * n’est jamais un bandeau pleine largeur sous la barre du haut (D-159). Un état durable de la page (données
+ * d’exemple) est aussi un encart, en haut de la page (D-253) ; le résultat d’une action est un toast.
  */
 export function Notice({
   tone = "info",
