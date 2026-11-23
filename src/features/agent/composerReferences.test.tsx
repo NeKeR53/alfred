@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
@@ -16,6 +16,7 @@ import {
   trimComposerReferences,
 } from "./lib/composerReferences";
 import { type Conversation, outgoingText, type UserMessage } from "./model";
+import { render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {

@@ -1,4 +1,3 @@
-import { Button, Disclosure, useConfirm } from "@alfred/ui";
 import { ChevronDown, ChevronUp, FileDiff, LoaderCircle, Undo2 } from "lucide-react";
 import {
   memo,
@@ -11,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Button, Disclosure, useConfirm } from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { Activities, type Activity, hasActivityOutput } from "./Activities";
@@ -362,7 +362,7 @@ function useStableSummaries(summaries: Map<string, Turn[]>): Map<string, Turn[]>
 function ChangeSummary({ conversationId, turns }: { conversationId: string; turns: Turn[] }) {
   const undoTurns = useAgents((state) => state.undoTurns);
   const spacePath = useShell((state) => state.snapshot?.path);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
   const [expanded, setExpanded] = useState(false);
   const files = useMemo(() => changedFilesOf(turns), [turns]);
   const visible = expanded ? files : files.slice(0, 3);
@@ -373,7 +373,6 @@ function ChangeSummary({ conversationId, turns }: { conversationId: string; turn
   const openFile = (path: string) => void followLink(path, spacePath ?? "");
   return (
     <section className="agent-chat__change-summary" aria-label="Bilan des modifications">
-      {confirmDialog}
       <div className="agent-chat__change-header">
         <span className="agent-chat__change-icon">
           <FileDiff size={18} aria-hidden="true" />
@@ -392,8 +391,9 @@ function ChangeSummary({ conversationId, turns }: { conversationId: string; turn
           ) : null}
         </div>
         <Button
-          className="agent-chat__change-undo"
-          onClick={async () => {
+          size="sm"
+          icon={<Undo2 size={14} />}
+          onPress={async () => {
             const accepted = await confirm({
               title: "Annuler cette modification ?",
               message: `L’espace de travail revient à son état d’avant ${turns.length > 1 ? "ces messages" : "ce tour"}. L’annulation est elle-même enregistrée et peut être défaite.`,
@@ -414,7 +414,7 @@ function ChangeSummary({ conversationId, turns }: { conversationId: string; turn
             }
           }}
         >
-          <Undo2 size={14} aria-hidden="true" /> Annuler cette modification
+          Annuler cette modification
         </Button>
       </div>
       {files.length ? (
@@ -583,12 +583,7 @@ const TurnView = memo(function TurnView({
         ) : (
           <>
             {blocks.length ? (
-              <Disclosure
-                appearance="subtle"
-                lazy
-                className="agent-chat__work-details"
-                label={<span>{turnSummary(turn)}</span>}
-              >
+              <Disclosure title={turnSummary(turn)}>
                 <ol className="agent-chat__work-entries">
                   <Entries blocks={blocks} {...entryProps} />
                 </ol>
@@ -614,7 +609,7 @@ const TurnView = memo(function TurnView({
         ) : last && turn.error ? (
           <div className="agent-chat__recovery">
             <p>{turn.error}</p>
-            <Button onClick={onRetry}>Réessayer le message</Button>
+            <Button onPress={onRetry}>Réessayer le message</Button>
           </div>
         ) : null}
         {changes ? <ChangeSummary conversationId={conversationId} turns={changes} /> : null}

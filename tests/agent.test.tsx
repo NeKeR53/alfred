@@ -3,10 +3,11 @@
  * un faux agent (derrière les commandes `agents.*`) et les outils d’Alfred posent leurs questions par le faux backend.
  */
 import "./support/dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
+import { render } from "../src/features/agent/socle.test-helper";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 import { findNavigation, getNavigation } from "./support/shell";

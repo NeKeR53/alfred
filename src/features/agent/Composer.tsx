@@ -1,4 +1,3 @@
-import { Button, FeedbackBanner, IconButton, MenuItem, OverflowMenu } from "@alfred/ui";
 import { AtSign, FolderOpen, Paperclip, Plus, Slash, Square, X } from "lucide-react";
 import {
   type ClipboardEvent,
@@ -12,6 +11,8 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import { Button, IconButton, Menu } from "socle-ui";
+import { Notice, Row } from "../../kit";
 import { inTauri, pickFolder } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -107,20 +108,19 @@ function ConversationOptions({
         align="end"
         onChange={(value) => update(conversation.id, { autonomy: value as Autonomy })}
       />
-      <button
-        type="button"
-        className="choice-picker__trigger agent-composer__folder"
-        title={conversation.cwd}
-        aria-label={`Dossier de travail : ${folder}`}
-        disabled={locked || responding || !inTauri || started}
-        onClick={async () => {
+      <Button
+        size="sm"
+        variant="subtle"
+        icon={<FolderOpen size={13} />}
+        aria-label={`${folder} : dossier de travail ${conversation.cwd}`}
+        isDisabled={locked || responding || !inTauri || started}
+        onPress={async () => {
           const selected = await pickFolder("Dossier de travail de la conversation");
           if (selected) update(conversation.id, { cwd: selected });
         }}
       >
-        <FolderOpen size={13} aria-hidden="true" />
-        <span>{folder}</span>
-      </button>
+        {folder}
+      </Button>
     </div>
   );
 }
@@ -434,8 +434,7 @@ export function Composer({
     });
   };
 
-  // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, Ctrl/⌘+Entrée met le message en file.
-  const queueShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↩︎" : "Ctrl+↩︎";
+  // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, Ctrl/⌘+Entrée met le message en file (onKeyDown).
   const filled = hasDraft(draft);
   // Comme dans OneApp : après une erreur ou une interruption, envoyer sans rien écrire relance le dernier message.
   const canResume = !responding && (lastStatus === "error" || lastStatus === "cancelled");
@@ -515,26 +514,27 @@ export function Composer({
   return (
     <div className="agent-composer">
       {draftsLoadError ? (
-        <FeedbackBanner action={<Button onClick={() => void retryDrafts()}>Réessayer</Button>}>
+        <Notice tone="danger" action={<Button onPress={() => void retryDrafts()}>Réessayer</Button>}>
           Les brouillons n’ont pas pu être chargés. Réessayez avant de saisir un message.
-        </FeedbackBanner>
+        </Notice>
       ) : draftUnreadable ? (
-        <FeedbackBanner
+        <Notice
+          tone="danger"
           action={
-            <>
-              <Button onClick={() => void retryDrafts()}>Réessayer</Button>
+            <Row gap="sm">
+              <Button onPress={() => void retryDrafts()}>Réessayer</Button>
               <Button
-                onClick={() =>
+                onPress={() =>
                   void discardUnreadable(conversationId).catch((error) => failure("Brouillon non supprimé", error))
                 }
               >
                 Supprimer le brouillon
               </Button>
-            </>
+            </Row>
           }
         >
           Le brouillon enregistré de cette conversation est illisible.
-        </FeedbackBanner>
+        </Notice>
       ) : null}
       <form
         className={`agent-composer__box${dragging ? " is-dragging" : ""}`}
@@ -590,44 +590,36 @@ export function Composer({
                     <span>{attachment.name}</span>
                   </>
                 )}
-                <IconButton
-                  size="small"
-                  className="agent-composer__remove"
-                  label={`Retirer ${attachment.name}`}
-                  onClick={() =>
-                    patch(conversationId, {
-                      attachments: draft.attachments.filter((item) => item.path !== attachment.path),
-                    })
-                  }
-                >
-                  <X size={12} aria-hidden="true" />
-                </IconButton>
+                <span className="agent-composer__remove">
+                  <IconButton
+                    icon={<X size={12} />}
+                    label={`Retirer ${attachment.name}`}
+                    onPress={() =>
+                      patch(conversationId, {
+                        attachments: draft.attachments.filter((item) => item.path !== attachment.path),
+                      })
+                    }
+                  />
+                </span>
               </li>
             ))}
           </ul>
         ) : null}
         <div className="agent-composer__row">
-          <OverflowMenu
+          <Menu
             label="Ajouter au message"
-            tooltip="Joindre un fichier, un skill ou une référence"
-            icon={<Plus size={16} aria-hidden="true" />}
-            placement="above"
-            align="start"
-            disabled={locked}
+            placement="top start"
+            trigger={<IconButton icon={<Plus size={16} />} label="Ajouter au message" isDisabled={locked} />}
           >
-            <MenuItem disabled={attaching} onClick={pick}>
-              <Paperclip size={14} aria-hidden="true" />
-              Joindre des fichiers…
-            </MenuItem>
-            <MenuItem onClick={() => insertTrigger("/")}>
-              <Slash size={14} aria-hidden="true" />
-              Skill ou commande · /
-            </MenuItem>
-            <MenuItem onClick={() => insertTrigger("@")}>
-              <AtSign size={14} aria-hidden="true" />
-              Fichier du dossier · @
-            </MenuItem>
-          </OverflowMenu>
+            <Menu.Item
+              label="Joindre des fichiers…"
+              icon={<Paperclip size={14} />}
+              isDisabled={attaching}
+              onAction={pick}
+            />
+            <Menu.Item label="Skill ou commande · /" icon={<Slash size={14} />} onAction={() => insertTrigger("/")} />
+            <Menu.Item label="Fichier du dossier · @" icon={<AtSign size={14} />} onAction={() => insertTrigger("@")} />
+          </Menu>
           <input
             ref={fileInput}
             type="file"
@@ -674,17 +666,18 @@ export function Composer({
           />
           <DictationButton onTranscript={(dictated) => void submit(dictated)} />
           {responding ? (
-            <IconButton label="Arrêter l’agent" tooltip="Arrêter · Échap" onClick={() => void cancel(conversationId)}>
-              <Square size={13} aria-hidden="true" />
-            </IconButton>
+            <IconButton
+              icon={<Square size={13} />}
+              label="Arrêter l’agent"
+              shortcut="Escape"
+              onPress={() => void cancel(conversationId)}
+            />
           ) : null}
           <AgentSendButton
-            type="submit"
-            className="agent-composer__send"
             label={sendLabel}
-            tooltip={responding ? `Envoyer maintenant · ↩︎ (${queueShortcut} pour mettre en file)` : sendLabel}
-            disabled={locked || attaching || (!filled && !canResume)}
-            loading={attaching}
+            isDisabled={locked || attaching || (!filled && !canResume)}
+            isPending={attaching}
+            onPress={() => void submit()}
           />
         </div>
       </form>

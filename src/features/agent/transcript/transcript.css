@@ -16,7 +16,7 @@
   max-width: min(100%, 420px);
 }
 .agent-chat__file small {
-  color: var(--color-muted);
+  color: var(--fg-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -49,8 +49,8 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  background: var(--surface-side);
   cursor: zoom-in;
 }
 .image-preview__thumbnail img {
@@ -65,64 +65,8 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px;
-  font-size: var(--font-size-secondary);
-  color: var(--color-muted);
-}
-.image-preview__dialog {
-  max-width: calc(100vw - 32px);
-  max-height: calc(100dvh - 32px);
-  overflow: hidden;
-}
-.image-preview__dialog > img {
-  display: block;
-  max-width: calc(100vw - 34px);
-  max-height: calc(100dvh - 34px);
-  object-fit: contain;
-}
-.image-preview__dialog .image-preview__close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: var(--color-bg);
-  border: 1px solid var(--line);
-}
-.image-preview__dialog .image-preview__previous,
-.image-preview__dialog .image-preview__next {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--color-bg);
-  border: 1px solid var(--line);
-}
-.image-preview__dialog .image-preview__previous {
-  left: 8px;
-}
-.image-preview__dialog .image-preview__next {
-  right: 8px;
-}
-.image-preview__caption {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: calc(100% - 16px);
-  margin: 0;
-  padding: 2px 8px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--color-bg);
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.image-preview__status {
-  min-width: 240px;
-  margin: 0;
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--color-muted);
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
 }
 
 /* Captures d’écran de l’agent : une rangée de petites vignettes sous le travail du tour. */
@@ -157,8 +101,8 @@
 }
 .page-captures__caption {
   overflow: hidden;
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -168,29 +112,11 @@
   justify-content: center;
   aspect-ratio: 16 / 10;
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
 }
 /* « + N » : une tuile de la hauteur des vignettes, devant les plus récentes. */
-.page-captures .page-captures__more {
-  width: 48px;
-  height: auto;
-  aspect-ratio: 48 / 100;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--color-surface);
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
-}
-.image-preview__dialog .image-preview__save {
-  position: absolute;
-  top: 8px;
-  right: 52px;
-  background: var(--color-bg);
-  border: 1px solid var(--line);
-}
 
 .mermaid-diagram {
   max-width: 100%;
@@ -207,12 +133,12 @@
   margin: 8px 0;
   overflow-x: auto;
   font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: var(--font-size-secondary);
+  font-size: var(--fs-sm);
 }
 .mermaid-diagram__error {
   margin: 8px 0 0;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
 }
 
 /* Carte de question ou d’autorisation, collée en bas du relevé, juste au-dessus de la saisie. */
@@ -221,23 +147,23 @@
   bottom: 0;
   z-index: 1;
   padding: 8px 0 0;
-  background: linear-gradient(transparent, var(--color-bg) 8px);
+  background: linear-gradient(transparent, var(--surface) 8px);
 }
 .agent-question {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 10px 8px 12px;
-  border: 1px solid color-mix(in oklch, var(--color-primary) 35%, var(--line));
-  border-radius: var(--radius-panel);
-  background: color-mix(in oklch, var(--color-primary) 4%, var(--color-bg));
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--accent) 4%, var(--surface));
 }
 .agent-question__head {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
 }
 .agent-question__kind {
   flex: 1;
@@ -248,17 +174,17 @@
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: var(--color-bg);
-  font-size: var(--font-size-meta);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--surface);
+  font-size: var(--fs-sm);
   font-weight: 700;
   line-height: 1;
 }
 .agent-question__text {
   margin: 0;
-  color: var(--color-ink);
-  font-size: var(--font-size-panel);
+  color: var(--fg);
+  font-size: var(--fs-lg);
   line-height: 1.5;
 }
 .agent-question__options {
@@ -278,21 +204,21 @@
   gap: 8px;
   padding: 4px 8px;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-ink);
+  color: var(--fg);
   font: inherit;
-  font-size: var(--font-size-body);
+  font-size: var(--fs-md);
   text-align: left;
 }
 .agent-question__option:hover:not(:disabled),
 .agent-question__other:hover:not(:disabled) {
-  background: var(--color-surface);
+  background: var(--surface-side);
 }
 .agent-question__option:focus-visible,
 .agent-question__other:focus-visible,
 .agent-question__pill:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .agent-question__option kbd {
@@ -302,14 +228,14 @@
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--color-bg);
-  color: var(--color-muted);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg-2);
   font: inherit;
-  font-size: var(--font-size-meta);
+  font-size: var(--fs-sm);
 }
 .agent-question__other {
-  color: var(--color-muted);
+  color: var(--fg-2);
 }
 .agent-question__pill {
   align-self: flex-start;
@@ -318,12 +244,12 @@
   align-items: center;
   gap: 6px;
   padding: 0 10px 0 6px;
-  border: 1px solid color-mix(in oklch, var(--color-primary) 35%, var(--line));
-  border-radius: 13px;
-  background: color-mix(in oklch, var(--color-primary) 4%, var(--color-bg));
-  color: var(--color-ink);
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--accent) 4%, var(--surface));
+  color: var(--fg);
   font: inherit;
-  font-size: var(--font-size-secondary);
+  font-size: var(--fs-sm);
 }
 
 @media (forced-colors: active) {
@@ -337,15 +263,15 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 .agent-chat__activity-file {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--color-muted);
+  color: var(--fg-2);
   font: inherit;
   text-decoration: underline dotted;
   text-underline-offset: 3px;
@@ -375,9 +301,23 @@
   padding: 1px 7px;
   vertical-align: baseline;
   border-radius: 999px;
-  background: var(--color-surface-strong);
-  color: var(--color-ink);
-  font-size: var(--font-size-secondary);
+  background: var(--selected);
+  color: var(--fg);
+  font-size: var(--fs-sm);
   line-height: 20px;
   white-space: nowrap;
+}
+
+/* Image de la vue agrandie, dans le corps du `Dialog` de Socle. */
+.image-viewer {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+}
+.image-viewer__image {
+  display: block;
+  max-width: 100%;
+  max-height: 70dvh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
 }

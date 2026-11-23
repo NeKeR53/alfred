@@ -1,8 +1,7 @@
-import { Markdown } from "@alfred/ui";
-import { memo, type ReactNode, useCallback } from "react";
-import { notify } from "../../../shell/notifications";
+import { memo, useCallback, useMemo } from "react";
+import { Markdown } from "socle-ui/markdown";
 import { followLink } from "../files";
-import { agentFileLinks, isAgentFileReference } from "../lib/agentFileLinks";
+import { fileFromLink, linkAgentFiles } from "../lib/agentFileLinks";
 import { chatImageUrl, isLocalImageReference } from "../lib/chatImages";
 import { markdownUrl } from "../lib/markdown";
 import { ImagePreview } from "./ImagePreview";
@@ -10,48 +9,24 @@ import { LoadedImage } from "./LoadedImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { useConversationResources } from "./resources";
 
-const plugins = [agentFileLinks];
-
 function renderCode(language: string, text: string) {
   // Un bloc ```mermaid est dessiné, comme dans OneApp.
   return language === "mermaid" ? <MermaidDiagram source={text.trim()} /> : undefined;
 }
 
-function copyError() {
-  notify({ title: "Copie impossible", description: "Le presse-papiers est indisponible.", tone: "error" });
-}
-
 /**
  * Texte d’un message de la conversation, repris de `MarkdownText` de OneApp : chemins de fichiers cliquables, schémas
- * Mermaid, images `data:`, `https` et images locales de l’espace, agrandissables. Comme OneApp, seuls les liens web et
- * de courriel restent des liens ; une autre adresse reste du texte, et le HTML écrit dans le message est ignoré.
+ * Mermaid, images `data:`, `https` et images locales de l’espace, agrandissables. Seuls les liens web, de courriel et
+ * de fichier s’ouvrent ; le HTML écrit dans le message est ignoré (`Markdown` de Socle).
  */
 export const AgentMarkdown = memo(function AgentMarkdown({ text, cwd }: { text: string; cwd: string }) {
   const { loadImage } = useConversationResources();
-  const onLink = useCallback((href: string) => void followLink(href, cwd), [cwd]);
-  const renderLink = useCallback(
-    (href: string | undefined, label: ReactNode) => {
-      if (href && isAgentFileReference(href))
-        return (
-          <button type="button" className="markdown-text__file-link" onClick={() => void followLink(href, cwd)}>
-            {label}
-          </button>
-        );
-      const url = href ? markdownUrl(href) : undefined;
-      if (!url) return <span>{label}</span>;
-      return (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(event) => {
-            event.preventDefault();
-            void followLink(url, cwd);
-          }}
-        >
-          {label}
-        </a>
-      );
+  const onLinkPress = useCallback(
+    (href: string) => {
+      const file = fileFromLink(href);
+      if (file) return void followLink(file, cwd);
+      const url = markdownUrl(href);
+      if (url) void followLink(url, cwd);
     },
     [cwd],
   );
@@ -63,18 +38,10 @@ export const AgentMarkdown = memo(function AgentMarkdown({ text, cwd }: { text: 
     },
     [loadImage],
   );
+  const linked = useMemo(() => linkAgentFiles(text), [text]);
   return (
-    <Markdown
-      remarkPlugins={plugins}
-      onLink={onLink}
-      renderCode={renderCode}
-      renderImage={renderImage}
-      renderLink={renderLink}
-      onCopyError={copyError}
-      skipHtml
-      shiftHeadings
-    >
-      {text}
+    <Markdown headingLevel={3} onLinkPress={onLinkPress} renderCode={renderCode} renderImage={renderImage}>
+      {linked}
     </Markdown>
   );
 });

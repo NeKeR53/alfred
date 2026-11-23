@@ -3,7 +3,7 @@
  * saisie verrouillée tant que rien n’est prêt, message rendu à la saisie si l’envoi échoue, un seul envoi pour
  * plusieurs Entrée, collages longs en cartes, limites des pièces jointes et file avec ses pastilles.
  */
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
@@ -23,6 +23,7 @@ import { ATTACHMENT_LIMIT_MESSAGE, checkAttachmentLimits, saveBlobs } from "./fi
 import { clearReferenceCatalogs } from "./lib/composerReferences";
 import type { Conversation, QueuedMessage, UserMessage } from "./model";
 import { queuedPreview } from "./QueueList";
+import { render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -255,16 +256,17 @@ describe("envoi", () => {
         files: [image],
       },
     });
-    const button = screen.getByRole("button", { name: "Envoyer" });
-    await waitFor(() => expect(button).toHaveAttribute("aria-busy", "true"));
-    expect(button).toBeDisabled();
+    // Le bouton se redessine en chargement : il est relu à chaque fois.
+    const button = () => screen.getByRole("button", { name: /^Envoyer/ });
+    await waitFor(() => expect(button()).toHaveAttribute("data-pending", "true"));
     fireEvent.keyDown(input, { key: "Enter" });
     expect(sent).toHaveLength(0);
 
     await act(async () => release(undefined));
-    await waitFor(() => expect(button).not.toBeDisabled());
+    await waitFor(() => expect(button()).not.toHaveAttribute("data-pending"));
+    await waitFor(() => expect(button()).not.toBeDisabled());
     expect(screen.getByRole("button", { name: "Retirer capture.png" })).toBeInTheDocument();
-    await user.click(button);
+    await user.click(button());
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0].attachments).toEqual([{ path: "/echange/capture.png", name: "capture.png", mimeType: "image/png" }]);
   });
@@ -416,10 +418,10 @@ describe("file d’attente", () => {
     expect(queue.closest("form")).toHaveClass("agent-composer__box");
     expect(queue).toHaveClass("agent-queue");
     const sendNow = within(queue).getByRole("button", { name: "Envoyer le message 1 maintenant" });
-    expect(sendNow).toHaveClass("agent-send-button", "agent-send-button--up-right");
+    // Même bouton d’envoi que la saisie, la flèche inclinée.
+    expect(sendNow.querySelector(".lucide-arrow-up-right")).not.toBeNull();
     const send = screen.getByRole("button", { name: "Envoyer maintenant" });
-    expect(send).toHaveClass("agent-send-button");
-    expect(sendNow.querySelector("svg")?.outerHTML).toBe(send.querySelector("svg")?.outerHTML);
+    expect(send.querySelector(".lucide-arrow-up")).not.toBeNull();
   });
 
   it("modifier reprend le texte et les pastilles à la place de la saisie ; pas pour un message avec pièces jointes", async () => {

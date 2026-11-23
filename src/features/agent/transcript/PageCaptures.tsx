@@ -1,5 +1,5 @@
-import { Button } from "@alfred/ui";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "socle-ui";
 import { imageDataUrl } from "../lib/chatImages";
 import { type CaptureGroup, captureCaption, captureGroups, type PageCapture } from "../lib/pageCaptures";
 import { ImagePreview, ImageViewer, type ViewerImage } from "./ImagePreview";
@@ -78,24 +78,26 @@ function HiddenCaptures({ group, gallery }: { group: CaptureGroup; gallery: read
   return (
     <>
       <Button
-        className="page-captures__more"
-        aria-label={`Voir ${count} autre${count > 1 ? "s" : ""} capture${count > 1 ? "s" : ""} de ${title}`}
-        onClick={() => {
+        size="sm"
+        aria-label={`+ ${count} : voir ${count} autre${count > 1 ? "s" : ""} capture${count > 1 ? "s" : ""} de ${title}`}
+        onPress={() => {
           setIndex(count - 1);
           setOpen(true);
         }}
       >
-        + {count}
+        {`+ ${count}`}
       </Button>
-      <ImageViewer
-        images={gallery}
-        index={index}
-        open={open}
-        onIndex={setIndex}
-        onClose={() => setOpen(false)}
-        load={loadImage}
-        onSave={files ? (shown) => files.save(group.captures[shown]?.image ?? "") : undefined}
-      />
+      {open ? (
+        <ImageViewer
+          images={gallery}
+          index={index}
+          open={open}
+          onIndex={setIndex}
+          onClose={() => setOpen(false)}
+          load={loadImage}
+          onSave={files ? (shown) => files.save(group.captures[shown]?.image ?? "") : undefined}
+        />
+      ) : null}
     </>
   );
 }

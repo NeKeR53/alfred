@@ -5,10 +5,17 @@
  */
 
 import { BookMarked, File, Folder, Terminal } from "lucide-react";
-import { type CSSProperties, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { notify } from "../../shell/notifications";
-import { ListboxOption } from "../../ui/components/ChoiceButton";
 import type { Provider } from "./harness";
 import {
   type ComposerReference,
@@ -140,12 +147,12 @@ export function SuggestionList({
     <div className="reference-composer" style={position} ref={list}>
       <div id={id} role="listbox" aria-label={LIST_LABEL[kind]} aria-busy={loading}>
         {loading || failed || !items.length ? (
-          <ListboxOption selected={false} disabled className="reference-composer__status">
+          <ReferenceOption selected={false} disabled className="reference-composer__status">
             {loading ? "Recherche…" : failed ? "Recherche indisponible. Fermez puis réessayez." : "Aucun résultat."}
-          </ListboxOption>
+          </ReferenceOption>
         ) : (
           items.map((item, index) => (
-            <ListboxOption
+            <ReferenceOption
               key={`${item.kind}:${item.path}`}
               id={`${id}-${index}`}
               selected={active === index}
@@ -160,11 +167,25 @@ export function SuggestionList({
               {iconOf(item)}
               <span className="reference-composer__name">{referenceDisplayName(item)}</span>
               <small>{detailOf(item)}</small>
-            </ListboxOption>
+            </ReferenceOption>
           ))
         )}
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** Option de la liste des suggestions : le champ garde le focus, l’option active est portée par `aria-selected`. */
+function ReferenceOption({
+  selected,
+  className,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { selected: boolean }) {
+  return (
+    <button {...props} type="button" role="option" tabIndex={-1} aria-selected={selected} className={className}>
+      {children}
+    </button>
   );
 }

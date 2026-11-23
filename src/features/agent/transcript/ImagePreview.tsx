@@ -1,7 +1,7 @@
-import { Button, Dialog, IconButton } from "@alfred/ui";
-import { ChevronLeft, ChevronRight, Download, ImageOff, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button, Dialog, IconButton } from "socle-ui";
+import { Row, Text } from "../../../kit";
 
 /** Image montrée dans la vue agrandie : en ligne (`src`), ou fichier lu à la demande (`reference`). */
 export interface ViewerImage {
@@ -12,7 +12,7 @@ export interface ViewerImage {
 
 /**
  * Vue agrandie des images de la conversation, la seule : une image, ou une suite d’images parcourue avec les flèches
- * (captures d’une même page). « Enregistrer une copie de l’image » quand `onSave` est fourni.
+ * (captures d’une même page). « Enregistrer une copie » quand `onSave` est fourni.
  */
 export function ImageViewer({
   images,
@@ -32,17 +32,8 @@ export function ImageViewer({
   /** Lit une image citée par son chemin. */
   load?: (reference: string) => Promise<string>;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const current = images[Math.min(Math.max(index, 0), images.length - 1)];
   const [loaded, setLoaded] = useState<{ reference: string; url?: string; failed?: boolean }>();
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (open && !element.open) element.showModal();
-    if (!open && element.open) element.close();
-  }, [open]);
-  // La vue agrandie se ferme avec la vignette (conversation changée).
-  useEffect(() => () => dialog.current?.close(), []);
   const reference = open && !current?.src ? current?.reference : undefined;
   useEffect(() => {
     if (!reference || !load) return;
@@ -63,56 +54,59 @@ export function ImageViewer({
     if (!several || !onIndex) return;
     onIndex((index + step + images.length) % images.length);
   };
-  return createPortal(
+  const goLatest = useLatest(go);
+  // Les flèches du clavier parcourent la suite tant que la vue est ouverte.
+  useEffect(() => {
+    if (!open || !several) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "ArrowLeft") goLatest(-1);
+      else if (event.key === "ArrowRight") goLatest(1);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [goLatest, open, several]);
+  return (
     <Dialog
-      ref={dialog}
-      className="image-preview__dialog"
-      aria-label={label}
-      onClose={onClose}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") go(-1);
-        else if (event.key === "ArrowRight") go(1);
+      isOpen={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
       }}
+      title={label}
+      size="xl"
+      footer={
+        several || onSave ? (
+          <Row gap="sm" justify="between">
+            {several ? (
+              <Row gap="xs">
+                <IconButton icon={<ChevronLeft size={16} />} label="Image précédente" onPress={() => go(-1)} />
+                <Text as="span" tone="muted" size="meta">
+                  {`${label} · ${index + 1} / ${images.length}`}
+                </Text>
+                <IconButton icon={<ChevronRight size={16} />} label="Image suivante" onPress={() => go(1)} />
+              </Row>
+            ) : (
+              <span />
+            )}
+            {onSave ? <Button onPress={() => onSave(index)}>Enregistrer une copie</Button> : null}
+          </Row>
+        ) : undefined
+      }
     >
-      <IconButton className="image-preview__close" label="Fermer l’image" onClick={() => dialog.current?.close()}>
-        <X size={20} aria-hidden="true" />
-      </IconButton>
-      {onSave ? (
-        <IconButton
-          className="image-preview__save"
-          label="Enregistrer une copie de l’image"
-          onClick={() => onSave(index)}
-        >
-          <Download size={20} aria-hidden="true" />
-        </IconButton>
-      ) : null}
-      {open && src ? (
-        <img src={src} alt={label} referrerPolicy="no-referrer" />
-      ) : open ? (
-        <p className="image-preview__status">{failed ? `Image indisponible : ${label}` : "Chargement de l’image…"}</p>
-      ) : null}
-      {several ? (
-        <>
-          <IconButton className="image-preview__previous" label="Image précédente" onClick={() => go(-1)}>
-            <ChevronLeft size={20} aria-hidden="true" />
-          </IconButton>
-          <IconButton className="image-preview__next" label="Image suivante" onClick={() => go(1)}>
-            <ChevronRight size={20} aria-hidden="true" />
-          </IconButton>
-          <p className="image-preview__caption">
-            {label} · {index + 1} / {images.length}
-          </p>
-        </>
-      ) : null}
-    </Dialog>,
-    document.body,
+      <div className="image-viewer">
+        {src ? (
+          <img className="image-viewer__image" src={src} alt={label} referrerPolicy="no-referrer" />
+        ) : (
+          <Text tone="muted">{failed ? `Image indisponible : ${label}` : "Chargement de l’image…"}</Text>
+        )}
+      </div>
+    </Dialog>
   );
 }
 
 /**
  * Vignette d’image, reprise de `ImagePreview` de OneApp : un clic l’agrandit, une image qui ne se charge pas se
- * réessaie d’un clic, et la vue agrandie propose « Enregistrer une copie de l’image ». Avec `gallery`, la vue
- * agrandie parcourt les images voisines (captures d’une même page).
+ * réessaie d’un clic, et la vue agrandie propose « Enregistrer une copie ». Avec `gallery`, la vue agrandie parcourt
+ * les images voisines (captures d’une même page).
  */
 export function ImagePreview({
   src,
@@ -139,7 +133,9 @@ export function ImagePreview({
   const images = gallery?.images ?? [{ src, alt: label }];
   return (
     <span className={`image-preview image-preview--${size}`}>
-      <Button
+      {/* La vignette est l’image elle-même : Socle n’a pas de bouton-image. */}
+      <button
+        type="button"
         className="image-preview__thumbnail"
         aria-label={failed ? `Réessayer l’image : ${label}` : `Agrandir l’image : ${label}`}
         onClick={() => {
@@ -168,16 +164,26 @@ export function ImagePreview({
             onError={() => setFailedSource(src)}
           />
         )}
-      </Button>
-      <ImageViewer
-        images={images}
-        index={index}
-        open={expanded}
-        onIndex={setIndex}
-        onClose={() => setExpanded(false)}
-        onSave={onSave ? (shown) => onSave(gallery ? shown : undefined) : undefined}
-        load={load}
-      />
+      </button>
+      {expanded ? (
+        <ImageViewer
+          images={images}
+          index={index}
+          open={expanded}
+          onIndex={setIndex}
+          onClose={() => setExpanded(false)}
+          onSave={onSave ? (shown) => onSave(gallery ? shown : undefined) : undefined}
+          load={load}
+        />
+      ) : null}
     </span>
   );
+}
+
+/** Fonction stable qui appelle toujours la dernière version reçue. */
+export function useLatest<T extends (...args: never[]) => unknown>(callback: T) {
+  const [holder] = useState(() => ({ current: callback }));
+  holder.current = callback;
+  const [stable] = useState(() => ((...args: Parameters<T>) => holder.current(...args)) as T);
+  return stable;
 }

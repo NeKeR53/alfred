@@ -1,9 +1,9 @@
-import { ChoiceButton, ChoiceGroup, FormField, SelectControl } from "@alfred/ui";
-import { ChevronDown, Lock } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button, Popover, RadioGroup, Select } from "socle-ui";
 import { create } from "zustand";
+import { Stack, Text } from "../../../kit";
 import { invoke } from "../../../lib/native";
-import { useContextMenuDismiss } from "../../../ui/components/useContextMenuDismiss";
 import { effortLabel } from "../effort";
 import {
   ALL_PROVIDERS,
@@ -13,9 +13,7 @@ import {
   type Provider,
   useInstalledProviders,
 } from "../harness";
-import { usePickerPosition } from "./ChoicePicker";
 import { EffortSlider } from "./EffortSlider";
-import "./choice-picker.css";
 
 export interface ModelChoice {
   provider: Provider;
@@ -149,13 +147,7 @@ export function ModelPicker({
   onChange: (choice: ModelChoice) => void;
   placement?: "above" | "below";
 }) {
-  const id = useId();
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const popover = useRef<HTMLDivElement>(null);
-  const position = usePickerPosition(open, placement, trigger, popover);
-  const close = useCallback(() => setOpen(false), []);
-  useContextMenuDismiss(open, `[data-model-picker="${id}"]`, close);
   const models = useHarnessModels(value.provider, cwd);
   const { shownModels } = usePreferences();
   const current = models.find(({ id: model }) => model === value.model);
@@ -166,96 +158,77 @@ export function ModelPicker({
     (provider) => provider === value.provider || installed === null || installed.includes(provider),
   );
   const others = providers.filter((provider) => provider !== value.provider);
+  const label = modelChoiceLabel(value, models);
+  const modelOptions = [
+    { id: DEFAULT_MODEL, label: "Modèle par défaut" },
+    ...(value.model && !current ? [{ id: value.model, label: value.model }] : []),
+    ...choices.map((model) => ({ id: model.id, label: model.name })),
+  ];
   return (
-    <div className="choice-picker" data-model-picker={id}>
-      <button
-        ref={trigger}
-        type="button"
-        className="choice-picker__trigger"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={`${id}-popover`}
-        aria-label={`Modèle de l’agent : ${modelChoiceLabel(value, models)}`}
-        disabled={disabled}
-        onClick={() => setOpen((visible) => !visible)}
-      >
-        <span>{modelChoiceLabel(value, models)}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-      {open ? (
-        <div
-          ref={popover}
-          id={`${id}-popover`}
-          className="choice-picker__popover agent-model-picker__popover"
-          // Un cran par niveau de raisonnement : au-delà de cinq, la fenêtre s’élargit pour que les libellés restent lisibles.
-          style={{
-            ...(position ?? { visibility: "hidden" }),
-            width: Math.min(560, Math.max(320, 72 * ((current?.efforts.length ?? 0) + 1))),
-          }}
-          role="dialog"
-          aria-label="Modèle de l’agent"
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            setOpen(false);
-            trigger.current?.focus();
-          }}
+    <Popover
+      label="Modèle de l’agent"
+      // Un cran par niveau de raisonnement : au-delà de quatre, la fenêtre s’élargit pour que les libellés restent lisibles.
+      width={(current?.efforts.length ?? 0) > 4 ? "lg" : "md"}
+      placement={placement === "below" ? "bottom start" : "bottom end"}
+      isOpen={open}
+      onOpenChange={setOpen}
+      trigger={
+        <Button
+          size="sm"
+          variant="subtle"
+          icon={<ChevronDown size={13} />}
+          aria-label={`Modèle de l’agent : ${label}`}
+          isDisabled={disabled}
         >
-          {providers.length > 1 ? (
-            <ChoiceGroup label="Harnais" className="choice-segmented">
-              {providers.map((provider) => (
-                <ChoiceButton
-                  key={provider}
-                  variant="label"
-                  size="compact"
-                  selectionMode="radio"
-                  label={PROVIDER_LABEL[provider]}
-                  title={
-                    providerLocked && provider !== value.provider
-                      ? "Le harnais ne change plus une fois la conversation commencée."
-                      : undefined
-                  }
-                  selected={provider === value.provider}
-                  disabled={providerLocked && provider !== value.provider}
-                  onClick={() => {
-                    if (provider !== value.provider) onChange({ provider });
-                  }}
-                >
-                  {PROVIDER_LABEL[provider]}
-                </ChoiceButton>
-              ))}
-            </ChoiceGroup>
-          ) : null}
-          {providerLocked && others.length > 0 ? (
-            <p className="agent-model-picker__lock">
-              <Lock size={12} aria-hidden="true" />
-              <span>
-                Harnais fixé : cette conversation a commencé avec {PROVIDER_LABEL[value.provider]}. Pour{" "}
-                {others.map((provider) => PROVIDER_LABEL[provider]).join(" ou ")}, ouvrez une nouvelle conversation.
-              </span>
-            </p>
-          ) : null}
-          <FormField label="Modèle">
-            <SelectControl
-              value={value.model ?? ""}
-              onChange={(event) => onChange({ provider: value.provider, model: event.target.value || undefined })}
-            >
-              <option value="">Modèle par défaut</option>
-              {value.model && !current ? <option value={value.model}>{value.model}</option> : null}
-              {choices.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </SelectControl>
-          </FormField>
-          <EffortSlider
-            efforts={current?.efforts ?? []}
-            value={value.effort ?? ""}
-            onChange={(effort) => onChange({ ...value, effort: effort || undefined })}
-          />
-        </div>
-      ) : null}
-    </div>
+          {label}
+        </Button>
+      }
+    >
+      <Stack gap="md">
+        {providers.length > 1 ? (
+          <RadioGroup
+            label="Harnais"
+            orientation="horizontal"
+            value={value.provider}
+            onChange={(provider) => {
+              if (provider !== value.provider) onChange({ provider: provider as Provider });
+            }}
+          >
+            {providers.map((provider) => (
+              <RadioGroup.Option
+                key={provider}
+                value={provider}
+                isDisabled={providerLocked && provider !== value.provider}
+              >
+                {PROVIDER_LABEL[provider]}
+              </RadioGroup.Option>
+            ))}
+          </RadioGroup>
+        ) : null}
+        {providerLocked && others.length > 0 ? (
+          <Text tone="muted" size="meta">
+            {`Harnais fixé : cette conversation a commencé avec ${PROVIDER_LABEL[value.provider]}. Pour ${others
+              .map((provider) => PROVIDER_LABEL[provider])
+              .join(" ou ")}, ouvrez une nouvelle conversation.`}
+          </Text>
+        ) : null}
+        <Select
+          label="Modèle"
+          value={value.model ?? DEFAULT_MODEL}
+          options={modelOptions}
+          onChange={(model) =>
+            onChange({ provider: value.provider, model: model && model !== DEFAULT_MODEL ? model : undefined })
+          }
+        />
+        <EffortSlider
+          efforts={current?.efforts ?? []}
+          value={value.effort ?? ""}
+          onChange={(effort) => onChange({ ...value, effort: effort || undefined })}
+        />
+      </Stack>
+    </Popover>
   );
 }
+
+/** Identifiant du choix « Modèle par défaut » dans la liste (Select n’accepte pas d’identifiant vide). */
+const DEFAULT_MODEL = "__default__";

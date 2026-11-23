@@ -65,16 +65,6 @@
     {
       "includes": [
         "src/ui/**",
-        "src/features/agent/Activities.tsx",
-        "src/features/agent/AgentPage.tsx",
-        "src/features/agent/AgentSendButton.tsx",
-        "src/features/agent/Composer.tsx",
-        "src/features/agent/QueueList.tsx",
-        "src/features/agent/TextPreview.tsx",
-        "src/features/agent/Transcript.tsx",
-        "src/features/agent/transcript/ImagePreview.tsx",
-        "src/features/agent/transcript/PageCaptures.tsx",
-        "src/features/agent/uiFix.tsx",
         "src/features/functions/FunctionParts.tsx",
         "src/features/functions/ModuleFunctions.tsx",
         "src/features/modules/MarketplaceSources.tsx",

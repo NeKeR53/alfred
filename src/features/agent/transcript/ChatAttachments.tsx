@@ -1,5 +1,5 @@
-import { Button } from "@alfred/ui";
 import { useEffect, useState } from "react";
+import { Button } from "socle-ui";
 import { imageFileType } from "../lib/chatImages";
 import type { Attachment } from "../model";
 import { ConversationFile } from "./ConversationFiles";
@@ -37,12 +37,13 @@ function ChatAttachment({ attachment }: { attachment: Attachment }) {
   if (error)
     return (
       <Button
-        onClick={() => {
+        size="sm"
+        onPress={() => {
           setError(false);
           setAttempt((value) => value + 1);
         }}
       >
-        Image indisponible · Réessayer : {attachment.name}
+        {`Image indisponible · Réessayer : ${attachment.name}`}
       </Button>
     );
   return source ? (

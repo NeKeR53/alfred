@@ -1,21 +1,19 @@
+import { AppWindow, Archive, Bot, Code2, FolderOpen, PanelRight, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  type Action,
   Button,
   EmptyState,
-  FeedbackBanner,
   IconButton,
   InlineEdit,
-  LoadingSkeleton,
-  MenuItem,
-  OverflowMenu,
-  PageTopBar,
-  TextInput,
-} from "@alfred/ui";
-import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+  NotificationCenter,
+  Page,
+  Skeleton,
+  SkeletonGroup,
+} from "socle-ui";
+import { Notice, Row, Text } from "../../kit";
 import { inTauri, invoke } from "../../lib/native";
-import { NotificationBell } from "../../shell/NotificationCenter";
 import { notify } from "../../shell/notifications";
-import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { openAgentsWindow } from "./agentsWindow";
 import { Composer } from "./Composer";
@@ -37,8 +35,6 @@ const idle: ConversationRuntime = { status: "idle", approvals: [], questions: []
 type Persistence = { loadError?: string; saveError?: string; retrySave?: () => Promise<void> };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-const noFolder = "Aucun dossier de travail";
 
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
@@ -138,235 +134,219 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const context = conversation ? PROVIDER_LABEL[conversation.provider] : undefined;
   const models = useHarnessModels(conversation?.provider ?? "claude", conversation?.cwd || spacePath || "");
 
+  const failed = (title: string) => (error: unknown) =>
+    notify({ title, description: error instanceof Error ? error.message : String(error), tone: "error" });
+  const actions: Action[] = [
+    {
+      id: "new",
+      label: "Nouvelle conversation",
+      icon: <Bot size={16} />,
+      isDisabled: draft !== undefined,
+      onPress: () => void open(create().id),
+    },
+    {
+      id: "editor",
+      label: "Ouvrir le dossier dans l’éditeur",
+      icon: <Code2 size={15} />,
+      isHidden: !conversation,
+      isDisabled: !conversation?.cwd || !textEditor,
+      onPress: () => void openInEditor(),
+    },
+    {
+      id: "explorer",
+      label: "Ouvrir le dossier dans l’explorateur",
+      icon: <FolderOpen size={15} />,
+      isHidden: !conversation,
+      isDisabled: !conversation?.cwd,
+      onPress: () => void openInExplorer(),
+    },
+    {
+      id: "archive",
+      label: `Archiver ${conversation?.title ?? ""}`,
+      icon: <Archive size={16} />,
+      isHidden: !conversation?.started,
+      onPress: () => conversation && archiveConversation(conversation.id, conversation.title),
+    },
+    {
+      id: "window",
+      label: "Ouvrir la page Agent dans une fenêtre",
+      icon: <AppWindow size={15} />,
+      isHidden: detached || !inTauri,
+      onPress: () => void openAgentsWindow().catch(failed("Fenêtre Agent non ouverte")),
+    },
+    {
+      id: "panel",
+      label: panel.layout.hidden ? "Afficher le suivi des conversations" : "Masquer le suivi des conversations",
+      icon: <PanelRight size={15} />,
+      onPress: () => panel.setHidden(!panel.layout.hidden),
+    },
+    {
+      id: "rename",
+      label: "Renommer",
+      shortcut: "F2",
+      isHidden: !conversation?.started,
+      onPress: () => setRenaming(true),
+    },
+    {
+      id: "unread",
+      label: "Marquer comme non lue",
+      isHidden: !conversation?.started,
+      onPress: () => conversation && void markUnread(conversation.id),
+    },
+    {
+      // Une coordinatrice confie des tâches à d’autres agents ; un délégué ne délègue pas.
+      id: "coordinator",
+      label: conversation?.coordinator ? "Ne plus répartir le travail" : "Répartir le travail entre des agents",
+      isHidden: !conversation || Boolean(conversation.parent),
+      onPress: () =>
+        conversation &&
+        void setCoordinator(conversation.id, !conversation.coordinator).catch(failed("Répartition impossible")),
+    },
+  ];
+
   return (
     <section className="agents-page" aria-label="Agent">
       <div className="agents-page__body">
-        {/* Colonne de la conversation : sa barre du haut, puis le relevé. La liste des conversations est à côté, sur toute
-          la hauteur. */}
+        {/* Colonne de la conversation : son titre et ses actions, puis le relevé. La barre du haut est celle de la
+          coquille ; la liste des conversations est à côté. */}
         <div className="agents-page__lead">
-          <PageTopBar
-            className="agents-page__bar"
-            title={
-              <InlineEdit
-                key={conversation?.id}
-                className="agents-page__title-edit"
-                label="Nom de la conversation"
-                value={conversation?.title ?? ""}
-                disabled={!conversation?.started}
-                editing={renaming}
-                onEditingChange={setRenaming}
-                // Vide, l’ancien nom est gardé.
-                onSave={(title) => {
-                  if (conversation && title.trim() && title.trim() !== conversation.title)
-                    void rename(conversation.id, title);
-                }}
-                renderEditor={(editor) => (
-                  <TextInput
-                    className="agents-page__title-input"
-                    aria-label={editor.label}
-                    value={editor.value}
+          <Page
+            fill
+            actionsLabel="la conversation"
+            actions={actions}
+            toolbar={
+              <Row gap="sm">
+                <div className="agents-page__title">
+                  <InlineEdit
+                    key={conversation?.id}
+                    label="Nom de la conversation"
+                    value={conversation?.title ?? "Agent"}
+                    isDisabled={!conversation?.started}
+                    isEditing={renaming}
+                    onEditingChange={setRenaming}
                     maxLength={MAX_TITLE_LENGTH}
-                    autoFocus
-                    onFocus={(event) => event.currentTarget.select()}
-                    onChange={(event) => editor.setValue(event.target.value)}
-                  />
-                )}
-              >
-                <h1>{conversation?.title ?? "Agent"}</h1>
-              </InlineEdit>
-            }
-            context={context}
-            panelToggle={{
-              hidden: panel.layout.hidden,
-              onToggle: () => panel.setHidden(!panel.layout.hidden),
-              subject: "le suivi des conversations",
-            }}
-          >
-            <IconButton
-              className="agents-page__new-agent"
-              label="Nouvelle conversation"
-              disabled={draft !== undefined}
-              onClick={() => void open(create().id)}
-            >
-              <Bot size={16} aria-hidden="true" />
-            </IconButton>
-            {conversation ? (
-              <>
-                <IconButton
-                  label="Ouvrir le dossier dans l’éditeur"
-                  tooltip={
-                    !conversation.cwd
-                      ? noFolder
-                      : textEditor
-                        ? `Ouvrir dans l’éditeur · ${conversation.cwd}`
-                        : "Choisissez un éditeur dans les réglages"
-                  }
-                  disabled={!conversation.cwd || !textEditor}
-                  onClick={() => void openInEditor()}
-                >
-                  <Code2 size={15} aria-hidden="true" />
-                </IconButton>
-                <IconButton
-                  label="Ouvrir le dossier dans l’explorateur"
-                  tooltip={conversation.cwd ? `Ouvrir dans l’explorateur · ${conversation.cwd}` : noFolder}
-                  disabled={!conversation.cwd}
-                  onClick={() => void openInExplorer()}
-                >
-                  <FolderOpen size={15} aria-hidden="true" />
-                </IconButton>
-              </>
-            ) : null}
-            {conversation?.started ? (
-              <IconButton
-                label={`Archiver ${conversation.title}`}
-                tooltip="Archiver la conversation"
-                onClick={() => archiveConversation(conversation.id, conversation.title)}
-              >
-                <Archive size={16} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {conversation?.started || (conversation && !conversation.parent) ? (
-              <OverflowMenu label="Autres actions sur la conversation">
-                {conversation.started ? (
-                  <>
-                    <MenuItem
-                      onClickCapture={() => setRenaming(true)}
-                      aria-keyshortcuts="F2"
-                      title={`Renommer ${conversation.title} (F2)`}
-                    >
-                      Renommer
-                    </MenuItem>
-                    <MenuItem onClickCapture={() => void markUnread(conversation.id)}>Marquer comme non lue</MenuItem>
-                  </>
-                ) : null}
-                {/* Une coordinatrice confie des tâches à d’autres agents ; un délégué ne délègue pas. */}
-                {conversation.parent ? null : (
-                  <MenuItem
-                    onClickCapture={() =>
-                      void setCoordinator(conversation.id, !conversation.coordinator).catch((error: unknown) =>
-                        notify({
-                          title: "Répartition impossible",
-                          description: error instanceof Error ? error.message : String(error),
-                          tone: "error",
-                        }),
-                      )
-                    }
-                  >
-                    {conversation.coordinator ? "Ne plus répartir le travail" : "Répartir le travail entre des agents"}
-                  </MenuItem>
-                )}
-              </OverflowMenu>
-            ) : null}
-            {/* La page Agent dans sa propre fenêtre : les conversations restent celles de cette fenêtre. */}
-            {!detached && inTauri ? (
-              <IconButton
-                label="Ouvrir la page Agent dans une fenêtre"
-                tooltip="Ouvrir dans une fenêtre"
-                onClick={() =>
-                  void openAgentsWindow().catch((error: unknown) =>
-                    notify({
-                      title: "Fenêtre Agent non ouverte",
-                      description: error instanceof Error ? error.message : String(error),
-                      tone: "error",
-                    }),
-                  )
-                }
-              >
-                <AppWindow size={15} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {detached ? null : <NotificationBell />}
-          </PageTopBar>
-          <section
-            className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
-            aria-label="Conversation et saisie"
-          >
-            {!ready && !loadError ? (
-              <div className="agents-page__state" aria-busy="true">
-                <LoadingSkeleton variant="page" rows={4} label="Chargement des conversations…" />
-              </div>
-            ) : loadError ? (
-              <div className="agents-page__state">
-                <FeedbackBanner action={<Button onClick={() => void load().catch(reportLoad)}>Réessayer</Button>}>
-                  L’historique des agents n’a pas pu être chargé.
-                </FeedbackBanner>
-              </div>
-            ) : conversation ? (
-              <>
-                {conversation.turns.length === 0 ? (
-                  <div className="agents-page__state">
-                    <EmptyState
-                      title="Que puis-je faire pour vous ?"
-                      description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
-                    />
-                  </div>
-                ) : (
-                  <Transcript
-                    conversation={conversation}
-                    runtime={runtime}
-                    dockQuestion={false}
-                    header={
-                      <p
-                        className="agents-page__context"
-                        title={modelChoiceLabel(
-                          { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
-                          models,
-                        )}
-                      >
-                        {conversation.origin ? `Depuis ${conversation.origin.title} · ` : ""}
-                        {startedAt.format(conversation.createdAt)}
-                      </p>
-                    }
-                  />
-                )}
-                <div className="agents-page__footer">
-                  {saveError ? (
-                    <FeedbackBanner
-                      className="agents-page__save-error"
-                      action={
-                        retrySave ? (
-                          <Button onClick={() => void retrySave().catch(() => undefined)}>
-                            Réessayer la sauvegarde
-                          </Button>
-                        ) : undefined
-                      }
-                    >
-                      {saveError}
-                    </FeedbackBanner>
-                  ) : null}
-                  {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
-                  <div className="agents-page__question">
-                    <ConversationQuestion
-                      conversation={conversation}
-                      runtime={runtime}
-                      onOther={() =>
-                        document
-                          .querySelector<HTMLElement>(
-                            '.agents-page__footer textarea, .agents-page__footer [contenteditable="true"]',
-                          )
-                          ?.focus()
-                      }
-                    />
-                  </div>
-                  <Composer
-                    conversation={conversation}
-                    responding={runtime.status !== "idle"}
-                    status={<GitSummaryPill git={git} />}
-                    onDraggingChange={setDragging}
+                    // Vide, l’ancien nom est gardé.
+                    onSave={(title) => {
+                      if (conversation && title.trim() && title.trim() !== conversation.title)
+                        void rename(conversation.id, title);
+                    }}
                   />
                 </div>
-              </>
-            ) : null}
-          </section>
+                {context ? (
+                  <Text as="span" tone="muted" size="meta">
+                    {context}
+                  </Text>
+                ) : null}
+                {detached ? <NotificationCenter /> : null}
+              </Row>
+            }
+          >
+            <section
+              className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
+              aria-label="Conversation et saisie"
+            >
+              {!ready && !loadError ? (
+                <div className="agents-page__state">
+                  <SkeletonGroup label="Chargement des conversations…">
+                    <Skeleton width="60%" />
+                    <Skeleton />
+                    <Skeleton width="80%" />
+                    <Skeleton width="40%" />
+                  </SkeletonGroup>
+                </div>
+              ) : loadError ? (
+                <div className="agents-page__state">
+                  <Notice
+                    tone="danger"
+                    action={<Button onPress={() => void load().catch(reportLoad)}>Réessayer</Button>}
+                  >
+                    L’historique des agents n’a pas pu être chargé.
+                  </Notice>
+                </div>
+              ) : conversation ? (
+                <>
+                  {conversation.turns.length === 0 ? (
+                    <div className="agents-page__state">
+                      <EmptyState
+                        title="Que puis-je faire pour vous ?"
+                        description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
+                      />
+                    </div>
+                  ) : (
+                    <Transcript
+                      conversation={conversation}
+                      runtime={runtime}
+                      dockQuestion={false}
+                      header={
+                        <p
+                          className="agents-page__context"
+                          title={modelChoiceLabel(
+                            { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
+                            models,
+                          )}
+                        >
+                          {conversation.origin ? `Depuis ${conversation.origin.title} · ` : ""}
+                          {startedAt.format(conversation.createdAt)}
+                        </p>
+                      }
+                    />
+                  )}
+                  <div className="agents-page__footer">
+                    {saveError ? (
+                      <Notice
+                        tone="danger"
+                        action={
+                          retrySave ? (
+                            <Button onPress={() => void retrySave().catch(() => undefined)}>
+                              Réessayer la sauvegarde
+                            </Button>
+                          ) : undefined
+                        }
+                      >
+                        {saveError}
+                      </Notice>
+                    ) : null}
+                    {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
+                    <div className="agents-page__question">
+                      <ConversationQuestion
+                        conversation={conversation}
+                        runtime={runtime}
+                        onOther={() =>
+                          document
+                            .querySelector<HTMLElement>(
+                              '.agents-page__footer textarea, .agents-page__footer [contenteditable="true"]',
+                            )
+                            ?.focus()
+                        }
+                      />
+                    </div>
+                    <Composer
+                      conversation={conversation}
+                      responding={runtime.status !== "idle"}
+                      status={<GitSummaryPill git={git} />}
+                      onDraggingChange={setDragging}
+                    />
+                  </div>
+                </>
+              ) : null}
+            </section>
+          </Page>
         </div>
         {panel.layout.hidden ? null : (
-          // Liste des conversations : sur toute la hauteur, avec son en-tête aligné sur la barre du haut.
-          <div className="agents-page__side">
-            <PanelBar
-              title="Suivi des conversations"
-              closeLabel="Masquer le suivi des conversations"
-              onClose={() => panel.setHidden(true)}
-            />
+          // Liste des conversations, sur toute la hauteur.
+          <aside className="agents-page__side">
+            <div className="agents-page__side-head">
+              <Row gap="sm" justify="between">
+                <Text as="span" weight="strong">
+                  Suivi des conversations
+                </Text>
+                <IconButton
+                  icon={<X size={15} />}
+                  label="Masquer le suivi des conversations"
+                  onPress={() => panel.setHidden(true)}
+                />
+              </Row>
+            </div>
             <ConversationList
               conversations={visible}
               activeId={activeId}
@@ -375,7 +355,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
               git={git}
               onArchive={(header) => archiveConversation(header.id, header.title)}
             />
-          </div>
+          </aside>
         )}
       </div>
     </section>

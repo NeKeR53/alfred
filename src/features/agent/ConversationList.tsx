@@ -1,6 +1,6 @@
-import { IconButton } from "@alfred/ui";
 import { Archive, FileDiff } from "lucide-react";
 import { useEffect, useState } from "react";
+import { IconButton } from "socle-ui";
 import { invoke } from "../../lib/native";
 import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
@@ -333,9 +333,7 @@ export function ConversationList({
       selected: header.id === activeId,
       onSelect: () => void open(header.id),
       action: onArchive ? (
-        <IconButton label={`Archiver ${header.title}`} tooltip="Archiver" onClick={() => onArchive(header)}>
-          <Archive size={14} aria-hidden="true" />
-        </IconButton>
+        <IconButton icon={<Archive size={14} />} label={`Archiver ${header.title}`} onPress={() => onArchive(header)} />
       ) : undefined,
     };
   });

@@ -13,17 +13,17 @@
   gap: 4px;
   padding: 6px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  background: var(--color-bg);
-  box-shadow: var(--shadow-floating);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
   transition: border-color 150ms ease-out;
 }
 .agent-composer__box:focus-within {
-  border-color: color-mix(in oklch, var(--color-primary) 55%, var(--line));
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--line));
 }
 .agent-composer__box.is-dragging {
   border-style: dashed;
-  border-color: var(--color-primary);
+  border-color: var(--accent);
 }
 /* Une ligne : « + » à gauche, le texte qui grandit jusqu’à sa hauteur maximale puis défile, l’envoi à droite. */
 .agent-composer__row {
@@ -32,16 +32,13 @@
   align-items: flex-end;
   gap: 4px;
 }
-.agent-composer__row .icon-button {
-  flex: 0 0 auto;
-  color: var(--color-muted);
-}
+
 /* Une ligne de 20 px dans 28 px : le texte est centré sur les boutons « + » et envoi, qui font aussi 28 px. */
 .agent-composer__box .reference-composer__input {
   min-height: 28px;
   max-height: 240px;
   padding: 4px;
-  font-size: var(--font-size-panel);
+  font-size: var(--fs-lg);
   line-height: 20px;
 }
 /* Pièces jointes en vignettes en haut de la saisie ; le texte collé et les fichiers en étiquettes. */
@@ -61,9 +58,9 @@
   gap: 6px;
   padding: 0 2px 0 8px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  font-size: var(--font-size-secondary);
+  border-radius: var(--radius-md);
+  background: var(--surface-side);
+  font-size: var(--fs-sm);
 }
 .agent-composer__file .agent-composer__remove {
   width: 20px;
@@ -80,7 +77,7 @@
   height: 56px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--color-surface);
+  background: var(--surface-side);
   object-fit: cover;
 }
 .agent-composer__thumb .agent-composer__remove {
@@ -91,8 +88,8 @@
   height: 20px;
   min-width: 20px;
   border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--color-bg);
+  border-radius: var(--radius-full);
+  background: var(--surface);
   opacity: 0;
 }
 .agent-composer__thumb:hover .agent-composer__remove,
@@ -105,9 +102,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-composer__box .agent-composer__send {
-  margin-left: 2px;
-}
+
 /* Sous la saisie, à droite et hors du cadre : modèle et raisonnement, puis le cadenas des demandes secrètes. */
 /* Une seule ligne : statut à gauche, réglages à droite. */
 .agent-composer__options {
@@ -128,24 +123,6 @@
 }
 /* Sélecteur de modèle */
 /* Choix compact : harnais, modèle en liste déroulante, puis raisonnement en curseur. */
-.agent-model-picker__popover {
-  width: 320px;
-  gap: 12px;
-  padding: 12px;
-}
-.agent-model-picker__lock {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: -6px 0 0;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
-  line-height: 1.4;
-}
-.agent-model-picker__lock > svg {
-  flex: none;
-  margin-top: 2px;
-}
 
 /* Champ de saisie : une ligne de 20 px dans 28 px, centrée sur les boutons « + » et envoi (reference-composer de OneApp).
    Élément éditable : le texte défile au-delà de 240 px, l’indication s’affiche tant qu’il est vide. */
@@ -159,16 +136,16 @@
   overflow-y: auto;
   outline: 0;
   background: transparent;
-  color: var(--color-ink);
+  color: var(--fg);
   font: inherit;
-  font-size: var(--font-size-panel);
+  font-size: var(--fs-lg);
   line-height: 20px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   cursor: text;
 }
 .agent-composer__input:empty::before {
-  color: var(--color-muted);
+  color: var(--fg-2);
   content: attr(data-placeholder);
   pointer-events: none;
 }
@@ -187,9 +164,9 @@
   overflow: hidden;
   vertical-align: baseline;
   border-radius: 999px;
-  background: var(--color-surface-strong);
-  color: var(--color-ink);
-  font-size: var(--font-size-secondary);
+  background: var(--selected);
+  color: var(--fg);
+  font-size: var(--fs-sm);
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -205,33 +182,30 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: transparent;
-  color: var(--color-muted);
+  color: var(--fg-2);
   font: inherit;
   cursor: default;
 }
 .reference-pill > button:hover {
-  background: var(--color-bg);
-  color: var(--color-ink);
+  background: var(--surface);
+  color: var(--fg);
 }
 .reference-pill > button:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-.agent-composer__folder > svg {
-  flex: none;
 }
 
 /* Suggestions de `/` et `@`, reprises du ReferenceComposer de OneApp : liste au-dessus de la saisie. */
 .reference-composer {
-  z-index: var(--z-popover);
+  z-index: 70;
   overflow: auto;
   padding: 4px;
-  background: var(--color-bg);
-  color: var(--color-ink);
+  background: var(--surface);
+  color: var(--fg);
   border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  border-radius: var(--radius-md);
 }
 .reference-composer .reference-composer__option {
   display: flex;
@@ -242,16 +216,16 @@
   min-height: 28px;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   text-align: left;
-  font-size: var(--font-size-secondary);
+  font-size: var(--fs-sm);
 }
 .reference-composer__option[aria-selected="true"] {
-  background: var(--color-surface-strong);
+  background: var(--selected);
 }
 .reference-composer__option svg {
   flex-shrink: 0;
-  color: var(--color-muted);
+  color: var(--fg-2);
 }
 .reference-composer__name {
   min-width: 0;
@@ -262,8 +236,8 @@
 .reference-composer__option small {
   flex: 0 1 auto;
   min-width: 0;
-  color: var(--color-muted);
-  font-size: var(--font-size-meta);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -271,8 +245,8 @@
 .reference-composer .reference-composer__status {
   width: 100%;
   padding: 10px 8px;
-  font-size: var(--font-size-secondary);
-  color: var(--color-muted);
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
   text-align: left;
 }
 /* Messages en file, repris de OneApp (pages/agents/agents.css) : en tête du cadre de la saisie, une ligne de 20 px
@@ -293,11 +267,11 @@
   align-items: center;
   gap: 4px;
   padding: 0 0 0 4px;
-  border-radius: var(--radius-control);
-  color: var(--color-muted);
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
 }
 .agent-queue__item:hover {
-  background: var(--color-surface);
+  background: var(--surface-side);
 }
 /* Même largeur que la poignée (20 px) : le texte ne bouge pas quand la file passe à plusieurs messages. */
 .agent-queue__mark {
@@ -320,21 +294,10 @@
 .agent-queue__actions {
   display: flex;
   flex: none;
-  color: var(--color-muted);
+  color: var(--fg-2);
 }
 /* Boutons de 20 px, pictogramme de 12 px (taille « micro » des boutons de OneApp). */
-.agent-queue .icon-button.agent-queue__action,
-.agent-queue .icon-button.agent-send-button--micro {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
-  padding: 0;
-}
-.agent-queue .icon-button.agent-queue__action > svg,
-.agent-queue .icon-button.agent-send-button--micro > svg {
-  width: 12px;
-  height: 12px;
-}
+
 /* Poignée de réordonnancement, reprise de `ReorderHandle` (taille « micro ») de OneApp. */
 .agent-queue .reorder-handle {
   width: 20px;
@@ -343,40 +306,14 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-muted);
+  color: var(--fg-2);
 }
 .agent-queue .reorder-handle:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
 /* Bouton d’envoi, repris de OneApp (agent-send-button.css) : le même dans la saisie et dans la file. */
-.icon-button.agent-send-button {
-  padding: 0;
-  border-radius: 50%;
-  background: var(--color-ink);
-  color: var(--color-bg);
-}
-.icon-button.agent-send-button:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--color-ink) 85%, var(--color-bg));
-  color: var(--color-bg);
-}
-.icon-button.agent-send-button:disabled {
-  background: var(--color-surface-strong);
-  color: var(--color-muted);
-}
-.agent-send-button--up-right > .lucide-arrow-up {
-  transform: rotate(45deg);
-  transform-origin: center;
-}
-@media (forced-colors: active) {
-  .icon-button.agent-send-button {
-    border: 1px solid ButtonText;
-  }
-  .icon-button.agent-send-button:disabled {
-    border-color: GrayText;
-  }
-}
 
 /* Suivis : « Relance à la fin de … » au-dessus de la saisie, avec sa croix. */
 .agent-watches {
@@ -393,9 +330,9 @@
   align-items: center;
   gap: 6px;
   padding: 2px 4px 2px 8px;
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
-  color: var(--color-muted);
+  border-radius: var(--radius-md);
+  background: var(--surface-side);
+  color: var(--fg-2);
   font-size: 12px;
 }
 
