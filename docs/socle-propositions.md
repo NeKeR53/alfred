@@ -1,0 +1,75 @@
+# Propositions à socle-ui pour passer Alfred tout en Socle — 2026-11-23
+
+> **État au 2026-11-23 : les lots 1 à 5 sont faits.** Les 21 PR sont fusionnées dans `main` de NeKeR53/app-design. Le lot 1 est sorti en socle-ui 0.2.0 (tag `v0.2.0`, 196 tests), les lots 2 à 5 en 0.3.0 (tag `v0.3.0`, 389 tests). La 0.3.0 est installée dans Alfred par yalc. Le détail des nouveautés et des changements : page « Nouveautés de Socle » (https://claude.ai/artifact/Gqe6DRsnaBzF3MeMvW7Hpc). Reste la section « Après les propositions » : la migration d'Alfred, qui n'est pas commencée.
+
+Source : [design-audit.md](design-audit.md). Base : socle-ui 0.1.0.
+
+Chaque ligne est un `/design propose`. L'ordre suit les dépendances : une proposition n'utilise que ce que les précédentes ont ajouté. Chaque proposition ajoute une option ou un export facultatif, donc chaque ajout est une version mineure (0.x).
+
+Une proposition suit le mode `propose` :
+1. test du générique ;
+2. page de validation ;
+3. questions une à une ;
+4. branche et code dans `../app-design/design-system` ;
+5. essai dans Alfred par yalc ;
+6. PR.
+
+## Lot 1 — Bases (tout le reste en dépend)
+
+| # | Proposition | Remplace dans Alfred | Générique ? | Dépend de |
+|---|---|---|---|---|
+| P1 | **Button** à texte : variantes principale, secondaire, discrète, danger ; état chargement. | `Button`, `primitives/button.tsx`, `RefreshButton` | Oui | — |
+| P2 | **Modèle `Action`** : `{ id, label, icon?, onPress, primary?, danger?, confirm? }`, et une règle qui décide de sa forme (bouton, icône, entrée de menu) selon la zone. | `templates/actions.tsx` (`Action`, `ActionBar`, `arrangeActions`) | Oui | P1, Menu |
+| P3 | **Dialog** et **confirmation** : modale à titre, contenu et pied ; `useConfirm` pour les actions `danger`. | `Dialog`, `Modal`, `ConfirmDialog`, `src/shell/DialogHeader.tsx` | Oui | P1 |
+| P4 | **Champs de formulaire** : TextField, TextArea, Select, Checkbox, Radio, Switch, Fieldset ; libellé au-dessus, aide et erreur en dessous (D-022). | `FormControls`, `primitives/*`, `Fieldset`, `ChoiceButton` | Oui | — |
+| P5 | **ComboBox** : simple, multiple, avec recherche. | `Combobox`, `MultiSelectCombobox`, `SearchCombobox` | Oui | P4 |
+| P6 | **Notifications** : toasts (succès, erreur, action « Annuler ») et centre de notifications dans la barre du haut. | `sonner`, `NotificationCenter.tsx`, `FeedbackBanner` | Oui | P1 |
+| P7 | **Petits éléments d'affichage** : StatusBadge, StatusDot, Avatar, ProgressBar, Skeleton, EmptyState, Link, Code, Divider. | composants du même nom | Oui | — |
+
+## Lot 2 — Gabarits de page (l'API de l'agent)
+
+| # | Proposition | Remplace dans Alfred | Générique ? | Dépend de |
+|---|---|---|---|---|
+| P8 | **ListPage** : `header`, `actions`, `toolbar` (recherche, filtres), `list` (Table ou List), `footer` (compteur, pagination), `empty` ; états chargement et erreur. Données décrites par colonnes typées. | `CollectionPage`, `PageToolbar`, `Pagination`, `FormattedValue` | Oui (déjà dans layout-rules) | P2, P7 |
+| P9 | **DetailPanel déclaratif** : sections décrites par des champs typés, actions d'en-tête par `Action`. | `templates/DetailPanel.tsx`, `PanelSections`, `PanelHeader` | Oui | P2 |
+| P10 | **FormPage** et formulaire en modale (`openForm`) : sections, barre d'actions collée en bas. | `openForm` (`templates/dialogs.tsx`), `FormActions` | Oui (déjà dans layout-rules) | P3, P4 |
+| P11 | **SettingsPage** : nav, sections, lignes de réglage (libellé à gauche, contrôle à droite), listes avec actions de ligne. | `SettingsPage`, `SettingRow`, `settings-surface.css` | Oui (déjà dans layout-rules) | P4 |
+| P12 | **DetailPage** : retour, titre, statut, méta, actions ; sections. | pages composées à la main avec `page.tsx` | Oui (déjà dans layout-rules) | P2 |
+
+## Lot 3 — Coquille
+
+| # | Proposition | Écart de l'audit | Générique ? | Dépend de |
+|---|---|---|---|---|
+| P13 | **Actions de page dans la barre du haut** : une action principale à texte, puis le repli « ⋯ » quand la place manque. Les bascules de vue passent en `views`. | Barre du haut à texte et « ⋯ » | Oui | P1, P2 |
+| P14 | **Pied de Sidebar** : entrée fixe (ex. assistant) et sélecteur d'espace de travail au-dessus de `Sidebar.Account`. | Pied du menu de gauche | À tester : « assistant » et « espace » doivent avoir du sens hors d'Alfred | — |
+| P15 | **Largeurs du panneau de détail** : largeur par contenu (sections, formulaire) et bouton Agrandir. | Panneau 340 / 460 / large | À tester | — |
+| P16 | **Résumé après le titre** dans la barre du haut (`useTopBarSummary`). | — (vu dans les commits) | Oui | — |
+
+## Lot 4 — Composants spécialisés
+
+| # | Proposition | Remplace dans Alfred | Générique ? |
+|---|---|---|---|
+| P17 | **TreeView** : nœuds, actions, confirmation des actions `danger`. | `TreeView` | Oui |
+| P18 | **DataGrid** dense : lignes de groupe, cases de sélection, cases teintées. Ou fusion dans `Table` avec des options. | `DataGrid`, `DataTable` | Oui |
+| P19 | **Terminal** et **LogViewer** : filtres par niveau, compteurs, bouton Suivre. | `Terminal`, `LogViewer` | Oui (outils techniques) |
+| P20 | **DiffView**. | `DiffView` | Oui |
+| P21 | **Markdown** (lecture) et **MarkdownEditor**. | `Markdown`, `MarkdownEditor` | Oui |
+| P22 | **DocumentViewer** (PDF, image) et **HtmlContent**. | `DocumentViewer`, `HtmlContent` | Oui |
+| P23 | **Disclosure**, **InlineEdit**, **StepList**, **AnchoredMenu / AnchoredPanel**. | composants du même nom | À tester un par un |
+
+## Lot 5 — Garde-fous
+
+| # | Proposition | Raison |
+|---|---|---|
+| P24 | Règles des garde-fous pour **Biome** (imports interdits, `style` inline, couleurs en dur), en plus de la config ESLint. | Alfred lint avec Biome |
+| P25 | Tag `v0.1.0` dans le dépôt de référence et notes sur l'installation par yalc. | Version installée lisible |
+
+## Après les propositions (dans Alfred)
+
+1. Brancher socle-ui : `styles.css`, `theme.css`, `SocleProvider`.
+2. Remplacer la coquille par `AppShell` et `Sidebar`.
+3. Remplacer les composants de `@alfred/ui` un par un.
+4. Réécrire `DESIGN.md` pour que l'agent importe `socle-ui`, puis adapter l'outil `check`.
+5. Supprimer `src/ui/`.
+
+Les étapes 1 et 2 peuvent commencer après le lot 1, sans attendre la suite.

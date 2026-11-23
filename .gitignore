@@ -17,3 +17,7 @@ src/runtime/generated
 src-tauri/resources/models/
 src-tauri/model-parts/
 *.safetensors
+
+# Installation locale du design system (yalc) : à ne pas commiter
+.yalc
+yalc.lock
