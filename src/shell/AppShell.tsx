@@ -1,49 +1,47 @@
-import { Button, EmptyState, IconButton, PageTopBar, PageTopBarSeparator, Tabs } from "@alfred/ui";
+/**
+ * Coquille d’Alfred sur `AppShell` et `Sidebar` de socle-ui.
+ *
+ * - Menu de gauche : une entrée par section (icône, compteur, menu « … »), les entrées de zone de ses pages en
+ *   sous-pages, puis les conversations de l’agent ; en pied, l’entrée Agent, l’espace de travail ouvert et le compte,
+ *   qui ouvre les Réglages.
+ * - Barre du haut : nom de la section, résumé et état de la page affichée, onglets de ses pages (vues), actions de la
+ *   page (`ActionBar` zone `topbar`), outils de la coquille et cloche du centre de notifications.
+ * - Panneau de droite : le panneau déclaré par la page, ou la conversation d’agent qu’elle a lancée.
+ */
+import { AppWindow, Bot, MoreHorizontal } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import {
-  AppWindow,
-  Bot,
-  CircleCheck,
-  LoaderCircle,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  SlidersHorizontal,
-} from "lucide-react";
-import {
-  type ButtonHTMLAttributes,
-  Fragment,
-  type KeyboardEvent,
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-} from "react";
+  type Action,
+  ActionBar,
+  Button,
+  EmptyState,
+  IconButton,
+  Menu,
+  NotificationCenter,
+  type PageStatus,
+  Sidebar,
+  AppShell as SocleShell,
+  type TabItem,
+} from "socle-ui";
 import { SetupGate } from "../features/setup/SetupGate";
-import { SpaceSwitcher } from "../features/space/SpaceSwitcher";
+import { spaceList, useSpaceActions } from "../features/space/spaceActions";
 import { inTauri, openPageWindow } from "../lib/native";
-import type { ResolvedPage } from "../lib/types";
-import { useOverflowEdges } from "../ui/components/overflowEdges";
+import type { ResolvedPage, ResolvedSection } from "../lib/types";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
-import { ExampleIndicator } from "./ExampleIndicator";
-import { SectionIcon } from "./icons";
-import { MenuZoneView, type ZoneRow } from "./MenuZone";
-import { startMenuZones } from "./menuZones";
-import { NotificationBell, NotificationToasts } from "./NotificationCenter";
-import { anchorOf, announce, applyLayoutChange, type MenuAnchor, useNavigationEditor } from "./navigationEditing";
-import { mergeVisibleOrder, pagesOf, reorderSections, reorderTabs, SETTINGS_SECTION } from "./navigationLayout";
+import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
+import { NamedIcon, SectionIcon } from "./icons";
+import type { ZoneRow } from "./MenuZone";
+import { entryTarget, orderedEntries, startMenuZones, useMenuZones } from "./menuZones";
+import { useNavigationEditor } from "./navigationEditing";
+import { SETTINGS_SECTION } from "./navigationLayout";
 import { notify } from "./notifications";
 import { PageFrame } from "./PageFrame";
-import { SectionZones } from "./PageZones";
-import { ResizablePanel } from "./ResizablePanel";
+import { openZoneEntry, runZoneAction } from "./PageZones";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
-import { TopBarSearch } from "./TopBarSearch";
-import { TopBarActions } from "./topBarActions";
-import { TopBarSummary } from "./topBarSummary";
+import { activateTopBarAction, type TopBarActionDescriptor, useTopBarActionStore } from "./topBarActions";
+import { useTopBarSummaries } from "./topBarSummary";
 import type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
-import { useDragReorder } from "./useDragReorder";
-import "./shell.css";
 
 export type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
 
@@ -66,26 +64,72 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
   );
 }
 
+/** Compteur lu par un lecteur d’écran : « 3 nouveautés ». */
+export function countLabel(count: number) {
+  return `${count} nouveauté${count > 1 ? "s" : ""}`;
+}
+
+const windowError = (error: unknown) =>
+  notify({
+    title: "La fenêtre n’a pas pu s’ouvrir",
+    description: error instanceof Error ? error.message : String(error),
+    tone: "error",
+  });
+
+/** Icône Lucide nommée en PascalCase par le SDK (`Plus`, `RefreshCw`). */
+function LucideIcon({ name }: { name: string }) {
+  return <NamedIcon name={name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()} size={16} />;
+}
+
 /**
- * Corps d’une section : la page de l’onglet actif et, si elle en déclare un, son panneau de droite. Les Réglages
- * et la page Agent passent par le même gabarit avec leurs onglets intégrés.
+ * Actions de la page telles que le cadre les décrit, en `Action` de Socle : un clic revient au cadre par
+ * l’identifiant de l’action, et c’est lui qui l’exécute (confirmation comprise). Une bascule de vue (`group`) devient
+ * une action ordinaire ; la vue affichée est désactivée.
  */
-export function SectionView({
+export function frameActions(reference: string, list: readonly TopBarActionDescriptor[] | undefined): Action[] {
+  return (list ?? []).map((action) => ({
+    id: `frame:${action.id}`,
+    label: action.group && action.selected ? `${action.label} (affichée)` : action.label,
+    icon: action.icon ? <LucideIcon name={action.icon} /> : undefined,
+    primary: action.primary,
+    // Le cadre confirme lui-même ses actions destructrices : Socle ne les confirme pas une deuxième fois.
+    isDisabled: action.disabled || action.running || (Boolean(action.group) && action.selected),
+    onPress: () => activateTopBarAction(reference, action.id),
+  }));
+}
+
+/** Ce que la coquille montre pour une section : la barre du haut, la page, et son panneau de droite. */
+export interface SectionFrame {
+  pageTitle: string;
+  pageSummary?: string;
+  pageStatus?: PageStatus;
+  views?: TabItem[];
+  activeView?: string;
+  onViewChange?: (id: string) => void;
+  actions: ReactNode;
+  detail?: ReactNode;
+  main: ReactNode;
+}
+
+/**
+ * Corps d’une section : les onglets de ses pages, la page de l’onglet actif et, si elle en déclare un, son panneau
+ * de droite ; dans la fenêtre principale comme dans une fenêtre de page.
+ */
+export function useSectionFrame({
   title,
   sectionId,
   pages,
   builtIn = [],
-  actions,
-  renderAgentPanel,
-  renderPageTools,
-  onPageMenu,
-  variant = "section",
   waiting: sectionWaiting,
   detachable = true,
+  renderAgentPanel,
+  renderPageTools,
+  pageActions,
 }: {
   title: string;
   sectionId: string;
   pages: ResolvedPage[];
+  builtIn?: BuiltInTab[];
   /**
    * Section par instance qui attend encore une instance : ce qu’il faut faire, à la place de ses pages par compte
    * (une page commune de la section, `perInstance` nul, s’affiche).
@@ -93,53 +137,23 @@ export function SectionView({
   waiting?: string | null;
   /** Propose d’ouvrir la page affichée dans sa propre fenêtre (pas dans une fenêtre de page elle-même). */
   detachable?: boolean;
-  builtIn?: BuiltInTab[];
-  actions?: ReactNode;
   renderAgentPanel?: AgentPanelRenderer;
   renderPageTools?: PageToolsRenderer;
-  /** Ouvre le menu d’un onglet de page de l’espace. */
-  onPageMenu?: (reference: string, anchor: MenuAnchor, returnFocus: HTMLElement | null) => void;
-  /** Réglages : les rubriques intégrées prennent la mise en page des Réglages de OneApp. */
-  variant?: "section" | "settings";
-}) {
+  /** Actions de la coquille sur la page affichée (renommer, déplacer…), dans le « … » de la barre du haut. */
+  pageActions?: (reference: string) => Action[];
+}): SectionFrame {
   const activeTab = useShell((state) => state.activeTab[sectionId]);
   const counts = useBadges((state) => state.counts);
   const setActiveTab = useShell((state) => state.setActiveTab);
-  const panelHidden = useShell((state) => state.panelHidden);
-  const togglePanel = useShell((state) => state.togglePanel);
-
   const visible = useMemo(() => pages.filter((page) => !page.hidden), [pages]);
-  const sortable = useMemo(() => visible.map((page) => ({ id: page.reference, page })), [visible]);
-  const drag = useDragReorder(
-    sortable,
-    (order, moved) =>
-      applyLayoutChange((snapshot) => {
-        const all = pagesOf(snapshot, sectionId).map((page) => page.reference);
-        return reorderTabs(snapshot, sectionId, mergeVisibleOrder(all, order), moved);
-      }),
-    { axis: "horizontal", findTarget: (element) => tabTarget(element) },
-  );
-  const tabs = useMemo(
-    () => [
-      ...builtIn.map((tab) => ({ id: tab.id, label: tab.label })),
-      ...drag.orderedItems.map(({ id, page }) => ({
-        id,
-        label: page.title,
-        content: (
-          <span data-tab-ref={id} className={`shell-tab${drag.draggedId === id ? " is-dragging" : ""}`}>
-            {page.title}
-            {counts[id] ? (
-              <span className="shell-count" role="img" aria-label={countLabel(counts[id])}>
-                {badgeText(counts[id])}
-              </span>
-            ) : null}
-          </span>
-        ),
-      })),
-    ],
-    [builtIn, drag.orderedItems, drag.draggedId, counts],
-  );
-  const activeId = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0]?.id;
+  const views: TabItem[] = [
+    ...builtIn.map((tab) => ({ id: tab.id, label: tab.label })),
+    ...visible.map((page) => ({
+      id: page.reference,
+      label: counts[page.reference] ? `${page.title} (${badgeText(counts[page.reference])})` : page.title,
+    })),
+  ];
+  const activeId = views.some((tab) => tab.id === activeTab) ? activeTab : views[0]?.id;
   // L’onglet affiché par défaut est retenu : réordonner ou déplacer les onglets ne change pas la page ouverte.
   useEffect(() => {
     if (activeId && activeId !== activeTab) setActiveTab(sectionId, activeId);
@@ -152,261 +166,126 @@ export function SectionView({
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.
   const agentConversation = useShell((state) => (page ? state.agentPanel[page.reference] : undefined));
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);
-  const hasPanel = Boolean(panel) || Boolean(agentConversation);
-  const panelVisible = hasPanel ? !panelHidden[page?.reference ?? ""] : false;
+  const summary = useTopBarSummaries((state) => (page ? state.summaries[page.reference] : undefined));
+  const described = useTopBarActionStore((state) => (page ? state.actions[page.reference] : undefined));
+  const examples = useExampleMode(page?.module ?? "");
   const main = useRef<HTMLDivElement>(null);
-  const tabsRow = useOverflowEdges<HTMLDivElement>();
+  const live = Boolean(page && !builtInTab && !waiting);
 
-  return (
-    <div
-      className="workspace-body shell-body"
-      data-surface={variant === "settings" && builtInTab ? "settings" : undefined}
-    >
-      {/* Colonne de la page : sa barre du haut, puis la page. Le panneau de droite est à côté, sur toute la hauteur. */}
-      <div className="shell-column">
-        <PageTopBar
-          className="shell-topbar"
-          title={
-            // Onglets à gauche, juste après le titre, comme les vues d’un produit dans OneApp.
-            <div className="shell-title">
-              <h1>{title}</h1>
-              {page && !builtInTab && !waiting ? <TopBarSummary reference={page.reference} /> : null}
-              {tabs.length > 1 && activeId ? (
-                // biome-ignore lint/a11y/noStaticElementInteractions: les onglets portent eux-mêmes le clavier ; ce conteneur relaie le glissement et le menu de chaque onglet.
-                <div
-                  ref={tabsRow}
-                  className="shell-tabs overflow-fade"
-                  onPointerDown={(event) => {
-                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                    const tab = target?.element.closest<HTMLElement>('[role="tab"]');
-                    if (target && tab && sortable.some((item) => item.id === target.id))
-                      drag.startDrag(event, target.id, tab);
-                  }}
-                  onContextMenu={(event) => {
-                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                    if (!target || !onPageMenu) return;
-                    event.preventDefault();
-                    onPageMenu(target.id, { x: event.clientX, y: event.clientY }, target.element.closest("button"));
-                  }}
-                  onKeyDownCapture={(event) => {
-                    const target = event.target instanceof Element ? tabTarget(event.target) : undefined;
-                    if (!target) return;
-                    const tab = target.element.closest<HTMLElement>('[role="tab"]');
-                    if (isMenuKey(event) && onPageMenu && tab) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onPageMenu(target.id, anchorOf(tab), tab);
-                      return;
-                    }
-                    if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (!drag.moveItem(target.id, event.key === "ArrowLeft" ? -1 : 1))
-                        announceEdge(event.key === "ArrowLeft" ? "premier" : "dernier");
-                      refocus(`[data-tab-ref="${CSS.escape(target.id)}"]`, (element) => element.closest("button"));
-                    }
-                  }}
-                >
-                  <Tabs
-                    label={`Onglets de ${title}`}
-                    className="shell-tabs__list choice-segmented"
-                    tabClassName="shell-tabs__tab"
-                    items={tabs}
-                    activeId={activeId}
-                    onChange={(id) => setActiveTab(sectionId, id)}
-                  />
-                </div>
-              ) : null}
-            </div>
-          }
-          panelToggle={
-            hasPanel && page
-              ? {
-                  hidden: !panelVisible,
-                  onToggle: () => togglePanel(page.reference),
-                  subject: agentConversation ? "la conversation avec l’agent" : `le panneau « ${panel?.title ?? ""} »`,
-                }
-              : undefined
-          }
+  const actions: Action[] = live && page ? [...frameActions(page.reference, described)] : [];
+  if (live && page && pageActions) actions.push(...pageActions(page.reference));
+
+  const pageStatus: PageStatus | undefined =
+    live && examples && page
+      ? {
+          label: "Exemple",
+          tone: "info",
+          description: EXAMPLE_HINT,
+          menu: (
+            <Menu.Item
+              label="Quitter les données d’exemple"
+              onAction={() =>
+                void setExampleMode(page.module, false).catch((error: unknown) =>
+                  notify({
+                    title: "Les données d’exemple n’ont pas pu être quittées",
+                    description: error instanceof Error ? error.message : String(error),
+                    tone: "error",
+                  }),
+                )
+              }
+            />
+          ),
+        }
+      : undefined;
+
+  const body = builtInTab ? (
+    builtInTab.render?.()
+  ) : waiting ? (
+    <EmptyState
+      title="En attente d’un compte"
+      description={waiting}
+      action={
+        <Button
+          variant="primary"
+          onPress={() => {
+            const shell = useShell.getState();
+            shell.setView({ kind: "settings" });
+            shell.setActiveTab(SETTINGS_SECTION, "modules");
+            // Ouvre la fiche du module de la section, où ses comptes se règlent.
+            shell.setActiveTab("réglages:module", sectionId.split("/")[0] ?? "");
+          }}
         >
-          {page && !builtInTab && !waiting ? <TopBarSearch reference={page.reference} /> : null}
-          {page && !builtInTab && !waiting ? <TopBarActions reference={page.reference} /> : null}
-          {/* Actions de la page, puis un trait, puis celles de la coquille : le trait disparaît quand la page n’en a pas. */}
-          <span className="shell-topbar__page-tools">
-            {actions}
-            {detachable && inTauri && page && !builtInTab && !waiting ? (
-              <IconButton
-                label="Ouvrir dans une nouvelle fenêtre"
-                onClick={() => {
-                  // Une entrée de zone ouverte suit la page dans sa fenêtre.
-                  const entry = useShell.getState().activeEntry[page.reference];
-                  void openPageWindow(
-                    page.reference,
-                    entry ? { params: { entry }, key: `entry:${entry.zone}:${entry.id}`, title: entry.label } : {},
-                  ).catch((error: unknown) =>
-                    notify({
-                      title: "La fenêtre n’a pas pu s’ouvrir",
-                      description: error instanceof Error ? error.message : String(error),
-                      tone: "error",
-                    }),
-                  );
-                }}
-              >
-                <AppWindow size={16} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
-          </span>
-          <PageTopBarSeparator />
-          {page && !builtInTab && !waiting ? <ExampleIndicator module={page.module} /> : null}
-          <NotificationBell />
-        </PageTopBar>
-        <div ref={main} className="shell-body__main">
-          {builtInTab ? (
-            builtInTab.render?.()
-          ) : waiting ? (
-            <EmptyState title="En attente d’un compte" description={waiting}>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  const shell = useShell.getState();
-                  shell.setView({ kind: "settings" });
-                  shell.setActiveTab(SETTINGS_SECTION, "modules");
-                  // Ouvre la fiche du module de la section, où ses comptes se règlent.
-                  shell.setActiveTab("réglages:module", sectionId.split("/")[0] ?? "");
-                }}
-              >
-                Ajouter un compte
-              </Button>
-            </EmptyState>
-          ) : page ? (
-            <SpacePage key={page.reference} page={page} kind="page" />
-          ) : (
-            <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
-          )}
-        </div>
+          Ajouter un compte
+        </Button>
+      }
+    />
+  ) : page ? (
+    <SpacePage key={page.reference} page={page} kind="page" />
+  ) : (
+    <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
+  );
+
+  const detail =
+    waiting || !page ? undefined : agentConversation && renderAgentPanel ? (
+      renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))
+    ) : panel ? (
+      <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
+    ) : undefined;
+
+  return {
+    pageTitle: title,
+    pageSummary: live ? summary : undefined,
+    pageStatus,
+    views: views.length > 1 ? views : undefined,
+    activeView: activeId,
+    onViewChange: (id) => setActiveTab(sectionId, id),
+    actions: (
+      <>
+        {actions.length ? <ActionBar actions={actions} zone="topbar" subject={page?.title ?? title} /> : null}
+        {detachable && inTauri && live && page ? (
+          <IconButton
+            icon={<AppWindow size={16} aria-hidden="true" />}
+            label="Ouvrir dans une nouvelle fenêtre"
+            onPress={() => {
+              // Une entrée de zone ouverte suit la page dans sa fenêtre.
+              const entry = useShell.getState().activeEntry[page.reference];
+              void openPageWindow(
+                page.reference,
+                entry ? { params: { entry }, key: `entry:${entry.zone}:${entry.id}`, title: entry.label } : {},
+              ).catch(windowError);
+            }}
+          />
+        ) : null}
+        {page && !builtInTab && renderPageTools ? renderPageTools(page, main) : null}
+        <NotificationCenter />
+      </>
+    ),
+    detail,
+    main: (
+      <div ref={main} className="flex h-full min-h-0 min-w-0 flex-col">
+        {body}
       </div>
-      {waiting ? null : page && panelVisible && agentConversation && renderAgentPanel ? (
-        <ResizablePanel storageKey="shell.panelWidth" label="Conversation avec l’agent">
-          {renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))}
-        </ResizablePanel>
-      ) : panel && page && panelVisible ? (
-        <ResizablePanel
-          storageKey="shell.panelWidth"
-          label={panel.title}
-          title={panel.title}
-          onClose={() => togglePanel(page.reference)}
-        >
-          <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
-        </ResizablePanel>
-      ) : null}
-    </div>
-  );
+    ),
+  };
 }
 
-function NavButton({
-  active,
-  label,
-  onClick,
-  children,
-  className = "",
-  badge,
-  count = 0,
-  glyph = false,
-  ...props
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-  children: ReactNode;
-  className?: string;
-  /** Pastille à droite du libellé, ou sur l’icône quand le menu est replié. */
-  badge?: AgentSummary;
-  /** Compteur des pages de la section (`badge.set` du SDK), en pastille quand il dépasse zéro. */
-  count?: number;
-  /** Icône posée dans un cadre fixe (entrée Agent), qui porte aussi la pastille du menu replié. */
-  glyph?: boolean;
-} & Pick<
-  ButtonHTMLAttributes<HTMLButtonElement>,
-  "onKeyDown" | "onContextMenu" | "onPointerDown" | "aria-keyshortcuts"
->) {
-  const collapsed = useShell((state) => state.sidebarCollapsed);
+function agentCounts(summary: AgentSummary) {
   return (
-    <IconButton
-      {...props}
-      appearance="navigation"
-      label={count > 0 ? `${label} · ${countLabel(count)}` : label}
-      tooltip={collapsed ? label : false}
-      tooltipPlacement="right"
-      className={`${className}${active ? " is-active" : ""}`}
-      aria-current={active ? "page" : undefined}
-      onClick={onClick}
-    >
-      {glyph ? (
-        <span className="sidebar-product__glyph">
-          {children}
-          {badge && collapsed ? <AgentsBadge summary={badge} collapsed /> : null}
-        </span>
-      ) : (
-        children
-      )}
-      <span className="sidebar__label">{badge ? label.split(" · ")[0] : label}</span>
-      {count > 0 ? (
-        // Même pastille que celle des agents de OneApp : à place fixe, à gauche du bouton « … » de la ligne.
-        collapsed ? (
-          <span className="product-agents__badge is-collapsed sidebar-count" aria-hidden="true">
-            {badgeText(count)}
-          </span>
-        ) : (
-          <span className="sidebar-count" aria-hidden="true">
-            <span className="product-agents__badge">{badgeText(count)}</span>
-          </span>
-        )
-      ) : null}
-      {badge && !collapsed ? (
-        <span className="sidebar-orchestrator__badge">
-          <AgentsBadge summary={badge} collapsed={false} />
-        </span>
-      ) : null}
-    </IconButton>
-  );
-}
-
-/** Compteur lu par un lecteur d’écran : « 3 nouveautés ». */
-function countLabel(count: number) {
-  return `${count} nouveauté${count > 1 ? "s" : ""}`;
-}
-
-/** Pastille de l’entrée Agent, reprise de celle des agents de OneApp. */
-function AgentsBadge({ summary, collapsed }: { summary: AgentSummary; collapsed: boolean }) {
-  return (
-    <span
-      className={`product-agents__badge product-agents__badge--${summary.state}${collapsed ? " is-collapsed" : ""}`}
-      aria-hidden="true"
-    >
-      {summary.state === "attention" ? (
-        <span className="product-agents__mark">?</span>
-      ) : summary.state === "working" ? (
-        <LoaderCircle className="is-spinning" size={10} aria-hidden="true" />
-      ) : (
-        <CircleCheck size={10} aria-hidden="true" />
-      )}
-      {summary.count}
-    </span>
+    summary.counts ?? {
+      attention: summary.state === "attention" ? summary.count : 0,
+      working: summary.state === "working" ? summary.count : 0,
+      unread: summary.state === "done" ? summary.count : 0,
+    }
   );
 }
 
 /**
- * Libellé de l’entrée Agent, comme celui de l’entrée Agents de OneApp : les réponses attendues, l’activité en cours,
- * puis les conversations à consulter, chacun s’il y a lieu.
+ * Libellé de l’entrée Agent : les réponses attendues, l’activité en cours, puis les conversations à consulter,
+ * chacun s’il y a lieu.
  */
 export function agentEntryLabel(summary: AgentSummary | undefined): string {
   if (!summary) return "Agent";
-  const counts = summary.counts ?? {
-    attention: summary.state === "attention" ? summary.count : 0,
-    working: summary.state === "working" ? summary.count : 0,
-    unread: summary.state === "done" ? summary.count : 0,
-  };
+  const counts = agentCounts(summary);
   const plural = counts.attention > 1 ? "s" : "";
   return [
     "Agent",
@@ -418,32 +297,69 @@ export function agentEntryLabel(summary: AgentSummary | undefined): string {
     .join(" · ");
 }
 
-/** Touche Menu ou Maj+F10 : ouvre le menu contextuel de l’élément qui a le focus. */
-const isMenuKey = (event: KeyboardEvent) => event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
+/** Identifiants de la navigation : une section, une entrée de zone, l’agent ou une de ses conversations. */
+const navId = {
+  section: (id: string) => `section:${id}`,
+  entry: (page: string, entry: string) => `entry:${page}\u0000${entry}`,
+  agent: "agent",
+  conversation: (id: string) => `agent:${id}`,
+};
 
-/** Onglet de page de l’espace sous un élément : son identifiant et le libellé qui le porte. */
-function tabTarget(element: Element): { id: string; element: HTMLElement } | undefined {
-  const tab = element.closest('[role="tab"]');
-  const label = tab?.querySelector<HTMLElement>("[data-tab-ref]");
-  const id = label?.dataset.tabRef;
-  return label && id ? { id, element: label } : undefined;
+type Rename = (title: string, initial: string, apply: (value: string) => void) => void;
+
+/** Une ligne de zone, en sous-page de la section : compteur, ou activité pour une entrée au travail. */
+function zoneItem(id: string, row: ZoneRow, onAction: (action: string) => void) {
+  const actions = (row.actions ?? []).slice(0, 2).map((action) => ({
+    icon: <NamedIcon name={action.icon} size={14} />,
+    label: `${action.label} ${row.label}`,
+    onPress: () => onAction(action.id),
+  }));
+  return (
+    <Sidebar.Item
+      key={id}
+      id={id}
+      label={row.label}
+      count={row.badge ? row.badge : undefined}
+      indicator={!row.badge && (row.status === "running" || row.status === "waiting") ? "activity" : undefined}
+      actions={actions.length ? actions : undefined}
+    />
+  );
 }
 
-/** Un élément déplacé dans le DOM perd le focus : il le retrouve une fois l’ordre affiché. */
-function refocus(selector: string, pick: (element: HTMLElement) => HTMLElement | null = (element) => element) {
-  requestAnimationFrame(() => {
-    const element = document.querySelector<HTMLElement>(selector);
-    const target = element ? pick(element) : null;
-    if (target && document.activeElement !== target) target.focus();
-  });
+/** Entrées de zone des pages visibles d’une section, dans l’ordre de ses onglets. */
+function useSectionEntries(section: ResolvedSection, rename: Rename) {
+  const zones = useMenuZones((state) => state.zones);
+  return section.pages
+    .filter((page) => !page.hidden && zones[page.reference]?.entries.length)
+    .flatMap((page) =>
+      orderedEntries(zones[page.reference]).map((entry) =>
+        zoneItem(navId.entry(page.reference, entry.id), entry, (action) => {
+          if (action !== "rename") return runZoneAction(page.reference, entry, action);
+          rename(`Renommer « ${entry.label} »`, entry.label, (value) => {
+            const next = value.trim();
+            if (next && next !== entry.label) runZoneAction(page.reference, entry, "rename", next);
+          });
+        }),
+      ),
+    );
 }
 
-function announceEdge(edge: "premier" | "dernier") {
-  announce(`Déjà en ${edge === "premier" ? "première" : "dernière"} position.`);
+function SectionItem({ section, menu, rename }: { section: ResolvedSection; menu: ReactNode; rename: Rename }) {
+  const counts = useBadges((state) => state.counts);
+  const entries = useSectionEntries(section, rename);
+  const count = sectionCount(counts, section.pages);
+  return (
+    <Sidebar.Item
+      id={navId.section(section.id)}
+      icon={<SectionIcon section={section} size={16} />}
+      label={section.label}
+      count={count > 0 ? count : undefined}
+      actions={[{ icon: <MoreHorizontal size={16} aria-hidden="true" />, label: `Actions de la section ${section.label}`, menu }]}
+    >
+      {entries.length ? entries : undefined}
+    </Sidebar.Item>
+  );
 }
-
-const sameView = (left: View, right: View) =>
-  left.kind === right.kind && (left.kind !== "section" || (right.kind === "section" && left.id === right.id));
 
 export function AppShell({
   agent,
@@ -464,218 +380,202 @@ export function AppShell({
   agentAvailable?: boolean | null;
   /** Conversations qui attendent l’utilisateur, travaillent ou sont à lire. */
   agentSummary?: AgentSummary;
-  /** Conversations rangées dans la zone de l’entrée Agent. */
+  /** Conversations rangées sous l’entrée Agent. */
   agentZone?: AgentZone;
-  /** Onglets intégrés des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
+  /** Rubriques intégrées des Réglages ; les pages de l’espace placées dans les Réglages s’y ajoutent. */
   settingsTabs: BuiltInTab[];
   renderAgentPanel?: AgentPanelRenderer;
   renderPageTools?: PageToolsRenderer;
 }) {
   const snapshot = useShell((state) => state.snapshot);
+  const recent = useShell((state) => state.recentSpaces);
   const shown = useShell((state) => state.view);
   const behind = useShell((state) => state.behind);
   const settingsOpen = shown.kind === "settings";
   // Les Réglages s’ouvrent par-dessus : la vue d’où ils ont été ouverts reste affichée derrière.
   const view: View = settingsOpen ? behind : shown;
   const setView = useShell((state) => state.setView);
-  const collapsed = useShell((state) => state.sidebarCollapsed);
-  const toggleSidebar = useShell((state) => state.toggleSidebar);
-  const editor = useNavigationEditor();
-  const counts = useBadges((state) => state.counts);
   const activeTabs = useShell((state) => state.activeTab);
   const activeEntry = useShell((state) => state.activeEntry);
+  const zones = useMenuZones((state) => state.zones);
+  const editor = useNavigationEditor();
+  const spaces = useSpaceActions();
   useEffect(() => startBadges(), []);
   useEffect(() => startMenuZones(), []);
-  const sections = useMemo(
-    () =>
-      (snapshot?.sections ?? []).filter((section) => !section.hidden).map((section) => ({ id: section.id, section })),
-    [snapshot],
-  );
-  const drag = useDragReorder(sections, (order, moved) =>
-    applyLayoutChange((current) =>
-      reorderSections(
-        current,
-        mergeVisibleOrder(
-          current.sections.map((section) => section.id),
-          order,
-        ),
-        moved,
-      ),
-    ),
-  );
-  if (!snapshot) return null;
+  const sections = useMemo(() => (snapshot?.sections ?? []).filter((section) => !section.hidden), [snapshot]);
 
-  const current = view.kind === "section" ? sections.find(({ section }) => section.id === view.id)?.section : undefined;
+  const current = view.kind === "section" ? sections.find((section) => section.id === view.id) : undefined;
   const wanted: View = view.kind === "section" && !current ? { kind: "agent" } : view;
   // Sans agent installé, la page Agent n’existe pas : la première section s’affiche à sa place.
-  const fallback = sections[0]?.section;
+  const fallback = sections[0];
   const effective: View =
     wanted.kind === "agent" && agentAvailable === false && fallback ? { kind: "section", id: fallback.id } : wanted;
   const shownSection =
-    effective.kind === "section" ? sections.find(({ section }) => section.id === effective.id)?.section : undefined;
+    effective.kind === "section" ? sections.find((section) => section.id === effective.id) : undefined;
 
-  return (
-    <div className={`app-shell${collapsed ? " app-shell--sidebar-collapsed" : ""}`}>
-      {/* Début de la barre du haut, au-dessus du menu : le bouton qui le replie, à place fixe. La barre de la page
-          affichée la prolonge jusqu’au panneau de droite, qui monte, lui, jusqu’en haut de la fenêtre. */}
-      <div className="app-topbar" inert={settingsOpen}>
-        <IconButton
-          appearance="navigation"
-          className="app-topbar__toggle"
-          label={collapsed ? "Déployer la navigation" : "Replier la navigation"}
-          tooltipPlacement="right"
-          aria-expanded={!collapsed}
-          onClick={toggleSidebar}
-        >
-          {collapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
-        </IconButton>
-      </div>
-      <aside className="sidebar" aria-label="Navigation principale" inert={settingsOpen}>
-        <nav aria-label="Sections de l’espace de travail">
-          {drag.orderedItems.map(({ section }) => {
-            const selector = `[data-sortable-scope="${drag.scopeId}"][data-sortable-id="${CSS.escape(section.id)}"]`;
-            const dropping = drag.dropTarget?.id === section.id ? ` is-drop-${drag.dropTarget.placement}` : "";
-            return (
-              <Fragment key={section.id}>
-                <div
-                  className={`sidebar-product${sectionCount(counts, section.pages) > 0 ? " has-count" : ""}${drag.draggedId === section.id ? " is-dragging" : ""}${dropping}${editor.menuOpenFor === section.id ? " is-menu-open" : ""}`}
-                  data-sortable-scope={drag.scopeId}
-                  data-sortable-id={section.id}
-                >
-                  <NavButton
-                    label={section.label}
-                    count={sectionCount(counts, section.pages)}
-                    active={
-                      !settingsOpen &&
-                      sameView(effective, { kind: "section", id: section.id }) &&
-                      // Une entrée de zone ouverte est surlignée à la place de sa section.
-                      !activeEntry[activeTabs[section.id] ?? ""]
-                    }
-                    onClick={() => {
-                      // L’entrée de la section ouvre ses pages sans entrée de zone.
-                      useShell.getState().clearEntries(section.pages.map((page) => page.reference));
-                      setView({ kind: "section", id: section.id });
-                    }}
-                    className={`product-nav product-color--${section.color ?? "steel"}`}
-                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Shift+F10"
-                    onPointerDown={(event) => {
-                      const row = event.currentTarget.closest<HTMLElement>(".sidebar-product");
-                      if (row) drag.startDrag(event, section.id, row);
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      editor.openSectionMenu(section.id, { x: event.clientX, y: event.clientY }, event.currentTarget);
-                    }}
-                    onKeyDown={(event) => {
-                      if (isMenuKey(event)) {
-                        event.preventDefault();
-                        editor.openSectionMenu(section.id, anchorOf(event.currentTarget), event.currentTarget);
-                      } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-                        event.preventDefault();
-                        if (!drag.moveItem(section.id, event.key === "ArrowUp" ? -1 : 1))
-                          announceEdge(event.key === "ArrowUp" ? "premier" : "dernier");
-                        refocus(selector, (element) => element.querySelector("button"));
-                      }
-                    }}
-                  >
-                    <SectionIcon section={section} />
-                  </NavButton>
-                  <div className="sidebar-product__actions">
-                    <IconButton
-                      size="small"
-                      label={`Actions de la section ${section.label}`}
-                      tooltip={editor.menuOpenFor === section.id ? false : "Plus"}
-                      aria-haspopup="menu"
-                      aria-expanded={editor.menuOpenFor === section.id}
-                      onClick={(event) => {
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        editor.openSectionMenu(section.id, { x: rect.left, y: rect.bottom + 4 }, event.currentTarget);
-                      }}
-                    >
-                      <MoreHorizontal size={16} aria-hidden="true" />
-                    </IconButton>
-                  </div>
-                </div>
-                <SectionZones pages={section.pages} sectionLabel={section.label} />
-              </Fragment>
-            );
-          })}
-        </nav>
-        {/* Bas du menu, dans cet ordre : Agent, l’espace ouvert, puis Réglages, toute dernière entrée. */}
-        {agentAvailable === true ? (
-          <NavButton
-            label={agentEntryLabel(agentSummary)}
-            active={!settingsOpen && sameView(effective, { kind: "agent" })}
-            onClick={() => setView({ kind: "agent" })}
-            className="sidebar-orchestrator"
-            badge={agentSummary}
-            glyph
-          >
-            <Bot size={16} aria-hidden="true" />
-          </NavButton>
-        ) : null}
-        {agentAvailable === true && agentZone ? (
-          <div className="sidebar-agent-zone">
-            <MenuZoneView
-              zoneKey="agent"
-              label="Conversations de l’agent"
-              rows={agentZone.rows}
-              activeId={!settingsOpen && effective.kind === "agent" ? agentZone.activeId : undefined}
-              visible={agentZone.visible}
-              onOpen={(id) => {
-                agentZone.onOpen(id);
-                setView({ kind: "agent" });
-              }}
-              onAction={agentZone.onAction}
+  const frame = useSectionFrame({
+    title: shownSection?.label ?? "Agent",
+    sectionId: shownSection?.id ?? "agent",
+    pages: shownSection?.pages ?? [],
+    waiting: shownSection?.waiting,
+    renderAgentPanel,
+    renderPageTools,
+    pageActions: shownSection ? (reference) => editor.pageActions(reference, shownSection.id) : undefined,
+  });
+
+  if (!snapshot) return null;
+
+  // Élément sélectionné : l’entrée de zone ouverte, sinon la section ; la conversation ouverte, sinon l’agent.
+  let selectedId = navId.agent;
+  if (effective.kind === "section" && shownSection) {
+    const page = activeTabs[shownSection.id];
+    const opened = page ? activeEntry[page] : undefined;
+    selectedId = opened ? navId.entry(opened.zone, opened.id) : navId.section(shownSection.id);
+  } else if (effective.kind === "agent" && agentZone?.activeId) {
+    selectedId = navId.conversation(agentZone.activeId);
+  }
+
+  const select = (id: string) => {
+    if (id === navId.agent) return setView({ kind: "agent" });
+    if (id.startsWith("agent:")) {
+      agentZone?.onOpen(id.slice("agent:".length));
+      return setView({ kind: "agent" });
+    }
+    if (id.startsWith("section:")) {
+      const sectionId = id.slice("section:".length);
+      const section = sections.find((candidate) => candidate.id === sectionId);
+      // L’entrée de la section ouvre ses pages sans entrée de zone.
+      useShell.getState().clearEntries((section?.pages ?? []).map((page) => page.reference));
+      return setView({ kind: "section", id: sectionId });
+    }
+    if (id.startsWith("entry:")) {
+      const [zonePage = "", entryId] = id.slice("entry:".length).split("\u0000");
+      const entry = zones[zonePage]?.entries.find((candidate) => candidate.id === entryId);
+      if (!entry) return;
+      openZoneEntry(zonePage, entry);
+      // La page de l’entrée s’ouvre dans sa section.
+      const target = entryTarget(zonePage, entry);
+      const section = sections.find((candidate) => candidate.pages.some((page) => page.reference === target));
+      if (section) setView({ kind: "section", id: section.id });
+    }
+  };
+
+  const counts = agentSummary ? agentCounts(agentSummary) : { attention: 0, working: 0, unread: 0 };
+  const agentCount = counts.attention + counts.unread;
+  const agentItem =
+    agentAvailable === true ? (
+      <Sidebar.Item
+        id={navId.agent}
+        icon={<Bot size={16} aria-hidden="true" />}
+        label="Agent"
+        tabbar
+        count={agentCount > 0 ? agentCount : undefined}
+        indicator={agentCount === 0 && counts.working > 0 ? "activity" : undefined}
+      />
+    ) : null;
+
+  const renameConversation = (row: ZoneRow) =>
+    editor.rename(`Renommer « ${row.label} »`, row.label, (value) => {
+      const next = value.trim();
+      if (next && next !== row.label) agentZone?.onAction(row.id, "rename", next);
+    });
+
+  const sidebar = (
+    <Sidebar
+      selectedId={selectedId}
+      onSelectionChange={select}
+      footer={agentItem}
+      workspace={
+        <Sidebar.Workspace
+          workspaces={spaceList(recent, snapshot).map((space) => ({ id: space.path, name: space.name }))}
+          currentId={snapshot.path}
+          isDisabled={spaces.busy}
+          onChange={(path) => void spaces.open(path, undefined, true)}
+          actions={
+            <>
+              <Menu.Item label="Ouvrir un autre dossier…" onAction={spaces.openOther} />
+              <Menu.Item label="Créer un espace de travail…" onAction={spaces.create} />
+            </>
+          }
+        />
+      }
+      account={<Sidebar.Account name="Alfred" onSettings={() => setView({ kind: "settings" })} />}
+    >
+      {sections.map((section) => (
+        <SectionItem key={section.id} section={section} menu={editor.sectionMenu(section.id)} rename={editor.rename} />
+      ))}
+      {agentAvailable === true && agentZone?.rows.length ? (
+        <Sidebar.Section id="agent-conversations" title="Conversations" limit={agentZone.visible}>
+          {agentZone.rows.map((row) => (
+            <Sidebar.TreeItem
+              key={row.id}
+              id={navId.conversation(row.id)}
+              title={row.label}
+              subtitle={row.details}
+              status={row.status === "error" || row.status === "warning" ? "warning" : undefined}
+              unread={Boolean(row.badge)}
+              actions={
+                row.actions?.length ? (
+                  <>
+                    {row.actions.map((action) => (
+                      <Menu.Item
+                        key={action.id}
+                        label={action.label}
+                        icon={<NamedIcon name={action.icon} size={16} />}
+                        onAction={() =>
+                          action.id === "rename" ? renameConversation(row) : agentZone.onAction(row.id, action.id)
+                        }
+                      />
+                    ))}
+                  </>
+                ) : undefined
+              }
             />
-          </div>
-        ) : null}
-        <SpaceSwitcher />
-        <NavButton
-          label="Réglages"
-          active={settingsOpen}
-          onClick={() => setView({ kind: "settings" })}
-          className="sidebar-settings"
-        >
-          <SlidersHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
-        </NavButton>
-      </aside>
-      <main className="workspace" inert={settingsOpen}>
-        {effective.kind === "agent" && agentAvailable !== null ? (
-          agentAvailable ? (
-            agent
-          ) : (
-            <div className="workspace__empty">
-              <EmptyState
-                title="Aucun agent installé"
-                description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
-              >
-                <Button
-                  onClick={() => {
-                    const shell = useShell.getState();
-                    shell.setView({ kind: "settings" });
-                    shell.setActiveTab(SETTINGS_SECTION, "agents");
-                  }}
-                >
-                  Vérifier dans les Réglages
-                </Button>
-              </EmptyState>
-            </div>
-          )
-        ) : null}
-        {effective.kind === "section" && shownSection ? (
-          <SectionView
-            key={shownSection.id}
-            title={shownSection.label}
-            sectionId={shownSection.id}
-            pages={shownSection.pages}
-            waiting={shownSection.waiting}
-            renderAgentPanel={renderAgentPanel}
-            renderPageTools={renderPageTools}
-            onPageMenu={editor.openPageMenu}
-          />
-        ) : null}
-      </main>
+          ))}
+        </Sidebar.Section>
+      ) : null}
+    </Sidebar>
+  );
+
+  const agentPage =
+    agentAvailable === null ? null : agentAvailable ? (
+      agent
+    ) : (
+      <EmptyState
+        title="Aucun agent installé"
+        description="Alfred se construit en parlant à un agent. Installez Claude Code, Codex ou OpenCode sur ce poste et connectez-vous-y dans un terminal : il apparaîtra ici."
+        action={
+          <Button
+            onPress={() => {
+              const shell = useShell.getState();
+              shell.setView({ kind: "settings" });
+              shell.setActiveTab(SETTINGS_SECTION, "agents");
+            }}
+          >
+            Vérifier dans les Réglages
+          </Button>
+        }
+      />
+    );
+
+  const onAgent = effective.kind === "agent";
+  return (
+    <>
+      <SocleShell
+        sidebar={sidebar}
+        pageTitle={onAgent ? "Agent" : frame.pageTitle}
+        pageSummary={onAgent ? undefined : frame.pageSummary}
+        pageStatus={onAgent ? undefined : frame.pageStatus}
+        views={onAgent ? undefined : frame.views}
+        activeView={onAgent ? undefined : frame.activeView}
+        onViewChange={onAgent ? undefined : frame.onViewChange}
+        actions={onAgent ? <NotificationCenter /> : frame.actions}
+        detail={onAgent ? undefined : frame.detail}
+        detailExpandable
+        history={false}
+      >
+        {onAgent ? agentPage : shownSection ? frame.main : null}
+      </SocleShell>
       {settingsOpen ? (
         <SettingsModal
           tabs={settingsTabs}
@@ -684,7 +584,7 @@ export function AppShell({
         />
       ) : null}
       {editor.elements}
-      <NotificationToasts />
-    </div>
+      {spaces.elements}
+    </>
   );
 }

@@ -1,16 +1,17 @@
-import { EmptyState } from "@alfred/ui";
+import { FileText } from "lucide-react";
 import { useEffect } from "react";
-import { type AgentPanelRenderer, type PageToolsRenderer, SectionView } from "./AppShell";
-import { NotificationToasts } from "./NotificationCenter";
+import { EmptyState, Sidebar, AppShell as SocleShell } from "socle-ui";
+import { useSectionFrame } from "./AppShell";
 import { findPage } from "./navigationLayout";
 import { pageWindowParams } from "./pageWindowMode";
 import { useShell } from "./store";
+import type { AgentPanelRenderer, PageToolsRenderer } from "./types";
 
 export { pageWindowReference } from "./pageWindowMode";
 
 /**
- * Coquille d’une fenêtre de page : la page et son panneau, sans le menu de l’espace. Elle suit le même espace que
- * la fenêtre principale, et dit pourquoi elle est vide si la page en a disparu.
+ * Coquille d’une fenêtre de page : la page et son panneau, avec un menu réduit à la page elle-même. Elle suit le
+ * même espace que la fenêtre principale, et dit pourquoi elle est vide si la page en a disparu.
  */
 export function PageWindow({
   reference,
@@ -33,31 +34,47 @@ export function PageWindow({
       activeEntry: { ...state.activeEntry, [reference]: { id: entry.id as string, label, zone } },
     }));
   }, [reference]);
+  const frame = useSectionFrame({
+    title: found?.page.title ?? "Page introuvable",
+    sectionId: `fenêtre:${reference}`,
+    pages: found ? [found.page] : [],
+    waiting: found?.section?.waiting,
+    detachable: false,
+    renderAgentPanel,
+    renderPageTools,
+  });
+  const sidebar = (
+    <Sidebar
+      selectedId={reference}
+      onSelectionChange={() => undefined}
+      account={<Sidebar.Account name="Alfred" onSettings={() => useShell.getState().setView({ kind: "settings" })} />}
+    >
+      <Sidebar.Item id={reference} icon={<FileText size={16} aria-hidden="true" />} label={frame.pageTitle} />
+    </Sidebar>
+  );
   return (
-    <div className="app-shell app-shell--page-window">
-      <main className="workspace">
-        {found ? (
-          <SectionView
-            title={found.page.title}
-            sectionId={`fenêtre:${reference}`}
-            pages={[found.page]}
-            waiting={found.section?.waiting}
-            detachable={false}
-            renderAgentPanel={renderAgentPanel}
-            renderPageTools={renderPageTools}
-          />
-        ) : (
-          <EmptyState
-            title="Page introuvable"
-            description={
-              snapshot
-                ? "Cette page n’est plus dans la navigation de l’espace de travail ouvert. Vous pouvez fermer cette fenêtre."
-                : "Aucun espace de travail n’est ouvert. Ouvrez-en un dans la fenêtre principale d’Alfred."
-            }
-          />
-        )}
-      </main>
-      <NotificationToasts />
-    </div>
+    <SocleShell
+      sidebar={sidebar}
+      pageTitle={frame.pageTitle}
+      pageSummary={frame.pageSummary}
+      pageStatus={frame.pageStatus}
+      actions={frame.actions}
+      detail={found ? frame.detail : undefined}
+      detailExpandable
+      history={false}
+    >
+      {found ? (
+        frame.main
+      ) : (
+        <EmptyState
+          title="Page introuvable"
+          description={
+            snapshot
+              ? "Cette page n’est plus dans la navigation de l’espace de travail ouvert. Vous pouvez fermer cette fenêtre."
+              : "Aucun espace de travail n’est ouvert. Ouvrez-en un dans la fenêtre principale d’Alfred."
+          }
+        />
+      )}
+    </SocleShell>
   );
 }

@@ -1,8 +1,6 @@
 import { openPageWindow } from "../lib/native";
-import type { ResolvedPage } from "../lib/types";
 import { frameServices } from "./frameBridge";
-import { MenuZoneView } from "./MenuZone";
-import { deliverEntryAction, entryTarget, type MenuEntry, moveEntry, orderedEntries, useMenuZones } from "./menuZones";
+import { deliverEntryAction, entryTarget, type MenuEntry } from "./menuZones";
 import { notify } from "./notifications";
 import { useShell } from "./store";
 
@@ -57,44 +55,3 @@ export function runZoneAction(zonePage: string, entry: MenuEntry, actionId: stri
   if (actionId !== "rename") openZoneEntry(zonePage, entry);
 }
 
-/** Zones des pages visibles d’une section, dans l’ordre de ses onglets, sous l’entrée de la section. */
-export function SectionZones({ pages, sectionLabel }: { pages: ResolvedPage[]; sectionLabel: string }) {
-  const zones = useMenuZones((state) => state.zones);
-  const activeEntry = useShell((state) => state.activeEntry);
-  const view = useShell((state) => state.view);
-  const activeTab = useShell((state) => state.activeTab);
-  return (
-    <>
-      {pages
-        .filter((page) => !page.hidden && zones[page.reference]?.entries.length)
-        .map((page) => {
-          const zone = zones[page.reference];
-          const entries = orderedEntries(zone);
-          // L’entrée ouverte : celle de la page affichée, si elle vient de cette zone.
-          const shownPage = view.kind === "section" ? activeTab[view.id] : undefined;
-          const opened = shownPage ? activeEntry[shownPage] : undefined;
-          const activeId = opened?.zone === page.reference ? opened.id : undefined;
-          return (
-            <MenuZoneView
-              key={page.reference}
-              zoneKey={page.reference}
-              label={zone.title ? `${zone.title} · ${sectionLabel}` : `Entrées de ${page.title}`}
-              title={zone.title}
-              rows={entries}
-              activeId={activeId}
-              visible={zone.visible}
-              onOpen={(id) => {
-                const entry = entries.find((candidate) => candidate.id === id);
-                if (entry) openZoneEntry(page.reference, entry);
-              }}
-              onAction={(id, action, value) => {
-                const entry = entries.find((candidate) => candidate.id === id);
-                if (entry) runZoneAction(page.reference, entry, action, value);
-              }}
-              onMove={zone.order === "user" ? (id, step) => moveEntry(page.reference, zone, id, step) : undefined}
-            />
-          );
-        })}
-    </>
-  );
-}

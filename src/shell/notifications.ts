@@ -1,11 +1,11 @@
-import { toast } from "sonner";
+import type { NotificationTone as SocleTone } from "socle-ui";
 import { create } from "zustand";
+import { notifications } from "./socle";
 
 /**
- * Notifications d’Alfred, reprises de OneApp (`lib/notifications.ts`, `lib/notificationCenter.ts`,
- * `components/shell/NotificationCenter.tsx`) : surimpressions sonner en bas à droite, quatre au plus, dédoublonnées,
- * durée selon le ton (5 s, 8 s pour une alerte ou une erreur, illimitée sur demande), une action et un bouton de
- * fermeture. Alfred garde en plus l’historique de la cloche de la barre du haut.
+ * Notifications d’Alfred : la file de socle-ui (toasts et centre de notifications de la barre du haut, D-150 à
+ * D-158) les affiche. Alfred garde ici l’API de ses modules (`notify`, tons `error`, dédoublonnage, actions) et une
+ * copie de l’historique, lue par les badges et les tests.
  */
 export type NotificationTone = "info" | "success" | "warning" | "error";
 
@@ -49,7 +49,7 @@ export interface NotificationInput {
 }
 
 /** Surimpressions visibles en même temps, comme dans OneApp. */
-export const maximumVisibleNotifications = 4;
+export const maximumVisibleNotifications = 3;
 
 export function notificationDuration(tone: NotificationTone) {
   return tone === "error" || tone === "warning" ? 8_000 : 5_000;
@@ -66,13 +66,17 @@ interface NotificationState {
 }
 
 let nextId = 1;
-const toastId = (id: number) => `alfred-notification-${id}`;
+/** Identifiant de la file Socle de chaque notification d’Alfred encore affichée. */
+const socleIds = new Map<number, string>();
+
+const socleTone = (tone: NotificationTone): SocleTone => (tone === "error" ? "danger" : tone);
 
 export const useNotifications = create<NotificationState>((set, get) => {
   const dismissToast = (id: number) => {
     if (!get().toasts.includes(id)) return;
     set((state) => ({ toasts: state.toasts.filter((toast) => toast !== id) }));
-    toast.dismiss(toastId(id));
+    const socleId = socleIds.get(id);
+    if (socleId) notifications.dismiss(socleId);
   };
   return {
     items: [],
@@ -89,7 +93,7 @@ export const useNotifications = create<NotificationState>((set, get) => {
       dedupeKey,
     }) {
       const actions = [...(single ? [single] : []), ...(more ?? [])].slice(0, 2);
-      const [action, second] = actions;
+      const [action] = actions;
       const state = get();
       const duplicate = state.items.find(
         (item) =>
@@ -119,40 +123,37 @@ export const useNotifications = create<NotificationState>((set, get) => {
         items: [item, ...state.items.filter((known) => known.id !== id)].slice(0, 200),
         toasts: toasts.slice(-maximumVisibleNotifications),
       });
-      for (const old of hidden) toast.dismiss(toastId(old));
+      for (const old of hidden) dismissToast(old);
+      // Une notification identique remplace la précédente : sa ligne du centre aussi.
+      const previous = socleIds.get(id);
+      if (previous) {
+        notifications.dismiss(previous);
+        notifications.remove(previous);
+      }
       const shown = persistent ? null : duration === undefined ? notificationDuration(tone) : duration;
-      const onDismiss = () => dismissToast(id);
-      toast[tone](title, {
-        id: toastId(id),
-        description,
-        duration: shown === null ? Number.POSITIVE_INFINITY : shown,
-        action: action
-          ? {
-              label: action.label,
-              onClick: () => {
-                action.run();
-                onDismiss();
-              },
-            }
-          : undefined,
-        cancel: second
-          ? {
-              label: second.label,
-              onClick: () => {
-                second.run();
-                onDismiss();
-              },
-            }
-          : undefined,
-        onDismiss,
-        onAutoClose: onDismiss,
-      });
+      socleIds.set(
+        id,
+        notifications.notify({
+          title,
+          description,
+          tone: socleTone(tone),
+          source,
+          // Socle ne montre qu’une action par toast (D-155) : la première. La seconde reste dans l’historique.
+          action: action ? { label: action.label, onAction: action.run } : undefined,
+          duration: shown === null ? null : Math.max(5_000, shown),
+        }),
+      );
       return id;
     },
     dismissToast,
-    markAllRead: () => set((state) => ({ items: state.items.map((item) => ({ ...item, read: true })) })),
+    markAllRead: () => {
+      notifications.markAllRead();
+      set((state) => ({ items: state.items.map((item) => ({ ...item, read: true })) }));
+    },
     clear: () => {
-      for (const id of get().toasts) toast.dismiss(toastId(id));
+      for (const id of get().toasts) dismissToast(id);
+      notifications.clear();
+      socleIds.clear();
       set({ items: [], toasts: [] });
     },
   };

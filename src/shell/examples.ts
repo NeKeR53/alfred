@@ -22,3 +22,4 @@ export async function setExampleMode(module: string, on: boolean): Promise<void>
   const { snapshot } = useShell.getState();
   if (snapshot) useShell.setState({ snapshot: { ...snapshot, examples } });
 }
+export const EXAMPLE_HINT = "Cette page affiche des données d’exemple";

@@ -2,11 +2,13 @@
  * Gestes de réorganisation de la navigation : application optimiste d’un nouveau `layout`, commit par
  * `space.updateLayout`, retour en arrière si le backend refuse ; menus contextuels et dialogues de la coquille.
  */
-import { Dialog, FormActions, FormField, Menu, MenuGroup, MenuItem, TextInput, useConfirm } from "@alfred/ui";
 import {
   AppWindow,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowRightLeft,
-  Check,
+  ArrowUp,
   EyeOff,
   History,
   icons,
@@ -15,33 +17,32 @@ import {
   Shapes,
   Trash2,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { type ReactNode, useCallback, useState } from "react";
+import { type Action, Button, Dialog, Menu, TextField, useConfirm, useOpenForm } from "socle-ui";
 import { create } from "zustand";
 import { PageHistoryDialog } from "../features/navigation/PageHistory";
 import { openModuleSettings } from "../features/settings/open";
 import { inTauri, invoke, openPageWindow } from "../lib/native";
-import { SECTION_COLORS, type Snapshot } from "../lib/types";
-import { focusStayed } from "../ui/components/AnchoredMenu";
-import { useContextMenuDismiss } from "../ui/components/useContextMenuDismiss";
-import { DialogHeader } from "./DialogHeader";
+import type { Snapshot } from "../lib/types";
 import { IconPicker } from "./IconPicker";
 import { isImageIcon } from "./icons";
 import {
   baseReference,
-  COLOR_LABELS,
   findPage,
   findSection,
   type LayoutChange,
   movePage,
+  pagesOf,
   project,
   renamePage,
   renameSection,
+  reorderSections,
+  reorderTabs,
   SETTINGS_SECTION,
   setPageHidden,
-  setSectionColor,
   setSectionHidden,
   setSectionIcon,
+  shift,
 } from "./navigationLayout";
 import { notify } from "./notifications";
 import { useShell } from "./store";
@@ -60,7 +61,7 @@ export function announce(text: string) {
 export function NavigationAnnouncer() {
   const { text, key } = useAnnouncements();
   return (
-    <div className="visually-hidden" role="status" aria-live="polite">
+    <div className="sr-only" role="status" aria-live="polite">
       <span key={key}>{text}</span>
     </div>
   );
@@ -173,91 +174,8 @@ export function iconExists(name: string): boolean {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Menu contextuel
+// Dialogue de renommage
 // ---------------------------------------------------------------------------------------------------------------
-
-const MENU_WIDTH = 252;
-
-export interface MenuAnchor {
-  x: number;
-  y: number;
-}
-
-/** Position d’un menu ouvert au clavier : sous l’élément, aligné sur son bord gauche. */
-export function anchorOf(element: Element): MenuAnchor {
-  const rect = element.getBoundingClientRect();
-  return { x: rect.left, y: rect.bottom + 4 };
-}
-
-/**
- * Menu ouvert à un point (clic droit, touche Menu, Maj+F10 ou bouton « … »). Échap, Tab ou le choix d’une entrée
- * le ferment et rendent le focus à l’élément qui l’a ouvert ; un clic à côté le ferme simplement.
- */
-export function ContextMenu({
-  label,
-  anchor,
-  returnFocus,
-  onClose,
-  children,
-}: {
-  label: string;
-  anchor: MenuAnchor;
-  returnFocus: HTMLElement | null;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const id = useId();
-  const close = useCallback(() => onClose(), [onClose]);
-  const closeAndFocus = () => {
-    const restore = focusStayed(document.querySelector(`[data-context-menu="${id}"]`));
-    onClose();
-    if (restore && returnFocus?.isConnected) returnFocus.focus();
-  };
-  useContextMenuDismiss(true, `[data-context-menu="${id}"]`, close);
-  const left = Math.max(8, Math.min(anchor.x, window.innerWidth - MENU_WIDTH - 8));
-  const below = anchor.y < window.innerHeight * 0.6;
-  return createPortal(
-    // biome-ignore lint/a11y/noStaticElementInteractions: les entrées du menu portent le clavier ; ce conteneur ne fait que fermer le menu.
-    <span
-      data-context-menu={id}
-      onClick={(event) => {
-        // Remontée, après le `onClick` de l’entrée : fermer pendant la capture rendait le focus, ce qui, dans une
-        // vraie fenêtre, rend aussitôt le menu démonté et l’action de l’entrée n’était jamais appelée.
-        if (event.target instanceof Element && event.target.closest('[role="menuitem"]:not(:disabled)'))
-          closeAndFocus();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" || event.key === "Tab") {
-          event.preventDefault();
-          event.stopPropagation();
-          closeAndFocus();
-        }
-      }}
-    >
-      <Menu
-        label={label}
-        className="nav-context-menu"
-        style={below ? { top: anchor.y, left } : { bottom: window.innerHeight - anchor.y, left }}
-      >
-        {children}
-      </Menu>
-    </span>,
-    document.body,
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Dialogues
-// ---------------------------------------------------------------------------------------------------------------
-
-function useModal() {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
-  return dialog;
-}
 
 /** Renomme une section ou une page. Un champ vide rend le nom d’origine du module. */
 export function RenameDialog({
@@ -271,41 +189,55 @@ export function RenameDialog({
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
-  const titleId = useId();
-  const formId = useId();
-  const dialog = useModal();
   const [value, setValue] = useState(initial);
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submit = () => {
     onSubmit(value);
-    dialog.current?.close();
+    onClose();
   };
   return (
-    <Dialog ref={dialog} className="nav-dialog" aria-labelledby={titleId} onClose={onClose}>
-      <form id={formId} noValidate onSubmit={submit}>
-        <DialogHeader title={title} titleId={titleId} dialogRef={dialog} />
-        <div className="nav-dialog__body">
-          <FormField label="Nom" hint="Laisser vide pour revenir au nom donné par le module.">
-            <TextInput
-              value={value}
-              autoComplete="off"
-              autoFocus
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => setValue(event.target.value)}
-            />
-          </FormField>
-        </div>
-        <div className="nav-dialog__footer">
-          <FormActions onCancel={() => dialog.current?.close()} submitLabel="Renommer" form={formId} />
-        </div>
+    <Dialog
+      isOpen
+      size="sm"
+      title={title}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      footer={
+        <>
+          <Button onPress={onClose}>Annuler</Button>
+          <Button variant="primary" onPress={submit}>
+            Renommer
+          </Button>
+        </>
+      }
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <TextField
+          label="Nom"
+          description="Laisser vide pour revenir au nom donné par le module."
+          value={value}
+          onChange={setValue}
+          autoComplete="off"
+          maxLength={120}
+          autoFocus
+        />
       </form>
     </Dialog>
   );
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Dialogue d’icône
+// ---------------------------------------------------------------------------------------------------------------
+
 /**
- * Change l’icône d’une section ou d’une page : une grille d’icônes avec une recherche, et « Par défaut » pour revenir
- * à celle du module (ou au logo du service).
+ * Change l’icône d’une section : une grille d’icônes avec une recherche, et « Par défaut » pour revenir à celle du
+ * module (ou au logo du service).
  */
 export function IconDialog({
   section,
@@ -324,26 +256,30 @@ export function IconDialog({
   onSubmit: (value: string) => void;
   onClose: () => void;
 }) {
-  const titleId = useId();
-  const formId = useId();
-  const dialog = useModal();
   const [value, setValue] = useState(iconExists(initial) ? initial : "");
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSubmit(value);
-    dialog.current?.close();
-  };
   return (
-    <Dialog ref={dialog} className="nav-dialog" aria-labelledby={titleId} onClose={onClose}>
-      <form id={formId} noValidate onSubmit={submit}>
-        <DialogHeader title={`Icône de « ${section} »`} titleId={titleId} dialogRef={dialog} />
-        <div className="nav-dialog__body">
-          <IconPicker value={value} onChange={setValue} fallback={{ icon: fallbackIcon, iconUrl: logo }} />
-        </div>
-        <div className="nav-dialog__footer">
-          <FormActions onCancel={() => dialog.current?.close()} submitLabel="Enregistrer" form={formId} />
-        </div>
-      </form>
+    <Dialog
+      isOpen
+      title={`Icône de « ${section} »`}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      footer={
+        <>
+          <Button onPress={onClose}>Annuler</Button>
+          <Button
+            variant="primary"
+            onPress={() => {
+              onSubmit(value);
+              onClose();
+            }}
+          >
+            Enregistrer
+          </Button>
+        </>
+      }
+    >
+      <IconPicker value={value} onChange={setValue} fallback={{ icon: fallbackIcon, iconUrl: logo }} />
     </Dialog>
   );
 }
@@ -352,33 +288,46 @@ export function IconDialog({
 // Menus de la coquille
 // ---------------------------------------------------------------------------------------------------------------
 
-type OpenMenu =
-  | { kind: "section"; id: string; anchor: MenuAnchor; returnFocus: HTMLElement | null }
-  | { kind: "page"; reference: string; anchor: MenuAnchor; returnFocus: HTMLElement | null };
+type OpenDialog = { kind: "icon"; id: string } | { kind: "history"; reference: string };
 
-type OpenDialog =
-  | { kind: "rename-section"; id: string }
-  | { kind: "icon"; id: string }
-  | { kind: "rename-page"; reference: string }
-  | { kind: "history"; reference: string };
+const icon16 = (Icon: typeof Pencil) => <Icon size={16} aria-hidden="true" />;
+
+const windowError = (error: unknown) =>
+  notify({
+    title: "La fenêtre n’a pas pu s’ouvrir",
+    description: error instanceof Error ? error.message : String(error),
+    tone: "error",
+  });
 
 /**
- * Menus et dialogues de la réorganisation, partagés par le menu de gauche et les onglets. `elements` se rend une
- * fois dans la coquille.
+ * Menus et dialogues de la réorganisation : le menu « … » d’une section (Sidebar), les actions de la page affichée
+ * (barre du haut, menu « … » de l’`ActionBar`). `elements` se rend une fois dans la coquille.
  */
 export function useNavigationEditor() {
   const snapshot = useShell((state) => state.snapshot);
-  const [menu, setMenu] = useState<OpenMenu>();
   const [dialog, setDialog] = useState<OpenDialog>();
-  const { confirm, confirmDialog } = useConfirm();
-  const closeMenu = useCallback(() => setMenu(undefined), []);
+  const confirm = useConfirm();
+  const openForm = useOpenForm();
 
-  const openSectionMenu = useCallback((id: string, anchor: MenuAnchor, returnFocus: HTMLElement | null) => {
-    setMenu({ kind: "section", id, anchor, returnFocus });
-  }, []);
-  const openPageMenu = useCallback((reference: string, anchor: MenuAnchor, returnFocus: HTMLElement | null) => {
-    setMenu({ kind: "page", reference, anchor, returnFocus });
-  }, []);
+  const rename = useCallback(
+    (title: string, initial: string, apply: (value: string) => void) =>
+      void openForm({
+        title,
+        fields: [
+          {
+            name: "name",
+            label: "Nom",
+            description: "Laisser vide pour revenir au nom donné par le module.",
+            autoComplete: "off",
+            maxLength: 120,
+          },
+        ],
+        initialValues: { name: initial },
+        submitLabel: "Renommer",
+        onSubmit: (values) => apply(String(values.name ?? "")),
+      }),
+    [openForm],
+  );
 
   const askDelete = async (reference: string) => {
     const current = useShell.getState().snapshot;
@@ -391,6 +340,7 @@ export function useNavigationEditor() {
         title: `La page « ${page.title} » ne peut pas être supprimée`,
         message: `Elle vient du module installé « ${module} », en lecture seule. La masquer la retire de la navigation sans toucher au module.`,
         confirmLabel: "Masquer la page",
+        tone: "default",
       });
       if (hide) void applyLayoutChange((state) => setPageHidden(state, reference, true));
       return;
@@ -405,152 +355,176 @@ export function useNavigationEditor() {
     if (accepted) void deletePage(reference);
   };
 
-  let menuElement: ReactNode = null;
-  if (snapshot && menu?.kind === "section") {
-    const section = findSection(snapshot, menu.id);
-    if (section) {
-      const color = section.color ?? "steel";
-      // Importé d’un marketplace ou masqué, le module a sa fiche ; une section sans module connu n’en a pas.
-      const module = snapshot.modules.find((candidate) => candidate.id === section.module);
-      menuElement = (
-        <ContextMenu
-          label={`Actions de la section ${section.label}`}
-          anchor={menu.anchor}
-          returnFocus={menu.returnFocus}
-          onClose={closeMenu}
-        >
-          {module ? (
-            <MenuItem onClick={() => openModuleSettings(module.id)}>
-              <Settings2 size={16} aria-hidden="true" />
-              Configurer le module…
-            </MenuItem>
-          ) : null}
-          <MenuItem onClick={() => setDialog({ kind: "rename-section", id: section.id })}>
-            <Pencil size={16} aria-hidden="true" />
-            Renommer…
-          </MenuItem>
-          <MenuItem onClick={() => setDialog({ kind: "icon", id: section.id })}>
-            <Shapes size={16} aria-hidden="true" />
-            Changer l’icône…
-          </MenuItem>
-          <MenuGroup label="Couleur">
-            {SECTION_COLORS.map((candidate) => (
-              <MenuItem
-                key={candidate}
-                aria-current={candidate === color ? "true" : undefined}
-                onClick={() => void applyLayoutChange((state) => setSectionColor(state, section.id, candidate))}
-              >
-                <span className={`nav-swatch product-color--${candidate}`} aria-hidden="true" />
-                <span className="nav-menu__label">{COLOR_LABELS[candidate].replace(/^./, (c) => c.toUpperCase())}</span>
-                {candidate === color ? (
-                  <>
-                    <Check size={14} aria-hidden="true" />
-                    <span className="visually-hidden">(couleur actuelle)</span>
-                  </>
-                ) : null}
-              </MenuItem>
-            ))}
-          </MenuGroup>
-          <MenuItem onClick={() => void applyLayoutChange((state) => setSectionHidden(state, section.id, true))}>
-            <EyeOff size={16} aria-hidden="true" />
-            Masquer la section
-          </MenuItem>
-        </ContextMenu>
-      );
-    }
-  } else if (snapshot && menu?.kind === "page") {
-    const found = findPage(snapshot, menu.reference);
-    if (found) {
-      const { page, section } = found;
-      // Un onglet va dans n’importe quelle autre page du menu ; une copie (`…@suffixe`) ne va pas dans les Réglages.
-      const copy = page.reference.includes("@");
-      const targets = snapshot.sections.filter((candidate) => candidate.id !== section?.id);
-      menuElement = (
-        <ContextMenu
-          label={`Actions de l’onglet ${page.title}`}
-          anchor={menu.anchor}
-          returnFocus={menu.returnFocus}
-          onClose={closeMenu}
-        >
-          <MenuItem onClick={() => setDialog({ kind: "rename-page", reference: page.reference })}>
-            <Pencil size={16} aria-hidden="true" />
-            Renommer…
-          </MenuItem>
-          {inTauri ? (
-            <MenuItem
-              onClick={() =>
-                void openPageWindow(page.reference).catch((error: unknown) =>
-                  notify({
-                    title: "La fenêtre n’a pas pu s’ouvrir",
-                    description: error instanceof Error ? error.message : String(error),
-                    tone: "error",
-                  }),
-                )
-              }
-            >
-              <AppWindow size={16} aria-hidden="true" />
-              Ouvrir dans une nouvelle fenêtre
-            </MenuItem>
-          ) : null}
-          {targets.length === 0 && (copy || !section) ? null : (
-            <MenuGroup label="Déplacer vers">
-              {targets.map((target) => (
-                <MenuItem
-                  key={target.id}
-                  onClick={() =>
-                    void applyLayoutChange((state) =>
-                      movePage(state, page.reference, { kind: "tab", section: target.id }),
-                    )
-                  }
-                >
-                  <ArrowRightLeft size={16} aria-hidden="true" />
-                  {target.label}
-                  {target.hidden ? " (masquée)" : ""}
-                </MenuItem>
-              ))}
-              {section && !copy ? (
-                <MenuItem
-                  onClick={() =>
-                    void applyLayoutChange((state) => movePage(state, page.reference, { kind: "settings" }))
-                  }
-                >
-                  <ArrowRightLeft size={16} aria-hidden="true" />
-                  Réglages
-                </MenuItem>
-              ) : null}
-            </MenuGroup>
-          )}
-          <MenuItem onClick={() => setDialog({ kind: "history", reference: baseReference(page.reference) })}>
-            <History size={16} aria-hidden="true" />
-            Historique…
-          </MenuItem>
-          <MenuItem onClick={() => void applyLayoutChange((state) => setPageHidden(state, page.reference, true))}>
-            <EyeOff size={16} aria-hidden="true" />
-            Masquer l’onglet
-          </MenuItem>
-          <MenuItem className="nav-menu__danger" onClick={() => void askDelete(baseReference(page.reference))}>
-            <Trash2 size={16} aria-hidden="true" />
-            Supprimer la page…
-          </MenuItem>
-        </ContextMenu>
-      );
-    }
-  }
+  /** Entrées du menu « … » d’une section de la navigation. */
+  const sectionMenu = (id: string): ReactNode => {
+    if (!snapshot) return null;
+    const section = findSection(snapshot, id);
+    if (!section) return null;
+    // Importé d’un marketplace ou masqué, le module a sa fiche ; une section sans module connu n’en a pas.
+    const module = snapshot.modules.find((candidate) => candidate.id === section.module);
+    const order = snapshot.sections.filter((candidate) => !candidate.hidden).map((candidate) => candidate.id);
+    const move = (offset: -1 | 1) => {
+      const next = shift(order, id, offset);
+      if (next) void applyLayoutChange((state) => reorderSections(state, next, id));
+    };
+    const index = order.indexOf(id);
+    return (
+      <>
+        {module ? (
+          <Menu.Item
+            label="Configurer le module…"
+            icon={icon16(Settings2)}
+            onAction={() => openModuleSettings(module.id)}
+          />
+        ) : null}
+        <Menu.Item
+          label="Renommer…"
+          icon={icon16(Pencil)}
+          onAction={() =>
+            rename(
+              `Renommer la section « ${section.label} »`,
+              section.label,
+              (value) => void applyLayoutChange((state) => renameSection(state, section.id, value)),
+            )
+          }
+        />
+        <Menu.Item label="Changer l’icône…" icon={icon16(Shapes)} onAction={() => setDialog({ kind: "icon", id })} />
+        <Menu.Item label="Monter" icon={icon16(ArrowUp)} isDisabled={index <= 0} onAction={() => move(-1)} />
+        <Menu.Item
+          label="Descendre"
+          icon={icon16(ArrowDown)}
+          isDisabled={index < 0 || index >= order.length - 1}
+          onAction={() => move(1)}
+        />
+        <Menu.Separator />
+        <Menu.Item
+          label="Masquer la section"
+          icon={icon16(EyeOff)}
+          onAction={() => void applyLayoutChange((state) => setSectionHidden(state, section.id, true))}
+        />
+      </>
+    );
+  };
+
+  /** Actions de la page affichée (onglet), rangées dans le « … » de la barre du haut. */
+  const pageActions = (reference: string, sectionId: string): Action[] => {
+    if (!snapshot) return [];
+    const found = findPage(snapshot, reference);
+    if (!found) return [];
+    const { page, section } = found;
+    // Un onglet va dans n’importe quelle autre section ; une copie (`…@suffixe`) ne va pas dans les Réglages.
+    const copy = page.reference.includes("@");
+    const targets = snapshot.sections.filter((candidate) => candidate.id !== section?.id);
+    const order = pagesOf(snapshot, sectionId)
+      .filter((candidate) => !candidate.hidden)
+      .map((candidate) => candidate.reference);
+    const index = order.indexOf(reference);
+    const moveTab = (offset: -1 | 1) => {
+      const next = shift(order, reference, offset);
+      if (!next) return;
+      void applyLayoutChange((state) => {
+        const all = pagesOf(state, sectionId).map((candidate) => candidate.reference);
+        const visible = new Set(next);
+        const queue = [...next];
+        return reorderTabs(
+          state,
+          sectionId,
+          all.map((id) => (visible.has(id) ? (queue.shift() ?? id) : id)),
+          reference,
+        );
+      });
+    };
+    const destinations = [
+      ...targets.map((target) => ({
+        id: target.id,
+        label: `${target.label}${target.hidden ? " (masquée)" : ""}`,
+      })),
+      ...(section && !copy ? [{ id: SETTINGS_SECTION, label: "Réglages" }] : []),
+    ];
+    return [
+      {
+        id: "page-rename",
+        label: "Renommer l’onglet…",
+        onPress: () =>
+          rename(
+            `Renommer la page « ${page.title} »`,
+            page.title,
+            (value) => void applyLayoutChange((state) => renamePage(state, reference, value)),
+          ),
+      },
+      {
+        id: "page-window",
+        label: "Ouvrir dans une nouvelle fenêtre",
+        isHidden: !inTauri,
+        onPress: () => void openPageWindow(page.reference).catch(windowError),
+      },
+      {
+        id: "page-left",
+        label: "Déplacer l’onglet vers la gauche",
+        isHidden: order.length < 2,
+        isDisabled: index <= 0,
+        onPress: () => moveTab(-1),
+      },
+      {
+        id: "page-right",
+        label: "Déplacer l’onglet vers la droite",
+        isHidden: order.length < 2,
+        isDisabled: index < 0 || index >= order.length - 1,
+        onPress: () => moveTab(1),
+      },
+      {
+        id: "page-move",
+        label: "Déplacer vers une autre section…",
+        isHidden: destinations.length === 0,
+        onPress: () =>
+          void openForm({
+            title: `Déplacer « ${page.title} »`,
+            fields: [{ type: "select", name: "target", label: "Section", options: destinations, isRequired: true }],
+            submitLabel: "Déplacer",
+            onSubmit: (values) => {
+              const target = String(values.target ?? "");
+              void applyLayoutChange((state) =>
+                movePage(
+                  state,
+                  page.reference,
+                  target === SETTINGS_SECTION ? { kind: "settings" } : { kind: "tab", section: target },
+                ),
+              );
+            },
+          }),
+      },
+      {
+        id: "page-history",
+        label: "Historique…",
+        onPress: () => setDialog({ kind: "history", reference: baseReference(page.reference) }),
+      },
+      {
+        id: "page-hide",
+        label: "Masquer l’onglet",
+        onPress: () => void applyLayoutChange((state) => setPageHidden(state, page.reference, true)),
+      },
+      {
+        id: "page-delete",
+        label: "Supprimer la page…",
+        // Une page d’un module installé ne se supprime pas : l’action explique et propose de la masquer.
+        danger: !page.readOnly,
+        confirm: page.readOnly
+          ? undefined
+          : {
+              title: `Supprimer la page « ${page.title} » ?`,
+              message:
+                "Son fichier et son entrée sont retirés du module. La suppression reste annulable par l’historique de l’espace de travail.",
+              confirmLabel: "Supprimer",
+            },
+        onPress: () =>
+          page.readOnly ? askDelete(baseReference(page.reference)) : deletePage(baseReference(page.reference)),
+      },
+    ];
+  };
 
   let dialogElement: ReactNode = null;
   const closeDialog = () => setDialog(undefined);
-  if (snapshot && dialog?.kind === "rename-section") {
-    const section = findSection(snapshot, dialog.id);
-    if (section)
-      dialogElement = (
-        <RenameDialog
-          title={`Renommer la section « ${section.label} »`}
-          initial={section.label}
-          onSubmit={(value) => void applyLayoutChange((state) => renameSection(state, section.id, value))}
-          onClose={closeDialog}
-        />
-      );
-  } else if (snapshot && dialog?.kind === "icon") {
+  if (snapshot && dialog?.kind === "icon") {
     const section = findSection(snapshot, dialog.id);
     if (section)
       dialogElement = (
@@ -569,28 +543,15 @@ export function useNavigationEditor() {
   } else if (snapshot && dialog?.kind === "history") {
     const found = findPage(snapshot, dialog.reference);
     if (found) dialogElement = <PageHistoryDialog page={found.page} onClose={closeDialog} />;
-  } else if (snapshot && dialog?.kind === "rename-page") {
-    const found = findPage(snapshot, dialog.reference);
-    if (found)
-      dialogElement = (
-        <RenameDialog
-          title={`Renommer la page « ${found.page.title} »`}
-          initial={found.page.title}
-          onSubmit={(value) => void applyLayoutChange((state) => renamePage(state, dialog.reference, value))}
-          onClose={closeDialog}
-        />
-      );
   }
 
   return {
-    openSectionMenu,
-    openPageMenu,
-    menuOpenFor: menu?.kind === "section" ? menu.id : menu?.kind === "page" ? menu.reference : undefined,
+    sectionMenu,
+    pageActions,
+    rename,
     elements: (
       <>
-        {menuElement}
         {dialogElement}
-        {confirmDialog}
         <NavigationAnnouncer />
       </>
     ),
