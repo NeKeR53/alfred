@@ -1,4 +1,4 @@
-import type { ConfirmOptions } from "@alfred/ui";
+import type { ConfirmOptions } from "socle-ui";
 import { invoke } from "../../lib/native";
 import { useAgents } from "../agent/store";
 import { conversationState } from "../agent/summary";
@@ -53,6 +53,7 @@ export function switchConfirmation(busy: BusyWork, target: string): ConfirmOptio
     title: `Passer à « ${target} » ?`,
     message: parts.join(" "),
     confirmLabel: "Changer d’espace de travail",
+    tone: "default",
   };
 }
 

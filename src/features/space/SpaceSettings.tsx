@@ -1,38 +1,32 @@
-import {
-  Button,
-  ChoiceButton,
-  ChoiceGroup,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  IconButton,
-  LoadingSkeleton,
-  MenuItem,
-  Modal,
-  OverflowMenu,
-  Page,
-  RefreshButton,
-  Section,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  StatusBadge,
-  Text,
-  useConfirm,
-} from "@alfred/ui";
-import { Monitor, Moon, Sun, Undo2 } from "lucide-react";
-import "./space.css";
+/**
+ * Rubriques « Général » et « Apparence » des Réglages, décrites par données pour `SettingsPage` de Socle : les
+ * espaces de travail, les sauvegardes, les modèles locaux, les accès accordés et l’historique ; le mode clair ou
+ * sombre, la densité et la couleur d’accent.
+ */
+import { ArrowRightLeft, FolderOpen, FolderSearch, History, Pencil, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import {
+  type ColorScheme,
+  Dialog,
+  EmptyState,
+  type SettingsSection,
+  Skeleton,
+  SkeletonGroup,
+  Table,
+  type TableColumn,
+  useConfirm,
+  useSocle,
+} from "socle-ui";
+import { Notice } from "../../kit";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { startWelcome } from "../../shell/welcome/store";
-import { BackupsSection } from "./BackupsSection";
-import { DecisionsSection } from "./DecisionsSection";
-import { ModelSourceSection } from "./ModelSourceSection";
-import { SemanticSection } from "./SemanticSection";
+import { useBackupsSection } from "./BackupsSection";
+import { useDecisionsSection } from "./DecisionsSection";
+import { useModelSourceSection } from "./ModelSourceSection";
+import { useSemanticSection } from "./SemanticSection";
 import { spaceList, useSpaceActions } from "./spaceActions";
 
 export interface Grant {
@@ -54,6 +48,8 @@ export const ACCENT_LABEL: Record<SectionColor, string> = {
   teal: "Bleu-vert",
 };
 
+const icon = (Icon: typeof X) => <Icon size={16} aria-hidden="true" />;
+
 const dateFormat = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" });
 
 function formatDate(iso: string): string {
@@ -65,7 +61,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Nom du gestionnaire de fichiers du système, pour le libellé du bouton. */
+/** Nom du gestionnaire de fichiers du système, pour le libellé de l’action. */
 function fileManager(platform: string | undefined): string {
   if (platform === "macos") return "le Finder";
   if (platform === "windows") return "l’Explorateur";
@@ -119,14 +115,18 @@ export function describeResource(resource: string, snapshot: Snapshot | null | u
   return resource;
 }
 
-/** Charge une liste au montage et la relit sur demande ; garde la dernière liste en cas d’échec de relecture. */
-function useList<Item>(command: string, args: Record<string, unknown>, events: string[]) {
+/**
+ * Charge une liste au montage et la relit sur demande ; garde la dernière liste en cas d’échec de relecture. `space`
+ * est le chemin de l’espace ouvert : rien n’est lu sans lui, et tout se relit quand il change.
+ */
+function useList<Item>(command: string, args: Record<string, unknown>, events: string[], space: string | undefined) {
   const [items, setItems] = useState<Item[]>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const key = JSON.stringify(args);
   const eventKey = events.join(",");
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `space` relance la lecture quand l’espace change.
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -137,9 +137,10 @@ function useList<Item>(command: string, args: Record<string, unknown>, events: s
     } finally {
       setLoading(false);
     }
-  }, [command, key]);
+  }, [command, key, space]);
 
   useEffect(() => {
+    if (!space) return;
     void load();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stops = eventKey
@@ -155,9 +156,9 @@ function useList<Item>(command: string, args: Record<string, unknown>, events: s
       clearTimeout(timer);
       for (const stop of stops) stop();
     };
-  }, [load, eventKey]);
+  }, [load, eventKey, space]);
 
-  return { items, error, loading, reload: () => void load() };
+  return { items, error, loading, reload: load };
 }
 
 const openedFormat = new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeStyle: "short" });
@@ -168,34 +169,29 @@ function openedLabel(iso: string): string | null {
   return iso && !Number.isNaN(date.getTime()) ? `Ouvert le ${openedFormat.format(date)}` : null;
 }
 
+/** Squelette d’une section en cours de chargement. */
+export function LoadingRows({ label, rows = 2 }: { label: string; rows?: number }) {
+  return (
+    <SkeletonGroup label={label}>
+      {Array.from({ length: rows }, (_, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: des formes identiques, sans identité propre.
+        <Skeleton key={index} />
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 /**
  * Tous les espaces de travail de l’utilisateur, l’ouvert marqué : l’ouvrir, le renommer, l’afficher dans le
  * gestionnaire de fichiers, le supprimer (de la liste, et à la corbeille si on le coche). En tête, ouvrir un autre
  * dossier ou créer un espace ; en bas, fermer l’espace pour revenir à l’accueil.
  */
-function SpacesSection({
-  snapshot,
-  confirm,
-}: {
-  snapshot: Snapshot;
-  confirm: ReturnType<typeof useConfirm>["confirm"];
-}) {
+function useSpacesSection(snapshot: Snapshot | null): SettingsSection {
   const recent = useShell((state) => state.recentSpaces);
   const platform = useShell((state) => state.info?.platform);
   const closeSpace = useShell((state) => state.closeSpace);
   const actions = useSpaceActions();
-  const [opening, setOpening] = useState<string | null>(null);
-  const spaces = spaceList(recent, snapshot);
-  const busy = actions.busy || opening !== null;
-
-  const open = async (path: string) => {
-    setOpening(path);
-    try {
-      await actions.open(path, undefined, true);
-    } finally {
-      setOpening(null);
-    }
-  };
+  const spaces = snapshot ? spaceList(recent, snapshot) : [];
 
   const reveal = async (path: string) => {
     try {
@@ -206,13 +202,6 @@ function SpacesSection({
   };
 
   const close = async () => {
-    const confirmed = await confirm({
-      title: `Fermer l’espace de travail « ${snapshot.name} » ?`,
-      message:
-        "Alfred revient à l’accueil pour ouvrir ou créer un autre espace de travail. Rien n’est supprimé : cet espace de travail se rouvre depuis l’accueil ou depuis cette liste.",
-      confirmLabel: "Fermer l’espace de travail",
-    });
-    if (!confirmed) return;
     try {
       await closeSpace();
     } catch (failure) {
@@ -220,422 +209,402 @@ function SpacesSection({
     }
   };
 
-  return (
-    <Section
-      title="Général"
-      description="Vos espaces de travail : chacun est un dossier qui garde ses modules, ses pages et son historique. Passez de l’un à l’autre, renommez-les, ou retirez ceux dont vous n’avez plus besoin."
-      actions={
-        <>
-          <Button disabled={busy} onClick={actions.openOther}>
-            Ouvrir un autre dossier…
-          </Button>
-          <Button disabled={busy} onClick={actions.create}>
-            Créer un espace de travail…
-          </Button>
-          <Button variant="subtle" disabled={busy} onClick={() => startWelcome(true)}>
-            Revoir l’accueil
-          </Button>
-        </>
-      }
-    >
-      <SettingRows label="Vos espaces de travail">
-        {spaces.map((space) => {
-          const current = space.path === snapshot.path;
-          const opened = openedLabel(space.openedAt);
-          return (
-            <SettingRow
-              key={space.path}
-              title={
-                <span className="space-row__title">
-                  <span>{space.name}</span>
-                  {current ? (
-                    <StatusBadge tone="success" size="compact">
-                      Ouvert
-                    </StatusBadge>
-                  ) : null}
-                </span>
-              }
-              description={
-                <span className="space-row__details">
-                  <span className="space-row__path" title={space.path}>
-                    {space.path}
-                  </span>
-                  {opened && !current ? <span>{opened}</span> : null}
-                </span>
-              }
-            >
-              {current ? null : (
-                <Button
-                  aria-label={`Ouvrir l’espace de travail ${space.name}`}
-                  loading={opening === space.path}
-                  disabled={busy}
-                  onClick={() => void open(space.path)}
-                >
-                  Ouvrir
-                </Button>
-              )}
-              <OverflowMenu label={`Actions de l’espace de travail ${space.name}`} disabled={busy} size="small">
-                <MenuItem onClick={() => actions.rename(space)}>Renommer…</MenuItem>
-                <MenuItem onClick={() => void reveal(space.path)}>Afficher dans {fileManager(platform)}</MenuItem>
-                <MenuItem tone="danger" onClick={() => actions.remove(space)}>
-                  Supprimer…
-                </MenuItem>
-              </OverflowMenu>
-            </SettingRow>
-          );
-        })}
-        <SettingRow
-          title="Fermer l’espace de travail"
-          description="Revenir à l’accueil d’Alfred. Rien n’est supprimé : l’espace de travail se rouvre depuis cette liste."
-        >
-          <Button disabled={busy} onClick={() => void close()}>
-            Fermer l’espace de travail
-          </Button>
-        </SettingRow>
-      </SettingRows>
-      {actions.elements}
-    </Section>
-  );
+  return {
+    id: "spaces",
+    title: "Espaces de travail",
+    description:
+      "Chacun est un dossier qui garde ses modules, ses pages et son historique. Passez de l’un à l’autre, renommez-les, ou retirez ceux dont vous n’avez plus besoin.",
+    actions: [
+      {
+        id: "create",
+        label: "Créer un espace de travail…",
+        primary: true,
+        isDisabled: actions.busy,
+        onPress: actions.create,
+      },
+      {
+        id: "open-other",
+        label: "Ouvrir un autre dossier…",
+        icon: icon(FolderOpen),
+        isDisabled: actions.busy,
+        onPress: actions.openOther,
+      },
+      {
+        id: "welcome",
+        label: "Revoir l’accueil",
+        icon: icon(RotateCcw),
+        onPress: () => startWelcome(true),
+      },
+    ],
+    settings: [
+      ...spaces.map((space) => {
+        const current = space.path === snapshot?.path;
+        const opened = openedLabel(space.openedAt);
+        return {
+          id: `space:${space.path}`,
+          type: "item" as const,
+          label: space.name,
+          description: opened && !current ? `${space.path} · ${opened}` : space.path,
+          tags: current ? [{ label: "Ouvert", tone: "success" as const }] : undefined,
+          actions: [
+            {
+              id: "open",
+              label: "Ouvrir",
+              icon: icon(ArrowRightLeft),
+              isHidden: current,
+              isDisabled: actions.busy,
+              onPress: () => actions.open(space.path, undefined, true),
+            },
+            { id: "rename", label: "Renommer…", icon: icon(Pencil), onPress: () => actions.rename(space) },
+            {
+              id: "reveal",
+              label: `Afficher dans ${fileManager(platform)}`,
+              icon: icon(FolderSearch),
+              onPress: () => reveal(space.path),
+            },
+            // La confirmation, avec la case « corbeille », est celle de `remove`.
+            { id: "remove", label: "Supprimer…", isDisabled: actions.busy, onPress: () => actions.remove(space) },
+          ],
+        };
+      }),
+      {
+        id: "close",
+        type: "action",
+        label: "Fermer l’espace de travail",
+        description:
+          "Revenir à l’accueil d’Alfred. Rien n’est supprimé : l’espace de travail se rouvre depuis cette liste.",
+        action: {
+          id: "close",
+          label: "Fermer l’espace de travail",
+          isDisabled: actions.busy,
+          confirm: {
+            title: `Fermer l’espace de travail « ${snapshot?.name ?? ""} » ?`,
+            message:
+              "Alfred revient à l’accueil pour ouvrir ou créer un autre espace de travail. Rien n’est supprimé : cet espace de travail se rouvre depuis l’accueil ou depuis cette liste.",
+            confirmLabel: "Fermer l’espace de travail",
+          },
+          onPress: close,
+        },
+      },
+    ],
+    content: actions.elements,
+  };
 }
 
-/** Thème et couleur d’accent ; repris par l’accueil, avec sa propre phrase (`description`). */
-export function AppearanceSection({ snapshot, description }: { snapshot: Snapshot; description?: string }) {
+const THEMES: Array<{ id: ColorScheme; label: string }> = [
+  { id: "system", label: "Comme l’ordinateur" },
+  { id: "light", label: "Clair" },
+  { id: "dark", label: "Sombre" },
+];
+
+/**
+ * Mode clair ou sombre, densité et couleur d’accent ; repris par l’accueil. Alfred garde le thème (`appearance.theme`,
+ * transmis aux pages des modules) et Socle le reçoit aussi ; la densité est un choix de Socle, mémorisé par lui.
+ */
+export function useAppearance() {
+  const snapshot = useShell((state) => state.snapshot);
   const theme = useShell((state) => state.theme);
   const followsSystem = useShell((state) => state.themeFollowsSystem);
   const setTheme = useShell((state) => state.setTheme);
-  const [accent, setAccent] = useState<string | null>(snapshot.accent);
-  const [savingAccent, setSavingAccent] = useState(false);
+  const socle = useSocle();
+  const scheme: ColorScheme = followsSystem ? "system" : theme;
 
-  const [shownAccent, setShownAccent] = useState(snapshot.accent);
-  if (shownAccent !== snapshot.accent) {
-    setShownAccent(snapshot.accent);
-    setAccent(snapshot.accent);
-  }
-
-  const themeChoice = followsSystem ? "system" : theme;
-  // Cartes de thème reprises des Préférences de OneApp : le système d’abord, puis clair et sombre.
-  const themes = [
-    { value: "system", label: "Système", description: "Suit le thème du système", Icon: Monitor },
-    { value: "light", label: "Clair", description: "Utilise le thème clair", Icon: Sun },
-    { value: "dark", label: "Sombre", description: "Utilise le thème sombre", Icon: Moon },
-  ] as const;
-
-  const changeAccent = async (next: string | null) => {
-    const previous = accent;
-    setAccent(next);
-    setSavingAccent(true);
-    try {
-      await invoke("space.updateLayout", {
-        accent: next,
-        message: next
-          ? `Couleur d’accent : ${ACCENT_LABEL[next as SectionColor] ?? next}`
-          : "Couleur d’accent par défaut",
-      });
-      await useShell.getState().refresh();
-    } catch (failure) {
-      setAccent(previous);
-      notify({ title: "La couleur d’accent n’a pas été changée", description: errorMessage(failure), tone: "error" });
-    } finally {
-      setSavingAccent(false);
-    }
+  const changeScheme = (next: string) => {
+    const chosen = (THEMES.find((candidate) => candidate.id === next)?.id ?? "system") as ColorScheme;
+    setTheme(chosen === "system" ? null : chosen);
+    socle.setColorScheme(chosen);
   };
 
-  return (
-    <Section
-      title="Apparence"
-      description={
-        description ??
-        "S’applique tout de suite. Le reste du thème (police, tailles, couleurs des états) est fixé par Alfred pour que toutes les pages restent lisibles et cohérentes."
-      }
-    >
-      <SettingRows>
-        <SettingRow title="Thème" description="Clair, sombre, ou le même que votre ordinateur.">
-          <ChoiceGroup label="Thème" appearance="segmented">
-            {themes.map(({ value, label, Icon }) => (
-              <ChoiceButton
-                key={value}
-                variant="label"
-                label={label}
-                selected={themeChoice === value}
-                onClick={() => setTheme(value === "system" ? null : value)}
-              >
-                <Icon size={14} aria-hidden="true" />
-                {label}
-              </ChoiceButton>
-            ))}
-          </ChoiceGroup>
-        </SettingRow>
-        <SettingRow title="Couleur d’accent" description="Elle marque le focus, la sélection et le choix actif.">
-          <SelectControl
-            aria-label="Couleur d’accent"
-            value={accent ?? ""}
-            disabled={savingAccent}
-            onChange={(event) => void changeAccent(event.target.value || null)}
-          >
-            <option value="">Par défaut</option>
-            {SECTION_COLORS.map((color) => (
-              <option key={color} value={color}>
-                {ACCENT_LABEL[color]}
-              </option>
-            ))}
-          </SelectControl>
-        </SettingRow>
-      </SettingRows>
-    </Section>
-  );
+  /** Un échec rejette la promesse : la ligne de réglage reprend l’ancienne valeur et le signale (D-204). */
+  const changeAccent = async (next: string) => {
+    const accent = next === "default" ? null : next;
+    await invoke("space.updateLayout", {
+      accent,
+      message: accent ? `Couleur d’accent : ${ACCENT_LABEL[accent as SectionColor] ?? accent}` : "Couleur d’accent par défaut",
+    });
+    await useShell.getState().refresh();
+  };
+
+  return {
+    scheme,
+    changeScheme,
+    density: socle.density,
+    changeDensity: (next: string) => socle.setDensity(next === "web" ? "web" : "desktop"),
+    accent: snapshot?.accent ?? "default",
+    changeAccent,
+    hasSpace: Boolean(snapshot),
+  };
+}
+
+export const THEME_OPTIONS = THEMES;
+export const DENSITY_OPTIONS = [
+  { id: "desktop", label: "Compacte" },
+  { id: "web", label: "Confortable" },
+];
+export const ACCENT_OPTIONS = [
+  { id: "default", label: "Par défaut" },
+  ...SECTION_COLORS.map((color) => ({ id: color, label: ACCENT_LABEL[color] })),
+];
+
+/** Rubrique « Apparence » : mode, densité, couleur d’accent. */
+export function useAppearanceSections(): SettingsSection[] {
+  const appearance = useAppearance();
+  return [
+    {
+      id: "appearance",
+      description:
+        "S’applique tout de suite. Le reste du thème (police, tailles, couleurs des états) est fixé pour que toutes les pages restent lisibles et cohérentes.",
+      settings: [
+        {
+          id: "theme",
+          type: "select",
+          label: "Mode",
+          description: "Clair, sombre, ou le même que votre ordinateur.",
+          value: appearance.scheme,
+          options: THEMES,
+          onChange: appearance.changeScheme,
+        },
+        {
+          id: "density",
+          type: "select",
+          label: "Densité",
+          description: "Compacte : des lignes plus serrées, comme une application de bureau.",
+          value: appearance.density,
+          options: DENSITY_OPTIONS,
+          onChange: appearance.changeDensity,
+        },
+        {
+          id: "accent",
+          type: "select",
+          label: "Couleur d’accent",
+          description: "Elle marque le focus, la sélection et le choix actif dans les pages de cet espace de travail.",
+          value: appearance.accent,
+          options: ACCENT_OPTIONS,
+          isDisabled: !appearance.hasSpace,
+          onChange: appearance.changeAccent,
+        },
+      ],
+    },
+  ];
 }
 
 /** Dernières modifications montrées dans la rubrique ; le reste s’ouvre avec « Tout voir ». */
 const RECENT = 5;
 
-function HistorySection({ confirm }: { confirm: ReturnType<typeof useConfirm>["confirm"] }) {
-  const history = useList<Commit>("space.history", { limit: 50 }, ["space:changed"]);
-  const [undoing, setUndoing] = useState<string | null>(null);
+const count = (value: number) => new Intl.NumberFormat("fr-FR").format(value);
+
+function commitDescription(commit: Commit) {
+  return `${formatDate(commit.date)} · ${count(commit.files.length)} fichier${commit.files.length > 1 ? "s" : ""}`;
+}
+
+type CommitRow = Commit & { when: string; files_: string };
+
+const HISTORY_COLUMNS: TableColumn[] = [
+  { id: "message", label: "Modification" },
+  { id: "when", label: "Date", width: 170 },
+  { id: "files_", label: "Fichiers", width: 90, align: "end" },
+];
+
+function useHistorySection(snapshot: Snapshot | null): SettingsSection {
+  const history = useList<Commit>(
+    "space.history",
+    { limit: 50 },
+    ["space:changed"],
+    snapshot?.path,
+  );
+  const confirm = useConfirm();
   const [all, setAll] = useState(false);
+  const items = history.items ?? [];
+
+  const confirmation = (commit: Commit) => ({
+    title: `Annuler la modification « ${commit.message} » ?`,
+    message:
+      "Alfred enregistre une nouvelle modification qui défait celle-ci. Cette annulation apparaît à son tour dans l’historique et peut elle-même être annulée.",
+    confirmLabel: "Annuler la modification",
+  });
 
   const undo = async (commit: Commit) => {
-    const confirmed = await confirm({
-      title: `Annuler la modification « ${commit.message} » ?`,
-      message:
-        "Alfred enregistre une nouvelle modification qui défait celle-ci. Cette annulation apparaît à son tour dans l’historique et peut elle-même être annulée.",
-      confirmLabel: "Annuler la modification",
-      cancelLabel: "Ne rien changer",
-    });
-    if (!confirmed) return;
-    setUndoing(commit.id);
     try {
       await invoke("space.undo", { commit: commit.id });
       notify({ title: "Modification annulée", description: commit.message, tone: "success" });
-      history.reload();
+      await history.reload();
       await useShell.getState().refresh();
     } catch (failure) {
       notify({ title: "La modification n’a pas été annulée", description: errorMessage(failure), tone: "error" });
-    } finally {
-      setUndoing(null);
     }
   };
 
-  /** Une modification sur une ligne : ce qu’elle a changé, sa date et son nombre de fichiers, et « Annuler ». */
-  const row = (commit: Commit) => (
-    <SettingRow
-      key={commit.id}
-      title={commit.message}
-      description={`${formatDate(commit.date)} · ${new Intl.NumberFormat("fr-FR").format(commit.files.length)} fichier${commit.files.length > 1 ? "s" : ""}`}
-    >
-      <IconButton
-        label={`Annuler la modification « ${commit.message} »`}
-        tooltip="Annuler cette modification"
-        size="small"
-        loading={undoing === commit.id}
-        disabled={undoing !== null}
-        onClick={() => void undo(commit)}
-      >
-        <Undo2 size={16} aria-hidden="true" />
-      </IconButton>
-    </SettingRow>
-  );
-  const items = history.items ?? [];
+  const rows: CommitRow[] = items.map((commit) => ({
+    ...commit,
+    when: formatDate(commit.date),
+    files_: count(commit.files.length),
+  }));
 
-  return (
-    <Section
-      title="Historique"
-      description="Chaque tour d’agent et chaque réglage est enregistré, et s’annule."
-      actions={
-        items.length > RECENT ? (
-          <Button onClick={() => setAll(true)}>
-            Tout voir ({new Intl.NumberFormat("fr-FR").format(items.length)})
-          </Button>
-        ) : null
-      }
-    >
-      {history.error ? (
-        <FeedbackBanner
-          tone="error"
-          appearance="contained"
-          action={<Button onClick={history.reload}>Réessayer</Button>}
+  return {
+    id: "history",
+    title: "Historique",
+    description: "Chaque tour d’agent et chaque réglage est enregistré, et s’annule.",
+    actions: [
+      {
+        id: "all",
+        label: `Tout voir (${count(items.length)})`,
+        icon: icon(History),
+        isHidden: items.length <= RECENT,
+        onPress: () => setAll(true),
+      },
+    ],
+    emptyMessage: history.items && !history.error ? "Aucune modification enregistrée pour l’instant." : undefined,
+    settings: items.slice(0, RECENT).map((commit) => ({
+      id: commit.id,
+      type: "item" as const,
+      label: commit.message,
+      description: commitDescription(commit),
+      actions: [
+        {
+          id: "undo",
+          label: "Annuler la modification",
+          icon: icon(Undo2),
+          confirm: confirmation(commit),
+          onPress: () => undo(commit),
+        },
+      ],
+    })),
+    content: (
+      <>
+        {history.error ? (
+          <Notice tone="danger" title="L’historique n’a pas pu être lu">
+            {history.error}
+          </Notice>
+        ) : history.items === undefined ? (
+          <LoadingRows label="Chargement de l’historique…" rows={3} />
+        ) : null}
+        <Dialog
+          isOpen={all}
+          onOpenChange={setAll}
+          size="lg"
+          title="Historique de l’espace de travail"
+          description="Les dernières modifications, la plus récente d’abord. Annuler une modification la défait sans effacer l’historique."
         >
-          L’historique n’a pas pu être lu : {history.error}
-        </FeedbackBanner>
-      ) : null}
-      {history.items === undefined ? (
-        history.error ? null : (
-          <LoadingSkeleton rows={3} label="Chargement de l’historique…" />
-        )
-      ) : items.length === 0 ? (
-        <Text size="meta" tone="muted">
-          Aucune modification enregistrée pour l’instant.
-        </Text>
-      ) : (
-        <SettingRows label="Dernières modifications de l’espace de travail">
-          {items.slice(0, RECENT).map(row)}
-        </SettingRows>
-      )}
-      <Modal
-        open={all}
-        onClose={() => setAll(false)}
-        size="wide"
-        title="Historique de l’espace de travail"
-        description="Les dernières modifications, la plus récente d’abord. Annuler une modification la défait sans effacer l’historique."
-      >
-        <SettingRows label="Historique de l’espace de travail">{items.map(row)}</SettingRows>
-      </Modal>
-    </Section>
-  );
+          <Table
+            label="Historique de l’espace de travail"
+            columns={HISTORY_COLUMNS}
+            rows={rows}
+            density="compact"
+            rowActions={(commit) => [
+              {
+                icon: icon(Undo2),
+                label: `Annuler « ${commit.message} »`,
+                onPress: () =>
+                  void confirm(confirmation(commit)).then((accepted) => (accepted ? undo(commit) : undefined)),
+              },
+            ]}
+          />
+        </Dialog>
+      </>
+    ),
+  };
 }
 
-function GrantsSection({
-  snapshot,
-  confirm,
-}: {
-  snapshot: Snapshot;
-  confirm: ReturnType<typeof useConfirm>["confirm"];
-}) {
-  const grants = useList<Grant>("grants.list", {}, []);
-  const [revoking, setRevoking] = useState<string | null>(null);
+type GrantRow = Grant & { id: string; who: string; what: string; since: string };
 
-  const revoke = async (grant: Grant) => {
-    const who = describeSubject(grant.subject, snapshot);
-    const what = describeResource(grant.resource, snapshot);
-    const confirmed = await confirm({
-      title: `Retirer l’accès de ${who} à ${what} ?`,
+const GRANT_COLUMNS: TableColumn[] = [
+  { id: "who", label: "Qui", sortable: true },
+  { id: "what", label: "Accès à", sortable: true },
+  { id: "since", label: "Depuis", width: 150 },
+];
+
+function useGrantsSection(snapshot: Snapshot | null): SettingsSection {
+  const grants = useList<Grant>("grants.list", {}, [], snapshot?.path);
+  const confirm = useConfirm();
+
+  const revoke = async (grant: GrantRow) => {
+    const accepted = await confirm({
+      title: `Retirer l’accès de ${grant.who} à ${grant.what} ?`,
       message: "Au prochain usage, Alfred vous redemandera votre accord avant de laisser faire.",
       confirmLabel: "Retirer",
       tone: "danger",
     });
-    if (!confirmed) return;
-    const key = `${grant.subject}|${grant.resource}`;
-    setRevoking(key);
+    if (!accepted) return;
     try {
       await invoke("grants.revoke", { subject: grant.subject, resource: grant.resource });
-      notify({ title: "Accès retiré", description: `${who} → ${what}`, tone: "success" });
-      grants.reload();
+      notify({ title: "Accès retiré", description: `${grant.who} → ${grant.what}`, tone: "success" });
+      await grants.reload();
     } catch (failure) {
       notify({ title: "L’accès n’a pas été retiré", description: errorMessage(failure), tone: "error" });
-    } finally {
-      setRevoking(null);
     }
   };
 
-  const columns: DataTableColumn<Grant>[] = [
-    {
-      key: "subject",
-      header: "Qui",
-      render: (grant) => describeSubject(grant.subject, snapshot),
-      sortValue: (grant) => describeSubject(grant.subject, snapshot),
-    },
-    {
-      key: "resource",
-      header: "Accès à",
-      render: (grant) => describeResource(grant.resource, snapshot),
-      sortValue: (grant) => describeResource(grant.resource, snapshot),
-    },
-    {
-      key: "grantedAt",
-      header: "Depuis",
-      width: "150px",
-      render: (grant) => formatDate(grant.grantedAt),
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      width: "96px",
-      align: "end",
-      sortable: false,
-      render: (grant) => {
-        const key = `${grant.subject}|${grant.resource}`;
-        return (
-          <Button
-            variant="danger"
-            loading={revoking === key}
-            disabled={revoking !== null && revoking !== key}
-            aria-label={`Retirer l’accès de ${describeSubject(grant.subject, snapshot)} à ${describeResource(grant.resource, snapshot)}`}
-            onClick={() => void revoke(grant)}
-          >
-            Retirer
-          </Button>
-        );
-      },
-    },
+  const rows: GrantRow[] = (grants.items ?? []).map((grant) => ({
+    ...grant,
+    id: `${grant.subject}|${grant.resource}`,
+    who: describeSubject(grant.subject, snapshot),
+    what: describeResource(grant.resource, snapshot),
+    since: formatDate(grant.grantedAt),
+  }));
+
+  return {
+    id: "grants",
+    title: "Accès accordés",
+    description:
+      "Quand une page ou une fonction veut utiliser un client ou la fonction d’un autre module, Alfred vous demande votre accord une fois, puis s’en souvient.",
+    actions: [{ id: "reload", label: "Actualiser les accès", icon: icon(RefreshCw), onPress: grants.reload }],
+    content: grants.error ? (
+      <Notice tone="danger" title="Les accès accordés n’ont pas pu être lus">
+        {grants.error}
+      </Notice>
+    ) : grants.items === undefined ? (
+      <LoadingRows label="Chargement des accès…" />
+    ) : rows.length === 0 ? (
+      <EmptyState
+        size="compact"
+        title="Aucun accès accordé"
+        description="Aucune page n’a encore demandé d’accès à un client ou à une fonction d’un autre module."
+      />
+    ) : (
+      <Table
+        label="Accès accordés"
+        columns={GRANT_COLUMNS}
+        rows={rows}
+        density="compact"
+        isLoading={grants.loading}
+        rowActions={(grant) => [
+          { icon: icon(X), label: `Retirer l’accès de ${grant.who} à ${grant.what}`, onPress: () => void revoke(grant) },
+        ]}
+      />
+    ),
+  };
+}
+
+/**
+ * Rubrique « Général » : les espaces de travail, les sauvegardes, les modèles locaux, les accès et l’historique.
+ * Sans espace ouvert, une seule section le dit ; les crochets tournent quand même, sans rien lire.
+ */
+export function useSpaceSections(): SettingsSection[] {
+  const snapshot = useShell((state) => state.snapshot);
+  const sections = [
+    useSpacesSection(snapshot ?? null),
+    useBackupsSection(snapshot ?? null),
+    useSemanticSection(),
+    useDecisionsSection(),
+    useModelSourceSection(),
+    useGrantsSection(snapshot ?? null),
+    useHistorySection(snapshot ?? null),
   ];
-
-  return (
-    <Section
-      title="Accès accordés"
-      description="Quand une page ou une fonction veut utiliser un client ou la fonction d’un autre module, Alfred vous demande votre accord une fois, puis s’en souvient."
-      actions={<RefreshButton label="Actualiser les accès" loading={grants.loading} onClick={grants.reload} />}
-    >
-      {grants.error ? (
-        <FeedbackBanner tone="error" appearance="contained" action={<Button onClick={grants.reload}>Réessayer</Button>}>
-          Les accès accordés n’ont pas pu être lus : {grants.error}
-        </FeedbackBanner>
-      ) : null}
-      {grants.items === undefined ? (
-        grants.error ? null : (
-          <LoadingSkeleton rows={2} label="Chargement des accès…" />
-        )
-      ) : grants.items.length === 0 ? (
-        <EmptyState
-          size="compact"
-          title="Aucun accès accordé"
-          description="Aucune page n’a encore demandé d’accès à un client ou à une fonction d’un autre module."
-        />
-      ) : (
-        <DataTable
-          label="Accès accordés"
-          columns={columns}
-          rows={grants.items}
-          rowKey={(grant) => `${grant.subject}|${grant.resource}`}
-          loading={grants.loading}
-        />
-      )}
-    </Section>
-  );
-}
-
-/** Onglet « Espace » des Réglages : nom et dossier, apparence, historique des modifications, accès accordés. */
-/** Rubrique « Apparence » des Réglages : thème clair ou sombre, couleur d’accent. */
-export function AppearanceSettings() {
-  const snapshot = useShell((state) => state.snapshot);
-  if (!snapshot) return null;
-  return (
-    <Page width="text">
-      <AppearanceSection snapshot={snapshot} />
-    </Page>
-  );
-}
-
-export function SpaceSettings() {
-  const snapshot = useShell((state) => state.snapshot);
-  const { confirm, confirmDialog } = useConfirm();
-
   if (snapshot === undefined) {
-    return (
-      <Page width="text">
-        <LoadingSkeleton label="Chargement de l’espace de travail…" />
-      </Page>
-    );
+    return [{ id: "loading", content: <LoadingRows label="Chargement de l’espace de travail…" rows={4} /> }];
   }
   if (snapshot === null) {
-    return (
-      <Page width="text">
-        <EmptyState
-          title="Aucun espace de travail ouvert"
-          description="Ouvrez ou créez un espace de travail depuis l’accueil d’Alfred."
-        />
-      </Page>
-    );
+    return [
+      {
+        id: "none",
+        content: (
+          <EmptyState
+            title="Aucun espace de travail ouvert"
+            description="Ouvrez ou créez un espace de travail depuis l’accueil d’Alfred."
+          />
+        ),
+      },
+    ];
   }
-
-  return (
-    <Page width="text">
-      <SpacesSection snapshot={snapshot} confirm={confirm} />
-      <BackupsSection snapshot={snapshot} confirm={confirm} />
-      <SemanticSection />
-      <DecisionsSection />
-      <ModelSourceSection />
-      <GrantsSection snapshot={snapshot} confirm={confirm} />
-      <HistorySection confirm={confirm} />
-      {confirmDialog}
-    </Page>
-  );
+  return sections;
 }

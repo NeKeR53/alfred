@@ -4,8 +4,8 @@ import { AgentSettings } from "../agentSettings/AgentSettings";
 import { JournalSettings } from "../journal/JournalSettings";
 import { MarketplaceSettings } from "../modules/MarketplaceSettings";
 import { ModulesSettings } from "../modules/ModulesSettings";
-import { NavigationSettings } from "../navigation/NavigationSettings";
-import { AppearanceSettings, SpaceSettings } from "../space/SpaceSettings";
+import { useNavigationSections } from "../navigation/NavigationSettings";
+import { useAppearanceSections, useSpaceSections } from "../space/SpaceSettings";
 import { VaultSettings } from "../vault/VaultSettings";
 import { VoiceSettings } from "../voice/VoiceSettings";
 
@@ -27,7 +27,7 @@ export const settingsTabs: BuiltInTab[] = [
     group: "espace",
     groupTitle: "Espace de travail",
     icon: icon(FolderOpen),
-    render: () => <SpaceSettings />,
+    useSections: useSpaceSections,
   },
   {
     id: "modules",
@@ -48,14 +48,14 @@ export const settingsTabs: BuiltInTab[] = [
     label: "Apparence",
     group: "espace",
     icon: icon(Palette),
-    render: () => <AppearanceSettings />,
+    useSections: useAppearanceSections,
   },
   {
     id: "navigation",
     label: "Ordre du menu",
     group: "espace",
     icon: icon(ListOrdered),
-    render: () => <NavigationSettings />,
+    useSections: useNavigationSections,
   },
   { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), render: () => <JournalSettings /> },
   {
