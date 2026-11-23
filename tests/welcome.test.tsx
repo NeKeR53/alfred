@@ -54,7 +54,9 @@ it("premier démarrage sans espace : la bienvenue, puis le choix de l’espace, 
   await user.click(screen.getByRole("button", { name: "Commencer" }));
 
   expect(screen.getByRole("heading", { name: "Votre espace de travail" })).toBeVisible();
-  expect(screen.getByText("Étape 1 sur 3")).toBeVisible();
+  const steps = screen.getByRole("list", { name: "Étapes de l’accueil" });
+  expect(within(steps).getAllByRole("listitem")[0]).toHaveAttribute("aria-current", "step");
+  expect(within(steps).getAllByRole("listitem")[0]).toHaveTextContent("Espace");
   const cards = screen.getByRole("radiogroup", { name: "Votre espace de travail" });
   expect(
     within(cards)
@@ -133,14 +135,14 @@ it("marketplace ajouté : le catalogue s’affiche, les modules cochés sont imp
   await createSpace(user);
   await user.click(screen.getByRole("button", { name: "Ajouter le marketplace" }));
 
-  const list = await screen.findByRole("list", { name: "Modules proposés" });
+  const list = await screen.findByRole("group", { name: "Modules proposés" });
   expect(backend.lastCall("marketplace.add")).toEqual({ url: SUGGESTED_MARKETPLACE });
-  expect(within(list).getByRole("checkbox", { name: "Ancien" })).toBeDisabled();
-  expect(within(list).getByText("Demande une version plus récente d’Alfred.")).toBeVisible();
+  expect(within(list).getByRole("checkbox", { name: /^Ancien/ })).toBeDisabled();
+  expect(within(list).getByText("Indisponible : Demande une version plus récente d’Alfred.")).toBeVisible();
   // Sans rien cocher, le bouton principal continue simplement.
   expect(screen.getByRole("button", { name: "Continuer" })).toBeEnabled();
-  await user.click(within(list).getByRole("checkbox", { name: "Prefect" }));
-  await user.click(within(list).getByRole("checkbox", { name: "Jira" }));
+  await user.click(within(list).getByRole("checkbox", { name: /^Prefect/ }));
+  await user.click(within(list).getByRole("checkbox", { name: /^Jira/ }));
   await user.click(screen.getByRole("button", { name: "Importer 2 modules" }));
 
   expect(await screen.findByRole("heading", { name: "Quelques réglages" })).toBeVisible();
@@ -205,7 +207,7 @@ it("le dernier espace fermé : la version courte, créer ou ouvrir, avec les esp
   await act(() => useShell.getState().closeSpace());
   expect(await screen.findByRole("heading", { name: "Quel espace ouvrir ?" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Commencer" })).not.toBeInTheDocument();
-  const recents = screen.getByRole("list", { name: "Vos espaces récents" });
+  const recents = screen.getByRole("grid", { name: "Vos espaces récents" });
   expect(within(recents).getByText("Maison")).toBeVisible();
   expect(screen.getByRole("radio", { name: /Créer un nouvel espace/ })).toBeVisible();
 

@@ -4,14 +4,12 @@
  * présente le module, laisse choisir ses pages, puis guide, page par page, le choix ou la connexion de leurs comptes.
  */
 import { useEffect } from "react";
-import { Dialog } from "socle-ui";
 import { create } from "zustand";
 import { onNativeEvent } from "../../lib/native";
 import { useShell } from "../../shell/store";
 import { useClients } from "../clients/useClients";
 import { SetupFlow } from "./SetupFlow";
 import { useModuleSetup } from "./useModuleSetup";
-import "./setup.css";
 
 interface OnboardingState {
   /** Module en cours de configuration, ou `null` quand le panneau est fermé. */
@@ -67,26 +65,18 @@ function OnboardingPanel({ module, start, step }: { module: string; start: "intr
   const name = modules.find((candidate) => candidate.id === module)?.name ?? module;
 
   return (
-    <Dialog
-      isOpen
-      size="xl"
+    <SetupFlow
       title={`Configurer ${name}`}
-      onOpenChange={(open) => {
-        if (!open) closeOnboarding();
+      setup={setups.of(module)}
+      modules={modules}
+      services={services}
+      start={start}
+      step={step}
+      onClose={closeOnboarding}
+      onOpenSection={(id) => {
+        closeOnboarding();
+        useShell.getState().setView({ kind: "section", id });
       }}
-    >
-      <SetupFlow
-        setup={setups.of(module)}
-        modules={modules}
-        services={services}
-        start={start}
-        step={step}
-        onClose={closeOnboarding}
-        onOpenSection={(id) => {
-          closeOnboarding();
-          useShell.getState().setView({ kind: "section", id });
-        }}
-      />
-    </Dialog>
+    />
   );
 }

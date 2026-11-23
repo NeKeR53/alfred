@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useId, useState } from "react";
-import { Button, RadioGroup, TextField, useConfirm } from "socle-ui";
+import { Button, RadioButtonGroup, TextInput, useConfirm } from "socle-ui";
 import { confirmLeaving } from "../../features/space/switchGuard";
 import { Row, Stack } from "../../kit";
 import { inTauri, pickFolder } from "../../lib/native";
@@ -126,28 +126,28 @@ export function SpaceChoice({
 
   return (
     <>
-      <RadioGroup
+      <RadioButtonGroup
         label="Votre espace de travail"
         hideLabel
         value={mode}
         onChange={(value) => select(value as SpaceMode | "keep")}
       >
         {extraChoice ? (
-          <RadioGroup.Option value="keep" description={extraChoice.description}>
+          <RadioButtonGroup.Option value="keep" description={extraChoice.description}>
             {extraChoice.title}
-          </RadioGroup.Option>
+          </RadioButtonGroup.Option>
         ) : null}
-        <RadioGroup.Option value="create" description="Pour commencer de zéro.">
+        <RadioButtonGroup.Option value="create" description="Pour commencer de zéro.">
           Créer un nouvel espace
-        </RadioGroup.Option>
-        <RadioGroup.Option value="open" description="Un dossier déjà créé avec Alfred.">
+        </RadioButtonGroup.Option>
+        <RadioButtonGroup.Option value="open" description="Un dossier déjà créé avec Alfred.">
           Ouvrir un espace existant
-        </RadioGroup.Option>
-      </RadioGroup>
+        </RadioButtonGroup.Option>
+      </RadioButtonGroup>
       <form id={formId} noValidate onSubmit={(event) => void submit(event)}>
         {mode === "create" ? (
           <Stack gap="md">
-            <TextField
+            <TextInput
               label="Nom de l’espace"
               isRequired
               description="Par exemple « Travail » ou « Maison »."
@@ -160,7 +160,7 @@ export function SpaceChoice({
               }}
             />
             <Stack gap="xs">
-              <TextField
+              <TextInput
                 label="Dossier"
                 isRequired
                 value={shownCreatePath}
@@ -176,7 +176,7 @@ export function SpaceChoice({
           </Stack>
         ) : mode === "open" ? (
           <Stack gap="xs">
-            <TextField
+            <TextInput
               label="Dossier de l’espace"
               isRequired
               value={openPath}

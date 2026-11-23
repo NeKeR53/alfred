@@ -9,7 +9,7 @@
  */
 import { ExternalLink } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
-import { Button, Checkbox, RadioGroup, TextField } from "socle-ui";
+import { Button, Checkbox, RadioButtonGroup, TextInput } from "socle-ui";
 import { Row, Stack, Text } from "../../kit";
 import { openExternal } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
@@ -353,7 +353,7 @@ export function AccountWizard({
     <form id={formId} noValidate onSubmit={submit} aria-label={`Connecter un compte ${plan.label}`}>
       <Stack gap="md">
         {!simple ? (
-          <TextField
+          <TextInput
             label="Nom du compte"
             isRequired
             description="Pour le reconnaître dans le menu."
@@ -365,7 +365,7 @@ export function AccountWizard({
           />
         ) : null}
         {methods.length > 1 ? (
-          <RadioGroup
+          <RadioButtonGroup
             label="Comment vous connectez-vous ?"
             isDisabled={busy}
             value={method?.id ?? null}
@@ -378,14 +378,14 @@ export function AccountWizard({
             }}
           >
             {methods.map((item) => (
-              <RadioGroup.Option key={item.id} value={item.id}>
+              <RadioButtonGroup.Option key={item.id} value={item.id}>
                 {item.label || item.id}
-              </RadioGroup.Option>
+              </RadioButtonGroup.Option>
             ))}
-          </RadioGroup>
+          </RadioButtonGroup>
         ) : null}
         {askUrl ? (
-          <TextField
+          <TextInput
             label="Adresse"
             isRequired={!fixedUrl}
             description={
@@ -465,7 +465,7 @@ export function AccountWizard({
           </Row>
         ) : null}
         {fields.login ? (
-          <TextField
+          <TextInput
             label={fields.login.label}
             isRequired
             error={errors.login}
@@ -476,7 +476,7 @@ export function AccountWizard({
           />
         ) : null}
         {fields.secret ? (
-          <TextField
+          <TextInput
             type="password"
             label={fields.secret.label}
             isRequired={!keepsSecret}

@@ -105,3 +105,26 @@ Chaque manque a une solution locale dans Alfred, faite de composants Socle. Chac
 | Titre riche de `Disclosure` (icône, roue) | Titre texte seul. |
 | Infobulle différente du nom accessible sur `IconButton` | Le nom accessible sert aussi d'infobulle. |
 | Notification d'une page avec une action à rappel (`onAction`) | Le pont ne transporte pas une fonction : seules les actions décrites (navigation, fenêtre, fonction) passent. |
+
+## Manques vus en 1.0.0
+
+Relevés en refaisant le parcours de configuration d'un module (`src/features/setup`) et l'écran d'accueil (`src/shell/welcome`) avec les seuls composants de socle-ui 1.0.0. Chacun peut devenir un `/design propose`.
+
+### Gabarits
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| Assistant en étapes dans une modale. `FormPage` en étapes (D-364) est un gabarit du `main`, décrit par des champs, avec récapitulatif et envoi à la fin. Le parcours de configuration écrit tout de suite (pages, comptes), ouvre un sous-assistant de compte et compte de 3 à 10 étapes selon le module. | `Modal` `lg` : `ProgressIndicator` horizontal, puis l'étape en `PageSection`, puis le pied de la modale (« Terminer plus tard », « Précédent », l'action). |
+| `PageSection` hors de `Page` et `DetailPage` (placement non prévu : modale, écran d'accueil). | `PageSection` posée dans la modale du parcours et dans l'accueil, pour les titres d'étape et les blocs. |
+| Écran centré hors AppShell (accueil, premier démarrage). `LoginPage` en a la forme mais ne sert qu'à la connexion. | Cadre local minimal dans `Accueil.tsx` : fond `--surface-side`, panneau centré de 600 px, titre `h1`. Le reste est en composants Socle. |
+| Plus de 7 étapes dans `ProgressIndicator` (le parcours d'un module à beaucoup de pages). | Aucune limite côté Alfred : l'indicateur se resserre seul. |
+
+### Composants
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| Carte de choix riche : un choix parmi des comptes, avec adresse, état (`Badge`) et une action par carte (« Modifier ce compte »). `RadioButtonGroup.Option` n'accepte qu'un libellé texte et une description. `Card` n'a pas d'état choisi. | `RadioButtonGroup` : l'état passe dans la description (« jenkins.acme.fr · Connecté »). Un `Alert` sous le groupe porte l'échec et « Modifier ce compte », ou ce qu'il manque au compte choisi (« Vérifier », « Autoriser »…). « Connecter un nouveau compte » est un `Button` sous le groupe. |
+| Choisir de nouveau l'option déjà choisie (`RadioButtonGroup` ne prévient pas). L'ancienne carte relançait la vérification au clic. | L'`Alert` du compte choisi porte l'action qui le termine. |
+| Nom accessible d'une option de `RadioButtonGroup` ou d'une `Checkbox` avec description : la description est collée au libellé (« Recetterecette.acme.fr · Connecté »), en plus d'être reliée par `aria-describedby`. | Rien : à corriger dans Socle. Les tests d'Alfred cherchent l'option par libellé et description. |
+| Actions par case dans un `CheckboxGroup` (renommer une page, en ajouter une du même modèle). | Le `CheckboxGroup` choisit ; une seconde `PageSection` « Noms dans le menu » liste les pages gardées avec `InlineEdit` (ouvert par « Renommer ») et « Une autre ». |
+| État par case (`Badge` « Déjà là », « Indisponible ») dans un `CheckboxGroup` ; liste longue qui défile (catalogue d'un marketplace, plus de 10 modules). | L'état passe dans la description de la case ; l'erreur d'import dans `error` de la case. La liste ne défile plus dans un cadre. |
+| Bouton visible sur une ligne de `List` (« Ouvrir » un espace récent). Les actions de ligne n'apparaissent qu'au survol. | `List` avec `itemActions` (« Ouvrir l'espace … ») et `onAction` (Entrée, double-clic). |
+| Paires libellé/valeur hors du panneau de détail (résumé « C'est prêt » de l'accueil). | `PropertyRow` posées dans l'écran d'accueil, sans cadre. |

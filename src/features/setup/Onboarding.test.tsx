@@ -501,7 +501,18 @@ async function open(module: string, start: "intro" | "resume" = "intro") {
   return screen.findByRole("dialog", { name: `Configurer ${modules.find((item) => item.id === module)?.name}` });
 }
 
-/** Titres des étapes de la `StepList` de Socle, sans « (fait) » ni la précision de l’étape. */
+/**
+ * Nom d’une case ou d’un bouton radio de Socle par son seul libellé : le nom accessible y colle la description
+ * au libellé (« Recetterecette.prefect.acme.fr · Connecté »).
+ */
+function choice(label: string) {
+  return (name: string, element: Element) => {
+    const description = document.getElementById(element.getAttribute("aria-describedby") ?? "")?.textContent ?? "";
+    return name === `${label}${description}`;
+  };
+}
+
+/** Titres des étapes du `ProgressIndicator` de Socle, sans « (fait) » ni la précision de l’étape. */
 function stepTitles(list: HTMLElement): string[] {
   return within(list)
     .getAllByRole("listitem")
@@ -522,11 +533,11 @@ it("choix des pages : chaque modèle coché une fois, une page décochée, une d
   const dialog = await open("atlassian");
   await user.click(await within(dialog).findByRole("button", { name: "Commencer" }));
   expect(within(dialog).getByRole("heading", { name: "Quelles pages voulez-vous ?" })).toBeTruthy();
-  expect(within(dialog).getByRole("checkbox", { name: "Garder la page Jira" })).toBeChecked();
-  expect(within(dialog).getByRole("checkbox", { name: "Garder la page Bitbucket" })).toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: choice("Jira") })).toBeChecked();
+  expect(within(dialog).getByRole("checkbox", { name: choice("Bitbucket") })).toBeChecked();
   // Ni interrupteur ni menu « ⋯ » : des cases et des boutons simples.
   expect(within(dialog).queryByRole("switch")).toBeNull();
-  await user.click(within(dialog).getByRole("checkbox", { name: "Garder la page Bitbucket" }));
+  await user.click(within(dialog).getByRole("checkbox", { name: choice("Bitbucket") }));
   await user.click(within(dialog).getByRole("button", { name: "Une autre page « Jira »" }));
   await user.click(within(dialog).getByRole("button", { name: "Renommer la page Jira 2" }));
   const field = within(dialog).getByRole("textbox", { name: "Nom de la page Jira" });
@@ -558,20 +569,16 @@ it("reprend un compte déjà connecté par un autre module, puis ajoute un ongle
   expect(
     await within(dialog).findByRole("heading", { name: "À quel compte Prefect se connecter pour « Prefect » ?" }),
   ).toBeTruthy();
-  const cards = within(dialog).getByRole("group", { name: "Comptes Prefect" });
+  const cards = within(dialog).getByRole("radiogroup", { name: "Compte Prefect" });
   expect(
     within(cards)
-      .getAllByRole("button")
-      .map((card) => card.textContent),
-  ).toEqual([
-    expect.stringContaining("Recette"),
-    expect.stringContaining("Partagé"),
-    expect.stringContaining("Connecter un nouveau compte"),
-  ]);
-  expect(within(cards).getByRole("button", { name: "Partagé, Connecté" }).textContent).toContain(
-    "déjà utilisé par Prefect (équipe)",
-  );
-  await user.click(within(cards).getByRole("button", { name: "Partagé, Connecté" }));
+      .getAllByRole("radio")
+      .map((card) => card.closest("label")?.textContent),
+  ).toEqual([expect.stringContaining("Recette"), expect.stringContaining("Partagé")]);
+  expect(within(dialog).getByRole("button", { name: "Connecter un nouveau compte" })).toBeTruthy();
+  const shared = within(cards).getByRole("radio", { name: choice("Partagé") });
+  expect(shared).toHaveAccessibleDescription("partage.prefect.acme.fr · déjà utilisé par Prefect (équipe) · Connecté");
+  await user.click(shared);
   await waitFor(() =>
     expect(lastCall("space.menu.configure")).toEqual({
       target: "prefect/deploiements",
@@ -582,10 +589,10 @@ it("reprend un compte déjà connecté par un autre module, puis ajoute un ongle
   expect(await within(dialog).findByRole("heading", { name: "Vous avez un autre compte Prefect ?" })).toBeTruthy();
   expect(within(dialog).getByRole("button", { name: "Non, c’est tout" })).toBeTruthy();
   await user.click(within(dialog).getByRole("button", { name: "Ajouter un onglet pour un autre compte" }));
-  const others = await within(dialog).findByRole("group", { name: "Comptes Prefect" });
+  const others = await within(dialog).findByRole("radiogroup", { name: "Compte Prefect" });
   // Le compte déjà choisi n’est plus proposé.
-  expect(within(others).queryByRole("button", { name: /Partagé/ })).toBeNull();
-  await user.click(within(others).getByRole("button", { name: "Recette, Connecté" }));
+  expect(within(others).queryByRole("radio", { name: /Partagé/ })).toBeNull();
+  await user.click(within(others).getByRole("radio", { name: choice("Recette") }));
   await waitFor(() =>
     expect(lastCall("space.menu.addTab")).toEqual({
       page: "prefect/principal",
@@ -600,7 +607,7 @@ it("reprend un compte déjà connecté par un autre module, puis ajoute un ongle
   await within(dialog).findByRole("heading", { name: "Vous avez un autre compte Prefect ?" });
   await user.click(within(dialog).getByRole("button", { name: "Non, c’est tout" }));
   // Fin : le menu tel qu’il sera, et « Ouvrir ».
-  const preview = await within(dialog).findByRole("list", { name: "Aperçu du menu" });
+  const preview = await within(dialog).findByRole("grid", { name: "Aperçu du menu" });
   expect(preview.textContent).toContain("Prefect");
   expect(preview.textContent).toContain("Recette");
   expect(within(dialog).getByRole("button", { name: "Ouvrir « Prefect »" })).toBeTruthy();
@@ -715,8 +722,8 @@ it("reprend après « Terminer plus tard » à la première page qui attend un c
   await user.click(await within(dialog).findByRole("button", { name: "Commencer" }));
   await user.click(within(dialog).getByRole("button", { name: "Continuer" }));
   // La page Prefect est prête : son compte Prod est choisi.
-  const cards = await within(dialog).findByRole("group", { name: "Comptes Prefect" });
-  expect(within(cards).getByRole("button", { name: "Prod, Connecté" })).toHaveAttribute("aria-pressed", "true");
+  const cards = await within(dialog).findByRole("radiogroup", { name: "Compte Prefect" });
+  expect(within(cards).getByRole("radio", { name: choice("Prod") })).toBeChecked();
   await user.click(within(dialog).getByRole("button", { name: "Terminer plus tard" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 

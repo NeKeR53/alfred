@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button, Disclosure, Divider, Link, Select, StatusBadge } from "socle-ui";
+import { Accordion, Badge, Button, Link, PageSection, Select, Separator } from "socle-ui";
 import { ALL_PROVIDERS, checkHarnesses, type Probe, useHarnesses } from "../../features/agent/harness/installed";
 import { PROVIDER_LABEL, type Provider } from "../../features/agent/harness/types";
 import { describeSource, useModelSource } from "../../features/space/ModelSourceSection";
@@ -13,37 +13,11 @@ export const AGENT_INSTALL_URL = "https://code.claude.com/docs/fr/setup";
 
 /** État d’un harnais en une étiquette, comme dans Réglages › Agent. */
 function HarnessBadge({ probe }: { probe: Probe | undefined }) {
-  if (!probe || probe.status === "loading") return <StatusBadge tone="pending">Vérification…</StatusBadge>;
-  if (probe.status === "error") return <StatusBadge>État inconnu</StatusBadge>;
-  if (!probe.value.installed) return <StatusBadge>Non installé</StatusBadge>;
-  if (probe.value.loggedIn === false) return <StatusBadge tone="pending">Non connecté</StatusBadge>;
-  return (
-    <StatusBadge tone="success">{probe.value.loggedIn === true ? "Installé et connecté" : "Installé"}</StatusBadge>
-  );
-}
-
-/** Un bloc de l’écran : titre, phrase, puis son contenu. */
-function Block({
-  title,
-  description,
-  action,
-  children,
-}: {
-  title: string;
-  description?: string;
-  action?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <Stack gap="sm">
-      <Row justify="between">
-        <h2 className="m-0 font-semibold text-lg">{title}</h2>
-        {action}
-      </Row>
-      {description ? <Text tone="muted">{description}</Text> : null}
-      {children}
-    </Stack>
-  );
+  if (!probe || probe.status === "loading") return <Badge tone="pending">Vérification…</Badge>;
+  if (probe.status === "error") return <Badge>État inconnu</Badge>;
+  if (!probe.value.installed) return <Badge>Non installé</Badge>;
+  if (probe.value.loggedIn === false) return <Badge tone="pending">Non connecté</Badge>;
+  return <Badge tone="success">{probe.value.loggedIn === true ? "Installé et connecté" : "Installé"}</Badge>;
 }
 
 /** Harnais installés et connectés, d’après la dernière vérification. */
@@ -68,14 +42,18 @@ function AgentSection() {
   const probes = useHarnesses((state) => state.probes);
   const { checking, installed } = harnessSummary(probes);
   return (
-    <Block
+    <PageSection
       title="Agent"
       description="Je m’appuie sur un agent de code installé sur cet ordinateur pour écrire vos pages."
-      action={
-        <Button variant="subtle" size="sm" isDisabled={checking} onPress={() => void checkHarnesses()}>
-          Vérifier à nouveau
-        </Button>
-      }
+      actions={[
+        {
+          id: "verifier",
+          label: "Vérifier à nouveau",
+          primary: true,
+          isDisabled: checking,
+          onPress: () => void checkHarnesses(),
+        },
+      ]}
     >
       {checking && installed.length === 0 ? (
         <Row justify="between">
@@ -111,7 +89,7 @@ function AgentSection() {
           </Text>
         </Stack>
       )}
-    </Block>
+    </PageSection>
   );
 }
 
@@ -119,7 +97,7 @@ function AgentSection() {
 function AppearanceBlock() {
   const appearance = useAppearance();
   return (
-    <Block title="Apparence" description="S’applique tout de suite.">
+    <PageSection title="Apparence" description="S’applique tout de suite.">
       <Row gap="md" wrap>
         <Select
           label="Mode"
@@ -147,7 +125,7 @@ function AppearanceBlock() {
           />
         ) : null}
       </Row>
-    </Block>
+    </PageSection>
   );
 }
 
@@ -181,18 +159,18 @@ export function BasicsStep({ footer }: { footer: ReactNode }) {
     <>
       <Stack gap="md">
         <AppearanceBlock />
-        <Divider />
+        <Separator />
         <AgentSection />
-        <Divider />
-        <Disclosure title="Réseau d’entreprise (facultatif)">
+        <Separator />
+        <Accordion title="Réseau d’entreprise (facultatif)">
           <ModelSourceBlock />
-        </Disclosure>
-        <Divider />
-        <Block title="Voix" description="Dicter vos demandes et m’entendre répondre.">
+        </Accordion>
+        <Separator />
+        <PageSection title="Voix" description="Dicter vos demandes et m’entendre répondre.">
           <Text size="meta" tone="muted">
             Facultatif : vous l’activerez quand vous voudrez, dans Réglages › Voix. Rien n’est téléchargé maintenant.
           </Text>
-        </Block>
+        </PageSection>
       </Stack>
       {footer}
     </>

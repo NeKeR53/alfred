@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
-import { Button, Checkbox, Link, StatusBadge, TextField } from "socle-ui";
+import { Alert, Button, Checkbox, CheckboxGroup, Link, TextInput } from "socle-ui";
 import {
   type CatalogModule,
   catalogAccesses,
@@ -9,7 +9,7 @@ import {
 } from "../../features/modules/api";
 import { useModuleUpdatesStore } from "../../features/modules/useModuleUpdates";
 import { LoadingRows } from "../../features/space/SpaceSettings";
-import { Notice, Row, Stack, Text } from "../../kit";
+import { Stack, Text } from "../../kit";
 import { useShell } from "../store";
 import { useWelcome } from "./store";
 
@@ -115,13 +115,8 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
     }
   };
 
-  const toggle = (key: string, checked: boolean) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (checked) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+  /** Modules déjà là : cochés et grisés, jamais importés de nouveau. */
+  const present = (offers ?? []).filter((offer) => offer.module.installed || offer.module.own).map(keyOf);
 
   const chosen = (offers ?? []).filter((offer) => selected.has(keyOf(offer)));
 
@@ -189,7 +184,7 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
       ) : showForm ? (
         <form id={formId} noValidate onSubmit={(event) => void add(event)}>
           <Stack gap="sm">
-            <TextField
+            <TextInput
               label="Adresse git du marketplace"
               isRequired
               value={url}
@@ -229,17 +224,13 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
               </Link>
             </Text>
             {readError ? (
-              <Notice
+              <Alert
                 tone="danger"
                 title="Le catalogue n’a pas pu être lu"
-                action={
-                  <Button size="sm" onPress={() => void load()}>
-                    Réessayer
-                  </Button>
-                }
+                action={{ label: "Réessayer", onPress: () => void load() }}
               >
                 {readError}
-              </Notice>
+              </Alert>
             ) : null}
             {offers === null ? (
               <LoadingRows label="Lecture du catalogue" rows={3} />
@@ -248,52 +239,37 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
                 Ce marketplace ne propose encore aucun module.
               </Text>
             ) : (
-              <ul
-                className="m-0 max-h-80 list-none divide-y divide-line overflow-y-auto rounded-md border border-line p-0"
-                aria-label="Modules proposés"
+              <CheckboxGroup
+                label="Modules proposés"
+                hideLabel
+                isDisabled={busy}
+                value={[...present, ...selected]}
+                onChange={(keys) => setSelected(new Set(keys.filter((key) => !present.includes(key))))}
               >
                 {offers.map((offer) => {
                   const key = keyOf(offer);
                   const { module } = offer;
                   const already = Boolean(module.installed || module.own);
                   const blocked = unavailable(module);
-                  const accesses = accessSummary(module);
                   const details = [
+                    already ? "Déjà là" : blocked ? `Indisponible : ${blocked}` : null,
                     module.description,
-                    accesses,
-                    blocked && !already ? blocked : null,
+                    accessSummary(module),
                     several ? `Depuis ${offer.marketplace.name}` : null,
                   ].filter(Boolean);
                   return (
-                    <li key={key} className="flex flex-col gap-1 px-3 py-2">
-                      <Row justify="between">
-                        <Checkbox
-                          isSelected={already || selected.has(key)}
-                          isDisabled={already || Boolean(blocked) || busy}
-                          onChange={(checked) => toggle(key, checked)}
-                        >
-                          {module.name}
-                        </Checkbox>
-                        {already ? (
-                          <StatusBadge tone="success">Déjà là</StatusBadge>
-                        ) : blocked ? (
-                          <StatusBadge>Indisponible</StatusBadge>
-                        ) : null}
-                      </Row>
-                      {details.map((detail) => (
-                        <Text key={detail} size="meta" tone="muted">
-                          {detail}
-                        </Text>
-                      ))}
-                      {failures[key] ? (
-                        <Text size="meta" tone="danger">
-                          Import impossible : {failures[key]}
-                        </Text>
-                      ) : null}
-                    </li>
+                    <Checkbox
+                      key={key}
+                      value={key}
+                      isDisabled={already || Boolean(blocked)}
+                      description={details.join(" · ") || undefined}
+                      error={failures[key] ? `Import impossible : ${failures[key]}` : undefined}
+                    >
+                      {module.name}
+                    </Checkbox>
                   );
                 })}
-              </ul>
+              </CheckboxGroup>
             )}
             {chosen.length > 0 ? (
               <Text size="meta" tone="muted">

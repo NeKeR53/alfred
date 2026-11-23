@@ -3,14 +3,14 @@
  * marketplace, quelques réglages, puis le résumé. Il se relance depuis Réglages › Général (« Revoir l’accueil »).
  * Quand le dernier espace est fermé, `ShortWelcome` n’en garde que le choix de l’espace.
  */
-import { X } from "lucide-react";
+import { FolderOpen, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { Button, Code, IconButton, PropertyRow } from "socle-ui";
+import { Alert, Button, Code, IconButton, List, ProgressIndicator, PropertyRow } from "socle-ui";
 import { useHarnesses } from "../../features/agent/harness/installed";
 import { PROVIDER_LABEL } from "../../features/agent/harness/types";
 import { openOnboarding } from "../../features/setup/Onboarding";
 import { ACCENT_LABEL } from "../../features/space/SpaceSettings";
-import { Notice, Row, Stack, Text } from "../../kit";
+import { Row, Stack, Text } from "../../kit";
 import { SETTINGS_SECTION } from "../navigationLayout";
 import { useShell } from "../store";
 import { BasicsStep, harnessSummary } from "./BasicsStep";
@@ -18,8 +18,17 @@ import { ModulesStep } from "./ModulesStep";
 import { SpaceChoice } from "./SpaceChoice";
 import { closeWelcome, goToStep, useWelcome, WELCOME_STEPS, type WelcomeStep } from "./store";
 
-const STEP_NUMBER: Partial<Record<WelcomeStep, number>> = { space: 1, modules: 2, basics: 3 };
+/** Les trois étapes numérotées de l’accueil ; « Bonjour » et « C’est prêt » les encadrent. */
+const NUMBERED_STEPS = [
+  { id: "space", title: "Espace" },
+  { id: "modules", title: "Modules" },
+  { id: "basics", title: "Réglages" },
+] as const;
 
+/**
+ * Écran centré, hors AppShell : Socle n’a pas de gabarit pour lui (LoginPage ne sert qu’à la connexion). Seuls le
+ * fond, le panneau et le titre restent locaux ; le contenu est fait de composants Socle.
+ */
 function Frame({
   title,
   intro,
@@ -33,22 +42,20 @@ function Frame({
   children: ReactNode;
   onClose?: () => void;
 }) {
-  const number = step ? STEP_NUMBER[step] : undefined;
+  const numbered = NUMBERED_STEPS.some((item) => item.id === step);
   return (
     <main className="grid min-h-screen place-items-center overflow-y-auto bg-surface-side px-4 py-8 text-fg">
       <section
         className="flex w-full max-w-[600px] flex-col gap-4 rounded-lg border border-line bg-surface p-6 shadow-md"
         aria-labelledby="welcome-title"
       >
-        {number || onClose ? (
-          <Row justify="between">
-            <Text size="meta" tone="muted">
-              {number ? `Étape ${number} sur 3` : ""}
-            </Text>
-            {onClose ? (
-              <IconButton icon={<X size={16} aria-hidden="true" />} label="Fermer l’accueil" onPress={onClose} />
-            ) : null}
+        {onClose ? (
+          <Row justify="end">
+            <IconButton icon={<X size={16} aria-hidden="true" />} label="Fermer l’accueil" onPress={onClose} />
           </Row>
+        ) : null}
+        {numbered && step ? (
+          <ProgressIndicator label="Étapes de l’accueil" steps={NUMBERED_STEPS} current={step} />
         ) : null}
         <h1 id="welcome-title" className="m-0 font-semibold text-2xl">
           {title}
@@ -119,7 +126,7 @@ function ReadyStep() {
 
   return (
     <Frame title="C’est prêt" intro="Voici ce que nous avons mis en place. Tout se change ensuite dans les Réglages.">
-      <div className="rounded-md border border-line px-3">
+      <Stack gap="none">
         <PropertyRow
           label="Espace"
           value={
@@ -155,7 +162,7 @@ function ReadyStep() {
                 : "Aucun pour l’instant. Je le détecterai dès qu’il sera installé."
           }
         />
-      </div>
+      </Stack>
       {names.length > 0 ? (
         <Text tone="muted">
           {names.length > 1
@@ -203,7 +210,7 @@ export function Accueil() {
         intro="Je vous aide à assembler votre propre application : des pages, des outils et des réglages, rangés dans un dossier à vous. Nous allons la préparer ensemble en trois étapes."
         onClose={onClose}
       >
-        {startupError ? <Notice tone="danger">{startupError}</Notice> : null}
+        {startupError ? <Alert tone="danger">{startupError}</Alert> : null}
         <Footer
           primary={
             <Button variant="primary" onPress={() => goToStep("space")} autoFocus>
@@ -311,13 +318,14 @@ export function ShortWelcome() {
       title="Quel espace ouvrir ?"
       intro="Aucun espace de travail n’est ouvert. Reprenez l’un des vôtres, ou créez-en un."
     >
-      {startupError ? <Notice tone="danger">{startupError}</Notice> : null}
+      {startupError ? <Alert tone="danger">{startupError}</Alert> : null}
       <RecentList spaces={recent.slice(0, 5)} open={(path) => openSpace(path, undefined, { existing: true })} />
       <SpaceChoice footer={(primary) => <Footer primary={primary} />} />
     </Frame>
   );
 }
 
+/** Les espaces récents : une ligne par espace, « Ouvrir » au survol, Entrée ou double-clic ; un échec en encart. */
 function RecentList({
   spaces,
   open,
@@ -325,48 +333,37 @@ function RecentList({
   spaces: Array<{ path: string; name: string }>;
   open: (path: string) => Promise<void>;
 }) {
+  const [failure, setFailure] = useState<{ name: string; message: string } | null>(null);
   if (spaces.length === 0) return null;
+  const openSpace = async (path: string) => {
+    const space = spaces.find((item) => item.path === path);
+    setFailure(null);
+    try {
+      await open(path);
+    } catch (error) {
+      setFailure({ name: space?.name ?? path, message: error instanceof Error ? error.message : String(error) });
+    }
+  };
   return (
-    <ul
-      className="m-0 list-none divide-y divide-line rounded-md border border-line p-0"
-      aria-label="Vos espaces récents"
-    >
-      {spaces.map((space) => (
-        <RecentRow key={space.path} space={space} open={open} />
-      ))}
-    </ul>
-  );
-}
-
-function RecentRow({ space, open }: { space: { path: string; name: string }; open: (path: string) => Promise<void> }) {
-  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-  return (
-    <li className="flex items-center gap-2 px-3 py-2">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Text weight="medium">{space.name}</Text>
-        <Text size="meta" tone="muted">
-          {space.path}
-        </Text>
-        {state.error ? (
-          <Text size="meta" tone="danger">
-            {state.error}
-          </Text>
-        ) : null}
-      </div>
-      <Button
-        aria-label={`Ouvrir l’espace ${space.name}`}
-        isPending={state.busy}
-        onPress={async () => {
-          setState({ busy: true, error: null });
-          try {
-            await open(space.path);
-          } catch (failure) {
-            setState({ busy: false, error: failure instanceof Error ? failure.message : String(failure) });
-          }
-        }}
-      >
-        Ouvrir
-      </Button>
-    </li>
+    <Stack gap="sm">
+      {failure ? (
+        <Alert tone="danger" title={`« ${failure.name} » ne s’est pas ouvert`} announce>
+          {failure.message}
+        </Alert>
+      ) : null}
+      <List
+        label="Vos espaces récents"
+        selectionMode="none"
+        items={spaces.map((space) => ({ id: space.path, title: space.name, subtitle: space.path }))}
+        onAction={(path) => void openSpace(path)}
+        itemActions={(item) => [
+          {
+            icon: <FolderOpen size={16} aria-hidden="true" />,
+            label: `Ouvrir l’espace ${item.title}`,
+            onPress: () => void openSpace(item.id),
+          },
+        ]}
+      />
+    </Stack>
   );
 }
