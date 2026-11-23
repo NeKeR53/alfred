@@ -32,11 +32,13 @@ vi.mock("@testing-library/react", async (importOriginal) => {
   const { SocleProvider } = await import("socle-ui");
   const { notifications } = await import("../src/shell/socle");
   const Wrapper = ({ children }: { children: import("react").ReactNode }) =>
-    createElement(
-      SocleProvider,
-      { density: "desktop", platform: "macos", storageKey: "test", notifications },
+    createElement(SocleProvider, {
+      density: "desktop",
+      platform: "macos",
+      storageKey: "test",
+      notifications,
       children,
-    );
+    });
   return {
     ...original,
     render: ((ui: Parameters<typeof original.render>[0], options: Parameters<typeof original.render>[1] = {}) =>
