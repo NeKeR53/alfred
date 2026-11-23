@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Setting, SettingsSection } from "socle-ui";
-import { Notice } from "../../kit";
+import { Alert } from "socle-ui";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { formatSize } from "./BackupsSection";
 
@@ -114,12 +114,12 @@ export function useLocalModelSection({
     settings: [row],
     content:
       error || model?.error ? (
-        <Notice
+        <Alert
           tone="danger"
           title={model?.error ? "Le téléchargement a échoué" : "L’état du modèle n’a pas pu être lu"}
         >
           {model?.error ?? error}
-        </Notice>
+        </Alert>
       ) : undefined,
   };
 }

@@ -4,7 +4,7 @@
  * et la fiche du module. Les valeurs vont dans le fichier du service, jamais dans le coffre : elles ne sont pas
  * secrètes.
  */
-import { TextField } from "socle-ui";
+import { TextInput } from "socle-ui";
 import type { ClientParamDef } from "./api";
 
 /** Paramètre à saisir : sans valeur par défaut ni caractère facultatif. */
@@ -62,7 +62,7 @@ export function ParamFields({
           .filter(Boolean)
           .join(" ");
         return (
-          <TextField
+          <TextInput
             key={param.id}
             label={param.label || param.id}
             isRequired={paramRequired(param)}

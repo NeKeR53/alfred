@@ -4,8 +4,8 @@
  * « Exporté vers … » et propose d’afficher le fichier dans le gestionnaire de fichiers.
  */
 import { useState } from "react";
-import { Button, Code, Dialog, PropertyRow, Select } from "socle-ui";
-import { Notice, Stack, Text } from "../../kit";
+import { Alert, Button, Code, Modal, PropertyRow, Select } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import { invoke, pickSaveFile } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -68,7 +68,7 @@ export function ModuleExportDialog({
 
   if (done)
     return (
-      <Dialog
+      <Modal
         isOpen
         onOpenChange={(open) => {
           if (!open) onClose();
@@ -88,11 +88,11 @@ export function ModuleExportDialog({
           <Text>Exporté vers :</Text>
           <Code>{done}</Code>
         </Stack>
-      </Dialog>
+      </Modal>
     );
 
   return (
-    <Dialog
+    <Modal
       isOpen
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -141,11 +141,11 @@ export function ModuleExportDialog({
           />
         </div>
         {error ? (
-          <Notice tone="danger" title="L’export a échoué">
+          <Alert announce tone="danger" title="L’export a échoué">
             {error}
-          </Notice>
+          </Alert>
         ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }

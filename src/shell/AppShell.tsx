@@ -14,10 +14,11 @@ import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import {
   type Action,
   ActionBar,
+  Alert,
   Button,
+  DropdownMenu,
   EmptyState,
   IconButton,
-  Menu,
   NotificationCenter,
   Sidebar,
   AppShell as SocleShell,
@@ -25,9 +26,9 @@ import {
 } from "socle-ui";
 import { SetupGate } from "../features/setup/SetupGate";
 import { spaceList, useSpaceActions } from "../features/space/spaceActions";
-import { Notice } from "../kit";
 import { inTauri, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection } from "../lib/types";
+import { accountName } from "./accountName";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
 import { NamedIcon, SectionIcon } from "./icons";
@@ -106,26 +107,22 @@ export function ExampleNotice({ module }: { module: string }) {
   const examples = useExampleMode(module);
   if (!examples || !module) return null;
   return (
-    <Notice
+    <Alert
       title="Données d’exemple"
-      action={
-        <Button
-          onPress={() =>
-            void setExampleMode(module, false).catch((error: unknown) =>
-              notify({
-                title: "Les données d’exemple n’ont pas pu être quittées",
-                description: error instanceof Error ? error.message : String(error),
-                tone: "error",
-              }),
-            )
-          }
-        >
-          Quitter les données d’exemple
-        </Button>
-      }
+      action={{
+        label: "Quitter les données d’exemple",
+        onPress: () =>
+          void setExampleMode(module, false).catch((error: unknown) =>
+            notify({
+              title: "Les données d’exemple n’ont pas pu être quittées",
+              description: error instanceof Error ? error.message : String(error),
+              tone: "error",
+            }),
+          ),
+      }}
     >
       {EXAMPLE_HINT}.
-    </Notice>
+    </Alert>
   );
 }
 
@@ -408,6 +405,7 @@ export function AppShell({
 }) {
   const snapshot = useShell((state) => state.snapshot);
   const recent = useShell((state) => state.recentSpaces);
+  const home = useShell((state) => state.info?.home);
   const shown = useShell((state) => state.view);
   const behind = useShell((state) => state.behind);
   const settingsOpen = shown.kind === "settings";
@@ -513,13 +511,13 @@ export function AppShell({
           onChange={(path) => void spaces.open(path, undefined, true)}
           actions={
             <>
-              <Menu.Item label="Ouvrir un autre dossier…" onAction={spaces.openOther} />
-              <Menu.Item label="Créer un espace de travail…" onAction={spaces.create} />
+              <DropdownMenu.Item label="Ouvrir un autre dossier…" onAction={spaces.openOther} />
+              <DropdownMenu.Item label="Créer un espace de travail…" onAction={spaces.create} />
             </>
           }
         />
       }
-      account={<Sidebar.Account name="Alfred" onSettings={() => setView({ kind: "settings" })} />}
+      account={<Sidebar.Account name={accountName(home)} onSettings={() => setView({ kind: "settings" })} />}
     >
       {sections.map((section) =>
         sectionItem(section, {
@@ -542,7 +540,7 @@ export function AppShell({
               actions={
                 row.actions?.length
                   ? row.actions.map((action) => (
-                      <Menu.Item
+                      <DropdownMenu.Item
                         key={action.id}
                         label={action.label}
                         icon={<NamedIcon name={action.icon} size={16} />}

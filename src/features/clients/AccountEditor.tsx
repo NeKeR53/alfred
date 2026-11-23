@@ -8,12 +8,10 @@
  * l’entrée du coffre qui garde le secret, se déduisent seuls.
  */
 import { type FormEvent, useEffect, useState } from "react";
-import { Button, Checkbox, Disclosure, Select, TextArea, TextField } from "socle-ui";
-import { Notice, Row, Stack, Text } from "../../kit";
+import { Accordion, Alert, Button, Checkbox, Select, TextArea, TextInput } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { notify } from "../../shell/notifications";
-import { ModulePart } from "../modules/ModulePart";
 import { errorMessage, listVault, saveVaultEntry, type VaultEntry, type VaultKind } from "../vault/api";
-import { AccountPages } from "./AccountPages";
 import {
   AUTH_TYPES,
   type AuthType,
@@ -146,6 +144,22 @@ type Errors = Partial<Record<"url" | "login" | "secret" | "headers", string>> & 
   params?: Record<string, string>;
 };
 
+/**
+ * Titre et phrase de la section qui porte le formulaire (`SettingsSection` de Socle) : « Ajouter un compte Jira »
+ * pour un ajout, « Votre compte Jira » sinon.
+ */
+export function accountEditorHeading(
+  client: ClientItem,
+  initial: ClientInstanceItem | undefined,
+): { title: string; description: string } {
+  const adding = !client.simple && !initial;
+  return {
+    title: adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`,
+    description: "Vos identifiants restent sur cet ordinateur, dans le coffre.",
+  };
+}
+
+/** Formulaire du compte. Son titre est celui de la section qui le porte (`accountEditorHeading`). */
 export function AccountEditor({
   client,
   initial,
@@ -161,7 +175,7 @@ export function AccountEditor({
   /** Aide du module : où trouver la clé, quel compte utiliser. */
   help?: string;
   redirectUri: string | null;
-  /** Le compte vient d’être ajouté : la fiche invite d’abord à lui ajouter des pages. */
+  /** Le compte vient d’être ajouté : le bouton de sortie devient « Terminer ». */
   created?: boolean;
   onCancel: () => void;
   /** `created` : le compte est nouveau ; `saved`, le service tel qu’il est maintenant. */
@@ -260,137 +274,115 @@ export function AccountEditor({
   const clear = (key: keyof Errors) => setErrors((current) => ({ ...current, [key]: undefined }));
   const adding = !simple && !initial;
 
-  const pages = editing ? <AccountPages client={client} instance={editing} created={created} /> : null;
-
   return (
-    <Stack gap="lg">
-      {created ? pages : null}
-      <ModulePart
-        part="account"
-        title={adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`}
-        description="Vos identifiants restent sur cet ordinateur, dans le coffre."
-      >
-        <form noValidate onSubmit={submit}>
+    <form noValidate onSubmit={submit}>
+      <Stack gap="md">
+        {help ? <Text tone="muted">{help}</Text> : null}
+        {askUrl ? (
+          <TextInput
+            label="Adresse de votre compte"
+            isRequired={!client.baseUrl}
+            description={client.baseUrl ? `Laissez vide pour ${client.baseUrl}.` : "L’adresse où vous vous connectez."}
+            error={errors.url}
+            placeholder={client.baseUrl || "Ex. https://acme.atlassian.net"}
+            autoComplete="off"
+            value={url}
+            onChange={(value) => {
+              setUrl(value);
+              clear("url");
+            }}
+          />
+        ) : null}
+        {!simple && client.methods.length > 1 ? (
+          <Select
+            label="Connexion"
+            value={method}
+            options={client.methods.map((known) => ({ id: known.id, label: methodLabel(known) }))}
+            onChange={(id) => {
+              if (!id) return;
+              setMethod(id);
+              setLogin("");
+              setSecret("");
+              setErrors({});
+            }}
+          />
+        ) : null}
+        <ParamFields
+          params={declaredParams}
+          values={params}
+          errors={errors.params}
+          onChange={(id, value) => {
+            setParams((current) => ({ ...current, [id]: value }));
+            setErrors((current) => ({ ...current, params: { ...current.params, [id]: "" } }));
+          }}
+        />
+        {fields.login ? (
+          <TextInput
+            label={fields.login.label}
+            isRequired
+            autoComplete="off"
+            error={errors.login}
+            value={login}
+            onChange={(value) => {
+              setLogin(value);
+              clear("login");
+            }}
+          />
+        ) : null}
+        {fields.secret ? (
+          <TextInput
+            type="password"
+            label={fields.secret.label}
+            isRequired={fields.secret.required && !keepsSecret}
+            description={keepsSecret ? "Laissez vide pour garder celui enregistré." : undefined}
+            error={errors.secret}
+            autoComplete="off"
+            value={secret}
+            onChange={(value) => {
+              setSecret(value);
+              clear("secret");
+            }}
+          />
+        ) : null}
+        {type === "oauth2" && redirectUri ? (
+          <Alert tone="info">
+            {`Adresse de retour à donner au service : ${redirectUri}. Vous vous connecterez ensuite dans votre navigateur.`}
+          </Alert>
+        ) : null}
+        <Accordion title="Options avancées" defaultExpanded={Boolean(errors.headers || insecureTls || headers)}>
           <Stack gap="md">
-            <Stack gap="none">
-              <Text weight="strong">
-                {adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`}
-              </Text>
-              <Text size="meta" tone="muted">
-                Vos identifiants restent sur cet ordinateur, dans le coffre.
-              </Text>
-            </Stack>
-            {help ? <Text tone="muted">{help}</Text> : null}
-            {askUrl ? (
-              <TextField
-                label="Adresse de votre compte"
-                isRequired={!client.baseUrl}
-                description={
-                  client.baseUrl ? `Laissez vide pour ${client.baseUrl}.` : "L’adresse où vous vous connectez."
-                }
-                error={errors.url}
-                placeholder={client.baseUrl || "Ex. https://acme.atlassian.net"}
-                autoComplete="off"
-                value={url}
-                onChange={(value) => {
-                  setUrl(value);
-                  clear("url");
-                }}
-              />
-            ) : null}
-            {!simple && client.methods.length > 1 ? (
-              <Select
-                label="Connexion"
-                value={method}
-                options={client.methods.map((known) => ({ id: known.id, label: methodLabel(known) }))}
-                onChange={(id) => {
-                  if (!id) return;
-                  setMethod(id);
-                  setLogin("");
-                  setSecret("");
-                  setErrors({});
-                }}
-              />
-            ) : null}
-            <ParamFields
-              params={declaredParams}
-              values={params}
-              errors={errors.params}
-              onChange={(id, value) => {
-                setParams((current) => ({ ...current, [id]: value }));
-                setErrors((current) => ({ ...current, params: { ...current.params, [id]: "" } }));
+            <TextArea
+              label="En-têtes en plus"
+              description="Un par ligne, « Nom: valeur ». Ajoutés à chaque appel de ce compte."
+              error={errors.headers}
+              minRows={3}
+              placeholder="X-Tenant: acme"
+              value={headers}
+              onChange={(value) => {
+                setHeaders(value);
+                clear("headers");
               }}
             />
-            {fields.login ? (
-              <TextField
-                label={fields.login.label}
-                isRequired
-                autoComplete="off"
-                error={errors.login}
-                value={login}
-                onChange={(value) => {
-                  setLogin(value);
-                  clear("login");
-                }}
-              />
-            ) : null}
-            {fields.secret ? (
-              <TextField
-                type="password"
-                label={fields.secret.label}
-                isRequired={fields.secret.required && !keepsSecret}
-                description={keepsSecret ? "Laissez vide pour garder celui enregistré." : undefined}
-                error={errors.secret}
-                autoComplete="off"
-                value={secret}
-                onChange={(value) => {
-                  setSecret(value);
-                  clear("secret");
-                }}
-              />
-            ) : null}
-            {type === "oauth2" && redirectUri ? (
-              <Notice tone="info">
-                {`Adresse de retour à donner au service : ${redirectUri}. Vous vous connecterez ensuite dans votre navigateur.`}
-              </Notice>
-            ) : null}
-            <Disclosure title="Options avancées" defaultExpanded={Boolean(errors.headers || insecureTls || headers)}>
-              <Stack gap="md">
-                <TextArea
-                  label="En-têtes en plus"
-                  description="Un par ligne, « Nom: valeur ». Ajoutés à chaque appel de ce compte."
-                  error={errors.headers}
-                  minRows={3}
-                  placeholder="X-Tenant: acme"
-                  value={headers}
-                  onChange={(value) => {
-                    setHeaders(value);
-                    clear("headers");
-                  }}
-                />
-                <Stack gap="xs">
-                  <Checkbox isSelected={insecureTls} onChange={setInsecureTls}>
-                    Accepter un certificat non vérifié
-                  </Checkbox>
-                  <Text size="meta" tone="muted">
-                    Pour un serveur interne dont le certificat n’est pas reconnu (auto-signé). La connexion reste
-                    chiffrée, mais l’identité du serveur n’est plus vérifiée.
-                  </Text>
-                </Stack>
-              </Stack>
-            </Disclosure>
-            <Row gap="sm" justify="end">
-              <Button onPress={onCancel} isDisabled={pending}>
-                {created ? "Terminer" : "Annuler"}
-              </Button>
-              <Button type="submit" variant="primary" isPending={pending}>
-                {adding ? "Ajouter" : "Enregistrer"}
-              </Button>
-            </Row>
+            <Stack gap="xs">
+              <Checkbox isSelected={insecureTls} onChange={setInsecureTls}>
+                Accepter un certificat non vérifié
+              </Checkbox>
+              <Text size="meta" tone="muted">
+                Pour un serveur interne dont le certificat n’est pas reconnu (auto-signé). La connexion reste chiffrée,
+                mais l’identité du serveur n’est plus vérifiée.
+              </Text>
+            </Stack>
           </Stack>
-        </form>
-      </ModulePart>
-      {created ? null : pages}
-    </Stack>
+        </Accordion>
+        <Row gap="sm" justify="end">
+          <Button onPress={onCancel} isDisabled={pending}>
+            {created ? "Terminer" : "Annuler"}
+          </Button>
+          <Button type="submit" variant="primary" isPending={pending}>
+            {adding ? "Ajouter" : "Enregistrer"}
+          </Button>
+        </Row>
+      </Stack>
+    </form>
   );
 }

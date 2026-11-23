@@ -5,8 +5,8 @@
  */
 import { ShieldCheck } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Code, Dialog, Disclosure, type SettingsSection, StatusBadge, TextField, useConfirm } from "socle-ui";
-import { Notice, Row, Stack, Text } from "../../kit";
+import { Accordion, Alert, Badge, Button, Code, Modal, type SettingsSection, TextInput, useConfirm } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -60,15 +60,15 @@ function casesOf(functions: ResolvedFunction[]): Case[] {
 function ResultLine({ item, live, children }: { item: Case; live: Live | undefined; children?: ReactNode }) {
   const badge =
     live?.status === "running" ? (
-      <StatusBadge tone="pending">En cours</StatusBadge>
+      <Badge tone="pending">En cours</Badge>
     ) : live?.status === "passed" ? (
-      <StatusBadge tone="success">Réussi</StatusBadge>
+      <Badge tone="success">Réussi</Badge>
     ) : live?.status === "failed" ? (
-      <StatusBadge tone="danger">Échec</StatusBadge>
+      <Badge tone="danger">Échec</Badge>
     ) : live?.status === "skipped" || item.blocked ? (
-      <StatusBadge>Passé</StatusBadge>
+      <Badge>Passé</Badge>
     ) : (
-      <StatusBadge>En attente</StatusBadge>
+      <Badge>En attente</Badge>
     );
   const note = item.blocked ?? (live && live.status !== "running" && live.status !== "passed" ? live.message : "");
   return (
@@ -88,11 +88,11 @@ function ResultLine({ item, live, children }: { item: Case; live: Live | undefin
         </Text>
       ) : null}
       {live && live.status === "failed" && live.output ? (
-        <Disclosure title="Sortie reçue">
+        <Accordion title="Sortie reçue">
           <Code block label="Sortie reçue">
             {live.output}
           </Code>
-        </Disclosure>
+        </Accordion>
       ) : null}
       {children}
     </li>
@@ -177,7 +177,7 @@ function VerifyDialog({
   const list = "m-0 flex list-none flex-col p-0";
 
   return (
-    <Dialog
+    <Modal
       isOpen
       size="lg"
       title={`Vérifier les fonctions de ${module.name}`}
@@ -223,16 +223,16 @@ function VerifyDialog({
             <Stack gap="sm">
               <Text weight="medium">Écritures</Text>
               {writesStarted ? null : (
-                <Notice tone="warning">
+                <Alert tone="warning">
                   Ces tests modifient le service : ils ne se lancent qu’avec votre accord. Indiquez pour chacun une
                   cible de test (un ticket ou un message jetable).
-                </Notice>
+                </Alert>
               )}
               <ul className={list}>
                 {writes.map((item) => (
                   <ResultLine key={item.key} item={item} live={live[item.key]}>
                     {item.target && !writesStarted && !item.blocked ? (
-                      <TextField
+                      <TextInput
                         label={`${item.target.label} pour « ${item.name} »`}
                         isRequired
                         description={item.target.label}
@@ -248,7 +248,7 @@ function VerifyDialog({
           </section>
         ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 

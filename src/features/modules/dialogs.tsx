@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Code, Dialog, RadioGroup, Select, TextArea, TextField } from "socle-ui";
-import { Notice, Stack, Text } from "../../kit";
+import { Alert, Button, Code, Modal, RadioButtonGroup, Select, TextArea, TextInput } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import type { ModuleSummary } from "../../lib/types";
 import {
   accessKindLabel,
@@ -90,7 +90,7 @@ export function UpdateDialog({
       changes.functionsRemoved.length ===
     0;
   return (
-    <Dialog
+    <Modal
       isOpen
       size="lg"
       title={`Mettre à jour ${update.name}`}
@@ -111,19 +111,27 @@ export function UpdateDialog({
         <Text>
           {`Version ${update.current} → ${update.available}${update.marketplaceName ? `, depuis ${update.marketplaceName}` : ""}. Le contenu du module est remplacé ; ses données sont conservées. La mise à jour s’annule depuis l’historique de l’espace de travail.`}
         </Text>
-        {error ? <Notice tone="danger">{error}</Notice> : null}
-        {update.blocked ? <Notice tone="danger">{update.blocked}</Notice> : null}
+        {error ? (
+          <Alert announce tone="danger">
+            {error}
+          </Alert>
+        ) : null}
+        {update.blocked ? (
+          <Alert announce tone="danger">
+            {update.blocked}
+          </Alert>
+        ) : null}
         <DependencySteps steps={update.dependencies ?? []} />
         {update.locallyModified ? (
-          <Notice tone="warning">
+          <Alert tone="warning">
             Ce module a été modifié sur place depuis son import. La mise à jour écrase ces modifications ; le détacher
             d’abord pour les garder.
-          </Notice>
+          </Alert>
         ) : null}
         {changes.newAccesses.length > 0 ? (
-          <Notice tone="warning" title="Cette version demande de nouveaux accès">
+          <Alert tone="warning" title="Cette version demande de nouveaux accès">
             <AccessList accesses={changes.newAccesses} />
-          </Notice>
+          </Alert>
         ) : null}
         <section aria-label="Notes de version">
           <Stack gap="xs">
@@ -138,7 +146,7 @@ export function UpdateDialog({
         {unchanged ? <Text>Aucune page ni fonction ajoutée ou retirée.</Text> : null}
         {update.pinned ? <Text>Ce module est figé : il le restera, sur la nouvelle version.</Text> : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -157,7 +165,7 @@ export function UninstallDialog({
   const installed = module.origin !== null && !module.origin.detached;
   const verb = installed ? "Retirer" : "Supprimer";
   return (
-    <Dialog
+    <Modal
       isOpen
       title={installed ? `Retirer ${module.name} de l’espace de travail` : `Supprimer ${module.name}`}
       isBusy={busy}
@@ -181,20 +189,24 @@ export function UninstallDialog({
               ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
               : "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
         </Text>
-        {error ? <Notice tone="danger">{error}</Notice> : null}
-        <RadioGroup
+        {error ? (
+          <Alert announce tone="danger">
+            {error}
+          </Alert>
+        ) : null}
+        <RadioButtonGroup
           label="Données enregistrées par ce module"
           value={deleteData ? "delete" : "keep"}
           isDisabled={busy}
           onChange={(value) => setDeleteData(value === "delete")}
         >
-          <RadioGroup.Option value="keep">
+          <RadioButtonGroup.Option value="keep">
             Garder les données (elles resserviront si le module revient)
-          </RadioGroup.Option>
-          <RadioGroup.Option value="delete">Supprimer les données (définitif)</RadioGroup.Option>
-        </RadioGroup>
+          </RadioButtonGroup.Option>
+          <RadioButtonGroup.Option value="delete">Supprimer les données (définitif)</RadioButtonGroup.Option>
+        </RadioButtonGroup>
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -213,7 +225,7 @@ export function InstallDialog({
   const { busy, error, apply } = useApply(onConfirm);
   const accesses = catalogAccesses(module);
   return (
-    <Dialog
+    <Modal
       isOpen
       size="lg"
       title={`Importer ${module.name} v${module.version}`}
@@ -234,8 +246,16 @@ export function InstallDialog({
         <Text>
           {`Depuis le marketplace ${marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et recevra les mises à jour de ce marketplace ; pour l’adapter, il faudra le détacher.`}
         </Text>
-        {error ? <Notice tone="danger">{error}</Notice> : null}
-        {module.blocked ? <Notice tone="danger">{module.blocked}</Notice> : null}
+        {error ? (
+          <Alert announce tone="danger">
+            {error}
+          </Alert>
+        ) : null}
+        {module.blocked ? (
+          <Alert announce tone="danger">
+            {module.blocked}
+          </Alert>
+        ) : null}
         {module.description ? <Text>{module.description}</Text> : null}
         <DependencySteps steps={module.dependencies ?? []} />
         <section aria-label="Accès demandés">
@@ -260,7 +280,7 @@ export function InstallDialog({
           count
         />
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -330,7 +350,7 @@ export function PublishDialog({
         : "Pas encore publié sur ce marketplace.";
 
   return (
-    <Dialog
+    <Modal
       isOpen
       title={`Publier ${module.name}`}
       isBusy={busy}
@@ -353,14 +373,15 @@ export function PublishDialog({
     >
       <Stack gap="md">
         {marketplaces.length === 0 ? (
-          <Notice tone="info" action={<Button onPress={onManage}>Ajouter un marketplace</Button>}>
+          <Alert tone="info" action={{ label: "Ajouter un marketplace", onPress: onManage }}>
             Aucun marketplace n’est branché : ajoutez celui de votre équipe pour publier.
-          </Notice>
+          </Alert>
         ) : (
           <Text>Alfred vérifie que tout compile et qu’aucun secret ni chemin de ce poste ne part, puis l’envoie.</Text>
         )}
         {error ? (
-          <Notice tone="danger" title={error}>
+          <Alert announce tone="danger" title="La publication a échoué">
+            {error}
             {problems.length > 0 ? (
               <Bullets
                 label="Problèmes à corriger"
@@ -374,7 +395,7 @@ export function PublishDialog({
                 }))}
               />
             ) : null}
-          </Notice>
+          </Alert>
         ) : null}
         <Select
           label="Marketplace de destination"
@@ -384,7 +405,7 @@ export function PublishDialog({
           options={marketplaces.map((marketplace) => ({ id: marketplace.id, label: marketplace.name }))}
           onChange={(id) => setTarget(id ?? "")}
         />
-        <TextField
+        <TextInput
           label="Version"
           isRequired
           isDisabled={busy}
@@ -405,6 +426,6 @@ export function PublishDialog({
           onChange={setNotes}
         />
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }

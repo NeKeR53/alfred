@@ -1,7 +1,7 @@
 import { ArrowLeft, Download, Eye, RefreshCw, Server } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Code, SearchField, Select, type SettingsSection, type SettingTag } from "socle-ui";
-import { Notice, Row, Stack } from "../../kit";
+import { Alert, Code, SearchInput, Select, type SettingsSection, type SettingTag } from "socle-ui";
+import { Row, Stack } from "../../kit";
 import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -214,12 +214,13 @@ export function useMarketplaceSections(): SettingsSection[] {
       content: (
         <Stack gap="sm">
           {problems.map((item) => (
-            <Notice key={item.marketplace.id} tone="danger" title={`${item.marketplace.name} : ${item.message}`}>
+            <Alert key={item.marketplace.id} tone="danger" title={item.marketplace.name}>
+              {item.message}
               {item.detail ? <Code block>{item.detail}</Code> : null}
-            </Notice>
+            </Alert>
           ))}
           <Row gap="md" wrap>
-            <SearchField label="les modules" onChange={({ text }) => setQuery(text)} />
+            <SearchInput label="les modules" onChange={({ text }) => setQuery(text)} />
             {several ? (
               <Select
                 label="Marketplace affiché"
@@ -351,12 +352,16 @@ function offerSections(
       content:
         module.error || module.blocked || module.conflict || dialog ? (
           <Stack gap="sm">
-            {module.error ? <Notice tone="danger">{module.error}</Notice> : null}
-            {module.blocked ? <Notice tone="warning">{module.blocked}</Notice> : null}
+            {module.error ? (
+              <Alert announce tone="danger">
+                {module.error}
+              </Alert>
+            ) : null}
+            {module.blocked ? <Alert tone="warning">{module.blocked}</Alert> : null}
             {module.conflict ? (
-              <Notice tone="warning">
+              <Alert tone="warning">
                 {`Un autre module « ${module.id} » est déjà installé dans cet espace de travail : supprimez-le pour importer celui-ci.`}
-              </Notice>
+              </Alert>
             ) : null}
             {dialog}
           </Stack>

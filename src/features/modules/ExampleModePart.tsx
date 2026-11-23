@@ -4,7 +4,7 @@
  * appelle). Le réglage reste sur ce poste, hors de l’espace.
  */
 import { useState } from "react";
-import { Switch } from "socle-ui";
+import { Toggle } from "socle-ui";
 import { Stack, Text } from "../../kit";
 import type { ModuleSummary, Snapshot } from "../../lib/types";
 import { inExampleMode, setExampleMode } from "../../shell/examples";
@@ -30,7 +30,7 @@ export function ExampleModePart({ module, snapshot }: { module: ModuleSummary; s
   return (
     <div data-part="examples">
       <Stack gap="sm">
-        <Switch
+        <Toggle
           isSelected={on}
           isDisabled={saving}
           onChange={(wanted) => {
@@ -49,7 +49,7 @@ export function ExampleModePart({ module, snapshot }: { module: ModuleSummary; s
           }}
         >
           Données d’exemple
-        </Switch>
+        </Toggle>
         <Text size="meta" tone="muted">
           Affichez les pages de ce module sans vous connecter à ses services : ses fonctions rendent des réponses
           d’exemple et aucune requête ne part vers les services. Ce qui s’enregistre dans les données du module reste

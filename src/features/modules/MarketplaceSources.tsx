@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { type Action, Button, Code, Disclosure, type SettingsSection, TextField } from "socle-ui";
+import { Accordion, type Action, Button, Code, type SettingsSection, TextInput } from "socle-ui";
 import { Row, Stack } from "../../kit";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -175,13 +175,13 @@ export function useMarketplaceSourcesSection({
     content: (
       <Stack gap="md">
         {gitOutputs.map((marketplace) => (
-          <Disclosure key={marketplace.id} title={`Message de git (${marketplace.name})`}>
+          <Accordion key={marketplace.id} title={`Message de git (${marketplace.name})`}>
             <Code block>{marketplace.errorDetail}</Code>
-          </Disclosure>
+          </Accordion>
         ))}
         <form noValidate onSubmit={add}>
           <Row gap="sm">
-            <TextField
+            <TextInput
               label="Adresse git du marketplace"
               isRequired
               placeholder="git@exemple.fr:equipe/modules.git"

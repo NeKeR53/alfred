@@ -8,7 +8,7 @@
  */
 import { Boxes, MoreHorizontal } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
-import { Button, Dialog, IconButton, Menu, RadioGroup, Select, TextField } from "socle-ui";
+import { Button, DropdownMenu, IconButton, Modal, RadioButtonGroup, Select, TextInput } from "socle-ui";
 import { Stack, Text } from "../../kit";
 import type {
   ModuleSummary,
@@ -303,7 +303,7 @@ function AddDialog({
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       isBusy={pending}
       onOpenChange={(open) => {
@@ -332,7 +332,7 @@ function AddDialog({
       }
     >
       <Stack gap="md">
-        <RadioGroup
+        <RadioButtonGroup
           label="Modèle"
           value={choice}
           onChange={(value) => {
@@ -341,12 +341,12 @@ function AddDialog({
           }}
         >
           {choices.map((candidate) => (
-            <RadioGroup.Option key={candidate.key} value={candidate.key} description={candidate.hint}>
+            <RadioButtonGroup.Option key={candidate.key} value={candidate.key} description={candidate.hint}>
               {candidate.label}
-            </RadioGroup.Option>
+            </RadioButtonGroup.Option>
           ))}
-        </RadioGroup>
-        <TextField label="Nom" autoComplete="off" value={shownName} onChange={setName} />
+        </RadioButtonGroup>
+        <TextInput label="Nom" autoComplete="off" value={shownName} onChange={setName} />
         {mode === "page" && chosen ? <IconPicker value={icon} onChange={setIcon} fallback={chosen.section} /> : null}
         {needs.map((need) => {
           const label = lookup.needOf(module.id, need)?.label ?? need;
@@ -369,7 +369,7 @@ function AddDialog({
           );
         })}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -399,11 +399,14 @@ interface RowItem {
 /** Menu « … » d’une page ou d’un onglet. */
 function RowMenu({ label, items }: { label: string; items: RowItem[] }) {
   return (
-    <Menu label={label} trigger={<IconButton icon={<MoreHorizontal size={16} aria-hidden="true" />} label={label} />}>
+    <DropdownMenu
+      label={label}
+      trigger={<IconButton icon={<MoreHorizontal size={16} aria-hidden="true" />} label={label} />}
+    >
       {items.map((item) => (
-        <Menu.Item key={item.label} label={item.label} isDisabled={item.disabled} onAction={item.run} />
+        <DropdownMenu.Item key={item.label} label={item.label} isDisabled={item.disabled} onAction={item.run} />
       ))}
-    </Menu>
+    </DropdownMenu>
   );
 }
 

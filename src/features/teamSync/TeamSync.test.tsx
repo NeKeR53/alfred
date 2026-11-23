@@ -24,8 +24,16 @@ HTMLDialogElement.prototype.close = function () {
 
 import { invoke } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
-import { renderWithSocle as render } from "../space/sections.test-helper";
-import { TeamSync } from "./TeamSync";
+import { renderSections } from "../modules/settingsHarness";
+import { useTeamSyncSection } from "./TeamSync";
+
+/** La section seule, dans `SettingsPage`, comme la fiche du module la montre. */
+function renderTeamSync(module: ModuleSummary) {
+  return renderSections(() => {
+    const section = useTeamSyncSection(module);
+    return section ? [section] : [];
+  });
+}
 
 const carnet: ModuleSummary = {
   id: "carnet",
@@ -77,7 +85,7 @@ beforeEach(() => {
 
 it("relie un module au dépôt de l’équipe, montre la dernière synchronisation, puis arrête le partage", async () => {
   const user = userEvent.setup();
-  render(<TeamSync module={carnet} />);
+  renderTeamSync(carnet);
   expect(await screen.findByRole("heading", { name: "Partage en équipe" })).toBeInTheDocument();
   expect(screen.getByText(/Les données de carnet_contacts se partagent/)).toBeInTheDocument();
 
@@ -99,6 +107,6 @@ it("relie un module au dépôt de l’équipe, montre la dernière synchronisati
 });
 
 it("n’apparaît pas pour un module qui ne partage aucune table", () => {
-  render(<TeamSync module={{ ...carnet, sync: [] }} />);
+  renderTeamSync({ ...carnet, sync: [] });
   expect(screen.queryByRole("heading", { name: "Partage en équipe" })).not.toBeInTheDocument();
 });

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type Setting, type SettingsSection, useOpenForm } from "socle-ui";
-import { Notice } from "../../kit";
+import { Alert, type Setting, type SettingsSection, useOpenForm } from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { LoadingRows } from "../space/SpaceSettings";
 import {
@@ -124,9 +123,9 @@ export function useVoiceSections(): SettingsSection[] {
       {
         id: "error",
         content: (
-          <Notice tone="danger" title="Réglages de la voix indisponibles">
+          <Alert announce tone="danger" title="Réglages de la voix indisponibles">
             {loadError}
-          </Notice>
+          </Alert>
         ),
       },
     ];
@@ -337,11 +336,11 @@ export function useVoiceSections(): SettingsSection[] {
       ],
       content:
         dictation === false ? (
-          <Notice tone="info">La dictée est bloquée : aucun micro ne s’ouvre.</Notice>
+          <Alert tone="info">La dictée est bloquée : aucun micro ne s’ouvre.</Alert>
         ) : status?.listenError ? (
-          <Notice tone="warning">{status.listenError}</Notice>
+          <Alert tone="warning">{status.listenError}</Alert>
         ) : status ? (
-          <Notice tone="info">La dictée est prête : bouton micro dans la page Agent.</Notice>
+          <Alert tone="info">La dictée est prête : bouton micro dans la page Agent.</Alert>
         ) : undefined,
     },
     {
@@ -371,11 +370,11 @@ export function useVoiceSections(): SettingsSection[] {
         },
       ],
       content: status?.speakError ? (
-        <Notice tone="warning">
+        <Alert tone="warning">
           {config.ttsBackend === "qwen" && !status.qwenInstalled
             ? "La voix d’Alfred n’est pas installée : en attendant, la voix du système parle."
             : status.speakError}
-        </Notice>
+        </Alert>
       ) : undefined,
     },
     {

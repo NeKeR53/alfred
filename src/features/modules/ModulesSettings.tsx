@@ -2,7 +2,7 @@ import { ArrowLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Action,
-  SearchField,
+  SearchInput,
   Select,
   type Setting,
   type SettingsSection,
@@ -16,6 +16,8 @@ import { isModuleHidden, SETTINGS_SECTION, setModuleHidden } from "../../shell/n
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { useAutomationsSection } from "../automations/ModuleAutomations";
+import { accountEditorHeading } from "../clients/AccountEditor";
+import { accountPagesSection } from "../clients/AccountPages";
 import type { ClientNeedItem } from "../clients/api";
 import { serviceNeedsAttention } from "../clients/ServiceBlock";
 import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
@@ -28,7 +30,7 @@ import { openOnboarding, useOnboarding } from "../setup/Onboarding";
 import { verify } from "../setup/SetupGate";
 import { useModuleSetup } from "../setup/useModuleSetup";
 import { ModuleExportDialog } from "../space/ModuleDataDialog";
-import { TeamSync } from "../teamSync/TeamSync";
+import { useTeamSyncSection } from "../teamSync/TeamSync";
 import { errorMessage, type Marketplace, type ModulePublication, type ModuleUpdate, marketplaceApi } from "./api";
 import { PublishDialog, UninstallDialog, UpdateDialog } from "./dialogs";
 import { useModuleContentSections } from "./ModuleContents";
@@ -280,11 +282,15 @@ export function useModulesSections(): SettingsSection[] {
   const foldersSection = useFoldersSection(fiche ? { id: fiche.id, name: fiche.name } : undefined);
   const automationsSection = useAutomationsSection(fiche?.id);
   const jobsSection = useJobsSection(fiche?.id);
+  const teamSection = useTeamSyncSection(fiche);
 
   if (editingService) {
+    const { client, instance } = editingService;
+    const pages = instance ? accountPagesSection(snapshot, client, instance) : null;
     return [
       {
         id: "account",
+        ...accountEditorHeading(client, client.simple ? client.instances[0] : instance),
         content: (
           <ServiceEditor
             editing={editingService}
@@ -296,6 +302,7 @@ export function useModulesSections(): SettingsSection[] {
           />
         ),
       },
+      ...(pages ? [pages] : []),
     ];
   }
 
@@ -647,7 +654,7 @@ export function useModulesSections(): SettingsSection[] {
       head,
       ...contentSections,
       ...(foldersSection ? [foldersSection] : []),
-      { id: "team", content: <TeamSync module={module} /> },
+      ...(teamSection ? [teamSection] : []),
       ...(automationsSection ? [automationsSection] : []),
       ...(jobsSection ? [jobsSection] : []),
       ...(dependencies ? [dependencies] : []),
@@ -689,7 +696,7 @@ export function useModulesSections(): SettingsSection[] {
             id: "tools",
             content: (
               <Row gap="md" wrap>
-                <SearchField label="les modules" onChange={({ text }) => setQuery(text)} />
+                <SearchInput label="les modules" onChange={({ text }) => setQuery(text)} />
                 <Select
                   label="Afficher"
                   width="sm"

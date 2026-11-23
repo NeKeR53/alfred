@@ -16,9 +16,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   type ColorScheme,
-  Dialog,
   EmptyState,
+  Modal,
   type SettingsSection,
   Skeleton,
   SkeletonGroup,
@@ -27,7 +28,6 @@ import {
   useConfirm,
   useSocle,
 } from "socle-ui";
-import { Notice } from "../../kit";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { type Commit, type ResolvedPage, SECTION_COLORS, type SectionColor, type Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -479,13 +479,13 @@ function useHistorySection(snapshot: Snapshot | null): SettingsSection {
     content: (
       <>
         {history.error ? (
-          <Notice tone="danger" title="L’historique n’a pas pu être lu">
+          <Alert announce tone="danger" title="L’historique n’a pas pu être lu">
             {history.error}
-          </Notice>
+          </Alert>
         ) : history.items === undefined ? (
           <LoadingRows label="Chargement de l’historique…" rows={3} />
         ) : null}
-        <Dialog
+        <Modal
           isOpen={all}
           onOpenChange={setAll}
           size="lg"
@@ -506,17 +506,20 @@ function useHistorySection(snapshot: Snapshot | null): SettingsSection {
               },
             ]}
           />
-        </Dialog>
+        </Modal>
       </>
     ),
   };
 }
 
-type GrantRow = Grant & { id: string; who: string; what: string; since: string };
+type GrantRow = Grant & { id: string; who: string; what: string; access: string; since: string };
 
+/**
+ * La première colonne nomme l’accès en entier (qui, puis à quoi) : `Table` en fait le titre de la ligne, repris par
+ * l’action « Retirer l’accès » (Table.md). Deux accès d’une même page à deux clients ont ainsi deux noms distincts.
+ */
 const GRANT_COLUMNS: TableColumn[] = [
-  { id: "who", label: "Qui", sortable: true },
-  { id: "what", label: "Accès à", sortable: true },
+  { id: "access", label: "Accès", sortable: true },
   { id: "since", label: "Depuis", width: 150 },
 ];
 
@@ -541,13 +544,15 @@ function useGrantsSection(snapshot: Snapshot | null): SettingsSection {
     }
   };
 
-  const rows: GrantRow[] = (grants.items ?? []).map((grant) => ({
-    ...grant,
-    id: `${grant.subject}|${grant.resource}`,
-    who: describeSubject(grant.subject, snapshot),
-    what: describeResource(grant.resource, snapshot),
-    since: formatDate(grant.grantedAt),
-  }));
+  const rows: GrantRow[] = (grants.items ?? [])
+    .map((grant) => ({
+      ...grant,
+      id: `${grant.subject}|${grant.resource}`,
+      who: describeSubject(grant.subject, snapshot),
+      what: describeResource(grant.resource, snapshot),
+      since: formatDate(grant.grantedAt),
+    }))
+    .map((row) => ({ ...row, access: `${row.who} · ${row.what}` }));
 
   return {
     id: "grants",
@@ -556,9 +561,9 @@ function useGrantsSection(snapshot: Snapshot | null): SettingsSection {
       "Quand une page ou une fonction veut utiliser un client ou la fonction d’un autre module, Alfred vous demande votre accord une fois, puis s’en souvient.",
     actions: [{ id: "reload", label: "Actualiser les accès", icon: icon(RefreshCw), onPress: grants.reload }],
     content: grants.error ? (
-      <Notice tone="danger" title="Les accès accordés n’ont pas pu être lus">
+      <Alert announce tone="danger" title="Les accès accordés n’ont pas pu être lus">
         {grants.error}
-      </Notice>
+      </Alert>
     ) : grants.items === undefined ? (
       <LoadingRows label="Chargement des accès…" />
     ) : rows.length === 0 ? (

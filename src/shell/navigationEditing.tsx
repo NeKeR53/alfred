@@ -4,7 +4,7 @@
  */
 import { ArrowDown, ArrowUp, EyeOff, icons, Pencil, Settings2, Shapes } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
-import { type Action, Button, Dialog, Menu, TextField, useConfirm, useOpenForm } from "socle-ui";
+import { type Action, Button, DropdownMenu, Modal, TextInput, useConfirm, useOpenForm } from "socle-ui";
 import { create } from "zustand";
 import { PageHistoryDialog } from "../features/navigation/PageHistory";
 import { openModuleSettings } from "../features/settings/open";
@@ -181,7 +181,7 @@ export function RenameDialog({
     onClose();
   };
   return (
-    <Dialog
+    <Modal
       isOpen
       size="sm"
       title={title}
@@ -203,7 +203,7 @@ export function RenameDialog({
           submit();
         }}
       >
-        <TextField
+        <TextInput
           label="Nom"
           description="Laisser vide pour revenir au nom donné par le module."
           value={value}
@@ -213,7 +213,7 @@ export function RenameDialog({
           autoFocus
         />
       </form>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -244,7 +244,7 @@ export function IconDialog({
 }) {
   const [value, setValue] = useState(iconExists(initial) ? initial : "");
   return (
-    <Dialog
+    <Modal
       isOpen
       title={`Icône de « ${section} »`}
       onOpenChange={(open) => {
@@ -266,7 +266,7 @@ export function IconDialog({
       }
     >
       <IconPicker value={value} onChange={setValue} fallback={{ icon: fallbackIcon, iconUrl: logo }} />
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -357,13 +357,13 @@ export function useNavigationEditor() {
     return (
       <>
         {module ? (
-          <Menu.Item
+          <DropdownMenu.Item
             label="Configurer le module…"
             icon={icon16(Settings2)}
             onAction={() => openModuleSettings(module.id)}
           />
         ) : null}
-        <Menu.Item
+        <DropdownMenu.Item
           label="Renommer…"
           icon={icon16(Pencil)}
           onAction={() =>
@@ -374,16 +374,20 @@ export function useNavigationEditor() {
             )
           }
         />
-        <Menu.Item label="Changer l’icône…" icon={icon16(Shapes)} onAction={() => setDialog({ kind: "icon", id })} />
-        <Menu.Item label="Monter" icon={icon16(ArrowUp)} isDisabled={index <= 0} onAction={() => move(-1)} />
-        <Menu.Item
+        <DropdownMenu.Item
+          label="Changer l’icône…"
+          icon={icon16(Shapes)}
+          onAction={() => setDialog({ kind: "icon", id })}
+        />
+        <DropdownMenu.Item label="Monter" icon={icon16(ArrowUp)} isDisabled={index <= 0} onAction={() => move(-1)} />
+        <DropdownMenu.Item
           label="Descendre"
           icon={icon16(ArrowDown)}
           isDisabled={index < 0 || index >= order.length - 1}
           onAction={() => move(1)}
         />
-        <Menu.Separator />
-        <Menu.Item
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item
           label="Masquer la section"
           icon={icon16(EyeOff)}
           onAction={() => void applyLayoutChange((state) => setSectionHidden(state, section.id, true))}

@@ -3,7 +3,7 @@
  * seulement : Socle n’a pas de liste à puces en texte courant (voir les manques de la migration).
  */
 import type { ReactNode } from "react";
-import { Disclosure } from "socle-ui";
+import { Accordion } from "socle-ui";
 import { Stack, Text } from "../../kit";
 
 /** Liste à puces, un élément par ligne. */
@@ -36,7 +36,7 @@ export function Facts({ title, items, count = false }: { title: string; items: s
       <Stack gap="xs">
         <Text weight="strong">{count ? `${title} · ${items.length}` : title}</Text>
         {bullets(shown)}
-        {rest.length > 0 ? <Disclosure title={`… et ${rest.length} autres`}>{bullets(rest)}</Disclosure> : null}
+        {rest.length > 0 ? <Accordion title={`… et ${rest.length} autres`}>{bullets(rest)}</Accordion> : null}
       </Stack>
     </section>
   );

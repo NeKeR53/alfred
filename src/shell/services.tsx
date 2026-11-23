@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Button, Dialog } from "socle-ui";
+import { Button, Modal } from "socle-ui";
 import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
@@ -182,7 +182,7 @@ export function ShellServices() {
       <SnapshotFrames />
       <SecretRevealHost />
       {request ? (
-        <Dialog
+        <Modal
           isOpen
           size="sm"
           title={`Autoriser l’accès ${toResource(request.label)} ?`}

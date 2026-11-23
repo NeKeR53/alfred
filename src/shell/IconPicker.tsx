@@ -6,7 +6,7 @@
  */
 import { icons } from "lucide-react";
 import { useId, useMemo, useState } from "react";
-import { SearchField } from "socle-ui";
+import { SearchInput } from "socle-ui";
 import { Text } from "../kit";
 import { NamedIcon, SectionIcon } from "./icons";
 import "./iconPicker.css";
@@ -120,7 +120,7 @@ export function IconPicker({
     query.trim() !== "" && everyIcon().filter((name) => name.includes(query.trim().toLowerCase())).length > LIMIT;
   return (
     <div className="icon-picker">
-      <SearchField
+      <SearchInput
         label={`les icônes (en anglais : chart, mail, rocket…)`}
         onChange={(criteria) => setQuery(criteria.text)}
       />

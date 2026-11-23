@@ -5,8 +5,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { Button, Checkbox, CheckboxGroup, Dialog, ProgressBar, Select, TextField } from "socle-ui";
-import { Notice, Stack, Text } from "../../kit";
+import { Alert, Button, Checkbox, CheckboxGroup, Modal, ProgressBar, Select, TextInput } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { errorMessage } from "./api";
@@ -85,7 +85,7 @@ export function MergeDialog({
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       title={`Fusionner ${module.name}`}
       isBusy={busy}
@@ -120,9 +120,13 @@ export function MergeDialog({
             </Text>
           </>
         )}
-        {error ? <Notice tone="danger">{error}</Notice> : null}
+        {error ? (
+          <Alert announce tone="danger">
+            {error}
+          </Alert>
+        ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
@@ -184,7 +188,7 @@ export function SplitDialog({
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       title={`Scinder ${module.name}`}
       isBusy={busy}
@@ -201,7 +205,7 @@ export function SplitDialog({
       }
     >
       <Stack gap="md">
-        <TextField label="Nom du nouveau module" isRequired isDisabled={busy} value={name} onChange={setName} />
+        <TextInput label="Nom du nouveau module" isRequired isDisabled={busy} value={name} onChange={setName} />
         <CheckboxGroup label="Pages à déplacer" isDisabled={busy} value={selected} onChange={setSelected}>
           {pages.map((page) => (
             <Checkbox key={page.reference} value={page.id}>
@@ -225,14 +229,18 @@ export function SplitDialog({
               items={plan.sharedFunctions.map((id) => `Fonction ${id}`)}
             />
             {plan.problems.length ? (
-              <Notice tone="warning" title="Scission impossible :">
+              <Alert tone="warning" title="Scission impossible :">
                 <Bullets items={plan.problems.map((problem) => ({ key: problem, content: problem }))} />
-              </Notice>
+              </Alert>
             ) : null}
           </>
         ) : null}
-        {error ? <Notice tone="danger">{error}</Notice> : null}
+        {error ? (
+          <Alert announce tone="danger">
+            {error}
+          </Alert>
+        ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }

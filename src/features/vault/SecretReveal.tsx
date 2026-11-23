@@ -5,7 +5,7 @@
  */
 import { Copy, Eye } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Button, Code, Dialog } from "socle-ui";
+import { Button, Code, Modal } from "socle-ui";
 import { Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import { errorMessage } from "./api";
@@ -109,7 +109,7 @@ function SecretRevealDialog({ request, onClose }: { request: RevealRequest; onCl
     onClose(shown.current);
   };
   return (
-    <Dialog
+    <Modal
       isOpen
       title={`Afficher ${name} ?`}
       onOpenChange={(open) => {
@@ -159,6 +159,6 @@ function SecretRevealDialog({ request, onClose }: { request: RevealRequest; onCl
           </div>
         ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }

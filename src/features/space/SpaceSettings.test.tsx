@@ -277,13 +277,10 @@ it("annule une modification de l’historique et retire un accès accordé", asy
 
   // Accès : le demandeur et la ressource sont nommés comme l’utilisateur les connaît.
   const access = await screen.findByRole("grid", { name: "Accès accordés" });
-  expect(within(access).getByText("Page « Tableau des ventes » (module Ventes)")).toBeInTheDocument();
-  expect(within(access).getByText("Client « Jira de l’équipe »")).toBeInTheDocument();
-  await user.click(
-    within(access).getByRole("button", {
-      name: "Retirer l’accès Page « Tableau des ventes » (module Ventes)",
-    }),
-  );
+  const named = "Page « Tableau des ventes » (module Ventes) · Client « Jira de l’équipe »";
+  expect(within(access).getByText(named)).toBeInTheDocument();
+  // L’action reprend l’accès entier : la page et le client.
+  await user.click(within(access).getByRole("button", { name: `Retirer l’accès ${named}` }));
   dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Retirer" }));
   expect(await screen.findByText("Aucun accès accordé")).toBeInTheDocument();

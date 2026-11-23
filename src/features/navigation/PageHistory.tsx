@@ -6,8 +6,7 @@
 
 import { Undo2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Dialog, EmptyState, Table, type TableColumn, useConfirm } from "socle-ui";
-import { Notice } from "../../kit";
+import { Alert, EmptyState, Modal, Table, type TableColumn, useConfirm } from "socle-ui";
 import { invoke } from "../../lib/native";
 import type { Commit, ResolvedPage } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -84,7 +83,7 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
   }));
 
   return (
-    <Dialog
+    <Modal
       isOpen
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -95,9 +94,9 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
       description={pageFile(page)}
     >
       {error ? (
-        <Notice tone="danger" title="L’historique n’a pas pu être lu">
+        <Alert announce tone="danger" title="L’historique n’a pas pu être lu">
           {error}
-        </Notice>
+        </Alert>
       ) : null}
       {commits?.length === 0 ? (
         <EmptyState
@@ -121,6 +120,6 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
           ]}
         />
       )}
-    </Dialog>
+    </Modal>
   );
 }

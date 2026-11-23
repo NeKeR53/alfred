@@ -2,10 +2,9 @@
  * Pages qui se servent d’un compte, dans sa fiche : un compte est créé une fois par service, et plusieurs pages ou
  * onglets peuvent l’utiliser. Le choix se fait page par page (Réglages → Modules, fiche du module) ; ici, on le lit.
  */
+import type { SettingsSection } from "socle-ui";
 import { Text } from "../../kit";
 import type { Snapshot } from "../../lib/types";
-import { useShell } from "../../shell/store";
-import { ModulePart } from "../modules/ModulePart";
 import type { ClientInstanceItem, ClientItem } from "./api";
 
 /** Noms des onglets qui se servent du compte : « Prefect », ou « Prefect › Recette » dans une page à onglets. */
@@ -28,24 +27,17 @@ export function usageSentence(names: string[]): string {
   return `Utilisé par ${list}.`;
 }
 
-export function AccountPages({
-  client,
-  instance,
-}: {
-  client: ClientItem;
-  instance: Pick<ClientInstanceItem, "id" | "label">;
-  created?: boolean;
-}) {
-  const snapshot = useShell((state) => state.snapshot);
+/** Section « Pages de ce compte » sous le formulaire du compte ; `null` pour un service à une seule adresse. */
+export function accountPagesSection(
+  snapshot: Snapshot | null | undefined,
+  client: ClientItem,
+  instance: Pick<ClientInstanceItem, "id">,
+): SettingsSection | null {
   if (client.simple) return null;
-  const names = accountUsers(snapshot, client.id, instance.id);
-  return (
-    <ModulePart
-      part="account-pages"
-      title="Pages de ce compte"
-      description="Le compte d’une page se choisit dans la fiche de son module."
-    >
-      <Text tone="muted">{usageSentence(names)}</Text>
-    </ModulePart>
-  );
+  return {
+    id: "account-pages",
+    title: "Pages de ce compte",
+    description: "Le compte d’une page se choisit dans la fiche de son module.",
+    content: <Text tone="muted">{usageSentence(accountUsers(snapshot, client.id, instance.id))}</Text>,
+  };
 }

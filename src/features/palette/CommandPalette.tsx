@@ -6,7 +6,7 @@
  */
 import { Bot, MessageSquare, MessageSquarePlus, Moon, Play, Settings, Sun } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
-import { Button, ComboBox, type ComboBoxItem, Dialog, TextArea, useSocle } from "socle-ui";
+import { Button, ComboBox, type ComboBoxItem, Modal, TextArea, useSocle } from "socle-ui";
 import { create } from "zustand";
 import { Row, Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
@@ -299,7 +299,7 @@ export function CommandPalette() {
     : [];
 
   return (
-    <Dialog
+    <Modal
       isOpen={open}
       onOpenChange={(next) => {
         if (!next) close();
@@ -332,6 +332,6 @@ export function CommandPalette() {
           </Text>
         </Stack>
       )}
-    </Dialog>
+    </Modal>
   );
 }

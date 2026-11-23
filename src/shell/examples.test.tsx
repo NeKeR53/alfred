@@ -140,7 +140,7 @@ it("la page d’attente propose les données d’exemple, qui affichent la page 
     { module: "tickets", on: true },
   ]);
   expect(await screen.findByText("Vraie page")).toBeTruthy();
-  expect(screen.getByRole("status")).toHaveTextContent("Cette page affiche des données d’exemple");
+  expect(screen.getByText(/Cette page affiche des données d’exemple/)).toBeTruthy();
   expect(screen.queryByText("Il manque un compte à cette page")).toBeNull();
 });
 
@@ -157,7 +157,7 @@ it("l’encart « Données d’exemple » de la page dit le mode et son bouton l
     </>,
   );
   expect(screen.getByText("Vraie page")).toBeTruthy();
-  expect(screen.getByRole("status")).toHaveTextContent("Cette page affiche des données d’exemple");
+  expect(screen.getByText(/Cette page affiche des données d’exemple/)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Quitter les données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([
     { module: "tickets", on: false },

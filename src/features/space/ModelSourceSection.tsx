@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { type SettingsSection, useOpenForm } from "socle-ui";
-import { Notice } from "../../kit";
+import { Alert, type SettingsSection, useOpenForm } from "socle-ui";
 import { invoke } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 
@@ -141,9 +140,9 @@ export function useModelSourceSection(description?: string): SettingsSection {
       },
     ],
     content: error ? (
-      <Notice tone="danger" title="La source des modèles n’a pas pu être lue">
+      <Alert announce tone="danger" title="La source des modèles n’a pas pu être lue">
         {error}
-      </Notice>
+      </Alert>
     ) : undefined,
   };
 }

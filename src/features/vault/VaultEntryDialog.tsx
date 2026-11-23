@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Button, Dialog, Select, TextField } from "socle-ui";
+import { Button, Modal, Select, TextInput } from "socle-ui";
 import { Stack } from "../../kit";
 import { notify } from "../../shell/notifications";
 import {
@@ -111,7 +111,7 @@ export function VaultEntryDialog({
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       title={entry ? `Modifier « ${entry.label} »` : "Nouveau mot de passe ou clé"}
       // Pas de fermeture pendant l’écriture au trousseau : le résultat doit rester visible.
@@ -132,7 +132,7 @@ export function VaultEntryDialog({
     >
       <form id={formId} noValidate onSubmit={submit}>
         <Stack gap="md">
-          <TextField
+          <TextInput
             label="Libellé"
             isRequired
             autoComplete="off"
@@ -143,7 +143,7 @@ export function VaultEntryDialog({
               setErrors((current) => ({ ...current, label: undefined }));
             }}
           />
-          <TextField
+          <TextInput
             label="Identifiant"
             isRequired
             isDisabled={Boolean(entry)}
@@ -175,7 +175,7 @@ export function VaultEntryDialog({
             }}
           />
           {fields.meta ? (
-            <TextField
+            <TextInput
               label={fields.meta.label}
               isRequired
               autoComplete="off"
@@ -187,7 +187,7 @@ export function VaultEntryDialog({
               }}
             />
           ) : null}
-          <TextField
+          <TextInput
             type="password"
             label={fields.secret.label}
             isRequired={fields.secret.required && !keepsSecret}
@@ -206,6 +206,6 @@ export function VaultEntryDialog({
           />
         </Stack>
       </form>
-    </Dialog>
+    </Modal>
   );
 }

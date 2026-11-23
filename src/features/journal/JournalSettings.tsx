@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, EmptyState, type LogLine, LogViewer, Select, type SettingsSection } from "socle-ui";
-import { Notice, Stack } from "../../kit";
+import { Alert, EmptyState, type LogLine, LogViewer, Select, type SettingsSection } from "socle-ui";
+import { Stack } from "../../kit";
 import { invoke, onNativeEvent } from "../../lib/native";
 
 export interface JournalEntry {
@@ -157,9 +157,9 @@ export function useJournalSections(): SettingsSection[] {
       content: (
         <Stack gap="sm">
           {error ? (
-            <Notice tone="danger" action={<Button onPress={reload}>Réessayer</Button>}>
+            <Alert announce tone="danger" action={{ label: "Réessayer", onPress: reload }}>
               {entries ? `Le journal n’a pas pu être relu : ${error}` : `Le journal n’a pas pu être lu : ${error}`}
-            </Notice>
+            </Alert>
           ) : null}
           <LogViewer
             label="Journal d’exécution"

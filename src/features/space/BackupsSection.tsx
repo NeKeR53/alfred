@@ -1,7 +1,6 @@
 import { Download, FolderOpen, MoreHorizontal, RefreshCw, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Menu, type SettingsSection, Table, type TableColumn, useConfirm } from "socle-ui";
-import { Notice } from "../../kit";
+import { Alert, DropdownMenu, type SettingsSection, Table, type TableColumn, useConfirm } from "socle-ui";
 import { inTauri, invoke, onNativeEvent, pickFile, pickFolder } from "../../lib/native";
 import type { Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -272,9 +271,9 @@ export function useBackupsSection(snapshot: Snapshot | null): SettingsSection {
     content: (
       <>
         {error ? (
-          <Notice tone="danger" title="Les sauvegardes n’ont pas pu être lues">
+          <Alert announce tone="danger" title="Les sauvegardes n’ont pas pu être lues">
             {error}
-          </Notice>
+          </Alert>
         ) : null}
         <Table
           label="Sauvegardes de l’espace de travail"
@@ -288,18 +287,18 @@ export function useBackupsSection(snapshot: Snapshot | null): SettingsSection {
               label: `Actions de la sauvegarde du ${backup.when}`,
               menu: (
                 <>
-                  <Menu.Section title="Restaurer">
-                    <Menu.Item label="Toutes les données" onAction={() => void restore(backup)} />
+                  <DropdownMenu.Section title="Restaurer">
+                    <DropdownMenu.Item label="Toutes les données" onAction={() => void restore(backup)} />
                     {backup.modules.map((saved) => (
-                      <Menu.Item
+                      <DropdownMenu.Item
                         key={saved.id}
                         label={`Seulement « ${nameOf(saved.id)} »`}
                         onAction={() => void restore(backup, saved.id)}
                       />
                     ))}
-                  </Menu.Section>
-                  <Menu.Separator />
-                  <Menu.Item label="Supprimer la sauvegarde" danger onAction={() => void remove(backup)} />
+                  </DropdownMenu.Section>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item label="Supprimer la sauvegarde" danger onAction={() => void remove(backup)} />
                 </>
               ),
             },

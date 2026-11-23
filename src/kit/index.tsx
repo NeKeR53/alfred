@@ -6,7 +6,7 @@
  * en dur, aucun rayon hors échelle.
  */
 import type { ReactNode } from "react";
-import { StatusDot, type StatusTone } from "socle-ui";
+import { BadgeDot, type StatusTone } from "socle-ui";
 
 export type Gap = "none" | "xs" | "sm" | "md" | "lg";
 
@@ -77,6 +77,9 @@ const noticeLabel: Record<NoticeTone, string> = {
  * Encart dans une zone : un message qui concerne cette zone seulement (une erreur de chargement, une précision). Ce
  * n’est jamais un bandeau pleine largeur sous la barre du haut (D-159). Un état durable de la page (données
  * d’exemple) est aussi un encart, en haut de la page (D-253) ; le résultat d’une action est un toast.
+ *
+ * @deprecated Utiliser `Alert` de socle-ui (depuis 1.0.0, D-355) : une action `{ label, onPress }` au plus. Gardé
+ * pour la conversation et les pages servies par `@alfred/kit`, qui l’utilisent encore.
  */
 export function Notice({
   tone = "info",
@@ -97,7 +100,7 @@ export function Notice({
       className="flex min-w-0 items-start gap-3 rounded-md border border-line bg-surface-side p-3 text-md text-fg"
     >
       <span className="pt-1">
-        <StatusDot tone={statusTone} label={noticeLabel[tone]} />
+        <BadgeDot tone={statusTone} label={noticeLabel[tone]} />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         {title ? <p className="m-0 font-semibold">{title}</p> : null}

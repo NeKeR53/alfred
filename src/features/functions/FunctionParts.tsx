@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Button, Code, Dialog, type ItemSetting, type SettingTag, TextArea } from "socle-ui";
+import { Button, Code, type ItemSetting, Modal, type SettingTag, TextArea } from "socle-ui";
 import { Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { FunctionRuntime, ResolvedFunction } from "../../lib/types";
@@ -184,7 +184,7 @@ export function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () =
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       size="lg"
       title={`Essayer « ${fn.id} »`}
@@ -244,6 +244,6 @@ export function TryDialog({ fn, onClose }: { fn: ResolvedFunction; onClose: () =
           ) : null}
         </Stack>
       </form>
-    </Dialog>
+    </Modal>
   );
 }

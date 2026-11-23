@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useId, useState } from "react";
-import { Button, Checkbox, Code, Dialog, TextField, useConfirm } from "socle-ui";
+import { Button, Checkbox, Code, Modal, TextInput, useConfirm } from "socle-ui";
 import { Row, Stack, Text } from "../../kit";
 import { inTauri, invoke, pickFolder } from "../../lib/native";
 import { notify } from "../../shell/notifications";
@@ -290,7 +290,7 @@ export function SpaceDialog({
   };
 
   return (
-    <Dialog
+    <Modal
       isOpen
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -318,7 +318,7 @@ export function SpaceDialog({
       <form id={formId} noValidate onSubmit={(event) => void submit(event)}>
         <Stack gap="md">
           {mode !== "open" ? (
-            <TextField
+            <TextInput
               label="Nom"
               isRequired
               value={name}
@@ -336,7 +336,7 @@ export function SpaceDialog({
           ) : null}
           {mode !== "rename" ? (
             <Stack gap="xs">
-              <TextField
+              <TextInput
                 label="Dossier"
                 isRequired
                 value={shownPath}
@@ -363,6 +363,6 @@ export function SpaceDialog({
           ) : null}
         </Stack>
       </form>
-    </Dialog>
+    </Modal>
   );
 }

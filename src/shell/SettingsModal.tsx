@@ -10,8 +10,8 @@
 import { FileText } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import {
-  Dialog,
   EmptyState,
+  Modal,
   type SettingsCategory,
   type SettingsGroup,
   SettingsPage,
@@ -121,7 +121,7 @@ export function SettingsModal({
   const page = visiblePages.find((candidate) => candidate.reference === selectedId);
 
   return (
-    <Dialog
+    <Modal
       isOpen
       size="xl"
       title="Réglages"
@@ -137,6 +137,6 @@ export function SettingsModal({
         page={page}
         onSelect={(id) => setActiveTab(SETTINGS_SECTION, id)}
       />
-    </Dialog>
+    </Modal>
   );
 }

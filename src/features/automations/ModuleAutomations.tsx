@@ -8,8 +8,8 @@
  */
 import { Copy, Eye, EyeOff, Info } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { Button, Dialog, IconButton, type SettingsSection, Skeleton, Switch, useConfirm } from "socle-ui";
-import { Notice, Row, Stack, Text } from "../../kit";
+import { Alert, Button, IconButton, Modal, type SettingsSection, Skeleton, Toggle, useConfirm } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { KeyValues } from "../modules/lists";
@@ -143,9 +143,9 @@ function WebhookSecret({ hook }: { hook: WebhookItem }) {
 
   if (error)
     return (
-      <Notice tone="danger" action={<Button onPress={() => void load()}>Réessayer</Button>}>
+      <Alert announce tone="danger" action={{ label: "Réessayer", onPress: () => void load() }}>
         {`Le secret n’a pas pu être lu. ${error}`}
-      </Notice>
+      </Alert>
     );
   if (secret === undefined) return <Skeleton width="60%" />;
   return (
@@ -251,7 +251,7 @@ function Detail({
         ]
       : [entry.item.functionExists ? null : "Fonction introuvable : les appels échoueront."];
   return (
-    <Dialog
+    <Modal
       isOpen
       size="lg"
       title={name}
@@ -268,9 +268,9 @@ function Detail({
         ))}
         {entry.kind === "schedule" ? (
           <Row gap="md" wrap>
-            <Switch isSelected={entry.item.enabled} onChange={(enabled) => onToggle(entry.item, enabled)}>
+            <Toggle isSelected={entry.item.enabled} onChange={(enabled) => onToggle(entry.item, enabled)}>
               Active
-            </Switch>
+            </Toggle>
             <Button
               aria-label={`Exécuter maintenant ${name}`}
               isPending={running || entry.item.running === true}
@@ -297,7 +297,7 @@ function Detail({
           </>
         ) : null}
       </Stack>
-    </Dialog>
+    </Modal>
   );
 }
 
