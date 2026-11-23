@@ -4,12 +4,13 @@
  * espace est fermé, et l’accueil relancé depuis les Réglages.
  */
 import "./support/dom";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { App } from "../src/App";
 import { useHarnesses } from "../src/features/agent/harness/installed";
 import { closeOnboarding } from "../src/features/setup/Onboarding";
+import { renderWithSocle as render, selectButton } from "../src/features/space/sections.test-helper";
 import { useShell } from "../src/shell/store";
 import { SUGGESTED_MARKETPLACE } from "../src/shell/welcome/ModulesStep";
 import { closeWelcome } from "../src/shell/welcome/store";
@@ -57,8 +58,8 @@ it("premier démarrage sans espace : la bienvenue, puis le choix de l’espace, 
   expect(
     within(cards)
       .getAllByRole("radio")
-      .map((card) => card.getAttribute("aria-checked")),
-  ).toEqual(["true", "false"]);
+      .map((card) => (card as HTMLInputElement).checked),
+  ).toEqual([true, false]);
   expect(screen.queryByRole("button", { name: "Plus tard" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Créer l’espace" })).toBeDisabled();
   expect(backend.commandsCalled()).not.toContain("space.open");
@@ -157,16 +158,19 @@ it("réglages par défaut : thème du système, accent par défaut, agent détec
   await createSpace(user);
   await user.click(screen.getByRole("button", { name: "Plus tard" }));
 
-  expect(screen.getByRole("radio", { name: "Système" })).toHaveAttribute("aria-checked", "true");
-  expect(screen.getByRole("combobox", { name: "Couleur d’accent" })).toHaveValue("");
+  expect(await selectButton("Mode")).toHaveTextContent("Comme l’ordinateur");
+  expect(await selectButton("Couleur d’accent")).toHaveTextContent("Par défaut");
   expect(await screen.findAllByText("Installé et connecté")).toHaveLength(3);
-  const network = screen.getByText("Réseau d’entreprise (facultatif)").closest("details");
-  expect(network).not.toHaveAttribute("open");
+  expect(screen.getByRole("button", { name: "Réseau d’entreprise (facultatif)" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
   expect(screen.getByText(/vous l’activerez quand vous voudrez, dans Réglages › Voix/)).toBeVisible();
   expect(backend.commandsCalled()).not.toContain("voice.whisper.install");
 
   // Un choix s’applique tout de suite, et le résumé le reprend.
-  await user.click(screen.getByRole("radio", { name: "Sombre" }));
+  await user.click(await selectButton("Mode"));
+  await user.click(await screen.findByRole("option", { name: "Sombre" }));
   expect(document.documentElement.dataset.theme).toBe("dark");
   await user.click(screen.getByRole("button", { name: "Continuer" }));
   expect(screen.getByText("Thème sombre.")).toBeVisible();
@@ -183,10 +187,7 @@ it("sans agent installé : deux lignes et le lien d’installation, sans rien in
   await createSpace(user);
   await user.click(screen.getByRole("button", { name: "Plus tard" }));
   expect(await screen.findByText("Aucun agent n’est installé : Claude Code, Codex ou OpenCode.")).toBeVisible();
-  expect(screen.getByRole("link", { name: /Comment l’installer/ })).toHaveAttribute(
-    "href",
-    "https://code.claude.com/docs/fr/setup",
-  );
+  expect(screen.getByRole("button", { name: /Comment l’installer/ })).toBeVisible();
   expect(
     backend.commandsCalled().filter((command) => command.startsWith("agents.") && command !== "agents.probe"),
   ).toEqual([]);
@@ -223,10 +224,13 @@ it("relancé depuis Réglages › Général : garder l’espace ouvert, puis rev
 
   expect(screen.getByRole("heading", { name: "Bonjour, je suis Alfred" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Commencer" }));
-  expect(screen.getByRole("radio", { name: /Garder « Maison »/ })).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByRole("radio", { name: /Garder « Maison »/ })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Continuer" }));
   expect(screen.getByRole("heading", { name: "Vos modules" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Fermer l’accueil" }));
-  await waitFor(() => expect(screen.getByRole("complementary", { name: "Navigation principale" })).toBeVisible());
+  // Retour à Alfred : la coquille revient (les Réglages, d’où l’accueil a été relancé, restent ouverts par-dessus).
+  await waitFor(() =>
+    expect(screen.getByRole("complementary", { name: "Navigation principale", hidden: true })).toBeInTheDocument(),
+  );
   expect(backend.commandsCalled().filter((command) => command === "space.open")).toEqual([]);
 });

@@ -1,23 +1,7 @@
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  IconButton,
-  LoadingSkeleton,
-  MenuGroup,
-  MenuItem,
-  OverflowMenu,
-  RefreshButton,
-  Section,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  type useConfirm,
-} from "@alfred/ui";
-import { X } from "lucide-react";
+import { Download, FolderOpen, MoreHorizontal, RefreshCw, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Menu, type SettingsSection, Table, type TableColumn, useConfirm } from "socle-ui";
+import { Notice } from "../../kit";
 import { inTauri, invoke, onNativeEvent, pickFile, pickFolder } from "../../lib/native";
 import type { Snapshot } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -76,25 +60,33 @@ function moduleName(snapshot: Snapshot, id: string): string {
   return snapshot.modules.find((module) => module.id === id)?.name ?? id;
 }
 
+const icon = (Icon: typeof X) => <Icon size={16} aria-hidden="true" />;
+
+type BackupRow = BackupInfo & { when: string; kind: string; weight: string };
+
+const COLUMNS: TableColumn[] = [
+  { id: "when", label: "Date", width: 170 },
+  { id: "kind", label: "Type" },
+  { id: "weight", label: "Taille", width: 90, align: "end" },
+];
+
 /**
  * Sauvegardes des données des modules (base et fichiers, hors de l’historique git) : réglages, liste des copies,
  * restauration de tout l’espace de travail ou d’un module, export et import des données d’un module.
  */
-export function BackupsSection({
-  snapshot,
-  confirm,
-}: {
-  snapshot: Snapshot;
-  confirm: ReturnType<typeof useConfirm>["confirm"];
-}) {
+export function useBackupsSection(snapshot: Snapshot | null): SettingsSection {
   const [backups, setBackups] = useState<BackupInfo[]>();
   const [settings, setSettings] = useState<BackupSettings>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
   /** Modale d’export ou d’import des données d’un module. */
   const [transfer, setTransfer] = useState<"export" | "import">();
+  const confirm = useConfirm();
+  const space = snapshot?.path;
+  const modules = snapshot?.modules ?? [];
+  const nameOf = (id: string) => (snapshot ? moduleName(snapshot, id) : id);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `space` relit les sauvegardes quand l’espace change.
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -110,56 +102,49 @@ export function BackupsSection({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [space]);
 
   useEffect(() => {
+    if (!space) return;
     void load();
     return onNativeEvent("backups:changed", () => void load());
-  }, [load]);
+  }, [load, space]);
 
-  const run = async (key: string, action: () => Promise<void>) => {
-    setBusy(key);
+  /** Un échec rejette : la ligne reprend l’ancienne valeur et le signale (D-204). */
+  const changeSettings = async (next: Partial<BackupSettings>) => {
+    setSettings(await invoke<BackupSettings>("backups.setSettings", next));
+  };
+
+  const changeOrReport = async (next: Partial<BackupSettings>) => {
     try {
-      await action();
-    } finally {
-      setBusy(null);
+      await changeSettings(next);
+    } catch (failure) {
+      notify({ title: "Le réglage n’a pas été changé", description: errorMessage(failure), tone: "error" });
     }
   };
 
-  const changeSettings = (next: Partial<BackupSettings>) =>
-    run("settings", async () => {
-      try {
-        setSettings(await invoke<BackupSettings>("backups.setSettings", next));
-      } catch (failure) {
-        notify({ title: "Le réglage n’a pas été changé", description: errorMessage(failure), tone: "error" });
-      }
-    });
-
   const chooseCopyDir = async () => {
     const dir = await pickFolder("Dossier où recopier les sauvegardes");
-    if (dir) await changeSettings({ copyDir: dir });
+    if (dir) await changeOrReport({ copyDir: dir });
   };
 
-  const backupNow = () =>
-    run("create", async () => {
-      try {
-        const backup = await invoke<BackupInfo>("backups.create");
-        notify({
-          title: "Sauvegarde faite",
-          description: backup.copyError ? `La copie dans le dossier choisi a échoué : ${backup.copyError}` : undefined,
-          tone: backup.copyError ? "warning" : "success",
-        });
-        await load();
-      } catch (failure) {
-        notify({ title: "La sauvegarde a échoué", description: errorMessage(failure), tone: "error" });
-      }
-    });
+  const backupNow = async () => {
+    try {
+      const backup = await invoke<BackupInfo>("backups.create");
+      notify({
+        title: "Sauvegarde faite",
+        description: backup.copyError ? `La copie dans le dossier choisi a échoué : ${backup.copyError}` : undefined,
+        tone: backup.copyError ? "warning" : "success",
+      });
+      await load();
+    } catch (failure) {
+      notify({ title: "La sauvegarde a échoué", description: errorMessage(failure), tone: "error" });
+    }
+  };
 
   const restore = async (backup: BackupInfo, target?: string) => {
-    const what = target
-      ? `les données du module « ${moduleName(snapshot, target)} »`
-      : "toutes les données des modules";
-    const confirmed = await confirm({
+    const what = target ? `les données du module « ${nameOf(target)} »` : "toutes les données des modules";
+    const accepted = await confirm({
       title: `Restaurer ${what} au ${formatDate(backup.createdAt)} ?`,
       message: target
         ? "Les tables et les fichiers de ce module reviennent à leur état de cette sauvegarde ; les autres modules ne changent pas. Alfred sauvegarde d’abord l’état actuel, que vous pourrez restaurer à son tour."
@@ -167,220 +152,167 @@ export function BackupsSection({
       confirmLabel: "Restaurer",
       tone: "danger",
     });
-    if (!confirmed) return;
-    await run(`restore:${backup.id}`, async () => {
-      try {
-        await invoke("backups.restore", { id: backup.id, ...(target ? { module: target } : {}) });
-        notify({ title: "Données restaurées", description: formatDate(backup.createdAt), tone: "success" });
-        await load();
-      } catch (failure) {
-        notify({ title: "La restauration a échoué", description: errorMessage(failure), tone: "error" });
-      }
-    });
+    if (!accepted) return;
+    try {
+      await invoke("backups.restore", { id: backup.id, ...(target ? { module: target } : {}) });
+      notify({ title: "Données restaurées", description: formatDate(backup.createdAt), tone: "success" });
+      await load();
+    } catch (failure) {
+      notify({ title: "La restauration a échoué", description: errorMessage(failure), tone: "error" });
+    }
   };
 
   const remove = async (backup: BackupInfo) => {
-    const confirmed = await confirm({
+    const accepted = await confirm({
       title: `Supprimer la sauvegarde du ${formatDate(backup.createdAt)} ?`,
       message: "Elle ne pourra plus être restaurée. Les copies déjà faites dans le dossier choisi restent.",
       confirmLabel: "Supprimer",
       tone: "danger",
     });
-    if (!confirmed) return;
-    await run(`delete:${backup.id}`, async () => {
-      try {
-        await invoke("backups.delete", { id: backup.id });
-        await load();
-      } catch (failure) {
-        notify({ title: "La sauvegarde n’a pas été supprimée", description: errorMessage(failure), tone: "error" });
-      }
-    });
+    if (!accepted) return;
+    try {
+      await invoke("backups.delete", { id: backup.id });
+      await load();
+    } catch (failure) {
+      notify({ title: "La sauvegarde n’a pas été supprimée", description: errorMessage(failure), tone: "error" });
+    }
   };
 
   const importModule = async (module: string) => {
     setTransfer(undefined);
     const path = await pickFile("Importer des données dans le module");
     if (!path) return;
-    const confirmed = await confirm({
-      title: `Remplacer les données du module « ${moduleName(snapshot, module)} » ?`,
+    const accepted = await confirm({
+      title: `Remplacer les données du module « ${nameOf(module)} » ?`,
       message:
         "Les lignes et les fichiers actuels du module sont remplacés par ceux du fichier. Alfred sauvegarde d’abord l’état actuel.",
       confirmLabel: "Importer",
       tone: "danger",
     });
-    if (!confirmed) return;
-    await run("import", async () => {
-      try {
-        await invoke("backups.importModule", { module, path });
-        notify({ title: "Données importées", description: moduleName(snapshot, module), tone: "success" });
-        await useShell.getState().refresh();
-      } catch (failure) {
-        notify({ title: "L’import a échoué", description: errorMessage(failure), tone: "error" });
-      }
-    });
+    if (!accepted) return;
+    try {
+      await invoke("backups.importModule", { module, path });
+      notify({ title: "Données importées", description: nameOf(module), tone: "success" });
+      await useShell.getState().refresh();
+    } catch (failure) {
+      notify({ title: "L’import a échoué", description: errorMessage(failure), tone: "error" });
+    }
   };
 
-  const columns: DataTableColumn<BackupInfo>[] = [
-    {
-      key: "createdAt",
-      header: "Date",
-      width: "150px",
-      render: (backup) => formatDate(backup.createdAt),
-      sortValue: (backup) => backup.createdAt,
-    },
-    {
-      key: "reason",
-      header: "Type",
-      render: (backup) =>
-        backup.note ? `${REASON_LABEL[backup.reason]} (${backup.note})` : REASON_LABEL[backup.reason],
-      sortValue: (backup) => backup.reason,
-    },
-    {
-      key: "size",
-      header: "Taille",
-      width: "80px",
-      align: "end",
-      render: (backup) => formatSize(backup.size),
-      sortValue: (backup) => backup.size,
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      width: "72px",
-      align: "end",
-      sortable: false,
-      render: (backup) => (
-        <OverflowMenu
-          size="small"
-          label={`Actions de la sauvegarde du ${formatDate(backup.createdAt)}`}
-          tooltip="Restaurer ou supprimer"
-          disabled={busy !== null}
-        >
-          <MenuGroup label="Restaurer">
-            <MenuItem onClick={() => void restore(backup)}>Toutes les données</MenuItem>
-            {backup.modules.map((saved) => (
-              <MenuItem key={saved.id} onClick={() => void restore(backup, saved.id)}>
-                Seulement « {moduleName(snapshot, saved.id)} »
-              </MenuItem>
-            ))}
-          </MenuGroup>
-          <MenuItem tone="danger" onClick={() => void remove(backup)}>
-            Supprimer la sauvegarde
-          </MenuItem>
-        </OverflowMenu>
-      ),
-    },
-  ];
+  const keep = settings?.keep ?? 14;
+  const rows: BackupRow[] = (backups ?? []).map((backup) => ({
+    ...backup,
+    when: formatDate(backup.createdAt),
+    kind: backup.note ? `${REASON_LABEL[backup.reason]} (${backup.note})` : REASON_LABEL[backup.reason],
+    weight: formatSize(backup.size),
+  }));
 
-  return (
-    <Section
-      title="Sauvegardes"
-      description="Les données des modules (leurs tables et leurs fichiers) ne font pas partie de l’historique. Alfred les copie chaque jour et avant chaque changement de structure d’un module."
-      actions={
-        <>
-          <RefreshButton label="Actualiser les sauvegardes" loading={loading} onClick={() => void load()} />
-          <Button loading={busy === "create"} loadingLabel="Sauvegarde…" disabled={busy !== null} onClick={backupNow}>
-            Sauvegarder maintenant
-          </Button>
-        </>
-      }
-    >
-      {error ? (
-        <FeedbackBanner
-          tone="error"
-          appearance="contained"
-          action={<Button onClick={() => void load()}>Réessayer</Button>}
-        >
-          Les sauvegardes n’ont pas pu être lues : {error}
-        </FeedbackBanner>
-      ) : null}
-      <SettingRows label="Réglages des sauvegardes">
-        <SettingRow
-          title="Copies quotidiennes gardées"
-          description="Les plus anciennes sont supprimées au fur et à mesure."
-        >
-          <SelectControl
-            aria-label="Copies quotidiennes gardées"
-            value={String(settings?.keep ?? 14)}
-            disabled={!settings || busy !== null}
-            onChange={(event) => void changeSettings({ keep: Number(event.target.value) })}
-          >
-            {[...new Set([...KEEP_CHOICES, settings?.keep ?? 14])]
-              .sort((a, b) => a - b)
-              .map((count) => (
-                <option key={count} value={count}>
-                  {count} jours
-                </option>
-              ))}
-          </SelectControl>
-        </SettingRow>
-        <SettingRow
-          title="Copie dans un dossier"
-          description={
-            settings?.copyDir ? (
-              <span title={settings.copyDir}>{settings.copyDir}</span>
-            ) : (
-              "Recopiez chaque sauvegarde ailleurs : un disque externe, un dossier synchronisé."
-            )
-          }
-        >
-          {inTauri ? (
-            <Button disabled={!settings || busy !== null} onClick={() => void chooseCopyDir()}>
-              {settings?.copyDir ? "Changer…" : "Choisir un dossier…"}
-            </Button>
-          ) : null}
-          {settings?.copyDir ? (
-            <IconButton
-              size="small"
-              label="Ne plus recopier les sauvegardes"
-              tooltip="Ne plus recopier"
-              disabled={busy !== null}
-              onClick={() => void changeSettings({ copyDir: "" })}
-            >
-              <X size={14} aria-hidden="true" />
-            </IconButton>
-          ) : null}
-        </SettingRow>
-        {snapshot.modules.length > 0 && inTauri ? (
-          <SettingRow
-            title="Données d’un module"
-            description="Pour les passer dans un autre espace ou sur un autre ordinateur."
-          >
-            <Button disabled={busy !== null} onClick={() => setTransfer("export")}>
-              Exporter…
-            </Button>
-            <Button loading={busy === "import"} disabled={busy !== null} onClick={() => setTransfer("import")}>
-              Importer…
-            </Button>
-          </SettingRow>
+  return {
+    id: "backups",
+    title: "Sauvegardes",
+    description:
+      "Les données des modules (leurs tables et leurs fichiers) ne font pas partie de l’historique. Alfred les copie chaque jour et avant chaque changement de structure d’un module.",
+    actions: [
+      { id: "create", label: "Sauvegarder maintenant", primary: true, onPress: backupNow },
+      { id: "reload", label: "Actualiser les sauvegardes", icon: icon(RefreshCw), onPress: load },
+    ],
+    settings: [
+      {
+        id: "keep",
+        type: "select",
+        label: "Copies quotidiennes gardées",
+        description: "Les plus anciennes sont supprimées au fur et à mesure.",
+        value: String(keep),
+        isDisabled: !settings,
+        width: "sm",
+        options: [...new Set([...KEEP_CHOICES, keep])]
+          .sort((a, b) => a - b)
+          .map((days) => ({ id: String(days), label: `${days} jours` })),
+        onChange: (value) => changeSettings({ keep: Number(value) }),
+      },
+      {
+        id: "copy",
+        type: "item",
+        label: "Copie dans un dossier",
+        description:
+          settings?.copyDir ?? "Recopiez chaque sauvegarde ailleurs : un disque externe, un dossier synchronisé.",
+        actions: [
+          {
+            id: "choose",
+            label: settings?.copyDir ? "Changer de dossier…" : "Choisir un dossier…",
+            icon: icon(FolderOpen),
+            isHidden: !inTauri,
+            isDisabled: !settings,
+            onPress: chooseCopyDir,
+          },
+          {
+            id: "stop",
+            label: "Ne plus recopier les sauvegardes",
+            icon: icon(X),
+            isHidden: !settings?.copyDir,
+            onPress: () => changeOrReport({ copyDir: "" }),
+          },
+        ],
+      },
+      ...(modules.length > 0 && inTauri
+        ? [
+            {
+              id: "module-data",
+              type: "item" as const,
+              label: "Données d’un module",
+              description: "Pour les passer dans un autre espace ou sur un autre ordinateur.",
+              actions: [
+                { id: "export", label: "Exporter…", icon: icon(Download), onPress: () => setTransfer("export") },
+                { id: "import", label: "Importer…", icon: icon(Upload), onPress: () => setTransfer("import") },
+              ],
+            },
+          ]
+        : []),
+    ],
+    content: (
+      <>
+        {error ? (
+          <Notice tone="danger" title="Les sauvegardes n’ont pas pu être lues">
+            {error}
+          </Notice>
         ) : null}
-      </SettingRows>
-      {backups === undefined ? (
-        error ? null : (
-          <LoadingSkeleton rows={3} label="Chargement des sauvegardes…" />
-        )
-      ) : backups.length === 0 ? (
-        <EmptyState
-          size="compact"
-          title="Aucune sauvegarde"
-          description="La première copie est faite dès qu’un module a des données."
-        />
-      ) : (
-        <DataTable
+        <Table
           label="Sauvegardes de l’espace de travail"
-          columns={columns}
-          rows={backups}
-          rowKey={(backup) => backup.id}
-          loading={loading}
+          columns={COLUMNS}
+          rows={rows}
+          density="compact"
+          isLoading={loading && backups === undefined}
+          rowActions={(backup) => [
+            {
+              icon: icon(MoreHorizontal),
+              label: `Actions de la sauvegarde du ${backup.when}`,
+              menu: (
+                <>
+                  <Menu.Section title="Restaurer">
+                    <Menu.Item label="Toutes les données" onAction={() => void restore(backup)} />
+                    {backup.modules.map((saved) => (
+                      <Menu.Item
+                        key={saved.id}
+                        label={`Seulement « ${nameOf(saved.id)} »`}
+                        onAction={() => void restore(backup, saved.id)}
+                      />
+                    ))}
+                  </Menu.Section>
+                  <Menu.Separator />
+                  <Menu.Item label="Supprimer la sauvegarde" danger onAction={() => void remove(backup)} />
+                </>
+              ),
+            },
+          ]}
         />
-      )}
-      {transfer ? (
-        <ModuleExportDialog
-          modules={snapshot.modules}
-          onClose={() => setTransfer(undefined)}
-          onImport={transfer === "import" ? (module) => void importModule(module) : undefined}
-        />
-      ) : null}
-    </Section>
-  );
+        {transfer ? (
+          <ModuleExportDialog
+            modules={modules}
+            onClose={() => setTransfer(undefined)}
+            onImport={transfer === "import" ? (module) => void importModule(module) : undefined}
+          />
+        ) : null}
+      </>
+    ),
+  };
 }

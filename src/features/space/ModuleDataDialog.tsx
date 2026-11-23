@@ -3,8 +3,9 @@
  * suivante) et sous quelle forme (un fichier .json), avec un seul bouton principal. Une fois l’export fait, elle dit
  * « Exporté vers … » et propose d’afficher le fichier dans le gestionnaire de fichiers.
  */
-import { Button, FormField, KeyValueList, Modal, SelectControl, Stack, Text } from "@alfred/ui";
 import { useState } from "react";
+import { Button, Code, Dialog, PropertyRow, Select } from "socle-ui";
+import { Notice, Stack, Text } from "../../kit";
 import { invoke, pickSaveFile } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -67,50 +68,49 @@ export function ModuleExportDialog({
 
   if (done)
     return (
-      <Modal
-        open
-        size="small"
-        onClose={onClose}
+      <Dialog
+        isOpen
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        size="sm"
         title="Données exportées"
-        actions={
+        footer={
           <>
-            <Button onClick={() => void reveal(done)}>Afficher dans {fileManager(platform)}</Button>
-            <Button variant="primary" onClick={onClose}>
+            <Button onPress={() => void reveal(done)}>{`Afficher dans ${fileManager(platform)}`}</Button>
+            <Button variant="primary" onPress={onClose}>
               Terminer
             </Button>
           </>
         }
       >
-        <Text>
-          Exporté vers <strong>{done}</strong>
-        </Text>
-      </Modal>
+        <Stack gap="xs">
+          <Text>Exporté vers :</Text>
+          <Code>{done}</Code>
+        </Stack>
+      </Dialog>
     );
 
   return (
-    <Modal
-      open
-      size="small"
-      onClose={onClose}
-      busy={pending}
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      size="sm"
+      isBusy={pending}
       title={onImport ? "Importer des données" : "Exporter les données"}
       description={
         onImport
           ? "Les données actuelles du module sont remplacées par celles du fichier ; Alfred les sauvegarde d’abord."
           : "Pour les reprendre dans un autre espace de travail ou sur un autre ordinateur."
       }
-      actions={
+      footer={
         <>
-          <Button onClick={onClose} disabled={pending}>
+          <Button onPress={onClose} isDisabled={pending}>
             Annuler
           </Button>
-          <Button
-            variant="primary"
-            loading={pending}
-            loadingLabel="Export…"
-            disabled={!module}
-            onClick={() => void exportNow()}
-          >
+          <Button variant="primary" isPending={pending} isDisabled={!module} onPress={() => void exportNow()}>
             {onImport ? "Choisir le fichier…" : "Exporter…"}
           </Button>
         </>
@@ -118,31 +118,34 @@ export function ModuleExportDialog({
     >
       <Stack gap="md">
         {modules.length > 1 ? (
-          <FormField label="Module">
-            <SelectControl value={module} onChange={(event) => setModule(event.target.value)} disabled={pending}>
-              {modules.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </SelectControl>
-          </FormField>
+          <Select
+            label="Module"
+            isRequired
+            value={module}
+            isDisabled={pending}
+            options={modules.map((candidate) => ({ id: candidate.id, label: candidate.name }))}
+            onChange={(id) => setModule(id ?? "")}
+          />
         ) : null}
-        <KeyValueList
-          items={[
-            ...(modules.length > 1 ? [] : [{ label: "Module", value: name }]),
-            { label: "Contenu", value: "Ses tables et ses fichiers" },
-            { label: "Format", value: "Un fichier .json" },
-            {
-              label: onImport ? "D’où" : "Où",
-              value: onImport
+        <div>
+          {modules.length > 1 ? null : <PropertyRow label="Module" value={name} />}
+          <PropertyRow label="Contenu" value="Ses tables et ses fichiers" />
+          <PropertyRow label="Format" value="Un fichier .json" />
+          <PropertyRow
+            label={onImport ? "D’où" : "Où"}
+            value={
+              onImport
                 ? "Le fichier d’un export, choisi à l’étape suivante"
-                : "Vous choisissez l’emplacement à l’étape suivante",
-            },
-          ]}
-        />
-        {error ? <Text tone="danger">L’export a échoué : {error}</Text> : null}
+                : "Vous choisissez l’emplacement à l’étape suivante"
+            }
+          />
+        </div>
+        {error ? (
+          <Notice tone="danger" title="L’export a échoué">
+            {error}
+          </Notice>
+        ) : null}
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }

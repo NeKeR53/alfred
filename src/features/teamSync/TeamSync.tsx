@@ -3,18 +3,10 @@
  * dépôt git de l’équipe auquel il est relié, l’état de la dernière synchronisation, et de quoi relier, synchroniser
  * ou arrêter le partage. Visible seulement pour un module qui déclare des tables à partager (`sync.tables`).
  */
-import {
-  Button,
-  FeedbackBanner,
-  FormControlGroup,
-  FormField,
-  KeyValueList,
-  RefreshButton,
-  Text,
-  TextInput,
-  useConfirm,
-} from "@alfred/ui";
+import { RefreshCw } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { Button, IconButton, PropertyRow, TextField, useConfirm } from "socle-ui";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { invoke, onNativeEvent } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
 import { notify } from "../../shell/notifications";
@@ -53,7 +45,7 @@ export function TeamSync({ module }: { module: ModuleSummary }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState<"link" | "run" | "unlink">();
   const [error, setError] = useState<string>();
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
   const shared = (module.sync ?? []).length > 0;
 
   const load = useCallback(async () => {
@@ -109,6 +101,7 @@ export function TeamSync({ module }: { module: ModuleSummary }) {
       message:
         "Les données restent dans ce poste et dans le dépôt de l’équipe, mais elles ne se synchronisent plus. Vous pourrez relier le module de nouveau.",
       confirmLabel: "Arrêter le partage",
+      tone: "default",
     });
     if (accepted) void act("unlink", () => invoke<SyncStatus>("teamSync.unlink", { module: module.id }));
   };
@@ -121,82 +114,79 @@ export function TeamSync({ module }: { module: ModuleSummary }) {
       description={`Les données de ${(module.sync ?? []).join(", ")} se partagent avec votre équipe par un dépôt git : chacun voit ce que les autres ajoutent ou modifient.`}
       actions={
         current ? (
-          <RefreshButton
+          <IconButton
+            icon={<RefreshCw size={16} aria-hidden="true" />}
             label="Synchroniser maintenant"
-            loading={busy === "run"}
-            disabled={busy !== undefined}
-            onClick={() => void act("run", () => invoke<SyncStatus>("teamSync.run", { module: module.id }))}
+            isPending={busy === "run"}
+            isDisabled={busy !== undefined && busy !== "run"}
+            onPress={() => void act("run", () => invoke<SyncStatus>("teamSync.run", { module: module.id }))}
           />
         ) : undefined
       }
     >
-      {status?.problems.map((problem) => (
-        <FeedbackBanner key={problem} tone="warning" appearance="contained">
-          {problem}
-        </FeedbackBanner>
-      ))}
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-      {current ? (
-        <>
-          <KeyValueList
-            items={[
-              { label: "Dépôt de l’équipe", value: current.url },
-              {
-                label: "Dernière synchronisation",
-                value: current.lastSync
-                  ? `${dateTime.format(new Date(current.lastSync))} · ${lines(current.received)} reçue(s), ${lines(current.sent)} envoyée(s)${current.conflicts ? `, ${current.conflicts} conflit(s)` : ""}`
-                  : "Jamais",
-              },
-            ]}
-          />
-          {current.lastError ? (
-            <Text size="meta" tone="danger">
-              Dernier échec : {current.lastError}
-            </Text>
-          ) : null}
-          <Text size="meta" tone="muted">
-            Synchronisé toutes les deux minutes tant qu’Alfred est ouvert. Si une même ligne change des deux côtés, la
-            version de l’équipe est gardée et la vôtre est notée au journal.
-          </Text>
-          <div>
-            <Button variant="secondary" disabled={busy !== undefined} onClick={() => void unlink()}>
-              Arrêter le partage
-            </Button>
-          </div>
-        </>
-      ) : (
-        <form onSubmit={link}>
-          <FormControlGroup>
-            <FormField label="Adresse git du dépôt de l’équipe">
-              <TextInput
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="git@exemple.fr:equipe/donnees-carnet.git"
-                spellCheck={false}
-                autoCapitalize="off"
-                disabled={busy === "link"}
+      <Stack gap="md">
+        {status?.problems.map((problem) => (
+          <Notice key={problem} tone="warning">
+            {problem}
+          </Notice>
+        ))}
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+        {current ? (
+          <>
+            <div>
+              <PropertyRow label="Dépôt de l’équipe" value={current.url} />
+              <PropertyRow
+                label="Dernière synchronisation"
+                value={
+                  current.lastSync
+                    ? `${dateTime.format(new Date(current.lastSync))} · ${lines(current.received)} reçue(s), ${lines(current.sent)} envoyée(s)${current.conflicts ? `, ${current.conflicts} conflit(s)` : ""}`
+                    : "Jamais"
+                }
               />
-            </FormField>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={busy === "link"}
-              loadingLabel="Connexion…"
-              disabled={!url.trim() || busy !== undefined || (status?.problems.length ?? 0) > 0}
-            >
-              Partager
-            </Button>
-          </FormControlGroup>
-          <Text size="meta" tone="muted">
-            Chaque membre de l’équipe indique la même adresse. Alfred s’y connecte avec les accès git de ce poste.
-          </Text>
-        </form>
-      )}
-      {confirmDialog}
+            </div>
+            {current.lastError ? (
+              <Text size="meta" tone="danger">
+                Dernier échec : {current.lastError}
+              </Text>
+            ) : null}
+            <Text size="meta" tone="muted">
+              Synchronisé toutes les deux minutes tant qu’Alfred est ouvert. Si une même ligne change des deux côtés, la
+              version de l’équipe est gardée et la vôtre est notée au journal.
+            </Text>
+            <Row>
+              <Button isDisabled={busy !== undefined} onPress={() => void unlink()}>
+                Arrêter le partage
+              </Button>
+            </Row>
+          </>
+        ) : (
+          <form onSubmit={link}>
+            <Stack gap="sm">
+              <TextField
+                label="Adresse git du dépôt de l’équipe"
+                isRequired
+                value={url}
+                onChange={setUrl}
+                placeholder="git@exemple.fr:equipe/donnees-carnet.git"
+                isDisabled={busy === "link"}
+                description="Chaque membre de l’équipe indique la même adresse. Alfred s’y connecte avec les accès git de ce poste."
+              />
+              <Row>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  isPending={busy === "link"}
+                  isDisabled={
+                    !url.trim() || (busy !== undefined && busy !== "link") || (status?.problems.length ?? 0) > 0
+                  }
+                >
+                  Partager
+                </Button>
+              </Row>
+            </Stack>
+          </form>
+        )}
+      </Stack>
     </ModulePart>
   );
 }

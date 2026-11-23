@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NavigationSettings } from "../features/navigation/NavigationSettings";
+import { useNavigationSections } from "../features/navigation/NavigationSettings";
+import { pressRowAction } from "../features/space/sections.test-helper";
 import { MODULE_FOCUS } from "../features/settings/open";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
@@ -130,8 +131,9 @@ const lastLayoutCall = () => {
 
 const navigation = () => screen.getAllByRole("treegrid", { name: "Navigation principale" })[0];
 const sidebarLabels = () =>
-  within(navigation())
-    .getAllByRole("row")
+  // `hidden` : la modale des Réglages, quand elle est ouverte, cache le menu aux technologies d’assistance.
+  within(screen.getAllByRole("treegrid", { name: "Navigation principale", hidden: true })[0])
+    .getAllByRole("row", { hidden: true })
     .map((row) => row.getAttribute("aria-label"));
 const sidebarRow = (label: string) => within(navigation()).getByRole("row", { name: label });
 
@@ -139,7 +141,7 @@ const renderShell = (settings = false) =>
   render(
     <AppShell
       agent={<p>Agent</p>}
-      settingsTabs={settings ? [{ id: "navigation", label: "Navigation", render: () => <NavigationSettings /> }] : []}
+      settingsTabs={settings ? [{ id: "navigation", label: "Navigation", useSections: useNavigationSections }] : []}
     />,
   );
 
@@ -221,11 +223,11 @@ describe("réorganisation de la navigation", () => {
     renderShell();
     const menu = await openSectionMenu(user, "Compta");
     await user.click(within(menu).getByRole("menuitem", { name: /Changer l’icône/ }));
-    const search = await screen.findByRole("searchbox", { name: "Rechercher une icône" });
+    const search = await screen.findByRole("combobox", { name: /icônes/ });
     fireEvent.change(search, { target: { value: "pas-une-icone-xyz" } });
-    expect(screen.getByText(/Aucune icône ne correspond/)).toBeInTheDocument();
+    expect(await screen.findByText(/Aucune icône ne correspond/)).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "wallet" } });
-    fireEvent.click(screen.getByRole("radio", { name: "wallet" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "wallet" }));
     await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Compta en wallet"));
     expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "wallet" });
@@ -282,6 +284,58 @@ describe("réorganisation de la navigation", () => {
       title: "La page « Contacts » n’a pas été supprimée",
       description: "Le module « crm » est installé en lecture seule.",
     });
+  });
+
+  it("masque une section puis la réaffiche depuis les Réglages", async () => {
+    const user = userEvent.setup();
+    renderShell(true);
+    const menu = await openSectionMenu(user, "Clients");
+    await user.click(within(menu).getByRole("menuitem", { name: "Masquer la section" }));
+    expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage de la section Clients"));
+
+    act(() => useShell.getState().setView({ kind: "settings" }));
+    expect(await screen.findByText("Masquée")).toBeInTheDocument();
+    await pressRowAction(user, "Clients", "Réafficher la section Clients");
+    expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage de la section Clients"));
+    expect(lastLayoutCall()?.layout.overrides).toEqual({});
+  });
+
+  it("masque un module entier, puis le réaffiche depuis sa section dans l’ordre du menu", async () => {
+    renderShell(true);
+    act(() => useShell.getState().setView({ kind: "settings" }));
+    await act(async () => {
+      await applyLayoutChange((current) => setModuleHidden(current, "crm", true));
+    });
+    expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage du module CRM partagé"));
+    expect(lastLayoutCall()?.layout.overrides).toEqual({ "module:crm": { hidden: true } });
+    expect(await screen.findByText("Module CRM partagé masqué")).toBeInTheDocument();
+    await pressRowAction(userEvent.setup(), "Clients", "Réafficher le module CRM partagé");
+    expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage du module CRM partagé"));
+    expect(lastLayoutCall()?.layout.overrides).toEqual({});
+  });
+
+  it("réordonne et renomme sans glisser-déposer depuis les Réglages", async () => {
+    renderShell(true);
+    act(() => useShell.getState().setView({ kind: "settings" }));
+    const user = userEvent.setup();
+    await pressRowAction(user, "Tâches", "Descendre la page Tâches");
+    await waitFor(() =>
+      expect(lastLayoutCall()?.message).toBe("Déplacement de l’onglet Tâches en position 2 de la section Suivi"),
+    );
+    await pressRowAction(user, "Compta", "Monter la section Compta");
+    await waitFor(() =>
+      expect(lastLayoutCall()?.layout.sections).toEqual(["suivi/principal", "compta/principal", "crm/principal"]),
+    );
+    await pressRowAction(user, "Notes", "Renommer la page Notes");
+    const form = within(await screen.findByRole("dialog", { name: /Renommer la page/ }));
+    await user.clear(form.getByRole("textbox", { name: /Nom/ }));
+    await user.type(form.getByRole("textbox", { name: /Nom/ }), "Carnet");
+    await user.click(form.getByRole("button", { name: "Renommer" }));
+    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Renommage de la page Notes en Carnet"));
   });
 
   it("revient en arrière et notifie quand le backend refuse un changement", async () => {

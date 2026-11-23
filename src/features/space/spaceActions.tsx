@@ -1,8 +1,7 @@
-import { Button, CheckboxControl, Dialog, FormActions, FormField, TextInput, useConfirm } from "@alfred/ui";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { Button, Checkbox, Code, Dialog, TextField, useConfirm } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { inTauri, invoke, pickFolder } from "../../lib/native";
-import { DialogHeader } from "../../shell/DialogHeader";
-import "./space.css";
 import { notify } from "../../shell/notifications";
 import { type RecentSpace, useShell } from "../../shell/store";
 import { confirmLeaving } from "./switchGuard";
@@ -27,7 +26,7 @@ type DialogState = { mode: "create" | "open" } | { mode: "rename"; space: Recent
 export function useSpaceActions(onDialogClosed?: () => void) {
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<DialogState>();
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
 
   /**
    * Ouvre un espace après la garde : `true` quand il est ouvert (ou l’était déjà). `existing` pour un espace de la
@@ -166,7 +165,6 @@ export function useSpaceActions(onDialogClosed?: () => void) {
           }}
         />
       ) : null}
-      {confirmDialog}
     </>
   );
 
@@ -194,8 +192,8 @@ function RemoveMessage({
 }) {
   const [trash, setTrash] = useState(false);
   return (
-    <div className="space-remove">
-      <p>
+    <Stack gap="sm">
+      <Text>
         {trash
           ? "L’espace de travail est retiré de la liste et son dossier part à la corbeille du système, d’où il se récupère."
           : "L’espace de travail est retiré de la liste d’Alfred. Son dossier reste en place : rien n’est effacé."}
@@ -204,19 +202,18 @@ function RemoveMessage({
           : next
             ? ` C’est l’espace ouvert : Alfred passe sur « ${next} ».`
             : ""}
-      </p>
-      <CheckboxControl
-        label="Mettre aussi le dossier à la corbeille"
-        checked={trash}
-        onChange={(event) => {
-          setTrash(event.target.checked);
-          onTrashChange(event.target.checked);
+      </Text>
+      <Checkbox
+        isSelected={trash}
+        onChange={(checked) => {
+          setTrash(checked);
+          onTrashChange(checked);
         }}
-      />
-      <p className="space-remove__path" title={space.path}>
-        {space.path}
-      </p>
-    </div>
+      >
+        Mettre aussi le dossier à la corbeille
+      </Checkbox>
+      <Code>{space.path}</Code>
+    </Stack>
   );
 }
 
@@ -251,9 +248,7 @@ export function SpaceDialog({
   onSubmit: (path: string, name?: string) => Promise<boolean>;
   onClose: () => void;
 }) {
-  const titleId = useId();
   const formId = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
   const parent = parentOf(near);
   const [name, setName] = useState(initialName);
   const [nameError, setNameError] = useState<string>();
@@ -262,11 +257,6 @@ export function SpaceDialog({
   const [busy, setBusy] = useState(false);
   const shownPath = pathEdited ? path : name.trim() ? `${parent}${name.trim()}` : "";
   const text = DIALOG_TEXT[mode];
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -277,7 +267,7 @@ export function SpaceDialog({
         return;
       }
       if (name.trim() === initialName) {
-        dialog.current?.close();
+        onClose();
         return;
       }
     }
@@ -286,7 +276,7 @@ export function SpaceDialog({
     setBusy(true);
     const done = await onSubmit(target, mode !== "open" && name.trim() ? name.trim() : undefined);
     setBusy(false);
-    if (done) dialog.current?.close();
+    if (done) onClose();
   };
 
   const browse = async () => {
@@ -301,73 +291,77 @@ export function SpaceDialog({
 
   return (
     <Dialog
-      ref={dialog}
-      className="nav-dialog"
-      aria-labelledby={titleId}
-      onClose={onClose}
-      onCancel={(event) => {
-        if (busy) event.preventDefault();
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
+      size="sm"
+      title={text.title}
+      isBusy={busy}
+      footer={
+        <>
+          <Button isDisabled={busy} onPress={onClose}>
+            Annuler
+          </Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form={formId}
+            isPending={busy}
+            isDisabled={mode === "rename" ? !name.trim() : !shownPath.trim()}
+          >
+            {text.submit}
+          </Button>
+        </>
+      }
     >
       <form id={formId} noValidate onSubmit={(event) => void submit(event)}>
-        <DialogHeader title={text.title} titleId={titleId} dialogRef={dialog} />
-        <div className="nav-dialog__body space-dialog__body">
+        <Stack gap="md">
           {mode !== "open" ? (
-            <FormField
+            <TextField
               label="Nom"
+              isRequired
+              value={name}
+              autoComplete="off"
+              autoFocus
               error={nameError}
-              hint={mode === "rename" ? "Le nom affiché dans le menu de gauche. Le dossier ne change pas." : undefined}
-            >
-              <TextInput
-                value={name}
-                autoComplete="off"
-                autoFocus
-                spellCheck={false}
-                onFocus={(event) => {
-                  if (mode === "rename") event.currentTarget.select();
-                }}
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setNameError(undefined);
-                }}
-              />
-            </FormField>
+              description={
+                mode === "rename" ? "Le nom affiché dans le menu de gauche. Le dossier ne change pas." : undefined
+              }
+              onChange={(value) => {
+                setName(value);
+                setNameError(undefined);
+              }}
+            />
           ) : null}
           {mode !== "rename" ? (
-            <FormField
-              label="Dossier"
-              hint={
-                mode === "create"
-                  ? "Un dossier nouveau ou vide. Je l’ouvre aussitôt, avec ses modules et ses pages."
-                  : "Le dossier d’un espace de travail existant. Je l’ouvre aussitôt, avec ses modules et ses pages."
-              }
-            >
-              <div className="welcome__path">
-                <TextInput
-                  value={shownPath}
-                  autoComplete="off"
-                  autoFocus={mode === "open"}
-                  spellCheck={false}
-                  onChange={(event) => {
-                    setPath(event.target.value);
-                    setPathEdited(true);
-                  }}
-                />
-                {inTauri ? <Button onClick={() => void browse()}>Parcourir…</Button> : null}
-              </div>
-            </FormField>
+            <Stack gap="xs">
+              <TextField
+                label="Dossier"
+                isRequired
+                value={shownPath}
+                autoComplete="off"
+                autoFocus={mode === "open"}
+                description={
+                  mode === "create"
+                    ? "Un dossier nouveau ou vide. Je l’ouvre aussitôt, avec ses modules et ses pages."
+                    : "Le dossier d’un espace de travail existant. Je l’ouvre aussitôt, avec ses modules et ses pages."
+                }
+                onChange={(value) => {
+                  setPath(value);
+                  setPathEdited(true);
+                }}
+              />
+              {inTauri ? (
+                <Row>
+                  <Button size="sm" onPress={() => void browse()}>
+                    Parcourir…
+                  </Button>
+                </Row>
+              ) : null}
+            </Stack>
           ) : null}
-        </div>
-        <div className="nav-dialog__footer">
-          <FormActions
-            onCancel={() => dialog.current?.close()}
-            submitLabel={text.submit}
-            pendingLabel={text.pending}
-            pending={busy}
-            disabled={mode === "rename" ? !name.trim() : !shownPath.trim()}
-            form={formId}
-          />
-        </div>
+        </Stack>
       </form>
     </Dialog>
   );

@@ -1,5 +1,5 @@
-import { Button, CheckboxControl, FormField, Link, LoadingSkeleton, StatusBadge, TextInput } from "@alfred/ui";
 import { type FormEvent, type ReactNode, useCallback, useEffect, useId, useState } from "react";
+import { Button, Checkbox, Link, StatusBadge, TextField } from "socle-ui";
 import {
   type CatalogModule,
   catalogAccesses,
@@ -8,6 +8,8 @@ import {
   marketplaceApi,
 } from "../../features/modules/api";
 import { useModuleUpdatesStore } from "../../features/modules/useModuleUpdates";
+import { LoadingRows } from "../../features/space/SpaceSettings";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { useShell } from "../store";
 import { useWelcome } from "./store";
 
@@ -165,18 +167,11 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
   };
 
   const primary = showForm ? (
-    <Button type="submit" form={formId} variant="primary" loading={busy} loadingLabel="Ajout…" disabled={!url.trim()}>
+    <Button type="submit" form={formId} variant="primary" isPending={busy} isDisabled={!url.trim()}>
       Ajouter le marketplace
     </Button>
   ) : (
-    <Button
-      type="submit"
-      form={formId}
-      variant="primary"
-      loading={busy}
-      loadingLabel="Import…"
-      disabled={offers === null}
-    >
+    <Button type="submit" form={formId} variant="primary" isPending={busy} isDisabled={offers === null}>
       {chosen.length === 0
         ? "Continuer"
         : chosen.length === 1
@@ -190,107 +185,124 @@ export function ModulesStep({ footer, onDone }: { footer: (primary: ReactNode) =
   return (
     <>
       {marketplaces === null ? (
-        <LoadingSkeleton rows={3} label="Lecture des marketplaces" />
+        <LoadingRows label="Lecture des marketplaces" rows={3} />
       ) : showForm ? (
-        <form id={formId} className="welcome-form" noValidate onSubmit={(event) => void add(event)}>
-          <FormField
-            label="Adresse git du marketplace"
-            error={addError ?? undefined}
-            hint={
-              url.trim() === SUGGESTED_MARKETPLACE
-                ? "C’est une suggestion : le marketplace public d’Alfred. Mettez celle de votre équipe si vous en avez une."
-                : "L’adresse du dépôt git où votre équipe partage ses modules."
-            }
-          >
-            <TextInput
+        <form id={formId} noValidate onSubmit={(event) => void add(event)}>
+          <Stack gap="sm">
+            <TextField
+              label="Adresse git du marketplace"
+              isRequired
               value={url}
-              spellCheck={false}
-              autoCapitalize="off"
               autoFocus
-              disabled={busy}
+              isDisabled={busy}
               placeholder={SUGGESTED_MARKETPLACE}
-              onChange={(event) => {
-                setUrl(event.target.value);
+              error={addError ?? undefined}
+              description={
+                url.trim() === SUGGESTED_MARKETPLACE
+                  ? "C’est une suggestion : le marketplace public d’Alfred. Mettez celle de votre équipe si vous en avez une."
+                  : "L’adresse du dépôt git où votre équipe partage ses modules."
+              }
+              onChange={(value) => {
+                setUrl(value);
                 setAddError(null);
               }}
             />
-          </FormField>
-          {marketplaces.length > 0 ? (
-            <p className="welcome-meta">
-              <Link onClick={() => setAdding(false)}>Revenir aux modules</Link>
-            </p>
-          ) : null}
+            {marketplaces.length > 0 ? (
+              <Text size="meta">
+                <Link onPress={() => setAdding(false)}>Revenir aux modules</Link>
+              </Text>
+            ) : null}
+          </Stack>
         </form>
       ) : (
-        <form id={formId} className="welcome-form" noValidate onSubmit={(event) => void importChosen(event)}>
-          <p className="welcome-meta">
-            Branché : {marketplaces.map((marketplace) => marketplace.name).join(", ")} ·{" "}
-            <Link
-              onClick={() => {
-                setAdding(true);
-                setUrl("");
-              }}
-            >
-              Ajouter un autre marketplace
-            </Link>
-          </p>
-          {readError ? (
-            <p className="welcome-meta welcome-meta--danger" role="alert">
-              Le catalogue n’a pas pu être lu : {readError} <Link onClick={() => void load()}>Réessayer</Link>
-            </p>
-          ) : null}
-          {offers === null ? (
-            <LoadingSkeleton rows={3} label="Lecture du catalogue" />
-          ) : offers.length === 0 && !readError ? (
-            <p className="welcome-meta">Ce marketplace ne propose encore aucun module.</p>
-          ) : (
-            <ul className="welcome-modules" aria-label="Modules proposés">
-              {offers.map((offer) => {
-                const key = keyOf(offer);
-                const { module } = offer;
-                const already = Boolean(module.installed || module.own);
-                const blocked = unavailable(module);
-                const accesses = accessSummary(module);
-                return (
-                  <li key={key}>
-                    <CheckboxControl
-                      label={module.name}
-                      checked={already || selected.has(key)}
-                      disabled={already || Boolean(blocked) || busy}
-                      onChange={(event) => toggle(key, event.target.checked)}
-                    />
-                    {already ? (
-                      <StatusBadge tone="success" size="compact">
-                        Déjà là
-                      </StatusBadge>
-                    ) : blocked ? (
-                      <StatusBadge size="compact" title={blocked}>
-                        Indisponible
-                      </StatusBadge>
-                    ) : null}
-                    <div className="welcome-modules__details">
-                      {module.description ? <span>{module.description}</span> : null}
-                      {accesses ? <span>{accesses}</span> : null}
-                      {blocked && !already ? <span>{blocked}</span> : null}
-                      {several ? <span>Depuis {offer.marketplace.name}</span> : null}
+        <form id={formId} noValidate onSubmit={(event) => void importChosen(event)}>
+          <Stack gap="md">
+            <Text size="meta" tone="muted">
+              Branché : {marketplaces.map((marketplace) => marketplace.name).join(", ")} ·{" "}
+              <Link
+                onPress={() => {
+                  setAdding(true);
+                  setUrl("");
+                }}
+              >
+                Ajouter un autre marketplace
+              </Link>
+            </Text>
+            {readError ? (
+              <Notice
+                tone="danger"
+                title="Le catalogue n’a pas pu être lu"
+                action={
+                  <Button size="sm" onPress={() => void load()}>
+                    Réessayer
+                  </Button>
+                }
+              >
+                {readError}
+              </Notice>
+            ) : null}
+            {offers === null ? (
+              <LoadingRows label="Lecture du catalogue" rows={3} />
+            ) : offers.length === 0 && !readError ? (
+              <Text size="meta" tone="muted">
+                Ce marketplace ne propose encore aucun module.
+              </Text>
+            ) : (
+              <ul
+                className="m-0 max-h-80 list-none divide-y divide-line overflow-y-auto rounded-md border border-line p-0"
+                aria-label="Modules proposés"
+              >
+                {offers.map((offer) => {
+                  const key = keyOf(offer);
+                  const { module } = offer;
+                  const already = Boolean(module.installed || module.own);
+                  const blocked = unavailable(module);
+                  const accesses = accessSummary(module);
+                  const details = [
+                    module.description,
+                    accesses,
+                    blocked && !already ? blocked : null,
+                    several ? `Depuis ${offer.marketplace.name}` : null,
+                  ].filter(Boolean);
+                  return (
+                    <li key={key} className="flex flex-col gap-1 px-3 py-2">
+                      <Row justify="between">
+                        <Checkbox
+                          isSelected={already || selected.has(key)}
+                          isDisabled={already || Boolean(blocked) || busy}
+                          onChange={(checked) => toggle(key, checked)}
+                        >
+                          {module.name}
+                        </Checkbox>
+                        {already ? (
+                          <StatusBadge tone="success">Déjà là</StatusBadge>
+                        ) : blocked ? (
+                          <StatusBadge>Indisponible</StatusBadge>
+                        ) : null}
+                      </Row>
+                      {details.map((detail) => (
+                        <Text key={detail} size="meta" tone="muted">
+                          {detail}
+                        </Text>
+                      ))}
                       {failures[key] ? (
-                        <span className="welcome-meta--danger" role="alert">
+                        <Text size="meta" tone="danger">
                           Import impossible : {failures[key]}
-                        </span>
+                        </Text>
                       ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {chosen.length > 0 ? (
-            <p className="welcome-meta">
-              {chosen.length > 1
-                ? `${listNames(chosen.map((offer) => offer.module.name))} arriveront en lecture seule et recevront les mises à jour du marketplace. Je vous guiderai ensuite pour les configurer.`
-                : `${chosen[0].module.name} arrivera en lecture seule et recevra les mises à jour du marketplace. Je vous guiderai ensuite pour le configurer.`}
-            </p>
-          ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {chosen.length > 0 ? (
+              <Text size="meta" tone="muted">
+                {chosen.length > 1
+                  ? `${listNames(chosen.map((offer) => offer.module.name))} arriveront en lecture seule et recevront les mises à jour du marketplace. Je vous guiderai ensuite pour les configurer.`
+                  : `${chosen[0].module.name} arrivera en lecture seule et recevra les mises à jour du marketplace. Je vous guiderai ensuite pour le configurer.`}
+              </Text>
+            ) : null}
+          </Stack>
         </form>
       )}
       {footer(primary)}

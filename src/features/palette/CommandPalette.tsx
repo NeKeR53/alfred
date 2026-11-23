@@ -1,13 +1,14 @@
 /**
  * Palette de commandes : Cmd+K (macOS) ou Ctrl+K l’ouvre et la ferme. Elle mène à chaque page et onglet, lance les
  * fonctions de l’espace, ouvre les conversations avec l’agent et bascule le thème. La liste se recalcule à chaque
- * ouverture : une page créée par l’agent y apparaît d’elle-même.
+ * ouverture : une page créée par l’agent y apparaît d’elle-même. Faite d’un `Dialog` et d’un `ComboBox` de Socle :
+ * on tape, les flèches parcourent les résultats, Entrée lance.
  */
-import { Button, Dialog, FormField, IconButton, TextArea } from "@alfred/ui";
-import { Command } from "cmdk";
-import { Bot, MessageSquare, MessageSquarePlus, Moon, Play, Settings, Sun, X } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Bot, MessageSquare, MessageSquarePlus, Moon, Play, Settings, Sun } from "lucide-react";
+import { type FormEvent, useEffect, useId, useState } from "react";
+import { Button, ComboBox, type ComboBoxItem, Dialog, TextArea, useSocle } from "socle-ui";
 import { create } from "zustand";
+import { Row, Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { ResolvedFunction } from "../../lib/types";
 import { NamedIcon, SectionIcon } from "../../shell/icons";
@@ -15,7 +16,6 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { useAgents } from "../agent/store";
 import { openSettings, settingsTabs } from "../settings/tabs";
-import "./palette.css";
 
 interface PaletteState {
   open: boolean;
@@ -35,15 +35,6 @@ export const fold = (text: string) =>
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase();
-
-/** Filtre de cmdk : chaque mot cherché doit apparaître ; un libellé qui commence par la recherche passe devant. */
-export function paletteFilter(value: string, search: string, keywords: string[] = []): number {
-  const haystack = fold([value, ...keywords].join(" "));
-  const words = fold(search).split(/\s+/).filter(Boolean);
-  if (words.length === 0) return 1;
-  if (!words.every((word) => haystack.includes(word))) return 0;
-  return fold(keywords[0] ?? value).startsWith(words[0]) ? 1 : 0.5;
-}
 
 const isMac = () => {
   const platform = useShell.getState().info?.platform;
@@ -109,30 +100,12 @@ async function runFunction(fn: ResolvedFunction, input: unknown) {
   }
 }
 
-function Item({
-  value,
-  keywords,
-  icon,
-  meta,
-  onSelect,
-  children,
-}: {
-  value: string;
-  keywords: string[];
-  icon: ReactNode;
-  meta?: string;
-  onSelect: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Command.Item value={value} keywords={keywords} onSelect={onSelect}>
-      <span className="command-palette__icon">{icon}</span>
-      <span className="command-palette__label">{children}</span>
-      {meta ? <span className="command-palette__meta">{meta}</span> : null}
-    </Command.Item>
-  );
+/** Une entrée de la palette : son libellé, sa rubrique, et ce qu’elle fait. */
+interface Entry extends ComboBoxItem {
+  run: () => void;
 }
 
+/** Entrée JSON d’une fonction qui a des champs requis, puis « Lancer ». */
 function FunctionInput({
   fn,
   onBack,
@@ -154,35 +127,37 @@ function FunctionInput({
     }
   };
   return (
-    <form id={formId} className="command-palette__input-form" noValidate onSubmit={submit}>
-      <FormField
-        label={`Entrée de ${fn.reference}`}
-        hint={`${fn.description ? `${fn.description} ` : ""}Champs requis : ${requiredInputs(fn.input).join(", ")}. Ctrl+Entrée pour lancer.`}
-        error={error}
-      >
-        <TextArea
-          value={text}
-          spellCheck={false}
-          rows={8}
-          autoFocus
-          onChange={(event) => {
-            setText(event.target.value);
-            setError(undefined);
-          }}
+    <form id={formId} noValidate onSubmit={submit}>
+      <Stack gap="md">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: Mod+Entrée lance la fonction depuis le champ. */}
+        <div
           onKeyDown={(event) => {
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
               event.preventDefault();
               submit();
             }
           }}
-        />
-      </FormField>
-      <div className="form-actions">
-        <Button onClick={onBack}>Retour</Button>
-        <Button variant="primary" type="submit" form={formId}>
-          Lancer
-        </Button>
-      </div>
+        >
+          <TextArea
+            label={`Entrée de ${fn.reference}`}
+            isRequired
+            description={`${fn.description ? `${fn.description} ` : ""}Champs requis : ${requiredInputs(fn.input).join(", ")}. Ctrl+Entrée pour lancer.`}
+            value={text}
+            minRows={8}
+            error={error}
+            onChange={(value) => {
+              setText(value);
+              setError(undefined);
+            }}
+          />
+        </div>
+        <Row justify="end">
+          <Button onPress={onBack}>Retour</Button>
+          <Button variant="primary" type="submit" form={formId}>
+            Lancer
+          </Button>
+        </Row>
+      </Stack>
     </form>
   );
 }
@@ -193,10 +168,7 @@ export function CommandPalette() {
   const snapshot = useShell((state) => state.snapshot);
   const theme = useShell((state) => state.theme);
   const headers = useAgents((state) => state.headers);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const search = useRef<HTMLInputElement>(null);
-  const returnFocus = useRef<HTMLElement | null>(null);
-  const [query, setQuery] = useState("");
+  const socle = useSocle();
   const [inputFor, setInputFor] = useState<ResolvedFunction>();
 
   useEffect(() => {
@@ -210,37 +182,15 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (open && !element.open) {
-      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      element.showModal();
-      search.current?.focus();
-    } else if (!open && element.open) {
-      element.close();
-    }
-  }, [open]);
-
-  const close = () => setOpen(false);
-  const closed = () => {
+  const close = () => {
     setOpen(false);
-    setQuery("");
     setInputFor(undefined);
-    const target = returnFocus.current;
-    returnFocus.current = null;
-    requestAnimationFrame(() => {
-      if (target?.isConnected && !document.querySelector("dialog[open]")) target.focus();
-    });
   };
-  /** Ferme la palette puis lance l’action : une navigation garde le focus qu’elle donne. */
-  const run =
-    (action: () => void, restoreFocus = false) =>
-    () => {
-      if (!restoreFocus) returnFocus.current = null;
-      close();
-      action();
-    };
+  /** Ferme la palette puis lance l’action. */
+  const run = (action: () => void) => () => {
+    close();
+    action();
+  };
 
   const shell = useShell.getState;
   const sections = (snapshot?.sections ?? []).filter((section) => !section.hidden);
@@ -256,178 +206,132 @@ export function CommandPalette() {
       setInputFor(fn);
       return;
     }
-    run(() => void runFunction(fn, {}), true)();
+    run(() => void runFunction(fn, {}))();
   };
 
+  const icon16 = (Icon: typeof Bot) => <Icon size={16} aria-hidden="true" />;
+  const nextTheme = theme === "dark" ? "light" : "dark";
+  const entries: Entry[] = open
+    ? [
+        {
+          id: "aller:agent",
+          label: "Agent",
+          section: "Aller à",
+          icon: icon16(Bot),
+          run: run(() => shell().setView({ kind: "agent" })),
+        },
+        ...sections.map((section) => ({
+          id: `aller:section:${section.id}`,
+          label: section.label,
+          description: "Section",
+          section: "Aller à",
+          icon: <SectionIcon section={section} size={16} />,
+          run: run(() => shell().setView({ kind: "section", id: section.id })),
+        })),
+        ...sections.flatMap((section) =>
+          section.pages
+            .filter((page) => !page.hidden)
+            .map((page) => ({
+              id: `aller:page:${page.reference}`,
+              label: page.title,
+              description: section.label,
+              section: "Aller à",
+              icon: page.icon ? <NamedIcon name={page.icon} size={16} /> : <SectionIcon section={section} size={16} />,
+              run: run(() => shell().openPage(page.reference)),
+            })),
+        ),
+        ...settingsTabs.map((tab) => ({
+          id: `aller:réglages:${tab.id}`,
+          label: `Réglages › ${tab.label}`,
+          section: "Aller à",
+          icon: icon16(Settings),
+          run: run(() => openSettings(tab.id)),
+        })),
+        ...settingsPages.map((page) => ({
+          id: `aller:page:${page.reference}`,
+          label: `Réglages › ${page.title}`,
+          section: "Aller à",
+          icon: <NamedIcon name={page.icon} size={16} />,
+          run: run(() => shell().openPage(page.reference)),
+        })),
+        ...functions.map((fn) => ({
+          id: `fonction:${fn.reference}`,
+          label: fn.reference,
+          description: requiredInputs(fn.input).length > 0 ? "Entrée requise" : fn.description || undefined,
+          section: "Lancer une fonction",
+          icon: icon16(Play),
+          run: () => call(fn),
+        })),
+        {
+          id: "agent:nouvelle",
+          label: "Nouvelle conversation",
+          section: "Agent",
+          icon: icon16(MessageSquarePlus),
+          run: run(() => {
+            const agents = useAgents.getState();
+            const conversation = agents.create();
+            void agents.open(conversation.id);
+            shell().setView({ kind: "agent" });
+          }),
+        },
+        ...conversations.map((conversation) => ({
+          id: `agent:conversation:${conversation.id}`,
+          label: conversation.title,
+          description: "Conversation",
+          section: "Agent",
+          icon: icon16(MessageSquare),
+          run: run(() => {
+            void useAgents.getState().open(conversation.id);
+            shell().setView({ kind: "agent" });
+          }),
+        })),
+        {
+          id: "apparence:theme",
+          label: theme === "dark" ? "Passer au thème clair" : "Passer au thème sombre",
+          section: "Apparence",
+          icon: theme === "dark" ? icon16(Sun) : icon16(Moon),
+          run: run(() => {
+            shell().setTheme(nextTheme);
+            socle.setColorScheme(nextTheme);
+          }),
+        },
+      ]
+    : [];
+
   return (
-    <Dialog ref={dialog} className="command-dialog" aria-label="Palette de commandes" onClose={closed}>
-      {open ? (
-        <Command
-          className="command-palette"
-          label="Rechercher une page, une fonction ou une commande"
-          filter={paletteFilter}
-          loop
-        >
-          <div className="command-dialog__heading">
-            <strong>{inputFor ? `Lancer ${inputFor.reference}` : "Commandes"}</strong>
-            <IconButton label="Fermer la palette" tooltip="Fermer · Échap" onClick={close}>
-              <X size={16} aria-hidden="true" />
-            </IconButton>
-          </div>
-          {inputFor ? (
-            <FunctionInput
-              fn={inputFor}
-              onBack={() => {
-                setInputFor(undefined);
-                requestAnimationFrame(() => search.current?.focus());
-              }}
-              onRun={(input) => run(() => void runFunction(inputFor, input), true)()}
-            />
-          ) : (
-            <>
-              <Command.Input
-                ref={search}
-                placeholder="Rechercher une page, une fonction ou une commande…"
-                value={query}
-                onValueChange={setQuery}
-              />
-              <Command.List className="command-palette__list">
-                <Command.Empty className="command-dialog__empty">Aucun résultat.</Command.Empty>
-                <Command.Group heading="Aller à">
-                  <Item
-                    value="aller:agent"
-                    keywords={["Agent", "conversation"]}
-                    icon={<Bot size={16} aria-hidden="true" />}
-                    onSelect={run(() => shell().setView({ kind: "agent" }))}
-                  >
-                    Agent
-                  </Item>
-                  {sections.map((section) => (
-                    <Item
-                      key={section.id}
-                      value={`aller:section:${section.id}`}
-                      keywords={[section.label, "section"]}
-                      icon={<SectionIcon section={section} size={16} />}
-                      meta="Section"
-                      onSelect={run(() => shell().setView({ kind: "section", id: section.id }))}
-                    >
-                      {section.label}
-                    </Item>
-                  ))}
-                  {sections.flatMap((section) =>
-                    section.pages
-                      .filter((page) => !page.hidden)
-                      .map((page) => (
-                        <Item
-                          key={page.reference}
-                          value={`aller:page:${page.reference}`}
-                          keywords={[page.title, section.label, page.description]}
-                          icon={
-                            page.icon ? (
-                              <NamedIcon name={page.icon} size={16} />
-                            ) : (
-                              <SectionIcon section={section} size={16} />
-                            )
-                          }
-                          meta={section.label}
-                          onSelect={run(() => shell().openPage(page.reference))}
-                        >
-                          {page.title}
-                        </Item>
-                      )),
-                  )}
-                  {settingsTabs.map((tab) => (
-                    <Item
-                      key={tab.id}
-                      value={`aller:réglages:${tab.id}`}
-                      keywords={[tab.label, "Réglages"]}
-                      icon={<Settings size={16} aria-hidden="true" />}
-                      meta="Réglages"
-                      onSelect={run(() => openSettings(tab.id))}
-                    >
-                      {tab.label}
-                    </Item>
-                  ))}
-                  {settingsPages.map((page) => (
-                    <Item
-                      key={page.reference}
-                      value={`aller:page:${page.reference}`}
-                      keywords={[page.title, "Réglages", page.description]}
-                      icon={<NamedIcon name={page.icon} size={16} />}
-                      meta="Réglages"
-                      onSelect={run(() => shell().openPage(page.reference))}
-                    >
-                      {page.title}
-                    </Item>
-                  ))}
-                </Command.Group>
-                {functions.length > 0 ? (
-                  <Command.Group heading="Lancer une fonction">
-                    {functions.map((fn) => (
-                      <Item
-                        key={fn.reference}
-                        value={`fonction:${fn.reference}`}
-                        keywords={[fn.reference, fn.description, "fonction lancer"]}
-                        icon={<Play size={16} aria-hidden="true" />}
-                        meta={requiredInputs(fn.input).length > 0 ? "Entrée requise" : undefined}
-                        onSelect={() => call(fn)}
-                      >
-                        {fn.reference}
-                      </Item>
-                    ))}
-                  </Command.Group>
-                ) : null}
-                <Command.Group heading="Agent">
-                  <Item
-                    value="agent:nouvelle"
-                    keywords={["Nouvelle conversation", "agent"]}
-                    icon={<MessageSquarePlus size={16} aria-hidden="true" />}
-                    onSelect={run(() => {
-                      const agents = useAgents.getState();
-                      const conversation = agents.create();
-                      void agents.open(conversation.id);
-                      shell().setView({ kind: "agent" });
-                    })}
-                  >
-                    Nouvelle conversation
-                  </Item>
-                  {conversations.map((conversation) => (
-                    <Item
-                      key={conversation.id}
-                      value={`agent:conversation:${conversation.id}`}
-                      keywords={[conversation.title, "conversation"]}
-                      icon={<MessageSquare size={16} aria-hidden="true" />}
-                      meta="Conversation"
-                      onSelect={run(() => {
-                        void useAgents.getState().open(conversation.id);
-                        shell().setView({ kind: "agent" });
-                      })}
-                    >
-                      {conversation.title}
-                    </Item>
-                  ))}
-                </Command.Group>
-                <Command.Group heading="Apparence">
-                  <Item
-                    value="apparence:theme"
-                    keywords={[theme === "dark" ? "Thème clair" : "Thème sombre", "apparence mode"]}
-                    icon={
-                      theme === "dark" ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />
-                    }
-                    onSelect={run(() => shell().setTheme(theme === "dark" ? "light" : "dark"), true)}
-                  >
-                    {theme === "dark" ? "Passer au thème clair" : "Passer au thème sombre"}
-                  </Item>
-                </Command.Group>
-              </Command.List>
-              <div className="command-dialog__footer">
-                <span>Flèches pour choisir · Entrée pour valider · Échap pour fermer</span>
-                <kbd>{isMac() ? "⌘K" : "Ctrl+K"}</kbd>
-              </div>
-            </>
-          )}
-        </Command>
-      ) : null}
+    <Dialog
+      isOpen={open}
+      onOpenChange={(next) => {
+        if (!next) close();
+      }}
+      title={inputFor ? `Lancer ${inputFor.reference}` : "Palette de commandes"}
+      description={
+        inputFor
+          ? undefined
+          : `Tapez pour chercher ; flèches pour choisir, Entrée pour lancer. ${isMac() ? "⌘K" : "Ctrl+K"} ferme.`
+      }
+    >
+      {inputFor ? (
+        <FunctionInput
+          fn={inputFor}
+          onBack={() => setInputFor(undefined)}
+          onRun={(input) => run(() => void runFunction(inputFor, input))()}
+        />
+      ) : (
+        <Stack gap="sm">
+          <ComboBox
+            label="Rechercher une page, une fonction ou une commande"
+            hideLabel
+            placeholder="Rechercher une page, une fonction ou une commande…"
+            items={entries.map(({ run: _run, ...item }) => item)}
+            value={null}
+            onChange={(id) => entries.find((entry) => entry.id === id)?.run()}
+          />
+          <Text size="meta" tone="muted">
+            {`${entries.length} commandes : pages, Réglages, fonctions, conversations, thème.`}
+          </Text>
+        </Stack>
+      )}
     </Dialog>
   );
 }

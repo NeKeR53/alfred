@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ HTMLDialogElement.prototype.close = function () {
 
 import { invoke } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
+import { renderWithSocle as render } from "../space/sections.test-helper";
 import { TeamSync } from "./TeamSync";
 
 const carnet: ModuleSummary = {
@@ -80,7 +81,10 @@ it("relie un module au dépôt de l’équipe, montre la dernière synchronisati
   expect(await screen.findByRole("heading", { name: "Partage en équipe" })).toBeInTheDocument();
   expect(screen.getByText(/Les données de carnet_contacts se partagent/)).toBeInTheDocument();
 
-  await user.type(screen.getByLabelText("Adresse git du dépôt de l’équipe"), "git@exemple.fr:equipe/carnet.git");
+  await user.type(
+    screen.getByRole("textbox", { name: /Adresse git du dépôt de l’équipe/ }),
+    "git@exemple.fr:equipe/carnet.git",
+  );
   await user.click(screen.getByRole("button", { name: "Partager" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("teamSync.link", { module: "carnet", url: "git@exemple.fr:equipe/carnet.git" }),
@@ -89,12 +93,12 @@ it("relie un module au dépôt de l’équipe, montre la dernière synchronisati
   expect(screen.getByText(/3 lignes reçue\(s\), 1 ligne envoyée\(s\)/)).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Arrêter le partage" }));
-  await user.click(screen.getAllByRole("button", { name: "Arrêter le partage" }).at(-1) as HTMLElement);
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Arrêter le partage" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("teamSync.unlink", { module: "carnet" }));
-  expect(await screen.findByLabelText("Adresse git du dépôt de l’équipe")).toBeInTheDocument();
+  expect(await screen.findByRole("textbox", { name: /Adresse git du dépôt de l’équipe/ })).toBeInTheDocument();
 });
 
 it("n’apparaît pas pour un module qui ne partage aucune table", () => {
-  const { container } = render(<TeamSync module={{ ...carnet, sync: [] }} />);
-  expect(container).toBeEmptyDOMElement();
+  render(<TeamSync module={{ ...carnet, sync: [] }} />);
+  expect(screen.queryByRole("heading", { name: "Partage en équipe" })).not.toBeInTheDocument();
 });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -17,7 +17,10 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import type { Commit, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { AppearanceSettings, type Grant, SpaceSettings } from "./SpaceSettings";
+import { type Grant, useAppearanceSections, useSpaceSections } from "./SpaceSettings";
+import { pressRowAction, renderSections } from "./sections.test-helper";
+
+const renderGeneral = () => renderSections(useSpaceSections, "Général");
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -180,64 +183,60 @@ const notifications = () => useNotifications.getState().items.map((item) => item
 
 it("renomme l’espace de travail, montre son dossier, règle l’apparence et ramène à l’accueil après confirmation", async () => {
   const user = userEvent.setup();
-  const { unmount } = render(<SpaceSettings />);
+  const { unmount } = renderGeneral();
 
-  // La rubrique s’ouvre sur son titre, « Général », comme les autres rubriques.
-  expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent("Général");
-  // Une seule liste : l’espace ouvert, marqué, avec son dossier en texte discret.
-  const list = screen.getByRole("group", { name: "Vos espaces de travail" });
-  expect(within(list).getByText("Atelier")).toBeInTheDocument();
-  expect(within(list).getByText("Ouvert")).toBeInTheDocument();
-  expect(within(list).getByText("/Users/test/Espaces de travail/Atelier")).toBeInTheDocument();
-  expect(within(list).queryByRole("button", { name: "Ouvrir l’espace de travail Atelier" })).not.toBeInTheDocument();
+  // La rubrique s’ouvre sur son titre, « Général ».
+  expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Général");
+  // L’espace ouvert, marqué, avec son dossier.
+  expect(screen.getByText("Atelier")).toBeInTheDocument();
+  expect(screen.getByText("Ouvert")).toBeInTheDocument();
+  expect(screen.getByText("/Users/test/Espaces de travail/Atelier")).toBeInTheDocument();
+  const actions = screen.getByRole("group", { name: "Actions sur Atelier" });
+  expect(within(actions).queryByRole("button", { name: "Ouvrir" })).not.toBeInTheDocument();
 
   // Renommer : le nom seul, jamais le dossier.
-  await user.click(within(list).getByRole("button", { name: "Actions de l’espace de travail Atelier" }));
-  await user.click(screen.getByRole("menuitem", { name: "Renommer…" }));
+  await pressRowAction(user, "Atelier", "Renommer…");
   const renaming = screen.getByRole("dialog", { name: "Renommer l’espace de travail" });
   expect(within(renaming).queryByLabelText(/Dossier/)).not.toBeInTheDocument();
-  await user.clear(within(renaming).getByLabelText(/Nom/));
-  await user.type(within(renaming).getByLabelText(/Nom/), "Atelier Lyon{Enter}");
+  await user.clear(within(renaming).getByRole("textbox", { name: /Nom/ }));
+  await user.type(within(renaming).getByRole("textbox", { name: /Nom/ }), "Atelier Lyon{Enter}");
   await waitFor(() => expect(notifications()).toContain("Espace de travail renommé"));
   expect(lastCall("spaces.rename")).toEqual({ path: "/Users/test/Espaces de travail/Atelier", name: "Atelier Lyon" });
   expect(useShell.getState().snapshot?.name).toBe("Atelier Lyon");
 
-  await user.click(within(list).getByRole("button", { name: "Actions de l’espace de travail Atelier Lyon" }));
-  await user.click(screen.getByRole("menuitem", { name: "Afficher dans le Finder" }));
-  expect(lastCall("files.reveal")).toEqual({ path: "/Users/test/Espaces de travail/Atelier" });
-
-  // L’apparence est une rubrique à part.
-  expect(screen.queryByLabelText("Couleur d’accent")).not.toBeInTheDocument();
+  await pressRowAction(user, "Atelier Lyon", "Afficher dans le Finder");
+  await waitFor(() => expect(lastCall("files.reveal")).toEqual({ path: "/Users/test/Espaces de travail/Atelier" }));
   unmount();
-  const appearance = render(<AppearanceSettings />);
 
-  // Thème : suivre le système est le choix actif, puis Sombre.
-  expect(screen.getByRole("radio", { name: /^Système/ })).toBeChecked();
-  await user.click(screen.getByRole("radio", { name: /^Sombre/ }));
+  // L’apparence est une rubrique à part : mode (comme l’ordinateur d’abord), densité, accent.
+  const appearance = renderSections(useAppearanceSections, "Apparence");
+  const mode = screen.getByRole("button", { name: /Mode/ });
+  expect(mode).toHaveTextContent("Comme l’ordinateur");
+  await user.click(mode);
+  await user.click(await screen.findByRole("option", { name: "Sombre" }));
   expect(useShell.getState().theme).toBe("dark");
   expect(lastCall("settings.set")).toEqual({ key: "appearance.theme", value: "dark" });
-  expect(screen.getByRole("radio", { name: /^Sombre/ })).toBeChecked();
-  expect(screen.getByText(/Le reste du thème .* est fixé par Alfred/)).toBeInTheDocument();
+  expect(screen.getByText(/Le reste du thème .* est fixé/)).toBeInTheDocument();
 
-  // Accent : appliqué immédiatement, puis retour à « Par défaut ».
-  await user.selectOptions(screen.getByLabelText("Couleur d’accent"), "teal");
+  await user.click(screen.getByRole("button", { name: /Couleur d’accent/ }));
+  await user.click(await screen.findByRole("option", { name: "Bleu-vert" }));
   await waitFor(() => expect(useShell.getState().snapshot?.accent).toBe("teal"));
   expect(lastCall("space.updateLayout")).toMatchObject({ accent: "teal" });
-  await user.selectOptions(screen.getByLabelText("Couleur d’accent"), "");
+  await user.click(screen.getByRole("button", { name: /Couleur d’accent/ }));
+  await user.click(await screen.findByRole("option", { name: "Par défaut" }));
   await waitFor(() => expect(lastCall("space.updateLayout")).toMatchObject({ accent: null }));
+  appearance.unmount();
 
   // Changer d’espace : un espace récent s’ouvre en un clic, sans repasser par l’accueil.
-  appearance.unmount();
   useShell.setState({
     recentSpaces: [
       { path: "/Users/test/Espaces de travail/Atelier", name: "Atelier Lyon", openedAt: "2026-11-14T09:00:00Z" },
       { path: "/Users/test/Espaces de travail/Perso", name: "Perso", openedAt: "2026-11-13T09:00:00Z" },
     ],
   });
-  render(<SpaceSettings />);
-  const recent = screen.getByRole("group", { name: "Vos espaces de travail" });
-  expect(within(recent).getByText(/Ouvert le 13 novembre 2026/)).toBeInTheDocument();
-  await user.click(within(recent).getByRole("button", { name: "Ouvrir l’espace de travail Perso" }));
+  renderGeneral();
+  expect(screen.getByText(/Ouvert le 13 novembre 2026/)).toBeInTheDocument();
+  await pressRowAction(user, "Perso", "Ouvrir");
   await waitFor(() =>
     expect(lastCall("space.open")).toEqual({ path: "/Users/test/Espaces de travail/Perso", existing: true }),
   );
@@ -245,7 +244,7 @@ it("renomme l’espace de travail, montre son dossier, règle l’apparence et r
 
   // Fermer l’espace : confirmé, puis retour à l’accueil.
   await user.click(screen.getByRole("button", { name: "Fermer l’espace de travail" }));
-  const dialog = screen.getByRole("alertdialog");
+  const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText(/Rien n’est supprimé/)).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Fermer l’espace de travail" }));
   await waitFor(() => expect(useShell.getState().snapshot).toBeNull());
@@ -254,33 +253,30 @@ it("renomme l’espace de travail, montre son dossier, règle l’apparence et r
 
 it("annule une modification de l’historique et retire un accès accordé", async () => {
   const user = userEvent.setup();
-  render(<SpaceSettings />);
+  renderGeneral();
 
-  const table = await screen.findByRole("group", { name: "Dernières modifications de l’espace de travail" });
-  expect(within(table).getByText("Ajout de la page Tableau des ventes")).toBeInTheDocument();
+  expect(await screen.findByText("Ajout de la page Tableau des ventes")).toBeInTheDocument();
   expect(lastCall("space.history")).toEqual({ limit: 50 });
 
   // Une modification non annulable seule : l’erreur du backend est rapportée telle quelle.
   undoError = "Cette modification touche des fichiers modifiés depuis : annulez d’abord les plus récentes.";
-  await user.click(screen.getByRole("button", { name: "Annuler la modification « Création de l’espace de travail »" }));
-  let dialog = screen.getByRole("alertdialog");
+  await pressRowAction(user, "Création de l’espace de travail", "Annuler la modification");
+  let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText(/peut elle-même être annulée/)).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Annuler la modification" }));
   await waitFor(() => expect(notifications()).toContain("La modification n’a pas été annulée"));
   expect(useNotifications.getState().items[0].description).toBe(undoError);
 
   undoError = undefined;
-  await user.click(
-    screen.getByRole("button", { name: "Annuler la modification « Ajout de la page Tableau des ventes »" }),
-  );
-  dialog = screen.getByRole("alertdialog");
+  await pressRowAction(user, "Ajout de la page Tableau des ventes", "Annuler la modification");
+  dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Annuler la modification" }));
-  expect(await within(table).findByText("Annulation : Ajout de la page Tableau des ventes")).toBeInTheDocument();
+  expect(await screen.findByText("Annulation : Ajout de la page Tableau des ventes")).toBeInTheDocument();
   expect(lastCall("space.undo")).toEqual({ commit: "c2" });
   expect(notifications()).toContain("Modification annulée");
 
   // Accès : le demandeur et la ressource sont nommés comme l’utilisateur les connaît.
-  const access = await screen.findByRole("table", { name: "Accès accordés" });
+  const access = await screen.findByRole("grid", { name: "Accès accordés" });
   expect(within(access).getByText("Page « Tableau des ventes » (module Ventes)")).toBeInTheDocument();
   expect(within(access).getByText("Client « Jira de l’équipe »")).toBeInTheDocument();
   await user.click(
@@ -288,7 +284,7 @@ it("annule une modification de l’historique et retire un accès accordé", asy
       name: "Retirer l’accès de Page « Tableau des ventes » (module Ventes) à Client « Jira de l’équipe »",
     }),
   );
-  dialog = screen.getByRole("alertdialog");
+  dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Retirer" }));
   expect(await screen.findByText("Aucun accès accordé")).toBeInTheDocument();
   expect(lastCall("grants.revoke")).toEqual({ subject: "page:ventes/tableau", resource: "client:jira" });
@@ -301,12 +297,9 @@ const GONE = "/Users/test/Espaces de travail/Disparu";
 
 /** Ouvre « Supprimer… » d’un espace de la liste et renvoie la confirmation. */
 async function askRemoval(user: ReturnType<typeof userEvent.setup>, name: string) {
-  const list = screen.getByRole("group", { name: "Vos espaces de travail" });
-  await user.click(within(list).getByRole("button", { name: `Actions de l’espace de travail ${name}` }));
-  await user.click(screen.getByRole("menuitem", { name: "Supprimer…" }));
-  return screen.getByRole("alertdialog");
+  await pressRowAction(user, name, "Supprimer…");
+  return screen.findByRole("alertdialog");
 }
-
 it("supprime un autre espace de la liste sans toucher au disque, ou le met à la corbeille si on le coche", async () => {
   useShell.setState({
     recentSpaces: [
@@ -316,7 +309,7 @@ it("supprime un autre espace de la liste sans toucher au disque, ou le met à la
     ],
   });
   const user = userEvent.setup();
-  render(<SpaceSettings />);
+  renderGeneral();
 
   let dialog = await askRemoval(user, "Perso");
   expect(dialog).toHaveTextContent("Supprimer l’espace de travail « Perso » ?");
@@ -347,7 +340,7 @@ it("supprimer l’espace ouvert passe sur le plus récent des autres encore pré
     ],
   });
   const user = userEvent.setup();
-  render(<SpaceSettings />);
+  renderGeneral();
 
   let dialog = await askRemoval(user, "Atelier");
   expect(dialog).toHaveTextContent(/C’est l’espace ouvert : Alfred passe sur « Disparu »/);

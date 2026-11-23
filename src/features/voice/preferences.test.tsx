@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -16,9 +16,10 @@ vi.hoisted(() => {
 
 import { invoke, onNativeEvent } from "../../lib/native";
 import { frameServices } from "../../shell/frameBridge";
+import { renderSections, renderWithSocle } from "../space/sections.test-helper";
 import { DictationButton } from "./DictationButton";
 import { useVoice } from "./store";
-import { VoiceSettings } from "./VoiceSettings";
+import { useVoiceSections } from "./VoiceSettings";
 
 let preferences: { dictation: boolean; readNotifications: boolean };
 const spoken: string[] = [];
@@ -56,12 +57,8 @@ beforeEach(() => {
 
 it("bloquer la dictée retire le micro, sans couper la voix", async () => {
   const user = userEvent.setup();
-  render(
-    <>
-      <VoiceSettings />
-      <DictationButton onTranscript={() => undefined} />
-    </>,
-  );
+  renderSections(useVoiceSections, "Voix");
+  renderWithSocle(<DictationButton onTranscript={() => undefined} />);
   expect(await screen.findByRole("button", { name: "Dicter un message" })).toBeVisible();
   await user.click(await screen.findByRole("switch", { name: "Autoriser la dictée" }));
   expect(invoke).toHaveBeenCalledWith("voice.preferences.set", { dictation: false });
@@ -76,7 +73,7 @@ it("les notifications ne sont lues que si l’utilisateur l’a permis", async (
   expect(spoken).toEqual([]);
 
   const user = userEvent.setup();
-  render(<VoiceSettings />);
+  renderSections(useVoiceSections, "Voix");
   await user.click(await screen.findByRole("switch", { name: "Lire les notifications à voix haute" }));
   expect(invoke).toHaveBeenCalledWith("voice.preferences.set", { readNotifications: true });
   await useVoice.getState().announce("Essai. Bonjour");

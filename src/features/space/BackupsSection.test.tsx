@@ -1,5 +1,4 @@
-import { useConfirm } from "@alfred/ui";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -16,15 +15,8 @@ vi.hoisted(() => {
 import { invoke, onNativeEvent } from "../../lib/native";
 import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
-import { type BackupInfo, BackupsSection, formatSize } from "./BackupsSection";
-
-HTMLDialogElement.prototype.showModal = function () {
-  this.open = true;
-};
-HTMLDialogElement.prototype.close = function () {
-  this.open = false;
-  this.dispatchEvent(new Event("close"));
-};
+import { type BackupInfo, formatSize, useBackupsSection } from "./BackupsSection";
+import { renderSections } from "./sections.test-helper";
 
 const snapshot = {
   path: "/x",
@@ -73,24 +65,15 @@ beforeEach(() => {
   });
 });
 
-function Harness() {
-  const { confirm, confirmDialog } = useConfirm();
-  return (
-    <>
-      <BackupsSection snapshot={snapshot} confirm={confirm} />
-      {confirmDialog}
-    </>
-  );
-}
-
 it("liste les sauvegardes, en fait une et restaure un seul module après confirmation", async () => {
   const user = userEvent.setup();
-  render(<Harness />);
-  const table = await screen.findByRole("table", { name: "Sauvegardes de l’espace de travail" });
+  renderSections(() => [useBackupsSection(snapshot)], "Général");
+  const table = await screen.findByRole("grid", { name: "Sauvegardes de l’espace de travail" });
   expect(within(table).getByText("Quotidienne")).toBeInTheDocument();
   expect(within(table).getByText("2 Ko")).toBeInTheDocument();
 
-  await user.selectOptions(screen.getByLabelText("Copies quotidiennes gardées"), "30");
+  await user.click(screen.getByRole("button", { name: /Copies quotidiennes gardées/ }));
+  await user.click(await screen.findByRole("option", { name: "30 jours" }));
   await waitFor(() => expect(calls.some((call) => call.command === "backups.setSettings")).toBe(true));
   expect(calls.find((call) => call.command === "backups.setSettings")?.args).toEqual({ keep: 30 });
 

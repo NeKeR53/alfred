@@ -17,7 +17,7 @@ import { MODULE_FOCUS, openModuleSettings, openSettings } from "./open";
 import { settingsTabs } from "./tabs";
 
 // Chaque rubrique affiche son seul nom : le test porte sur l’ordre et le choix de la rubrique, pas sur leur contenu.
-const tabs = settingsTabs.map((tab) => ({ ...tab, render: () => <p>Rubrique {tab.label}</p> }));
+const tabs = settingsTabs.map((tab) => ({ ...tab, useSections: undefined, render: () => <p>Rubrique {tab.label}</p> }));
 
 beforeEach(() => {
   useShell.setState({ view: { kind: "agent" }, activeTab: {} });

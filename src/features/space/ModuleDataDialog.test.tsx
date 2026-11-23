@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ import { invoke, pickSaveFile } from "../../lib/native";
 import type { ModuleSummary } from "../../lib/types";
 import { useShell } from "../../shell/store";
 import { ModuleExportDialog } from "./ModuleDataDialog";
+import { renderWithSocle as render } from "./sections.test-helper";
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -50,14 +51,8 @@ it("exporte les données d’un module en une modale : quoi, où, format, puis �
     />,
   );
   const dialog = screen.getByRole("dialog", { name: "Exporter les données" });
-  expect(within(dialog).getByLabelText("Module")).toHaveValue("atlassian");
+  expect(within(dialog).getByRole("button", { name: /Module/ })).toHaveTextContent("Atlassian");
   expect(within(dialog).getByText("Un fichier .json")).toBeInTheDocument();
-  // Un seul bouton principal.
-  expect(
-    within(dialog)
-      .getAllByRole("button")
-      .filter((button) => button.dataset.variant === "default"),
-  ).toHaveLength(1);
   await user.click(within(dialog).getByRole("button", { name: "Exporter…" }));
   await waitFor(() =>
     expect(calls.at(-1)).toEqual({

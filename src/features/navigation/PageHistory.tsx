@@ -4,11 +4,12 @@
  * Navigation des Réglages.
  */
 
-import { Button, Dialog, EmptyState, FeedbackBanner, Spinner, Text, useConfirm } from "@alfred/ui";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Undo2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Dialog, EmptyState, Table, type TableColumn, useConfirm } from "socle-ui";
+import { Notice } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { Commit, ResolvedPage } from "../../lib/types";
-import { DialogHeader } from "../../shell/DialogHeader";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 
@@ -31,18 +32,16 @@ function when(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" });
 }
 
+const COLUMNS: TableColumn[] = [
+  { id: "message", label: "Modification" },
+  { id: "when", label: "Date", width: 190 },
+];
+
 export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClose: () => void }) {
-  const titleId = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [commits, setCommits] = useState<Commit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [undoing, setUndoing] = useState<string | null>(null);
-  const { confirm, confirmDialog } = useConfirm();
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
+  const [undoing, setUndoing] = useState(false);
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     try {
@@ -63,9 +62,10 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
       message: `« ${commit.message} » est défait par un nouveau commit.${undoScope(commit, pageFile(page))} L’annulation elle-même reste annulable.`,
       confirmLabel: "Annuler la modification",
       cancelLabel: "Garder",
+      tone: "default",
     });
     if (!accepted) return;
-    setUndoing(commit.id);
+    setUndoing(true);
     try {
       await invoke("space.undo", { commit: commit.id });
       await useShell.getState().refresh();
@@ -74,74 +74,53 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setUndoing(null);
+      setUndoing(false);
     }
   };
 
-  // La confirmation est rendue à côté du dialogue, pas dedans : sa fermeture (`close`) remonterait l’arbre React et
-  // fermerait l’historique avec elle.
+  const rows = (commits ?? []).map((commit, index) => ({
+    ...commit,
+    when: `${when(commit.date)}${index === 0 ? " · dernière" : ""}`,
+  }));
+
   return (
-    <>
-      <Dialog
-        ref={dialog}
-        className="nav-dialog nav-dialog--wide"
-        aria-labelledby={titleId}
-        onCancel={(event) => {
-          if (undoing) event.preventDefault();
-        }}
-        onClose={(event) => {
-          if (event.target === event.currentTarget) onClose();
-        }}
-      >
-        <DialogHeader
-          title={`Historique de « ${page.title} »`}
-          subtitle={pageFile(page)}
-          titleId={titleId}
-          dialogRef={dialog}
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      size="lg"
+      isBusy={undoing}
+      title={`Historique de « ${page.title} »`}
+      description={pageFile(page)}
+    >
+      {error ? (
+        <Notice tone="danger" title="L’historique n’a pas pu être lu">
+          {error}
+        </Notice>
+      ) : null}
+      {commits?.length === 0 ? (
+        <EmptyState
+          size="compact"
+          title="Aucune modification enregistrée"
+          description="La page n’a pas encore été modifiée depuis sa création."
         />
-        <div className="nav-dialog__body">
-          {error ? (
-            <FeedbackBanner tone="error" appearance="contained">
-              {error}
-            </FeedbackBanner>
-          ) : null}
-          {commits === null && !error ? <Spinner label="Lecture de l’historique" /> : null}
-          {commits?.length === 0 ? (
-            <EmptyState
-              size="compact"
-              title="Aucune modification enregistrée"
-              description="La page n’a pas encore été modifiée depuis sa création."
-            />
-          ) : null}
-          {commits?.length ? (
-            <ul className="nav-history" aria-label={`Modifications de ${page.title}`}>
-              {commits.map((commit, index) => (
-                <li key={commit.id} className="nav-history__row">
-                  <span className="nav-history__text">
-                    <Text as="span" weight="medium">
-                      {commit.message}
-                    </Text>
-                    <Text as="span" tone="muted">
-                      {when(commit.date)}
-                      {index === 0 ? " · dernière" : ""}
-                    </Text>
-                  </span>
-                  <Button
-                    loading={undoing === commit.id}
-                    loadingLabel="Annulation…"
-                    disabled={undoing !== null}
-                    onClick={() => void undo(commit)}
-                    aria-label={`Annuler « ${commit.message} »`}
-                  >
-                    Annuler
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      </Dialog>
-      {confirmDialog}
-    </>
+      ) : error && commits === null ? null : (
+        <Table
+          label={`Modifications de ${page.title}`}
+          columns={COLUMNS}
+          rows={rows}
+          density="compact"
+          isLoading={commits === null}
+          rowActions={(commit) => [
+            {
+              icon: <Undo2 size={16} aria-hidden="true" />,
+              label: `Annuler « ${commit.message} »`,
+              onPress: () => void undo(commit),
+            },
+          ]}
+        />
+      )}
+    </Dialog>
   );
 }

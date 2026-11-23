@@ -1,11 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../lib/native";
 import type { Commit, ResolvedPage, Snapshot } from "../../lib/types";
 import { AppShell } from "../../shell/AppShell";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { NavigationSettings } from "./NavigationSettings";
+import { pressRowAction, renderWithSocle as render, renderSections } from "../space/sections.test-helper";
+import { useNavigationSections } from "./NavigationSettings";
 import { undoScope } from "./PageHistory";
 
 vi.hoisted(() => {
@@ -111,9 +113,10 @@ beforeEach(() => {
 });
 
 async function undoInDialog(dialog: HTMLElement, message: string) {
+  const user = userEvent.setup();
   await within(dialog).findByText(message);
-  fireEvent.click(within(dialog).getByRole("button", { name: `Annuler « ${message} »` }));
-  fireEvent.click(await screen.findByRole("button", { name: "Annuler la modification" }));
+  await user.click(within(dialog).getByRole("button", { name: `Annuler « ${message} »` }));
+  await user.click(await screen.findByRole("button", { name: "Annuler la modification" }));
   await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("space.undo", { commit: "c2" }));
   await waitFor(() => expect(document.body.textContent).toContain(`Annulation de « ${message} »`));
 }
@@ -132,15 +135,16 @@ describe("historique d’une page", () => {
   });
 
   it("depuis l’écran Navigation, avec un état vide pour une page jamais modifiée", async () => {
-    render(<NavigationSettings />);
-    fireEvent.click(screen.getByRole("button", { name: "Historique de la page Notes" }));
-    const empty = screen.getByRole("dialog", { name: "Historique de « Notes »" });
+    const user = userEvent.setup();
+    renderSections(useNavigationSections, "Ordre du menu");
+    await pressRowAction(user, "Notes", "Historique de la page Notes");
+    const empty = await screen.findByRole("dialog", { name: "Historique de « Notes »" });
     await within(empty).findByText("Aucune modification enregistrée");
-    fireEvent.click(within(empty).getByRole("button", { name: "Fermer" }));
+    await user.click(within(empty).getByRole("button", { name: "Fermer" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Historique de la page Tâches" }));
+    await pressRowAction(user, "Tâches", "Historique de la page Tâches");
     await undoInDialog(
-      screen.getByRole("dialog", { name: "Historique de « Tâches »" }),
+      await screen.findByRole("dialog", { name: "Historique de « Tâches »" }),
       "Tour d’agent : colonne échéance",
     );
   });

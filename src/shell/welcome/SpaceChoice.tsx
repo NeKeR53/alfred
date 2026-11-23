@@ -1,7 +1,7 @@
-import { Button, FormField, TextInput, useConfirm } from "@alfred/ui";
-import { FolderOpen, FolderPlus, type LucideIcon } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { Button, RadioGroup, TextField, useConfirm } from "socle-ui";
 import { confirmLeaving } from "../../features/space/switchGuard";
+import { Row, Stack } from "../../kit";
 import { inTauri, pickFolder } from "../../lib/native";
 import { useShell } from "../store";
 
@@ -28,36 +28,6 @@ export function defaultSpacePath(home: string | null | undefined, name: string) 
   return name.trim() ? `${base}${separator}${name.trim()}` : base;
 }
 
-function ChoiceCard({
-  icon: Icon,
-  title,
-  description,
-  selected,
-  onSelect,
-}: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    // biome-ignore lint/a11y/useSemanticElements: une grande carte cliquable, dont la description se lit avec le titre ; le groupe gère la sélection.
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      tabIndex={selected ? 0 : -1}
-      className={`welcome-card${selected ? " is-selected" : ""}`}
-      onClick={onSelect}
-    >
-      <Icon size={20} aria-hidden="true" className="welcome-card__icon" />
-      <span className="welcome-card__title">{title}</span>
-      <span className="welcome-card__description">{description}</span>
-    </button>
-  );
-}
-
 /**
  * Créer un espace ou en ouvrir un : deux grandes cartes, puis le formulaire de la carte choisie. Rendu par l’accueil
  * complet comme par sa version courte. `footer` reçoit le bouton principal (le seul de l’écran) pour le placer en
@@ -75,7 +45,7 @@ export function SpaceChoice({
 }) {
   const home = useShell((state) => state.info?.home ?? null);
   const openSpace = useShell((state) => state.openSpace);
-  const { confirm, confirmDialog } = useConfirm();
+  const confirm = useConfirm();
   const [mode, setMode] = useState<SpaceMode | "keep">(extraChoice ? "keep" : "create");
   const [name, setName] = useState("");
   const [createPath, setCreatePath] = useState("");
@@ -137,105 +107,92 @@ export function SpaceChoice({
   };
 
   const primary = (
-    <Button type="submit" form={formId} variant="primary" loading={busy} disabled={!ready}>
-      {mode === "keep" ? extraChoice?.submitLabel : mode === "create" ? "Créer l’espace" : "Ouvrir l’espace"}
+    <Button type="submit" form={formId} variant="primary" isPending={busy} isDisabled={!ready}>
+      {mode === "keep"
+        ? (extraChoice?.submitLabel ?? "Continuer")
+        : mode === "create"
+          ? "Créer l’espace"
+          : "Ouvrir l’espace"}
     </Button>
   );
 
+  const browseButton = inTauri ? (
+    <Row>
+      <Button size="sm" onPress={() => void browse()}>
+        Parcourir…
+      </Button>
+    </Row>
+  ) : null;
+
   return (
     <>
-      <div
-        className="welcome-cards"
-        role="radiogroup"
-        aria-label="Votre espace de travail"
-        onKeyDown={(event) => {
-          // Comme des boutons radio : les flèches passent d’une carte à l’autre et la choisissent.
-          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-          if (!step) return;
-          const cards = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
-          const index = cards.indexOf(document.activeElement as HTMLButtonElement);
-          const target = cards[(Math.max(0, index) + step + cards.length) % cards.length];
-          event.preventDefault();
-          target.focus();
-          target.click();
-        }}
+      <RadioGroup
+        label="Votre espace de travail"
+        hideLabel
+        value={mode}
+        onChange={(value) => select(value as SpaceMode | "keep")}
       >
         {extraChoice ? (
-          <ChoiceCard
-            icon={FolderOpen}
-            title={extraChoice.title}
-            description={extraChoice.description}
-            selected={mode === "keep"}
-            onSelect={() => select("keep")}
-          />
+          <RadioGroup.Option value="keep" description={extraChoice.description}>
+            {extraChoice.title}
+          </RadioGroup.Option>
         ) : null}
-        <ChoiceCard
-          icon={FolderPlus}
-          title="Créer un nouvel espace"
-          description="Pour commencer de zéro."
-          selected={mode === "create"}
-          onSelect={() => select("create")}
-        />
-        <ChoiceCard
-          icon={FolderOpen}
-          title="Ouvrir un espace existant"
-          description="Un dossier déjà créé avec Alfred."
-          selected={mode === "open"}
-          onSelect={() => select("open")}
-        />
-      </div>
-      <form id={formId} className="welcome-form" noValidate onSubmit={(event) => void submit(event)}>
+        <RadioGroup.Option value="create" description="Pour commencer de zéro.">
+          Créer un nouvel espace
+        </RadioGroup.Option>
+        <RadioGroup.Option value="open" description="Un dossier déjà créé avec Alfred.">
+          Ouvrir un espace existant
+        </RadioGroup.Option>
+      </RadioGroup>
+      <form id={formId} noValidate onSubmit={(event) => void submit(event)}>
         {mode === "create" ? (
-          <>
-            <FormField label="Nom de l’espace" hint="Par exemple « Travail » ou « Maison ».">
-              <TextInput
-                value={name}
-                autoComplete="off"
-                spellCheck={false}
-                autoFocus
-                onChange={(event) => {
-                  setName(event.target.value);
+          <Stack gap="md">
+            <TextField
+              label="Nom de l’espace"
+              isRequired
+              description="Par exemple « Travail » ou « Maison »."
+              value={name}
+              autoComplete="off"
+              autoFocus
+              onChange={(value) => {
+                setName(value);
+                setError(null);
+              }}
+            />
+            <Stack gap="xs">
+              <TextField
+                label="Dossier"
+                isRequired
+                value={shownCreatePath}
+                error={error ?? undefined}
+                onChange={(value) => {
+                  setCreatePath(value);
+                  setPathEdited(true);
                   setError(null);
                 }}
               />
-            </FormField>
-            <div className="welcome-form__path">
-              <FormField label="Dossier" error={error ?? undefined}>
-                <TextInput
-                  value={shownCreatePath}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  onChange={(event) => {
-                    setCreatePath(event.target.value);
-                    setPathEdited(true);
-                    setError(null);
-                  }}
-                />
-              </FormField>
-              {inTauri ? <Button onClick={() => void browse()}>Parcourir…</Button> : null}
-            </div>
-          </>
+              {browseButton}
+            </Stack>
+          </Stack>
         ) : mode === "open" ? (
-          <div className="welcome-form__path">
-            <FormField label="Dossier de l’espace" error={error ?? undefined}>
-              <TextInput
-                value={openPath}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoFocus
-                placeholder={home ? `${home}${separatorOf(home)}Alfred${separatorOf(home)}…` : undefined}
-                onChange={(event) => {
-                  setOpenPath(event.target.value);
-                  setError(null);
-                }}
-              />
-            </FormField>
-            {inTauri ? <Button onClick={() => void browse()}>Parcourir…</Button> : null}
-          </div>
+          <Stack gap="xs">
+            <TextField
+              label="Dossier de l’espace"
+              isRequired
+              value={openPath}
+              autoFocus
+              error={error ?? undefined}
+              placeholder={home ? `${home}${separatorOf(home)}Alfred${separatorOf(home)}…` : undefined}
+              onChange={(value) => {
+                setOpenPath(value);
+                setError(null);
+              }}
+            />
+            {browseButton}
+          </Stack>
         ) : null}
       </form>
       {footer(primary)}
-      {confirmDialog}
     </>
   );
 }

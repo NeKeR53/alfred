@@ -1,6 +1,6 @@
-import { IconButton } from "@alfred/ui";
-import { LoaderCircle, Mic, Square, Volume2, VolumeX } from "lucide-react";
+import { Mic, Square, Volume2, VolumeX } from "lucide-react";
 import { type CSSProperties, useEffect, useRef } from "react";
+import { IconButton } from "socle-ui";
 import { useVoice } from "./store";
 import "./voice.css";
 
@@ -44,18 +44,18 @@ export function DictationButton({ onTranscript }: { onTranscript: (text: string)
 
   // Pendant une lecture, l’interrupteur l’arrête ; sinon il active ou coupe la voix.
   const toggle = speaking ? (
-    <IconButton label="Arrêter la lecture" tooltip="Arrêter la lecture" onClick={() => void stopReading()}>
-      <Volume2 size={14} className="voice-toggle--speaking" aria-hidden="true" />
-    </IconButton>
+    <IconButton
+      icon={<Volume2 size={14} className="voice-toggle--speaking" aria-hidden="true" />}
+      label="Arrêter la lecture"
+      onPress={() => void stopReading()}
+    />
   ) : (
     <IconButton
+      icon={status.enabled ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
       label={status.enabled ? "Couper la voix" : "Activer la voix"}
-      tooltip={status.enabled ? "Voix activée · cliquer pour la couper" : "Voix coupée · cliquer pour l’activer"}
-      aria-pressed={status.enabled}
-      onClick={() => void setEnabled(!status.enabled)}
-    >
-      {status.enabled ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
-    </IconButton>
+      isSelected={status.enabled}
+      onChange={(enabled) => void setEnabled(enabled)}
+    />
   );
 
   // Dictée bloquée (Réglages › Voix) : pas de micro, la lecture reste possible.
@@ -64,46 +64,36 @@ export function DictationButton({ onTranscript }: { onTranscript: (text: string)
   if (dictation === "starting" || dictation === "transcribing")
     return (
       <IconButton
+        icon={<Mic size={14} aria-hidden="true" />}
         label={dictation === "starting" ? "Ouverture du micro" : "Transcription en cours"}
-        tooltip={dictation === "starting" ? "Chargement du modèle…" : "Transcription…"}
-        disabled
-      >
-        <LoaderCircle size={14} className="voice-dictation__spin" aria-hidden="true" />
-      </IconButton>
+        isPending
+      />
     );
 
   if (dictation === "listening")
     return (
-      <IconButton
-        className="voice-dictation voice-dictation--listening"
-        label="Terminer la dictée et envoyer"
-        tooltip={
-          pause > 0
-            ? `Envoyé après ${(pause / 1000).toLocaleString("fr-FR")} s de silence · cliquer pour envoyer tout de suite · Échap annule`
-            : "Terminer et envoyer · Échap annule"
-        }
-        style={{ "--voice-level": level.toFixed(2) } as CSSProperties}
-        onClick={async () => {
-          const text = await finish();
-          if (text) onTranscript(text);
-        }}
-      >
-        <Square size={11} aria-hidden="true" />
-      </IconButton>
+      // L’anneau autour du bouton suit le niveau du micro : il est porté par l’enveloppe, pas par le bouton.
+      <span className="voice-dictation--listening" style={{ "--voice-level": level.toFixed(2) } as CSSProperties}>
+        <IconButton
+          icon={<Square size={11} aria-hidden="true" />}
+          label="Terminer la dictée et envoyer"
+          onPress={async () => {
+            const text = await finish();
+            if (text) onTranscript(text);
+          }}
+        />
+      </span>
     );
 
   return (
     <>
       {toggle}
       <IconButton
-        className="voice-dictation"
+        icon={<Mic size={14} aria-hidden="true" />}
         label="Dicter un message"
-        tooltip={status.listenError ?? "Dicter"}
-        disabled={Boolean(status.listenError)}
-        onClick={() => void start()}
-      >
-        <Mic size={14} aria-hidden="true" />
-      </IconButton>
+        isDisabled={Boolean(status.listenError)}
+        onPress={() => void start()}
+      />
     </>
   );
 }

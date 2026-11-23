@@ -3,10 +3,11 @@
  * voix haute au fil de l’eau, phrase par phrase pendant qu’il écrit ; une demande tapée ne l’est pas.
  */
 import "./support/dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
+import { renderWithSocle as render } from "../src/features/space/sections.test-helper";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 
