@@ -17,3 +17,15 @@ par son pont (espace « taff », lecture seule : aucune écriture, la confirmati
 Limite : le contenu des pages de modules (cadres) vient du runtime de l'Alfred de développement déjà lancé, encore
 sur l'ancienne version ; il ne s'affiche pas à travers le pont de l'essai. Les cadres sur socle-ui sont couverts par
 les tests (`tests/frames.test.tsx`, `pnpm build:runtime`, `cargo test --lib`).
+
+## Pages des espaces encore sur `@alfred/ui` (transition, 2026-11-23)
+
+Prises dans l'app de dev lancée (`http://localhost:14730/`, espace « taff », lecture seule) après la remise en
+service de `@alfred/ui` pour les cadres.
+
+| Fichier | Page |
+|---|---|
+| `transition-01-jenkins-clair.png` | Jenkins, tableau de bord (actions de la page dans la barre du haut) |
+| `transition-02-atom-projet-clair.png` | Atom, Projet, avec son panneau |
+| `transition-03-atom-secrets-panneau-clair.png` | Atom, Secrets : résumé de la barre du haut, tableau, panneau de détail |
+| `transition-04-atlassian-bitbucket-clair.png`, `transition-05-atlassian-bitbucket-sombre.png` | Atlassian, Bitbucket, en clair puis en sombre |
