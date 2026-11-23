@@ -73,3 +73,35 @@ Une proposition suit le mode `propose` :
 5. Supprimer `src/ui/`.
 
 Les étapes 1 et 2 peuvent commencer après le lot 1, sans attendre la suite.
+
+## Manques vus pendant la migration (socle-ui 0.3.0)
+
+Chaque manque a une solution locale dans Alfred, faite de composants Socle. Chacun peut devenir un `/design propose`.
+
+### Coquille
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| Glisser-déposer des sections de la Sidebar et des onglets de vues | Menu « … » de la section : « Monter », « Descendre » ; actions de la page : « Déplacer l'onglet vers la gauche / la droite ». |
+| Couleur par section (Sidebar : « pas de couleur par section ») | Retirée de l'affichage et du menu. Le réglage reste lisible dans le `layout` de l'espace. |
+| Recherche de page dans la barre du haut (`useTopBarSearch`) | Retirée : la recherche va dans la barre d'outils de `ListPage` ou de `Page`. Le message du pont reste accepté et ignoré. |
+| Une seule action par toast (D-155) | Le toast porte la première action ; la ligne du centre de notifications rouvre la même action (`onOpen`). La seconde action reste dans l'historique d'Alfred, sans bouton. |
+| Ouverture forcée du panneau de détail (`detail` sans option contrôlée) | Le panneau suit l'état mémorisé par AppShell. Une conversation d'agent lancée par une page remplace le contenu du panneau, sans le rouvrir s'il est replié. |
+| Bascule de vue à boutons accolés dans `actions` | Exclue par AppShell (D-222) : chaque vue devient une action ordinaire, la vue affichée est désactivée. |
+| Raccourci d'ouverture du sélecteur d'espace (Cmd+Maj+O) | Retiré (D-232). |
+| Renommer une entrée de la Sidebar sur place (F2) | Action « Renommer » de l'entrée, qui ouvre `useOpenForm`. |
+| Statut à plusieurs tons d'une entrée de zone (bon, échec, au travail) | `count` pour un compteur, `indicator="activity"` pour une entrée au travail ; les autres états ne se voient plus dans le menu. |
+| Menu contextuel d'un onglet de vue | Ses actions passent dans le « … » de la barre du haut. |
+| Compteur sur un onglet de vue | Le compteur s'ajoute au libellé : « Tâches (4) ». |
+
+### Composants
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| Écart entre composants (`Stack`, `Row`) et texte courant hors gabarit (`Text`) | Kit local `src/kit` (Tailwind avec les seuls tokens Socle), aussi servi aux pages sous `@alfred/kit`. |
+| Encart local dans une zone (erreur de chargement, précision) | `Notice` du kit : `StatusDot` et texte, bord `--line`. |
+| Rendu seul des sections de réglages, sans navigation | Une page de module placée dans les Réglages prend `Page`, `PageSection` et des champs Socle. |
+| Sous-partie titrée dans le contenu libre d'une `SettingsSection` ; liste à puces ; paires libellé/valeur hors `DetailPanel` | Composants locaux des modules (`modules/lists.tsx`), faits du kit. |
+| Curseur (`Slider`) | Sélecteur d'effort de l'agent gardé en local. |
+| Bouton-image (vignette cliquable), bouton d'envoi rond, `type="submit"` sur `IconButton` | Boutons HTML de l'app, stylés avec les tokens Socle. |
+| Titre riche de `Disclosure` (icône, roue) | Titre texte seul. |
+| Infobulle différente du nom accessible sur `IconButton` | Le nom accessible sert aussi d'infobulle. |
+| Notification d'une page avec une action à rappel (`onAction`) | Le pont ne transporte pas une fonction : seules les actions décrites (navigation, fenêtre, fonction) passent. |
