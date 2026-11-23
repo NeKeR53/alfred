@@ -3,11 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { AgentPage } from "./AgentPage";
 import { compareConversations, type GitSummary } from "./ConversationList";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
-import { findConversationTitle, render } from "./socle.test-helper";
+import { AgentPageWithTracking, findConversationTitle, render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -92,14 +91,14 @@ beforeEach(() => {
 
 describe("page Agent", () => {
   it("F2 met le titre de la conversation ouverte en édition", async () => {
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     fireEvent.keyDown(window, { key: "F2" });
     expect(await screen.findByRole("textbox", { name: "Nom de la conversation" })).toHaveValue("Factures");
   });
 
   it("ouvre le dossier de travail dans l’explorateur, et dans l’éditeur une fois choisi", async () => {
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     const editor = screen.getByRole("button", { name: "Ouvrir le dossier dans l’éditeur" });
     // Sans éditeur dans les réglages, le bouton reste visible mais grisé.
@@ -133,7 +132,7 @@ describe("page Agent", () => {
       deletions: 3,
       truncated: false,
     };
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     const pill = await screen.findByRole("status");
     expect(pill).toHaveTextContent("2 fichiers modifiés");
@@ -171,7 +170,7 @@ describe("page Agent", () => {
         ],
       }),
     };
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await screen.findByText("Réponse t3");
     const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
     expect(summaries.map((summary) => within(summary).getByRole("strong").textContent)).toEqual([
@@ -206,7 +205,7 @@ describe("page Agent", () => {
         ],
       }),
     };
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     expect(await screen.findByRole("region", { name: "Bilan des modifications" })).toBeInTheDocument();
     expect(await screen.findByText("1 fichier modifié")).toBeInTheDocument();
     // Un deuxième message part juste après : l’agent répond.
@@ -240,7 +239,7 @@ describe("page Agent", () => {
 
   it("signale un dépôt illisible, sans pastille", async () => {
     git = new Error("Ce dossier n’est pas un dépôt Git.");
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     expect(await screen.findByText("1 dépôt indisponible.")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -256,7 +255,7 @@ describe("page Agent", () => {
       deletions: 0,
       truncated: false,
     };
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
     expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
@@ -274,58 +273,51 @@ describe("page Agent", () => {
       c3: stored("c3", "Lue", at - 3_000, { updatedAt: at, lastStatus: "cancelled" }),
       c4: stored("c4", "Plus récente", at, { unread: true, lastStatus: "done" }),
     };
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     const panel = await screen.findByLabelText("Suivi des conversations");
     // Une seule carte, résumée par ce qui demande l’utilisateur ; plus de cartes par état.
     const list = await within(panel).findByRole("region", { name: "Conversations" });
     expect(within(panel).queryByRole("region", { name: "À traiter" })).toBeNull();
     expect(within(panel).queryByRole("region", { name: "Terminées" })).toBeNull();
-    await waitFor(() => expect(list.closest(".info-panel__card")).toHaveTextContent("1 à traiter"));
+    await waitFor(() => expect(list).toHaveTextContent("1 à traiter"));
     // La plus récemment créée d’abord, quel que soit son état.
-    const rows = within(list).getAllByRole("listitem");
-    expect(rows.map((row) => row.querySelector(".info-panel-rows__text")?.textContent)).toEqual([
-      "Plus récente",
-      "Récente",
-      "Lue",
-      "Ancienne",
-    ]);
+    const rows = within(list).getAllByRole("row");
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Plus récente", "Récente", "Lue", "Ancienne"]);
     // Pastille d’état dans la marge, état annoncé, heure de la dernière activité à droite.
-    const failed = within(list).getByRole("button", { name: /^Récente/ });
+    const failed = within(list).getByRole("row", { name: "Récente" });
     expect(failed).toHaveTextContent("Claude Code · en échec");
     expect(failed).toHaveTextContent("14:02");
-    expect(failed).toHaveAccessibleName(/En échec/);
+    expect(failed).toHaveTextContent("En échec");
     expect(failed.querySelector(".agent-list__dot--error")).not.toBeNull();
     expect(
-      within(list)
-        .getByRole("button", { name: /^Plus récente/ })
-        .querySelector(".agent-list__dot--done"),
+      within(list).getByRole("row", { name: "Plus récente" }).querySelector(".agent-list__dot--done"),
     ).not.toBeNull();
     // Une conversation lue est en veille : pastille neutre, sans libellé d’état visible.
-    const read = within(list).getByRole("button", { name: /^Lue/ });
+    const read = within(list).getByRole("row", { name: "Lue" });
     expect(read.querySelector(".agent-list__dot--idle")).not.toBeNull();
     expect(read).not.toHaveTextContent("en échec");
     // Un autre jour : le jour et le mois.
-    expect(within(list).getByRole("button", { name: /^Ancienne/ })).toHaveTextContent("5 janv.");
+    expect(within(list).getByRole("row", { name: "Ancienne" })).toHaveTextContent("5 janv.");
     // Chaque conversation s’archive depuis sa ligne, pas seulement les terminées.
     for (const title of ["Plus récente", "Récente", "Lue", "Ancienne"])
       expect(within(list).getByRole("button", { name: `Archiver ${title}` })).toBeInTheDocument();
   });
 
   it("le suivi résume les conversations au travail quand rien n’attend l’utilisateur", async () => {
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     const panel = await screen.findByLabelText("Suivi des conversations");
     const list = await within(panel).findByRole("region", { name: "Conversations" });
     act(() =>
       useAgents.setState({ runtime: { c1: { status: "responding", approvals: [], questions: [], queued: [] } } }),
     );
-    await waitFor(() => expect(list.closest(".info-panel__card")).toHaveTextContent("1 au travail"));
-    const row = within(list).getByRole("button", { name: /^Factures/ });
-    expect(row).toHaveAccessibleName(/Au travail/);
+    await waitFor(() => expect(list).toHaveTextContent("1 au travail"));
+    const row = within(list).getByRole("row", { name: "Factures" });
+    expect(row).toHaveTextContent("Au travail");
     expect(row.querySelector(".agent-list__dot--working")).not.toBeNull();
   });
 
   it("archiver notifie aussitôt, avec « Annuler »", async () => {
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     fireEvent.click(screen.getAllByRole("button", { name: "Archiver Factures" })[0]);
     const item = useNotifications.getState().items[0];
@@ -335,7 +327,7 @@ describe("page Agent", () => {
 
   it("affiche le bandeau d’échec de chargement avec « Réessayer » quand le magasin l’expose", async () => {
     const load = vi.fn(async () => undefined);
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     act(() => useAgents.setState({ loadError: "Base illisible.", load } as never));
     expect(await screen.findByText("L’historique des agents n’a pas pu être chargé.")).toBeInTheDocument();
@@ -346,7 +338,7 @@ describe("page Agent", () => {
 
   it("affiche l’échec d’enregistrement près de la saisie avec « Réessayer la sauvegarde »", async () => {
     const retrySave = vi.fn(async () => undefined);
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     act(() =>
       useAgents.setState({

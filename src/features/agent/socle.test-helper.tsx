@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import { createNotifications, SocleProvider } from "socle-ui";
 import { expect } from "vitest";
+import { AgentPage, ConversationTracking } from "./AgentPage";
 
 /** `render` de Testing Library, dans un `SocleProvider` comme à la racine de l’app (`src/main.tsx`). */
 export function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
@@ -13,6 +14,21 @@ export function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper"
     </SocleProvider>
   );
   return renderBase(ui, { ...options, wrapper });
+}
+
+/**
+ * La page Agent et son suivi des conversations, que l’enveloppe pose dans le panneau de détail de l’AppShell
+ * (repère « Détail » de Socle, ici nommé par le suivi).
+ */
+export function AgentPageWithTracking() {
+  return (
+    <>
+      <AgentPage />
+      <aside aria-label="Suivi des conversations">
+        <ConversationTracking />
+      </aside>
+    </>
+  );
 }
 
 /** Attend que le nom de la conversation ouverte, en tête de la page Agent, soit `name`. */

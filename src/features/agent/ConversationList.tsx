@@ -1,27 +1,13 @@
 import { Archive, FileDiff } from "lucide-react";
 import { useEffect, useState } from "react";
-import { IconButton } from "socle-ui";
+import { type DetailSection, Drawer } from "socle-ui";
 import { invoke } from "../../lib/native";
 import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
-import {
-  InfoPanel,
-  type InfoPanelCard,
-  InfoPanelNote,
-  InfoPanelRows,
-  type InfoPanelState,
-  useInfoPanelLayout,
-} from "./panel/InfoPanel";
+import { InfoPanelNote, InfoPanelRows } from "./panel/InfoPanel";
 import { useAgents } from "./store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
-
-const cardIds = ["conversations", "changes"] as const;
-
-/** Disposition du suivi des conversations, partagée entre le panneau et le bouton de la barre qui le masque. */
-export function useConversationListPanel() {
-  return useInfoPanelLayout("agent", cardIds);
-}
 
 /**
  * Ordre du suivi, comme la liste des agents de OneApp (`useAgents`) : la plus récemment créée d’abord. Une
@@ -284,14 +270,12 @@ export function ConversationList({
   conversations,
   activeId,
   active,
-  panel,
   git = emptyGit,
   onArchive,
 }: {
   conversations: readonly ConversationHeader[];
   activeId: string | null;
   active?: Conversation;
-  panel: InfoPanelState;
   /** État Git du dossier de travail de la conversation ouverte, lu par la page (`useWorkspaceGit`). */
   git?: GitChanges;
   /** Chaque conversation s’archive depuis sa ligne, même au travail, comme les agents de OneApp. */
@@ -329,33 +313,37 @@ export function ConversationList({
       description: details,
       announcement: status,
       meta: lastActivity(header.updatedAt, now),
-      title: `${header.title}\n${provider} · ${status}`,
       selected: header.id === activeId,
       onSelect: () => void open(header.id),
-      action: onArchive ? (
-        <IconButton icon={<Archive size={14} />} label={`Archiver ${header.title}`} onPress={() => onArchive(header)} />
-      ) : undefined,
+      action: onArchive
+        ? { icon: <Archive size={14} />, label: `Archiver ${header.title}`, onPress: () => onArchive(header) }
+        : undefined,
     };
   });
-  const cards: InfoPanelCard[] = [
+  const sections: DetailSection[] = [
     {
       // Une seule liste : la pastille donne l’état, le résumé ce qui demande l’utilisateur, sinon ce qui travaille.
-      id: "conversations",
+      id: "agent-conversations",
       title: "Conversations",
       summary: attention.length
-        ? `${attention.length} à traiter`
+        ? { label: `${attention.length} à traiter`, tone: "warning" }
         : working.length
           ? `${working.length} au travail`
           : undefined,
-      summaryTone: attention.length ? "warning" : "neutral",
       content: <InfoPanelRows variant="detailed" empty="Aucune conversation." rows={rows} />,
     },
     {
-      id: "changes",
+      id: "agent-changes",
       title: "Modifications",
       content: <ChangedFiles conversation={active} git={git} />,
     },
   ];
-  // Sans conversation, la liste n’afficherait qu’une phrase « Aucune… » : le suivi reste vide, comme dans OneApp.
-  return <InfoPanel label="Suivi des conversations" cards={conversations.length ? cards : []} panel={panel} />;
+  // Sans conversation, la liste n’afficherait qu’une phrase « Aucune… » : le suivi n’a pas de section.
+  return (
+    <Drawer
+      header={{ title: "Suivi des conversations" }}
+      sections={conversations.length ? sections : []}
+      emptyMessage="Aucune conversation."
+    />
+  );
 }

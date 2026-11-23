@@ -585,20 +585,14 @@ button.agent-chat__change-file:hover {
 }
 
 /* Propre à Alfred */
-/* Suivi des conversations : à droite, sur toute la hauteur, avec son en-tête aligné sur la barre du haut. */
+/* Fenêtre Agent détachée, sans AppShell : le suivi des conversations à droite de la conversation. */
 .agents-page__side {
-  width: 300px;
+  width: var(--detail-w);
   min-height: 0;
   flex: none;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
   border-left: 1px solid var(--line);
   background: var(--surface);
-}
-.agents-page__side > .info-panel {
-  width: auto;
-  flex: 1;
-  border-left: 0;
 }
 .agent-changes__lines {
   flex: none;
@@ -690,24 +684,6 @@ button.agent-chat__attachment-file:hover {
   gap: 8px;
   margin: 2px 0 8px 24px;
 }
-/* Conversation dans le panneau de droite d’une page : le même relevé et la même saisie, en colonne étroite. */
-.agent-panel {
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.agent-panel .agents-page__transcript {
-  padding-inline: 12px;
-}
-.agent-panel .agent-chat__entry--user {
-  max-width: 100%;
-}
-.agent-panel .agents-page__footer {
-  width: calc(100% - 24px);
-  padding-bottom: 12px;
-}
 /* Après les règles de base qu’elles précisent. */
 
 .agents-page__column .agent-chat__entry--assistant {
@@ -716,21 +692,6 @@ button.agent-chat__attachment-file:hover {
 }
 .agents-page__question:empty {
   display: none;
-}
-
-/* En-têtes de la liste des conversations et du panneau d’agent d’une page : un titre et ses boutons Socle. */
-.agents-page__side-head,
-.agent-panel__head {
-  flex: none;
-  height: var(--bar-h);
-  display: flex;
-  align-items: center;
-  padding-inline: 12px 6px;
-  border-bottom: 1px solid var(--line);
-}
-.agents-page__side-head > *,
-.agent-panel__head > * {
-  flex: 1;
 }
 
 /* Carte d’un texte replié (collage long, long message). */

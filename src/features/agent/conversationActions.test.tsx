@@ -5,9 +5,8 @@ import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { ArchivedConversations } from "../agentSettings/ArchivedConversations";
 import { renderWithSocle } from "../space/sections.test-helper";
-import { AgentPage } from "./AgentPage";
 import type { Conversation } from "./model";
-import { chooseConversationAction, findConversationTitle, render } from "./socle.test-helper";
+import { AgentPageWithTracking, chooseConversationAction, findConversationTitle, render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -78,7 +77,7 @@ beforeEach(() => {
 
 describe("conversations d’agent", () => {
   it("renomme, marque comme non lue, archive (avec annulation) puis retrouve et restaure", async () => {
-    render(<AgentPage />);
+    render(<AgentPageWithTracking />);
     await screen.findByText("Factures");
     // Renommer depuis le menu de la conversation.
     await chooseConversationAction("Renommer");

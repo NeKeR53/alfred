@@ -1,10 +1,9 @@
-import { AppWindow, Archive, Bot, Code2, FolderOpen, PanelRight, X } from "lucide-react";
+import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type Action,
   Button,
   EmptyState,
-  IconButton,
   InlineEdit,
   NotificationCenter,
   Page,
@@ -17,10 +16,10 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { openAgentsWindow } from "./agentsWindow";
 import { Composer } from "./Composer";
-import { ConversationList, GitSummaryPill, useConversationListPanel, useWorkspaceGit } from "./ConversationList";
+import { ConversationList, GitSummaryPill, useWorkspaceGit } from "./ConversationList";
 import { setCoordinator } from "./delegation";
 import { PROVIDER_LABEL } from "./harness";
-import { type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
+import { type ConversationHeader, type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
 import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
 import { ConversationQuestion, Transcript } from "./Transcript";
@@ -36,9 +35,55 @@ type Persistence = { loadError?: string; saveError?: string; retrySave?: () => P
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** Conversations montrées dans le suivi : commencées et non archivées. */
+const visibleConversations = (headers: readonly ConversationHeader[]) =>
+  headers.filter((header) => !header.archived && header.started);
+
+/**
+ * Archive, puis propose de revenir en arrière ; les conversations archivées se retrouvent dans Réglages › Agents.
+ * Comme dans OneApp, l’affichage n’attend ni l’arrêt du travail en cours ni l’enregistrement.
+ */
+function useArchiveConversation() {
+  const archive = useAgents((state) => state.archive);
+  const unarchive = useAgents((state) => state.unarchive);
+  return (id: string, title: string) => {
+    void archive(id).catch((error) =>
+      notify({ title: "Conversation non archivée", description: errorText(error), tone: "error" }),
+    );
+    notify({
+      title: "Conversation archivée",
+      description: `${title} · retrouvez-la dans Réglages, onglet Agent.`,
+      tone: "info",
+      action: { label: "Annuler", run: () => void unarchive(id) },
+    });
+  };
+}
+
+/**
+ * Suivi des conversations de la page Agent, dans le panneau de détail de l’AppShell (bouton de la barre du haut,
+ * Mod+.) : la coquille le passe à `detail` quand la page Agent est ouverte.
+ */
+export function ConversationTracking() {
+  const headers = useAgents((state) => state.headers);
+  const activeId = useAgents((state) => state.activeId);
+  const conversation = useAgents((state) => (state.activeId ? state.loaded[state.activeId] : undefined));
+  const visible = useMemo(() => visibleConversations(headers), [headers]);
+  const git = useWorkspaceGit(conversation);
+  const archiveConversation = useArchiveConversation();
+  return (
+    <ConversationList
+      conversations={visible}
+      activeId={activeId}
+      active={conversation}
+      git={git}
+      onArchive={(header) => archiveConversation(header.id, header.title)}
+    />
+  );
+}
+
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
-/** Page Agent : les conversations de l’espace à gauche, la conversation ouverte au centre. */
+/** Page Agent : la conversation ouverte ; le suivi des conversations va dans le panneau de détail (`ConversationTracking`). */
 /** `detached` : la page Agent seule, dans sa fenêtre (`agentsWindow.ts`). */
 export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const spacePath = useShell((state) => state.snapshot?.path);
@@ -51,8 +96,6 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const open = useAgents((state) => state.open);
   const create = useAgents((state) => state.create);
   const rename = useAgents((state) => state.rename);
-  const archive = useAgents((state) => state.archive);
-  const unarchive = useAgents((state) => state.unarchive);
   const markUnread = useAgents((state) => state.markUnread);
   const loadError = useAgents((state) => (state as Persistence).loadError);
   const saveError = useAgents((state) => (state as Persistence).saveError);
@@ -104,23 +147,8 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
     }
   };
 
-  const visible = useMemo(() => headers.filter((header) => !header.archived && header.started), [headers]);
-
-  /**
-   * Archive, puis propose de revenir en arrière ; les conversations archivées se retrouvent dans Réglages › Agents.
-   * Comme dans OneApp, l’affichage n’attend ni l’arrêt du travail en cours ni l’enregistrement.
-   */
-  const archiveConversation = (id: string, title: string) => {
-    void archive(id).catch((error) =>
-      notify({ title: "Conversation non archivée", description: errorText(error), tone: "error" }),
-    );
-    notify({
-      title: "Conversation archivée",
-      description: `${title} · retrouvez-la dans Réglages, onglet Agent.`,
-      tone: "info",
-      action: { label: "Annuler", run: () => void unarchive(id) },
-    });
-  };
+  const visible = useMemo(() => visibleConversations(headers), [headers]);
+  const archiveConversation = useArchiveConversation();
 
   // Une conversation est toujours ouverte : la saisie est disponible dès l’arrivée sur la page.
   useEffect(() => {
@@ -129,7 +157,6 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
 
   // Un brouillon abandonné ne s’accumule pas : « Nouvelle conversation » réutilise celui qui est ouvert.
   const draft = conversation && !conversation.started ? conversation : undefined;
-  const panel = useConversationListPanel();
   // Comme la portée de l’agent dans OneApp : le harnais en contexte du titre ; l’origine va au-dessus du relevé.
   const context = conversation ? PROVIDER_LABEL[conversation.provider] : undefined;
   const models = useHarnessModels(conversation?.provider ?? "claude", conversation?.cwd || spacePath || "");
@@ -173,12 +200,6 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
       icon: <AppWindow size={15} />,
       isHidden: detached || !inTauri,
       onPress: () => void openAgentsWindow().catch(failed("Fenêtre Agent non ouverte")),
-    },
-    {
-      id: "panel",
-      label: panel.layout.hidden ? "Afficher le suivi des conversations" : "Masquer le suivi des conversations",
-      icon: <PanelRight size={15} />,
-      onPress: () => panel.setHidden(!panel.layout.hidden),
     },
     {
       id: "rename",
@@ -332,31 +353,12 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
             </section>
           </Page>
         </div>
-        {panel.layout.hidden ? null : (
-          // Liste des conversations, sur toute la hauteur.
-          <aside className="agents-page__side">
-            <div className="agents-page__side-head">
-              <Row gap="sm" justify="between">
-                <Text as="span" weight="strong">
-                  Suivi des conversations
-                </Text>
-                <IconButton
-                  icon={<X size={15} />}
-                  label="Masquer le suivi des conversations"
-                  onPress={() => panel.setHidden(true)}
-                />
-              </Row>
-            </div>
-            <ConversationList
-              conversations={visible}
-              activeId={activeId}
-              active={conversation}
-              panel={panel}
-              git={git}
-              onArchive={(header) => archiveConversation(header.id, header.title)}
-            />
+        {detached ? (
+          // Fenêtre Agent détachée : pas d’AppShell, le suivi reste à côté de la conversation.
+          <aside className="agents-page__side" aria-label="Suivi des conversations">
+            <ConversationTracking />
           </aside>
-        )}
+        ) : null}
       </div>
     </section>
   );

@@ -379,6 +379,7 @@ function sectionItem(
 
 export function AppShell({
   agent,
+  agentDetail,
   agentZone,
   settingsTabs,
   renderAgentPanel,
@@ -388,6 +389,8 @@ export function AppShell({
 }: {
   /** Contenu de la page Agent. */
   agent: ReactNode;
+  /** Panneau de détail de la page Agent : le suivi des conversations (bouton de la barre du haut, Mod+.). */
+  agentDetail?: ReactNode;
   /**
    * Faux quand aucun agent (Claude Code, Codex, OpenCode) n’est installé : la page Agent laisse la place à la
    * première section, ou à un mot qui dit quoi installer. `null` pendant la vérification : l’entrée Agent reste cachée
@@ -589,7 +592,7 @@ export function AppShell({
         activeView={onAgent ? undefined : frame.activeView}
         onViewChange={onAgent ? undefined : frame.onViewChange}
         actions={onAgent ? <NotificationCenter /> : frame.actions}
-        detail={onAgent ? undefined : frame.detail}
+        detail={onAgent ? (agentAvailable ? agentDetail : undefined) : frame.detail}
         detailExpandable
         history={false}
       >
