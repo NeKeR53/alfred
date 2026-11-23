@@ -122,7 +122,7 @@ pub fn transpile_in(
                 message: if outside {
                     format!("Import interdit : « {specifier} » sort du module. Un module n’importe que ses propres fichiers.")
                 } else if specifier == RETIRED_UI {
-                    "Import interdit : « @alfred/ui » n’existe plus. Les composants et les gabarits viennent de `socle-ui` (`ListPage`, `DetailPanel`, `FormPage`, `useOpenForm`, `Page`, `DetailPage`…), l’écart et le texte de `@alfred/kit` (`Stack`, `Row`, `Text`, `Notice`), `usePageState` de `@alfred/sdk` (DESIGN.md, section 15 : correspondance).".to_string()
+                    "Import interdit : « @alfred/ui » n’existe plus. Les composants et les gabarits viennent de `socle-ui` (`ListPage`, `Drawer`, `FormPage`, `useOpenForm`, `Page`, `DetailPage`…), l’écart et le texte de `@alfred/kit` (`Stack`, `Row`, `Text`, `Notice`), `usePageState` de `@alfred/sdk` (DESIGN.md, section 15 : correspondance).".to_string()
                 } else if specifier.starts_with("socle-ui/") {
                     format!("Import interdit : « {specifier} » est un chemin interne de socle-ui. Importer depuis `socle-ui`, `socle-ui/markdown` ou `socle-ui/markdown-editor`.")
                 } else {

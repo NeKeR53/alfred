@@ -2,13 +2,15 @@
 //! le JSX sans exécuter la page. Imports depuis `socle-ui` seulement (ni chemin interne, ni librairie que Socle
 //! couvre déjà, ni l’ancienne `@alfred/ui`), ni `style` ni `className`, ni balise HTML stylée, ni couleur en dur, des
 //! actions décrites par des données, et les noms accessibles des composants qui en demandent un. Une page placée
-//! dans les Réglages a ses règles propres. Chaque remarque dit quoi écrire à la place.
+//! dans les Réglages a ses règles propres ; une page placée en panneau rend un `Drawer` à sa racine. Chaque remarque
+//! dit quoi écrire à la place.
 
 use std::collections::BTreeMap;
 
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{
-    ImportDeclarationSpecifier, JSXAttribute, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
+    ArrowFunctionBody, ArrowFunctionExpression, Declaration, ExportDefaultDeclarationKind, Expression, Function, FunctionBody,
+    ImportDeclarationSpecifier, ReturnStatement, Statement, JSXAttribute, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
     JSXElement, JSXElementName, JSXExpression, JSXOpeningElement, StringLiteral, TemplateLiteral,
 };
 use oxc::ast_visit::{walk, Visit};
@@ -26,7 +28,7 @@ const SOCLE_ENTRIES: [&str; 3] = ["socle-ui", "socle-ui/markdown", "socle-ui/mar
 /// Ce que devient chaque nom de l’ancienne `@alfred/ui` (DESIGN.md, section 15).
 const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("CollectionPage", "`ListPage` de `socle-ui` (`title`, `rows`, `columns` typées, `filters`, `actions`, `rowActions`, `empty`)"),
-    ("DetailPanel", "`DetailPanel` de `socle-ui`, forme déclarative (`header`, `sections`, `isLoading`, `hasError`)"),
+    ("DetailPanel", "`Drawer` de `socle-ui`, forme déclarative (`header`, `sections`, `isLoading`, `hasError`)"),
     ("SettingsPage", "`Page` et `PageSection` de `socle-ui`, avec des `Switch`, `Select`, `TextField` qui s’appliquent tout de suite"),
     ("openForm", "`useOpenForm()` de `socle-ui` (`await openForm({ title, fields, submitLabel, onSubmit })`)"),
     ("openModal", "`Dialog` de `socle-ui` (`isOpen`, `onOpenChange`, `title`, `footer`)"),
@@ -47,7 +49,7 @@ const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("DataTable", "`Table` de `socle-ui`, ou `ListPage` pour une collection"),
     ("DataGrid", "`Table` de `socle-ui` (`density=\"compact\"`, `groupBy`)"),
     ("ListItem", "`List` de `socle-ui` (`items`)"),
-    ("KeyValueList", "`DetailPanel` déclaratif (`fields`), ou `PropertyRow`"),
+    ("KeyValueList", "`Drawer` déclaratif (`fields`), ou `PropertyRow`"),
     ("Spinner", "`ProgressBar` sans `value`, ou l’état `loading` du gabarit"),
     ("LoadingSkeleton", "`Skeleton`, ou l’état `loading` du gabarit"),
     ("Pagination", "`pagination` de `ListPage`"),
@@ -67,7 +69,7 @@ const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("Markdown", "`Markdown` de `socle-ui/markdown`"),
     ("MarkdownEditor", "`MarkdownEditor` de `socle-ui/markdown-editor`"),
     ("PageToolbar", "`toolbar` et `actions` de `Page`, ou `ListPage`"),
-    ("ObjectHeader", "`header` de `DetailPanel`, ou `DetailPage`"),
+    ("ObjectHeader", "`header` de `Drawer`, ou `DetailPage`"),
     ("copyText", "`navigator.clipboard.writeText`"),
 ];
 
@@ -153,6 +155,17 @@ const NAMED: [(&str, &str, &str); 7] = [
     ("MarkdownEditor", "label", "« Contenu de la note »"),
     ("TreeView", "aria-label", "« Dossiers »"),
 ];
+
+/// Où la page est placée : ses règles en dépendent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Une page d’une section, dans la zone principale.
+    Page,
+    /// Une page des Réglages (`placement: { kind: "settings" }`).
+    Settings,
+    /// Une page du panneau de droite d’une autre page (`placement: { kind: "panel" }`).
+    Panel,
+}
 
 struct Lint<'s> {
     source: &'s str,
@@ -263,7 +276,7 @@ impl Lint<'_> {
                 "textarea" => "`TextArea` de `socle-ui`",
                 "table" | "thead" | "tbody" | "tr" | "td" | "th" => "`Table` de `socle-ui`, ou `ListPage`",
                 "ul" | "ol" | "li" => "`List` de `socle-ui`",
-                "dl" | "dt" | "dd" => "les `fields` d’un `DetailPanel`",
+                "dl" | "dt" | "dd" => "les `fields` d’un `Drawer`",
                 "hr" => "`Divider` de `socle-ui`",
                 "pre" | "code" => "`Code` de `socle-ui` (un journal : `LogViewer` ; une console : `Terminal`)",
                 "img" => "`DocumentViewer` de `socle-ui` (ou `Avatar` pour une personne)",
@@ -321,7 +334,7 @@ impl Lint<'_> {
             );
         }
 
-        if ACTION_OWNERS.contains(&name.as_str()) || (name == "DetailPanel" && from_socle) {
+        if ACTION_OWNERS.contains(&name.as_str()) || (PANEL_ROOTS.contains(&name.as_str()) && from_socle) {
             if let Some(actions) = attribute(opening, "actions") {
                 let jsx = match &actions.value {
                     Some(JSXAttributeValue::Element(_) | JSXAttributeValue::Fragment(_)) => true,
@@ -400,8 +413,9 @@ fn matches_library(source: &str, library: &str) -> bool {
 }
 
 /// Remarques de design sur le fichier d’une page ; vide si la page ne se lit pas (ses erreurs sont dites ailleurs).
-/// `settings` : la page est placée dans les Réglages.
-pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
+/// `placement` : où la page est placée (zone principale, Réglages ou panneau de droite).
+pub fn lint(source: &str, placement: Placement) -> Vec<Diagnostic> {
+    let settings = placement == Placement::Settings;
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::tsx()).parse();
     if parsed.fatal_error || !parsed.diagnostics.is_empty() {
@@ -491,7 +505,223 @@ pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
         }
     }
     lint.visit_program(&parsed.program);
+    if placement == Placement::Panel {
+        if let Some((offset, message)) = panel_root_problem(&parsed.program.body, &lint.socle) {
+            lint.report(offset, message);
+        }
+    }
     lint.found
+}
+
+/// Corps d’une fonction de composant du fichier : sa liste d’instructions, ou l’expression rendue d’une flèche.
+enum Body<'b, 'a> {
+    Statements(&'b FunctionBody<'a>),
+    Expression(&'b Expression<'a>),
+}
+
+fn function_body<'b, 'a>(function: &'b Function<'a>) -> Option<Body<'b, 'a>> {
+    function.body.as_deref().map(Body::Statements)
+}
+
+fn arrow_body<'b, 'a>(arrow: &'b ArrowFunctionExpression<'a>) -> Option<Body<'b, 'a>> {
+    match &arrow.body {
+        ArrowFunctionBody::FunctionBody(body) => Some(Body::Statements(body)),
+        other => other.as_expression().map(Body::Expression),
+    }
+}
+
+fn expression_body<'b, 'a>(expression: &'b Expression<'a>) -> Option<Body<'b, 'a>> {
+    match expression.without_parentheses() {
+        Expression::ArrowFunctionExpression(arrow) => arrow_body(arrow),
+        Expression::FunctionExpression(function) => function_body(function),
+        _ => None,
+    }
+}
+
+/// Expressions rendues par un corps, sans entrer dans les fonctions qu’il déclare.
+#[derive(Default)]
+struct Returns<'b, 'a> {
+    found: Vec<&'b Expression<'a>>,
+}
+
+impl<'b, 'a> Returns<'b, 'a> {
+    fn of(body: &Body<'b, 'a>) -> Vec<&'b Expression<'a>> {
+        match body {
+            Body::Expression(expression) => vec![*expression],
+            Body::Statements(body) => {
+                let mut returns = Returns::default();
+                for statement in &body.statements {
+                    returns.statement(statement);
+                }
+                returns.found
+            }
+        }
+    }
+
+    fn statement(&mut self, statement: &'b Statement<'a>) {
+        match statement {
+            Statement::ReturnStatement(ret) => self.ret(ret),
+            Statement::BlockStatement(block) => block.body.iter().for_each(|inner| self.statement(inner)),
+            Statement::IfStatement(branch) => {
+                self.statement(&branch.consequent);
+                if let Some(alternate) = &branch.alternate {
+                    self.statement(alternate);
+                }
+            }
+            Statement::TryStatement(attempt) => {
+                attempt.block.body.iter().for_each(|inner| self.statement(inner));
+                if let Some(handler) = &attempt.handler {
+                    handler.body.body.iter().for_each(|inner| self.statement(inner));
+                }
+                if let Some(finalizer) = &attempt.finalizer {
+                    finalizer.body.iter().for_each(|inner| self.statement(inner));
+                }
+            }
+            Statement::SwitchStatement(switch) => {
+                switch.cases.iter().flat_map(|case| &case.consequent).for_each(|inner| self.statement(inner));
+            }
+            _ => {}
+        }
+    }
+
+    fn ret(&mut self, ret: &'b ReturnStatement<'a>) {
+        if let Some(argument) = &ret.argument {
+            self.found.push(argument);
+        }
+    }
+}
+
+fn register<'b, 'a>(declaration: &'b Declaration<'a>, named: &mut BTreeMap<String, Body<'b, 'a>>) {
+    match declaration {
+        Declaration::FunctionDeclaration(function) => {
+            if let (Some(id), Some(body)) = (&function.id, function_body(function)) {
+                named.insert(id.name.to_string(), body);
+            }
+        }
+        Declaration::VariableDeclaration(variables) => {
+            for declarator in &variables.declarations {
+                let (Some(id), Some(init)) = (declarator.id.get_binding_identifier(), &declarator.init) else { continue };
+                if let Some(body) = expression_body(init) {
+                    named.insert(id.name.to_string(), body);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Composant exporté par défaut : son corps, ou le nom du composant du fichier qu’il désigne.
+enum DefaultExport<'b, 'a> {
+    Body(Body<'b, 'a>),
+    Named(String),
+}
+
+/// Composants déclarés au premier niveau du fichier (nom → corps), et le composant exporté par défaut.
+fn components<'b, 'a>(body: &'b [Statement<'a>]) -> (BTreeMap<String, Body<'b, 'a>>, Option<DefaultExport<'b, 'a>>) {
+    let mut named = BTreeMap::new();
+    let mut default = None;
+    for statement in body {
+        if let Some(declaration) = statement.as_declaration() {
+            register(declaration, &mut named);
+            continue;
+        }
+        match statement {
+            Statement::ExportDeclaration(export) => register(&export.declaration, &mut named),
+            Statement::ExportDefaultDeclaration(export) => {
+                default = match &export.declaration {
+                    ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                        if let (Some(id), Some(body)) = (&function.id, function_body(function)) {
+                            named.insert(id.name.to_string(), body);
+                        }
+                        function_body(function).map(DefaultExport::Body)
+                    }
+                    ExportDefaultDeclarationKind::Identifier(reference) => Some(DefaultExport::Named(reference.name.to_string())),
+                    kind => kind.as_expression().and_then(expression_body).map(DefaultExport::Body),
+                };
+            }
+            _ => {}
+        }
+    }
+    (named, default)
+}
+
+const PANEL_ROOTS: [&str; 2] = ["Drawer", "DetailPanel"];
+
+/// Ce que rend une expression, à sa racine : un élément JSX nommé, autre chose, ou rien (`null`).
+fn root_problem<'b, 'a>(
+    expression: &'b Expression<'a>,
+    named: &BTreeMap<String, Body<'b, 'a>>,
+    socle: &BTreeMap<String, String>,
+    depth: usize,
+) -> Option<(u32, String)> {
+    let not_drawer = |offset: u32, what: String| {
+        Some((
+            offset,
+            format!(
+                "Une page placée en panneau (`placement: {{ kind: \"panel\" }}`) rend un `<Drawer>` de `socle-ui` à sa racine, pas {what} : un panneau de droite ne contient qu’un `Drawer` (sections, propriétés, actions) (DESIGN.md, section 6)."
+            ),
+        ))
+    };
+    match expression.without_parentheses() {
+        Expression::NullLiteral(_) => None,
+        Expression::ConditionalExpression(choice) => root_problem(&choice.consequent, named, socle, depth)
+            .or_else(|| root_problem(&choice.alternate, named, socle, depth)),
+        Expression::LogicalExpression(logical) => root_problem(&logical.right, named, socle, depth),
+        Expression::JSXElement(element) => {
+            let opening = &element.opening_element;
+            let Some((local, intrinsic)) = element_name(&opening.name) else {
+                return not_drawer(opening.span.start, "cet élément".to_string());
+            };
+            let member = matches!(opening.name, JSXElementName::MemberExpression(_));
+            if !member && socle.get(&local).is_some_and(|imported| PANEL_ROOTS.contains(&imported.as_str())) {
+                return None;
+            }
+            // Un composant du fichier qui rend lui-même le Drawer convient.
+            if !member && !intrinsic && depth < 4 {
+                if let Some(body) = named.get(&local) {
+                    return panel_body_problem(body, named, socle, depth + 1)
+                        .map(|(_, message)| (opening.span.start, message));
+                }
+            }
+            not_drawer(opening.span.start, format!("`<{local}>`"))
+        }
+        Expression::JSXFragment(fragment) => not_drawer(fragment.span.start, "un fragment `<>…</>`".to_string()),
+        other => not_drawer(oxc::span::GetSpan::span(other).start, "cette expression".to_string()),
+    }
+}
+
+fn panel_body_problem<'b, 'a>(
+    body: &Body<'b, 'a>,
+    named: &BTreeMap<String, Body<'b, 'a>>,
+    socle: &BTreeMap<String, String>,
+    depth: usize,
+) -> Option<(u32, String)> {
+    let returns = Returns::of(body);
+    // Un composant qui ne rend jamais que `null` n'a pas de Drawer.
+    if returns.iter().all(|expression| matches!(expression.without_parentheses(), Expression::NullLiteral(_))) {
+        return Some((
+            0,
+            "Une page placée en panneau rend un `<Drawer>` de `socle-ui` à sa racine (DESIGN.md, section 6).".to_string(),
+        ));
+    }
+    returns.into_iter().find_map(|expression| root_problem(expression, named, socle, depth))
+}
+
+/// Une page placée en panneau rend un `Drawer` (ou l’ancien nom `DetailPanel`) de socle-ui à sa racine.
+fn panel_root_problem(body: &[Statement], socle: &BTreeMap<String, String>) -> Option<(u32, String)> {
+    let (named, default) = components(body);
+    let default = match &default {
+        Some(DefaultExport::Body(body)) => Some(body),
+        Some(DefaultExport::Named(name)) => named.get(name),
+        None => None,
+    };
+    let Some(default) = default else {
+        return Some((
+            0,
+            "Une page placée en panneau exporte par défaut un composant qui rend un `<Drawer>` de `socle-ui` (DESIGN.md, section 6).".to_string(),
+        ));
+    };
+    panel_body_problem(default, &named, socle, 0)
 }
 
 #[cfg(test)]
@@ -499,11 +729,15 @@ mod tests {
     use super::*;
 
     fn messages(source: &str) -> Vec<String> {
-        lint(source, false).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+        lint(source, Placement::Page).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+    }
+
+    fn panel_messages(source: &str) -> Vec<String> {
+        lint(source, Placement::Panel).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
     }
 
     fn settings_messages(source: &str) -> Vec<String> {
-        lint(source, true).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+        lint(source, Placement::Settings).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
     }
 
     #[test]
@@ -740,5 +974,89 @@ export function Bilan() {
 }
 "#;
         assert!(messages(page).is_empty(), "{:?}", messages(page));
+    }
+
+    #[test]
+    fn une_page_en_panneau_rend_un_drawer() {
+        let drawer = r#"
+import { Drawer } from "socle-ui";
+export default function Fiche() {
+  const fiche = useFiche();
+  if (!fiche) return null;
+  return <Drawer header={{ title: fiche.nom }} sections={[{ id: "infos", title: "Infos", fields: [] }]} />;
+}
+"#;
+        assert!(panel_messages(drawer).is_empty(), "{:?}", panel_messages(drawer));
+
+        // Ancien nom, renommé à l'import, ou rendu par un composant du fichier : toujours un Drawer.
+        let alias = r#"
+import { DetailPanel as Panneau } from "socle-ui";
+const Contenu = ({ id }) => (chargement ? <Panneau isLoading /> : <Panneau sections={[]} />);
+export default function Fiche() {
+  return <Contenu id="a" />;
+}
+"#;
+        assert!(panel_messages(alias).is_empty(), "{:?}", panel_messages(alias));
+
+        let fleche = r#"
+import { Drawer } from "socle-ui";
+const Fiche = () => <Drawer sections={[]} />;
+export default Fiche;
+"#;
+        assert!(panel_messages(fleche).is_empty(), "{:?}", panel_messages(fleche));
+    }
+
+    #[test]
+    fn une_page_en_panneau_sans_drawer_est_refusee() {
+        let page = r#"
+import { Page, PageSection } from "socle-ui";
+import { Text } from "@alfred/kit";
+export default function Fiche() {
+  return (
+    <Page>
+      <PageSection title="Infos">
+        <Text>Contenu</Text>
+      </PageSection>
+    </Page>
+  );
+}
+"#;
+        let found = panel_messages(page);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("6: "), "{found:?}");
+        assert!(found[0].contains("`<Page>`") && found[0].contains("DESIGN.md, section 6"), "{found:?}");
+        // La même page n'est pas relevée hors du panneau.
+        assert!(messages(page).is_empty(), "{:?}", messages(page));
+
+        // Une seule branche sans Drawer suffit, comme un fragment ou un composant du fichier qui n'en rend pas.
+        let branche = r#"
+import { Drawer, EmptyState } from "socle-ui";
+export default function Fiche() {
+  return vide ? <EmptyState title="Rien" /> : <Drawer sections={[]} />;
+}
+"#;
+        assert!(panel_messages(branche).iter().any(|m| m.contains("`<EmptyState>`")), "{:?}", panel_messages(branche));
+        let fragment = r#"
+import { Drawer } from "socle-ui";
+function Interne() {
+  return <><Drawer sections={[]} /></>;
+}
+export default function Fiche() {
+  return <Interne />;
+}
+"#;
+        assert!(panel_messages(fragment).iter().any(|m| m.contains("fragment")), "{:?}", panel_messages(fragment));
+
+        // Un Drawer qui ne vient pas de socle-ui ne compte pas.
+        let local = r#"
+function Drawer() {
+  return null;
+}
+export default function Fiche() {
+  return <Drawer />;
+}
+"#;
+        assert!(!panel_messages(local).is_empty());
+        assert!(!panel_messages("export const x = 1;").is_empty());
     }
 }

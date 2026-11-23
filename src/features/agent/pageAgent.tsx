@@ -6,8 +6,7 @@
 
 import { ExternalLink, X } from "lucide-react";
 import { useEffect } from "react";
-import { IconButton } from "socle-ui";
-import { Row, Text } from "../../kit";
+import { Drawer } from "socle-ui";
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
 import { declaredReference, type FrameIdentity, frameServices } from "../../shell/frameBridge";
@@ -199,31 +198,47 @@ export function AgentPanel({ conversationId, onClose }: { conversationId: string
     void ensureLoaded(conversationId);
   }, [conversationId, ensureLoaded]);
 
-  if (!conversation) return null;
+  // Un panneau de droite ne contient qu’un Drawer (DESIGN.md, section 6) : la conversation en est la seule section.
   return (
-    <div className="agent-panel">
-      <div className="agent-panel__head">
-        <Row gap="xs" justify="between">
-          <Text as="span" weight="strong">
-            {conversation.title}
-          </Text>
-          <Row gap="xs">
-            <IconButton
-              icon={<ExternalLink size={15} />}
-              label="Ouvrir dans la page Agent"
-              onPress={() => {
-                void open(conversationId);
-                setView({ kind: "agent" });
-              }}
-            />
-            <IconButton icon={<X size={15} />} label="Fermer la conversation" onPress={onClose} />
-          </Row>
-        </Row>
-      </div>
-      <Transcript conversation={conversation} runtime={runtime} />
-      <div className="agents-page__footer">
-        <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />
-      </div>
-    </div>
+    <Drawer
+      isLoading={!conversation}
+      header={
+        conversation
+          ? {
+              title: conversation.title,
+              actions: [
+                {
+                  id: "open",
+                  label: "Ouvrir dans la page Agent",
+                  icon: <ExternalLink size={15} />,
+                  onPress: () => {
+                    void open(conversationId);
+                    setView({ kind: "agent" });
+                  },
+                },
+                { id: "close", label: "Fermer la conversation", icon: <X size={15} />, onPress: onClose },
+              ],
+            }
+          : undefined
+      }
+      sections={
+        conversation
+          ? [
+              {
+                id: "agent-panel-conversation",
+                title: "Conversation",
+                content: (
+                  <>
+                    <Transcript conversation={conversation} runtime={runtime} />
+                    <div className="agents-page__footer">
+                      <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />
+                    </div>
+                  </>
+                ),
+              },
+            ]
+          : undefined
+      }
+    />
   );
 }

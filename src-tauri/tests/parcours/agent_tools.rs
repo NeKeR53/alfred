@@ -96,7 +96,7 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
 
     // L’agent écrit ses fichiers, dont un import interdit, une migration et une fonction offerte comme outil.
     std::fs::write(placed["file"].as_str().unwrap(), "import _ from \"lodash\";\nexport default function Vue() { return null; }\n").unwrap();
-    std::fs::write(panel["file"].as_str().unwrap(), PAGE).unwrap();
+    std::fs::write(panel["file"].as_str().unwrap(), PANEL).unwrap();
     desk.write("modules/courses/migrations/0001_articles.sql", "CREATE TABLE courses_articles (id INTEGER PRIMARY KEY, nom TEXT NOT NULL);\n");
     let declared = agent
         .ok(

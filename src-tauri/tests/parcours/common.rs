@@ -424,6 +424,8 @@ pub fn assert_no_leak(what: &str, text: &str, secrets: &[&str]) {
 }
 
 pub const PAGE: &str = "import { Page, PageSection } from \"socle-ui\";\n\nexport default function Vue() {\n  return <Page><PageSection title=\"Vue\" /></Page>;\n}\n";
+/// Page d’un panneau de droite : un `Drawer` à sa racine (DESIGN.md, section 6).
+pub const PANEL: &str = "import { Drawer } from \"socle-ui\";\n\nexport default function Detail() {\n  return <Drawer sections={[{ id: \"vue\", title: \"Vue\" }]} />;\n}\n";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Service distant

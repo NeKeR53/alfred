@@ -10,7 +10,7 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 
 ## 1. Règles non négociables
 
-1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `DetailPanel` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`. `Page` et `PageSection` seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (section 2).
+1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`. `Page` et `PageSection` seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (section 2).
 2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Dialog` et à l’action d’un `EmptyState`.
 3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
@@ -28,7 +28,7 @@ La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’a
 ┌───────────┬──────────────────────────────────────┬──────────────────┐
 │ ▯         │ Titre [Onglet 1|Onglet 2]  ⋯ ⟳ [Nouv.] cloche ▯ │ Panneau ⤢ ✕ │
 ├───────────┼──────────────────────────────────────┼──────────────────┤
-│ Section A │  gabarit de la page                  │ DetailPanel      │
+│ Section A │  gabarit de la page                  │ Drawer      │
 │ Section B │  (ListPage, Page, DetailPage…)       │ de l’objet       │
 │ …         │                                      │ sélectionné      │
 │ Agent     │                                      │                  │
@@ -51,7 +51,7 @@ Choisir le gabarit d’après ce que la page montre :
 | La page montre… | Gabarit | Placement |
 |---|---|---|
 | Des éléments de même nature (tâches, contacts, factures, fichiers), à chercher, filtrer, ouvrir | `ListPage` (section 5) | Onglet d’une section |
-| Les propriétés de l’élément sélectionné dans la liste de sa page | `DetailPanel` déclaratif (section 6) | Panneau de droite (`{ "kind": "panel" }`) |
+| Les propriétés de l’élément sélectionné dans la liste de sa page | `Drawer` déclaratif (section 6) | Panneau de droite (`{ "kind": "panel" }`) |
 | Des préférences du module | `Page` et `PageSection`, avec des réglages immédiats (section 7) | Réglages (`{ "kind": "settings" }`) |
 | Une saisie courte (créer, renommer, inviter : six champs au plus) | `useOpenForm()` (section 9), appelé par une `Action` | Modale |
 | Une saisie longue (une fiche riche, une demande) | `FormPage` (section 9) | Vue de la page |
@@ -61,7 +61,7 @@ Choisir le gabarit d’après ce que la page montre :
 | Une autre page de l’espace | `shell.navigate("module/page")` ; `shell.openWindow` pour une fenêtre à part | L’onglet de cette page |
 | Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page` et `PageSection` (section 10) | Onglet |
 
-Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `DetailPanel` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
+Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `Drawer` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
 
 Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des `Tabs` en tête de la page, ou des pages distinctes de la section. Jamais des boutons accolés.
 
@@ -111,13 +111,13 @@ La zone fixe la forme. La page ne choisit rien :
 | `topbar` | `useTopBarActions` (barre du haut d’Alfred) | Première icône ; sans icône, bouton à texte | 3, puis selon la place | « … » |
 | `header` | `actions` de `ListPage` et de `DetailPage` | Bouton à texte, à droite | 3 | « … » |
 | `toolbar` | `actions` de `Page`, actions groupées d’une sélection | Bouton à texte, à droite | 3 | « … » |
-| `section` | `actions` de `PageSection`, en-tête et sections de `DetailPanel` | Bouton secondaire `sm` | 2 | « … » |
+| `section` | `actions` de `PageSection`, en-tête et sections de `Drawer` | Bouton secondaire `sm` | 2 | « … » |
 | `row` | `rowActions` de `ListPage`, actions d’un nœud de `TreeView` | Sans effet | 1 | « … » |
 | `empty` | État vide | Bouton à texte, seul | 0 | rien |
 
 - Ordre : icônes, « … », action principale à droite. Un seul bouton plein par écran.
 - Une action `danger` est confirmée. `confirm` nomme l’objet : « Supprimer la tâche « Relancer le client » ? » ; `message` dit la conséquence : « Cette action est définitive. »
-- Les gabarits ne notifient pas l’échec d’une action : passer `onActionError={notifyActionError}` (de `@alfred/sdk`) à `ListPage`, `DetailPage` et `DetailPanel`. Alfred affiche « « Supprimer » n’a pas abouti » avec la cause. `onActionDone` sert à recharger les données.
+- Les gabarits ne notifient pas l’échec d’une action : passer `onActionError={notifyActionError}` (de `@alfred/sdk`) à `ListPage`, `DetailPage` et `Drawer`. Alfred affiche « « Supprimer » n’a pas abouti » avec la cause. `onActionDone` sert à recharger les données.
 - Après une écriture qui réussit, notifier seulement si le résultat ne se voit pas : `shell.notify({ title: "Tâche supprimée", tone: "success" })`.
 
 **Barre du haut.** `useTopBarActions(actions)` de `@alfred/sdk` place des actions de la page dans la barre du haut d’Alfred (zone `topbar`). Elle confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. À réserver à une `Page` composée, qui n’a pas d’en-tête ; une `ListPage` ou une `DetailPage` garde ses actions dans son en-tête. Un panneau n’en a pas. `useTopBarSummary` est retiré (D-253) : il reste pour les pages anciennes et ne fait rien ; ne plus l’écrire.
@@ -166,7 +166,9 @@ La zone fixe la forme. La page ne choisit rien :
 - Pas de bouton « Actualiser » automatique : une `Action` avec l’icône `RefreshCw` si les données changent hors d’Alfred.
 - Une ligne sélectionnée se publie pour le panneau : `onSelect={(row) => { setChoisie(row?.id ?? null); void shell.publish(row?.id ?? null); }}`.
 
-## 6. `DetailPanel` — le panneau de droite
+## 6. `Drawer` — le panneau de droite
+
+**Un panneau de droite ne contient qu’un `Drawer`.** Une page placée en panneau (`{ "kind": "panel" }`) rend un `Drawer` de socle-ui à sa racine, jamais une `Page`, une `ListPage`, un fragment ou du HTML ; l’outil `check` refuse une autre racine. Les panneaux d’Alfred lui-même suivent la même règle. `DetailPanel` est l’ancien nom de `Drawer` (socle-ui 1.0.0) : il marche encore, ne plus l’écrire.
 
 Le panneau lit la sélection publiée par sa page, charge l’objet et le décrit. Il ne charge rien lui-même.
 
@@ -174,7 +176,7 @@ Le panneau lit la sélection publiée par sa page, charge l’objet et le décri
 const id = useSelection<string>();                         // de @alfred/sdk
 const tache = useAsync(() => (id ? lireTache(id) : Promise.resolve(null)), [id]);
 return (
-  <DetailPanel
+  <Drawer
     header={tache.data ? { title: tache.data.titre, status: STATUT[tache.data.etat], actions: [...] } : undefined}
     sections={tache.data ? SECTIONS(tache.data) : undefined}
     isLoading={tache.loading}
@@ -191,7 +193,8 @@ return (
 - `header` : `{ title, subtitle, status: { label, tone }, actions }` (zone `section`).
 - `sections` : `{ id, title, fields, content, empty, actions, summary, defaultCollapsed }`. `id` est stable : il mémorise le repli. `summary` dit l’état d’un mot, lisible replié : « 2 en retard ».
 - `fields` : `{ label, value, type, statuses, hideEmpty, icon, action }`. La valeur est brute ; le `type` la met en forme (section 11). Une valeur modifiable sur place est un `InlineEdit` en `value`.
-- `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`). Un texte devient un paragraphe.
+- `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`). Un texte devient un paragraphe. Ce qui n’est pas une propriété (une liste, un relevé) va dans le `content` d’une section, pas à côté du `Drawer`.
+- L’ordre des sections est fixe : l’utilisateur les replie, il ne les déplace pas (D-185).
 - Après une écriture dans le panneau, `announceChange()` de `@alfred/sdk` prévient la page : ses `useAsync` se relancent. Dans l’autre sens, la page fait de même.
 - Pas de champ de saisie dans une ligne : une modification passe par une action (menu, interrupteur, `useOpenForm`) ou par `InlineEdit`.
 
@@ -335,7 +338,7 @@ Les propriétés de l’élément vont dans le panneau de droite, pas dans la `D
 
 ## 11. Types de valeurs
 
-Une colonne de `ListPage`, un champ de `DetailPanel` et `FormattedValue` prennent la valeur brute et son `type`. La page ne formate rien elle-même.
+Une colonne de `ListPage`, un champ de `Drawer` et `FormattedValue` prennent la valeur brute et son `type`. La page ne formate rien elle-même.
 
 | `type` | Valeur attendue | Rendu |
 |---|---|---|
@@ -518,7 +521,7 @@ export default function Taches() {
 ```tsx
 import { announceChange, notifyActionError, useAsync, useSelection } from "@alfred/sdk";
 import { Pencil } from "lucide-react";
-import { DetailPanel, useOpenForm } from "socle-ui";
+import { Drawer, useOpenForm } from "socle-ui";
 import { CHAMPS, ETATS, enregistrer, lire } from "../lib/taches";
 
 export default function Detail() {
@@ -528,7 +531,7 @@ export default function Detail() {
   const t = tache.data;
 
   return (
-    <DetailPanel
+    <Drawer
       header={t ? {
         title: t.titre,
         status: ETATS[t.etat],
@@ -630,7 +633,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 | `@alfred/ui` | socle-ui |
 |---|---|
 | `CollectionPage` | `ListPage` : `columns` en `{ id, label, type }`, `emptyTitle` → `empty.title`, `load` → `rows` + `useAsync` |
-| `DetailPanel` (`load`, `sections`) | `DetailPanel` déclaratif : `header`, `sections`, `isLoading`, `hasError` ; la page charge avec `useSelection` et `useAsync` |
+| `DetailPanel` (`load`, `sections`) | `Drawer` déclaratif : `header`, `sections`, `isLoading`, `hasError` ; la page charge avec `useSelection` et `useAsync` |
 | `SettingsPage` | `Page` + `PageSection` + `Switch`, `Select`, `TextField` (section 7) |
 | `openForm` | `useOpenForm()` ; champs `{ name, label, type, isRequired }` (`optional` disparaît : le champ est facultatif sans `isRequired`) |
 | `openModal` | `Dialog` |
@@ -643,7 +646,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 | `FeedbackBanner` | `Notice` de `@alfred/kit`, ou une notification |
 | `DataTable`, `DataGrid` | `Table`, ou `ListPage` |
 | `List`, `ListItem` | `List` (`items`) |
-| `KeyValueList` | `fields` d’un `DetailPanel` |
+| `KeyValueList` | `fields` d’un `Drawer` |
 | `TextInput`, `SelectControl`, `CheckboxControl`, `SwitchControl`, `RadioControl`, `FormField` | `TextField`, `Select`, `Checkbox`, `Switch`, `RadioGroup` (libellé porté par le champ) |
 | `Combobox`, `MultiSelectCombobox` | `ComboBox` (`selectionMode`) |
 | `ChoiceGroup`, bascule de vue (`group`, `selected`) | `Tabs`, ou `RadioGroup orientation="horizontal"` |
