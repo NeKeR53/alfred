@@ -4,7 +4,7 @@
  * et la fiche du module. Les valeurs vont dans le fichier du service, jamais dans le coffre : elles ne sont pas
  * secrètes.
  */
-import { FormField, TextInput } from "@alfred/ui";
+import { TextField } from "socle-ui";
 import type { ClientParamDef } from "./api";
 
 /** Paramètre à saisir : sans valeur par défaut ni caractère facultatif. */
@@ -62,17 +62,18 @@ export function ParamFields({
           .filter(Boolean)
           .join(" ");
         return (
-          <FormField key={param.id} label={param.label || param.id} hint={hint || undefined} error={errors?.[param.id]}>
-            <TextInput
-              value={values[param.id] ?? ""}
-              placeholder={param.default ?? param.example}
-              aria-required={paramRequired(param) ? "true" : undefined}
-              autoComplete="off"
-              spellCheck={false}
-              disabled={disabled}
-              onChange={(event) => onChange(param.id, event.target.value)}
-            />
-          </FormField>
+          <TextField
+            key={param.id}
+            label={param.label || param.id}
+            isRequired={paramRequired(param)}
+            description={hint || undefined}
+            error={errors?.[param.id] || undefined}
+            value={values[param.id] ?? ""}
+            placeholder={param.default ?? param.example}
+            autoComplete="off"
+            isDisabled={disabled}
+            onChange={(value) => onChange(param.id, value)}
+          />
         );
       })}
     </>

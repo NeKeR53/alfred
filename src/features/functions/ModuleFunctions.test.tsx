@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -18,7 +18,8 @@ vi.hoisted(() => {
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction } from "../../lib/types";
 import { useShell } from "../../shell/store";
-import { FunctionGroup } from "./ModuleFunctions";
+import { renderSections } from "../modules/settingsHarness";
+import { useFunctionSections } from "./ModuleFunctions";
 import type { FunctionTests } from "./tests";
 
 HTMLDialogElement.prototype.showModal = function () {
@@ -124,13 +125,16 @@ const functions = () => useShell.getState().snapshot?.functions ?? [];
 
 it("montre ce que le module fait avec un service, puis vérifie les lectures d’office et les écritures avec accord", async () => {
   const user = userEvent.setup();
-  render(
-    <FunctionGroup module={jira} functions={functions()} tests={statuses} label="Ce que le module fait avec Jira" />,
+  renderSections(() =>
+    useFunctionSections(
+      jira,
+      [{ key: "jira", label: "Ce que le module fait avec Jira", functions: functions() }],
+      statuses,
+    ),
   );
 
-  // Un groupe court est ouvert : son titre porte le nombre de fonctions, son bilan les lectures, écritures et tests.
-  expect(screen.getByText("Ce que le module fait avec Jira")).toBeInTheDocument();
-  expect(screen.getByText("(3)")).toBeInTheDocument();
+  // Le titre porte le nombre de fonctions, la description les lectures, écritures et tests.
+  expect(screen.getByRole("heading", { name: "Ce que le module fait avec Jira (3)" })).toBeInTheDocument();
   expect(screen.getByText("2 en lecture · 1 en écriture · 1 vérifiée, 2 à vérifier")).toBeInTheDocument();
   // Pastilles discrètes : seulement l’écriture et ce qui reste à vérifier, jamais « Lecture » ni « Vérifiée ».
   expect(screen.getAllByText("Écriture")).toHaveLength(1);
@@ -139,7 +143,7 @@ it("montre ce que le module fait avec un service, puis vérifie les lectures d�
   expect(screen.getAllByText("À vérifier")).toHaveLength(2);
 
   await user.click(screen.getByRole("button", { name: "Vérifier : Ce que le module fait avec Jira" }));
-  const dialog = screen.getByRole("dialog");
+  const dialog = await screen.findByRole("dialog");
   // Les deux lectures partent seules, l’une après l’autre ; l’écriture attend.
   await waitFor(() => expect(runs).toHaveLength(2));
   expect(runs.map((run) => [run.function, run.approved])).toEqual([
@@ -154,22 +158,12 @@ it("montre ce que le module fait avec un service, puis vérifie les lectures d�
   expect(launch).toBeDisabled();
   await user.type(within(dialog).getByRole("textbox", { name: "Ticket de test pour « Commente »" }), "TEST-1");
   await user.click(launch);
-  await user.click(await screen.findByRole("button", { name: "Lancer" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Lancer" }));
   await waitFor(() => expect(runs).toHaveLength(3));
   expect(runs[2]).toEqual({ function: "jira/commenter", test: "Commente", approved: true, target: "TEST-1" });
 });
 
-it("replie un groupe long, et ne montre rien pour un groupe vide", () => {
-  const many = Array.from({ length: 6 }, (_, index) => ({
-    ...functions()[0],
-    reference: `jira/f${index}`,
-    id: `f${index}`,
-  }));
-  const { container, rerender } = render(
-    <FunctionGroup module={jira} functions={many} tests={[]} label="Ce que le module fait avec Jira" />,
-  );
-  expect(container.querySelector("details")).not.toHaveAttribute("open");
-  expect(screen.getByText("(6)")).toBeInTheDocument();
-  rerender(<FunctionGroup module={jira} functions={[]} tests={[]} label="Autres fonctions" />);
-  expect(container).toBeEmptyDOMElement();
+it("ne montre aucune section pour un groupe vide", () => {
+  renderSections(() => useFunctionSections(jira, [{ key: "autres", label: "Autres fonctions", functions: [] }], []));
+  expect(screen.queryByRole("heading", { name: /Autres fonctions/ })).toBeNull();
 });

@@ -1,30 +1,15 @@
-import {
-  Button,
-  DataTable,
-  type DataTableColumn,
-  EmptyState,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  RefreshButton,
-  SearchField,
-  Section,
-  SelectControl,
-  StatusBadge,
-  Text,
-} from "@alfred/ui";
-import { ArrowLeft, Boxes } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Download, Eye, RefreshCw, Server } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Code, SearchField, Select, type SettingsSection, type SettingTag } from "socle-ui";
+import { Notice, Row, Stack } from "../../kit";
 import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { openOnboarding } from "../setup/Onboarding";
 import { type CatalogModule, errorMessage, type Marketplace, marketplaceApi } from "./api";
 import { InstallDialog } from "./dialogs";
-import { MarketplaceSources } from "./MarketplaceSources";
-import { ModulePart } from "./ModulePart";
+import { useMarketplaceSourcesSection } from "./MarketplaceSources";
 import { useModuleUpdatesStore } from "./useModuleUpdates";
-import "./modules.css";
 
 /** Un module proposé, avec le marketplace qui le propose. */
 interface Offer {
@@ -47,69 +32,31 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`) {
   return `${count} ${count > 1 ? pluralForm : singular}`;
 }
 
-/** Où en est un module proposé vis-à-vis de l’espace de travail, en une pastille. */
-function OfferStatus({ module }: { module: CatalogModule }) {
-  if (module.error)
-    return (
-      <StatusBadge tone="danger" size="compact" title={module.error}>
-        Illisible
-      </StatusBadge>
-    );
+const icon16 = { size: 16, "aria-hidden": true } as const;
+
+/** Où en est un module proposé vis-à-vis de l’espace de travail, en une étiquette. */
+function offerTag(module: CatalogModule): SettingTag | null {
+  if (module.error) return { label: "Illisible", tone: "danger" };
   if (module.installed)
-    return (
-      <StatusBadge tone="success" size="compact">
-        Installé{module.installed !== module.version ? ` (v${module.installed})` : ""}
-      </StatusBadge>
-    );
-  if (module.own)
-    return (
-      <StatusBadge tone="success" size="compact">
-        Votre module
-      </StatusBadge>
-    );
-  if (module.conflict)
-    return (
-      <StatusBadge tone="warning" size="compact" title="Un autre module de même identifiant est déjà installé.">
-        Conflit
-      </StatusBadge>
-    );
-  if (module.blocked)
-    return (
-      <StatusBadge tone="warning" size="compact" title={module.blocked}>
-        Bloqué
-      </StatusBadge>
-    );
+    return {
+      label: `Installé${module.installed !== module.version ? ` (v${module.installed})` : ""}`,
+      tone: "success",
+    };
+  if (module.own) return { label: "Votre module", tone: "success" };
+  if (module.conflict) return { label: "Conflit", tone: "warning" };
+  if (module.blocked) return { label: "Bloqué", tone: "warning" };
   return null;
 }
 
 const importable = (module: CatalogModule) =>
   !module.error && !module.installed && !module.own && !module.conflict && !module.blocked;
 
-/** Liste simple de la fiche d’un module proposé : un élément par ligne. */
-function Items({ items }: { items: Array<{ key: string; title: string; detail?: string; badge?: string }> }) {
-  return (
-    <ul className="modules-facts modules-offer__items">
-      {items.map((item) => (
-        <li key={item.key} className="modules-offer__item">
-          <span className="modules-offer__item-title">{item.title}</span>
-          {item.badge ? (
-            <StatusBadge size="compact" tone="neutral">
-              {item.badge}
-            </StatusBadge>
-          ) : null}
-          {item.detail ? <span className="modules-offer__item-detail"> — {item.detail}</span> : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /**
- * Rubrique « Marketplace » des Réglages : tous les modules proposés par les marketplaces branchés, en un seul
- * catalogue ; la fiche d’un module (ce qu’il fait, ses pages, ses fonctions, les services qu’il demande) et son
- * import dans l’espace de travail ; et les marketplaces eux-mêmes (écran « Sources »).
+ * Rubrique « Marketplace » des Réglages, décrite par sections : tous les modules proposés par les marketplaces
+ * branchés, en un seul catalogue ; la fiche d’un module (ce qu’il fait, ses pages, ses fonctions, les services qu’il
+ * demande) et son import dans l’espace de travail ; et les marketplaces eux-mêmes (écran « Sources »).
  */
-export function MarketplaceSettings() {
+export function useMarketplaceSections(): SettingsSection[] {
   const modules = useShell((state) => state.snapshot?.modules);
   const refreshSpace = useShell((state) => state.refresh);
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
@@ -185,209 +132,178 @@ export function MarketplaceSettings() {
     [offers, source, folded],
   );
 
-  const several = (marketplaces?.length ?? 0) > 1;
-  const columns: DataTableColumn<Offer>[] = [
-    {
-      key: "name",
-      header: "Module",
-      sortValue: (offer) => offer.module.name,
-      render: (offer) => (
-        <span className="modules-table__module">
-          <span className="module-row__icon product-color--steel" aria-hidden="true">
-            <Boxes size={15} />
-          </span>
-          <span className="modules-table__text">
-            <span className="modules-table__name">{offer.module.name}</span>
-            <span className="modules-table__description" title={offer.module.description || undefined}>
-              {offer.module.error ?? (offer.module.description || "Sans description")}
-            </span>
-          </span>
-        </span>
-      ),
-    },
-    ...(several
-      ? [
-          {
-            key: "marketplace",
-            header: "Marketplace",
-            width: "150px",
-            sortValue: (offer: Offer) => offer.marketplace.name,
-            render: (offer: Offer) => offer.marketplace.name,
-          },
-        ]
-      : []),
-    {
-      key: "version",
-      header: "Version",
-      width: "90px",
-      sortValue: (offer) => offer.module.version ?? "",
-      render: (offer) => (offer.module.version ? `v${offer.module.version}` : "—"),
-    },
-    {
-      key: "status",
-      header: "État",
-      width: "130px",
-      sortable: false,
-      render: (offer) => <OfferStatus module={offer.module} />,
-    },
-    {
-      key: "action",
-      header: "Action",
-      headerLabel: "Action",
-      width: "110px",
-      align: "end",
-      sortable: false,
-      render: (offer) =>
-        importable(offer.module) ? (
-          <Button aria-label={`Importer ${offer.module.name}`} onClick={() => setInstalling(offer)}>
-            Importer
-          </Button>
-        ) : null,
-    },
-  ];
+  const back = {
+    id: "back",
+    label: "Modules disponibles",
+    icon: <ArrowLeft {...icon16} />,
+    onPress: () => setScreen({ kind: "catalog" }),
+  };
+  const sources = useMarketplaceSourcesSection({
+    active: screen.kind === "sources",
+    onChanged: () => void load(),
+    back,
+  });
 
-  const sourcesButton = (
-    <Button onClick={() => setScreen({ kind: "sources" })}>
-      Marketplaces branchés{marketplaces ? ` (${marketplaces.length})` : ""}
-    </Button>
-  );
+  const dialog = installing ? (
+    <InstallDialog
+      module={installing.module}
+      marketplace={installing.marketplace}
+      onClose={() => setInstalling(null)}
+      onConfirm={async () => {
+        await marketplaceApi.install(installing.marketplace.id, installing.module.id);
+        const imported = installing.module;
+        setInstalling(null);
+        await Promise.all([refreshSpace().catch(() => undefined), loadUpdates(false).catch(() => undefined)]);
+        notify({ title: `${imported.name} importé`, tone: "success" });
+        // Juste après l’import : l’onboarding présente le module, fait nommer ses pages et connecter ses comptes.
+        useShell.getState().setActiveTab(SETTINGS_SECTION, "modules");
+        openOnboarding(imported.id, "intro");
+      }}
+    />
+  ) : undefined;
 
-  const catalogScreen = (
-    <Section
-      title="Modules disponibles"
-      description="Tous les modules des marketplaces branchés. Ouvrez-en un pour voir ce qu’il fait avant de l’importer."
-      actions={
-        <>
-          <RefreshButton
-            label="Vérifier les marketplaces"
-            loading={refreshing}
-            disabled={refreshing}
-            onClick={() => void refresh()}
-          />
-          {sourcesButton}
-        </>
-      }
-    >
-      {marketplaces === null || offers === null ? (
-        <LoadingSkeleton rows={3} label="Chargement des modules disponibles" />
-      ) : marketplaces.length === 0 ? (
-        <EmptyState
-          size="compact"
-          title="Aucun marketplace branché"
-          description="Un marketplace est le catalogue de modules partagé de votre équipe, rangé dans un dépôt git. Ajoutez son adresse pour voir ses modules."
-        >
-          <Button variant="primary" onClick={() => setScreen({ kind: "sources" })}>
-            Ajouter un marketplace
-          </Button>
-        </EmptyState>
-      ) : (
-        <div className="module-list-view">
-          {[
-            ...failures,
-            ...marketplaces
-              .filter((m) => m.error)
-              .map((marketplace) => ({
-                marketplace,
-                message: marketplace.error ?? "",
-                detail: marketplace.errorDetail,
-              })),
-          ]
-            .filter(
-              (item, index, all) => all.findIndex((other) => other.marketplace.id === item.marketplace.id) === index,
-            )
-            .map((item) => (
-              <FeedbackBanner key={item.marketplace.id} tone="error" appearance="contained">
-                <span title={item.detail}>
-                  {item.marketplace.name} : {item.message}
-                </span>
-              </FeedbackBanner>
-            ))}
-          <div className="module-list-view__tools">
-            <SearchField
-              label="Rechercher un module"
-              placeholder="Rechercher un module…"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            {several ? (
-              <SelectControl
-                aria-label="Marketplace affiché"
-                value={source}
-                onChange={(event) => setSource(event.target.value)}
-              >
-                <option value="all">Tous les marketplaces</option>
-                {marketplaces.map((marketplace) => (
-                  <option key={marketplace.id} value={marketplace.id}>
-                    {marketplace.name}
-                  </option>
-                ))}
-              </SelectControl>
-            ) : null}
-          </div>
-          <DataTable
-            label="Modules disponibles"
-            columns={
-              shown.some((offer) => importable(offer.module))
-                ? columns
-                : columns.filter((column) => column.key !== "action")
-            }
-            rows={shown}
-            rowKey={keyOf}
-            onRowClick={(offer) => setScreen({ kind: "module", key: keyOf(offer) })}
-            emptyTitle={offers.length === 0 ? "Aucun module proposé" : "Aucun module ne correspond"}
-            emptyDescription={
-              offers.length === 0
-                ? "Les marketplaces branchés ne proposent encore aucun module. Publiez l’un des vôtres depuis Réglages → Modules."
-                : "Changez la recherche."
-            }
-          />
-        </div>
-      )}
-    </Section>
-  );
+  if (screen.kind === "sources" && sources) return [sources];
 
   const offer = screen.kind === "module" ? offers?.find((candidate) => keyOf(candidate) === screen.key) : undefined;
-  const back = (
-    <Button variant="subtle" onClick={() => setScreen({ kind: "catalog" })}>
-      <ArrowLeft size={16} aria-hidden="true" />
-      Modules disponibles
-    </Button>
-  );
+  if (offer) return offerSections(offer, back, () => setInstalling(offer), dialog);
 
-  const offerScreen = offer ? <OfferDetail offer={offer} back={back} onImport={() => setInstalling(offer)} /> : null;
+  const several = (marketplaces?.length ?? 0) > 1;
+  const sourcesAction = {
+    id: "sources",
+    label: `Marketplaces branchés${marketplaces ? ` (${marketplaces.length})` : ""}`,
+    icon: <Server {...icon16} />,
+    onPress: () => setScreen({ kind: "sources" }),
+  };
+  const head = {
+    id: "catalog",
+    title: "Modules disponibles",
+    description:
+      "Tous les modules des marketplaces branchés. Ouvrez-en un pour voir ce qu’il fait avant de l’importer.",
+    actions: [
+      {
+        id: "refresh",
+        label: "Vérifier les marketplaces",
+        icon: <RefreshCw {...icon16} />,
+        isDisabled: refreshing,
+        onPress: refresh,
+      },
+      sourcesAction,
+    ],
+  };
+  if (marketplaces === null || offers === null)
+    return [{ ...head, emptyMessage: "Chargement des modules disponibles…", content: dialog }];
+  if (marketplaces.length === 0)
+    return [
+      {
+        ...head,
+        actions: [{ ...sourcesAction, label: "Ajouter un marketplace", primary: true }],
+        emptyMessage:
+          "Aucun marketplace branché. Un marketplace est le catalogue de modules partagé de votre équipe, rangé dans un dépôt git. Ajoutez son adresse pour voir ses modules.",
+      },
+    ];
+  const problems = [
+    ...failures,
+    ...marketplaces
+      .filter((m) => m.error)
+      .map((marketplace) => ({ marketplace, message: marketplace.error ?? "", detail: marketplace.errorDetail })),
+  ].filter((item, index, all) => all.findIndex((other) => other.marketplace.id === item.marketplace.id) === index);
 
-  const sourcesScreen = <MarketplaceSources onChanged={() => void load()} actions={back} />;
-
-  return (
-    <Page>
-      {screen.kind === "sources" ? sourcesScreen : (offerScreen ?? catalogScreen)}
-      {installing ? (
-        <InstallDialog
-          module={installing.module}
-          marketplace={installing.marketplace}
-          onClose={() => setInstalling(null)}
-          onConfirm={async () => {
-            await marketplaceApi.install(installing.marketplace.id, installing.module.id);
-            const imported = installing.module;
-            setInstalling(null);
-            await Promise.all([refreshSpace().catch(() => undefined), loadUpdates(false).catch(() => undefined)]);
-            notify({ title: `${imported.name} importé`, tone: "success" });
-            // Juste après l’import : l’onboarding présente le module, fait nommer ses pages et connecter ses comptes.
-            useShell.getState().setActiveTab(SETTINGS_SECTION, "modules");
-            openOnboarding(imported.id, "intro");
-          }}
-        />
-      ) : null}
-    </Page>
-  );
+  return [
+    {
+      id: "tools",
+      content: (
+        <Stack gap="sm">
+          {problems.map((item) => (
+            <Notice key={item.marketplace.id} tone="danger" title={`${item.marketplace.name} : ${item.message}`}>
+              {item.detail ? <Code block>{item.detail}</Code> : null}
+            </Notice>
+          ))}
+          <Row gap="md" wrap>
+            <SearchField label="les modules" onChange={({ text }) => setQuery(text)} />
+            {several ? (
+              <Select
+                label="Marketplace affiché"
+                width="sm"
+                value={source}
+                options={[
+                  { id: "all", label: "Tous les marketplaces" },
+                  ...marketplaces.map((marketplace) => ({ id: marketplace.id, label: marketplace.name })),
+                ]}
+                onChange={(id) => setSource(id ?? "all")}
+              />
+            ) : null}
+          </Row>
+        </Stack>
+      ),
+    },
+    {
+      ...head,
+      settings: shown.map((item) => {
+        const tag = offerTag(item.module);
+        return {
+          type: "item" as const,
+          id: keyOf(item),
+          label: item.module.name,
+          code: item.module.version ? `v${item.module.version}` : undefined,
+          description: [
+            several ? item.marketplace.name : null,
+            item.module.error ?? (item.module.description || "Sans description"),
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          tags: tag ? [tag] : undefined,
+          actions: [
+            ...(importable(item.module)
+              ? [
+                  {
+                    id: "import",
+                    label: `Importer ${item.module.name}`,
+                    icon: <Download {...icon16} />,
+                    onPress: () => setInstalling(item),
+                  },
+                ]
+              : []),
+            {
+              id: "open",
+              label: `Voir ${item.module.name}`,
+              icon: <Eye {...icon16} />,
+              onPress: () => setScreen({ kind: "module", key: keyOf(item) }),
+            },
+          ],
+        };
+      }),
+      emptyMessage:
+        offers.length === 0
+          ? "Aucun module proposé : les marketplaces branchés ne proposent encore aucun module. Publiez l’un des vôtres depuis Réglages → Modules."
+          : "Aucun module ne correspond. Changez la recherche.",
+      content: dialog,
+    },
+  ];
 }
 
+type Item = { key: string; title: string; detail?: string; badge?: string };
+
+const itemRows = (items: Item[]) =>
+  items.map((item) => ({
+    type: "item" as const,
+    id: item.key,
+    label: item.title,
+    description: item.detail,
+    tags: item.badge ? [{ label: item.badge, tone: "neutral" as const }] : undefined,
+  }));
+
 /** Fiche d’un module proposé : ce qu’il fait et tout ce qu’il apporte, avant de l’importer. */
-function OfferDetail({ offer, back, onImport }: { offer: Offer; back: ReactNode; onImport: () => void }) {
+function offerSections(
+  offer: Offer,
+  back: { id: string; label: string; icon: React.ReactNode; onPress: () => void },
+  onImport: () => void,
+  dialog: React.ReactNode,
+): SettingsSection[] {
   const { module, marketplace } = offer;
   const functions = module.functions ?? [];
   const clients = module.clients ?? [];
-  const automations = [
+  const tag = offerTag(module);
+  const automations: Item[] = [
     ...(module.webhooks ?? []).map((webhook) => ({
       key: `webhook:${webhook.id}`,
       title: webhook.description || webhook.id,
@@ -407,131 +323,116 @@ function OfferDetail({ offer, back, onImport }: { offer: Offer; back: ReactNode;
             : undefined,
     })),
   ];
-  return (
-    <Section
-      title={module.name}
-      description={module.description || undefined}
-      actions={
-        <>
-          {back}
-          {importable(module) ? (
-            <Button variant="primary" onClick={onImport}>
-              Importer
-            </Button>
-          ) : null}
-        </>
-      }
-    >
-      <div className="module-page">
-        <p className="module-row__summary">
-          <span>
-            {[
-              module.version ? `Version ${module.version}` : null,
-              `Marketplace ${marketplace.name}`,
-              plural(module.pages?.length ?? 0, "page"),
-              functions.length ? plural(functions.length, "fonction") : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-          <OfferStatus module={module} />
-        </p>
-        {module.error ? (
-          <FeedbackBanner tone="error" appearance="contained">
-            {module.error}
-          </FeedbackBanner>
-        ) : null}
-        {module.blocked ? (
-          <FeedbackBanner tone="warning" appearance="contained">
-            {module.blocked}
-          </FeedbackBanner>
-        ) : null}
-        {module.conflict ? (
-          <FeedbackBanner tone="warning" appearance="contained">
-            Un autre module « {module.id} » est déjà installé dans cet espace de travail : supprimez-le pour importer
-            celui-ci.
-          </FeedbackBanner>
-        ) : null}
-        <div className="module-page__body">
-          {clients.length > 0 ? (
-            <ModulePart
-              part="services"
-              title="Services nécessaires"
-              description="Les comptes à connecter après l’import, guidés pas à pas."
-            >
-              <Items
-                items={clients.map((client) => ({
-                  key: client.id,
-                  title: client.label || client.id,
-                  badge: client.optional ? "Facultatif" : undefined,
-                  detail: client.help || undefined,
-                }))}
-              />
-            </ModulePart>
-          ) : null}
-          {(module.pages ?? []).length > 0 ? (
-            <ModulePart part="pages" title="Pages" description="Ce qui apparaît dans le menu de gauche.">
-              <Items
-                items={(module.pages ?? []).map((page) => ({
-                  key: page.id,
-                  title: page.title,
-                  detail: page.description || undefined,
-                }))}
-              />
-            </ModulePart>
-          ) : null}
-          {functions.length > 0 ? (
-            <ModulePart
-              part="functions"
-              title="Fonctions"
-              description={
-                clients.length > 0
-                  ? `Ce que le module sait faire avec ${clients.map((client) => client.label || client.id).join(", ")}. Vos autres modules et l’agent peuvent s’en servir.`
-                  : "Ce que le module sait faire. Vos autres modules et l’agent peuvent s’en servir."
-              }
-            >
-              <Items
-                items={functions.map((fn) => ({
-                  key: fn.id,
-                  title: fn.id,
-                  badge: fn.effect === "write" ? "Écriture" : fn.effect === "read" ? "Lecture" : undefined,
-                  detail:
-                    [fn.description, fn.tool ? "proposée à l’agent" : null].filter(Boolean).join(" · ") || undefined,
-                }))}
-              />
-            </ModulePart>
-          ) : null}
-          {automations.length > 0 ? (
-            <ModulePart part="automations" title="Automatismes" description="Ce que le module lance de lui-même.">
-              <Items items={automations} />
-            </ModulePart>
-          ) : null}
-          {(module.dependencies ?? []).length > 0 || (module.requires ?? []).length > 0 ? (
-            <ModulePart part="dependencies" title="Modules importés avec lui">
-              <Items
-                items={
-                  (module.dependencies ?? []).length > 0
-                    ? (module.dependencies ?? []).map((step) => ({
-                        key: step.module,
-                        title: step.name,
-                        detail: `v${step.version}, ${step.action === "install" ? "importé avec lui" : "mis à jour avec lui"}`,
-                      }))
-                    : (module.requires ?? []).map((requirement) => ({
-                        key: requirement.module,
-                        title: requirement.module,
-                        detail: requirement.minVersion ? `v${requirement.minVersion} ou plus` : undefined,
-                      }))
-                }
-              />
-            </ModulePart>
-          ) : null}
-          {module.notes ? (
-            <ModulePart part="notes" title="Notes de version">
-              <Text>{module.notes}</Text>
-            </ModulePart>
-          ) : null}
-        </div>
-      </div>
-    </Section>
-  );
+  const sections: SettingsSection[] = [
+    {
+      id: "offer",
+      title: module.name,
+      description: module.description || undefined,
+      actions: [
+        back,
+        ...(importable(module) ? [{ id: "import", label: "Importer", primary: true, onPress: onImport }] : []),
+      ],
+      settings: [
+        {
+          type: "info",
+          id: "summary",
+          label: "Contenu",
+          value: [
+            module.version ? `Version ${module.version}` : null,
+            `Marketplace ${marketplace.name}`,
+            plural(module.pages?.length ?? 0, "page"),
+            functions.length ? plural(functions.length, "fonction") : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        },
+        ...(tag ? [{ type: "item" as const, id: "state", label: "État", tags: [tag] }] : []),
+      ],
+      content:
+        module.error || module.blocked || module.conflict || dialog ? (
+          <Stack gap="sm">
+            {module.error ? <Notice tone="danger">{module.error}</Notice> : null}
+            {module.blocked ? <Notice tone="warning">{module.blocked}</Notice> : null}
+            {module.conflict ? (
+              <Notice tone="warning">
+                {`Un autre module « ${module.id} » est déjà installé dans cet espace de travail : supprimez-le pour importer celui-ci.`}
+              </Notice>
+            ) : null}
+            {dialog}
+          </Stack>
+        ) : undefined,
+    },
+  ];
+  if (clients.length > 0)
+    sections.push({
+      id: "services",
+      title: "Services nécessaires",
+      description: "Les comptes à connecter après l’import, guidés pas à pas.",
+      settings: itemRows(
+        clients.map((client) => ({
+          key: client.id,
+          title: client.label || client.id,
+          badge: client.optional ? "Facultatif" : undefined,
+          detail: client.help || undefined,
+        })),
+      ),
+    });
+  if ((module.pages ?? []).length > 0)
+    sections.push({
+      id: "pages",
+      title: "Pages",
+      description: "Ce qui apparaît dans le menu de gauche.",
+      settings: itemRows(
+        (module.pages ?? []).map((page) => ({
+          key: page.id,
+          title: page.title,
+          detail: page.description || undefined,
+        })),
+      ),
+    });
+  if (functions.length > 0)
+    sections.push({
+      id: "functions",
+      title: "Fonctions",
+      description:
+        clients.length > 0
+          ? `Ce que le module sait faire avec ${clients.map((client) => client.label || client.id).join(", ")}. Vos autres modules et l’agent peuvent s’en servir.`
+          : "Ce que le module sait faire. Vos autres modules et l’agent peuvent s’en servir.",
+      settings: itemRows(
+        functions.map((fn) => ({
+          key: fn.id,
+          title: fn.id,
+          badge: fn.effect === "write" ? "Écriture" : fn.effect === "read" ? "Lecture" : undefined,
+          detail: [fn.description, fn.tool ? "proposée à l’agent" : null].filter(Boolean).join(" · ") || undefined,
+        })),
+      ),
+    });
+  if (automations.length > 0)
+    sections.push({
+      id: "automations",
+      title: "Automatismes",
+      description: "Ce que le module lance de lui-même.",
+      settings: itemRows(automations),
+    });
+  if ((module.dependencies ?? []).length > 0 || (module.requires ?? []).length > 0)
+    sections.push({
+      id: "dependencies",
+      title: "Modules importés avec lui",
+      settings: itemRows(
+        (module.dependencies ?? []).length > 0
+          ? (module.dependencies ?? []).map((step) => ({
+              key: step.module,
+              title: step.name,
+              detail: `v${step.version}, ${step.action === "install" ? "importé avec lui" : "mis à jour avec lui"}`,
+            }))
+          : (module.requires ?? []).map((requirement) => ({
+              key: requirement.module,
+              title: requirement.module,
+              detail: requirement.minVersion ? `v${requirement.minVersion} ou plus` : undefined,
+            })),
+      ),
+    });
+  if (module.notes)
+    sections.push({ id: "notes", title: "Notes de version", content: <Code block>{module.notes}</Code> });
+  return sections;
 }

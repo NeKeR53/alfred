@@ -6,8 +6,9 @@
  * ne retient pas la page. Un module en mode « données d’exemple » n’attend rien : sa page s’affiche avec les
  * exemples de ses fonctions, et la page d’attente propose d’entrer dans ce mode.
  */
-import { Button, EmptyState } from "@alfred/ui";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Button, EmptyState } from "socle-ui";
+import { Row } from "../../kit";
 import type { Uses } from "../../lib/types";
 import { setExampleMode, useExampleMode } from "../../shell/examples";
 import { notify } from "../../shell/notifications";
@@ -121,28 +122,31 @@ export function SetupGate({
       size={size}
       title={left.length === 1 ? "Il manque un compte à cette page" : "Il manque des comptes à cette page"}
       description={pageNeeds(left, module)}
-    >
-      {/* Le parcours s’ouvre directement sur le premier compte qui manque à cette page, pas sur la présentation. */}
-      <Button variant="primary" onClick={() => openOnboarding(module, "resume", left[0]?.key)}>
-        Configurer
-      </Button>
-      <Button
-        loading={entering}
-        onClick={() => {
-          setEntering(true);
-          setExampleMode(module, true)
-            .catch((error: unknown) =>
-              notify({
-                title: "Les données d’exemple n’ont pas pu être affichées",
-                description: error instanceof Error ? error.message : String(error),
-                tone: "error",
-              }),
-            )
-            .finally(() => setEntering(false));
-        }}
-      >
-        Voir avec des données d’exemple
-      </Button>
-    </EmptyState>
+      action={
+        <Row gap="sm" wrap justify="end">
+          {/* Le parcours s’ouvre directement sur le premier compte qui manque à cette page, pas sur la présentation. */}
+          <Button variant="primary" onPress={() => openOnboarding(module, "resume", left[0]?.key)}>
+            Configurer
+          </Button>
+          <Button
+            isPending={entering}
+            onPress={() => {
+              setEntering(true);
+              setExampleMode(module, true)
+                .catch((error: unknown) =>
+                  notify({
+                    title: "Les données d’exemple n’ont pas pu être affichées",
+                    description: error instanceof Error ? error.message : String(error),
+                    tone: "error",
+                  }),
+                )
+                .finally(() => setEntering(false));
+            }}
+          >
+            Voir avec des données d’exemple
+          </Button>
+        </Row>
+      }
+    />
   );
 }

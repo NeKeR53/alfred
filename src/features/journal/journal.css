@@ -1,4 +1,0 @@
-/* Journal des Réglages : un sujet ou un résumé long passe à la ligne au lieu d’élargir le tableau. */
-.journal-cell {
-  overflow-wrap: anywhere;
-}

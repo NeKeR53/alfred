@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -13,7 +13,13 @@ vi.hoisted(() => {
 });
 
 import { invoke, onNativeEvent } from "../../lib/native";
-import { advancement, type JobItem, ModuleJobs } from "./ModuleJobs";
+import { renderSections } from "../modules/settingsHarness";
+import { advancement, type JobItem, useJobsSection } from "./ModuleJobs";
+
+const useSections = () => {
+  const section = useJobsSection("import");
+  return section ? [section] : [];
+};
 
 const job = (patch: Partial<JobItem>): JobItem => ({
   id: "j1",
@@ -57,17 +63,15 @@ beforeEach(() => {
 
 it("montre la progression, annule une tâche en cours et reprend une tâche en échec", async () => {
   const user = userEvent.setup();
-  render(<ModuleJobs module="import" />);
-  const table = await screen.findByRole("table", { name: "Tâches de fond du module" });
-  expect(within(table).getByText("Page 3 sur 7")).toBeInTheDocument();
-  expect(within(table).getByText("45 % · 3 étapes")).toBeInTheDocument();
-  expect(within(table).getByText("Service indisponible")).toBeInTheDocument();
-
-  await user.click(within(table).getByRole("button", { name: "Annuler la tâche Import des contacts" }));
-  await waitFor(() => expect(within(table).getByText("Annulation…")).toBeInTheDocument());
-
-  await user.click(within(table).getByRole("button", { name: "Reprendre la tâche Relevé" }));
-  await waitFor(() => expect(within(table).getByText("En attente")).toBeInTheDocument());
+  renderSections(useSections);
+  const part = await screen.findByRole("region", { name: "Tâches de fond" });
+  expect(within(part).getByText(/Page 3 sur 7/)).toBeInTheDocument();
+  expect(within(part).getByText(/45 % · 3 étapes/)).toBeInTheDocument();
+  expect(within(part).getByText(/Service indisponible/)).toBeInTheDocument();
+  await user.click(within(part).getByRole("button", { name: "Annuler la tâche Import des contacts" }));
+  await waitFor(() => expect(within(part).getByText("Annulation…")).toBeInTheDocument());
+  await user.click(within(part).getByRole("button", { name: "Reprendre la tâche Relevé" }));
+  await waitFor(() => expect(within(part).getByText("En attente")).toBeInTheDocument());
   expect(calls.filter((call) => call.command !== "jobs.list")).toEqual([
     { command: "jobs.cancel", args: { id: "j1" } },
     { command: "jobs.resume", args: { id: "j2" } },

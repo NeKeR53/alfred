@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ import type {
 } from "../../lib/types";
 import { useShell } from "../../shell/store";
 import type { ClientConfig, ClientInstanceConfig, ClientInstanceItem, ClientItem } from "../clients/api";
+import { renderWithSocle } from "../modules/settingsHarness";
 import type { VaultEntry } from "../vault/api";
 import type { ModuleSetup, SetupStep } from "./api";
 import { closeOnboarding, OnboardingHost, openOnboarding } from "./Onboarding";
@@ -50,7 +51,7 @@ let nextTest: Array<"ok" | "refused" | "unreachable">;
 let compatible: Record<string, string[]>;
 let calls: Array<{ command: string; args: Record<string, unknown> }>;
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
-const emit = (name: string) => {
+const _emit = (name: string) => {
   for (const handler of listeners.get(name) ?? []) handler({});
 };
 /** Arguments d’un appel, sans l’espace que la coquille peut joindre pour se protéger d’un changement d’espace. */
@@ -495,9 +496,24 @@ function prefectAccount(client: string, id: string, label: string, tested = true
 }
 
 async function open(module: string, start: "intro" | "resume" = "intro") {
-  render(<OnboardingHost />);
+  renderWithSocle(<OnboardingHost />);
   openOnboarding(module, start);
   return screen.findByRole("dialog", { name: `Configurer ${modules.find((item) => item.id === module)?.name}` });
+}
+
+/** Titres des étapes de la `StepList` de Socle, sans « (fait) » ni la précision de l’étape. */
+function stepTitles(list: HTMLElement): string[] {
+  return within(list)
+    .getAllByRole("listitem")
+    .map(
+      (item) =>
+        Array.from(item.querySelectorAll("span")).find(
+          (span) =>
+            !span.closest("[aria-hidden]") &&
+            span.firstChild?.nodeType === Node.TEXT_NODE &&
+            !span.textContent?.startsWith(" "),
+        )?.firstChild?.textContent ?? "",
+    );
 }
 
 it("choix des pages : chaque modèle coché une fois, une page décochée, une deuxième ajoutée et renommée", async () => {
@@ -525,11 +541,7 @@ it("choix des pages : chaque modèle coché une fois, une page décochée, une d
   });
   // Une étape par page cochée : Jira, puis Jira Recette.
   const steps = within(dialog).getByRole("list", { name: "Étapes de la configuration de Atlassian" });
-  expect(
-    within(steps)
-      .getAllByRole("button")
-      .map((step) => step.getAttribute("aria-label")),
-  ).toEqual(["Présentation", "Vos pages", "Jira", "Jira Recette", "Terminé"]);
+  expect(stepTitles(steps)).toEqual(["Présentation", "Vos pages", "Jira", "Jira Recette", "Terminé"]);
   // Aucun compte Jira dans l’espace : l’assistant s’ouvre tout de suite.
   expect(await within(dialog).findByRole("heading", { name: "Connecter votre compte Jira" })).toBeTruthy();
   // Pas de vocabulaire technique.
@@ -634,7 +646,7 @@ it("connecte un nouveau compte pas à pas : méthode en clair, page du jeton, é
     accounts: { prefect: "mon-prefect" },
   });
   // Nouvel essai : le même compte est modifié, pas un second créé.
-  await user.type(within(dialog).getByLabelText("Collez votre jeton ici"), "bon-jeton");
+  await user.type(within(dialog).getByLabelText(/^Collez votre jeton ici/), "bon-jeton");
   await user.click(within(dialog).getByRole("button", { name: "Réessayer" }));
   expect(await within(dialog).findByRole("heading", { name: "Vous avez un autre compte Prefect ?" })).toBeTruthy();
   expect(lastCall("clients.saveInstance")).toMatchObject({ create: false, instance: { id: "mon-prefect" } });
@@ -713,7 +725,10 @@ it("reprend après « Terminer plus tard » à la première page qui attend un c
   dialog = await screen.findByRole("dialog", { name: "Configurer Tout" });
   expect(await within(dialog).findByRole("heading", { name: "Connecter votre compte Jira" })).toBeTruthy();
   const steps = within(dialog).getByRole("list", { name: "Étapes de la configuration de Tout" });
-  expect(within(steps).getByRole("button", { name: "Jira" }).closest("li")).toHaveAttribute("aria-current", "step");
+  expect(within(steps).getAllByRole("listitem")[stepTitles(steps).indexOf("Jira")]).toHaveAttribute(
+    "aria-current",
+    "step",
+  );
 });
 
 it("un module qui déclare son application OAuth : « Se connecter avec… », sans jeton à créer", async () => {

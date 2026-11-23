@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -9,10 +9,11 @@ import type { ClientNeed, ModuleSummary, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import type { ClientConfig, ClientInstanceItem, ClientItem } from "../clients/api";
-import { MODULE_FOCUS, ModulesSettings } from "../modules/ModulesSettings";
+import { MODULE_FOCUS, useModulesSections } from "../modules/ModulesSettings";
+import { renderSections, renderWithSocle } from "../modules/settingsHarness";
 import type { VaultEntry } from "../vault/api";
 import { type ModuleSetup, remainingSummary, type SetupStep } from "./api";
-import { OnboardingHost, openOnboarding, useOnboarding } from "./Onboarding";
+import { OnboardingHost, useOnboarding } from "./Onboarding";
 import { pageNeeds, SetupGate } from "./SetupGate";
 
 /**
@@ -261,12 +262,7 @@ function renderModules() {
     layout: { sections: [] },
   } as unknown as Snapshot;
   useShell.setState({ snapshot });
-  return render(
-    <>
-      <ModulesSettings />
-      <OnboardingHost />
-    </>,
-  );
+  return renderSections(useModulesSections, "Modules", <OnboardingHost />);
 }
 
 it("résume ce qui reste, compte par compte", () => {
@@ -311,7 +307,7 @@ it("résume ce qui reste, compte par compte", () => {
 it("une page à qui il manque un service affiche la page d’attente, et son bouton ouvre l’onboarding du module", async () => {
   const user = userEvent.setup();
   modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
-  render(
+  renderWithSocle(
     <SetupGate module="boite">
       <p>Vraie page</p>
     </SetupGate>,
@@ -329,7 +325,7 @@ it("une page à qui il manque un service affiche la page d’attente, et son bou
 
 it("la page d’attente cède la place à la vraie page dès que le service est prêt, sans recharger", async () => {
   modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
-  render(
+  renderWithSocle(
     <SetupGate module="boite">
       <p>Vraie page</p>
     </SetupGate>,
@@ -345,7 +341,7 @@ it("la page d’attente cède la place à la vraie page dès que le service est 
 it("un service seulement pas encore testé est vérifié de lui-même ; un test raté laisse la page d’attente", async () => {
   stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
   modules = [summary("boite", "Boîte", { clients: [GMAIL] })];
-  const { unmount } = render(
+  const { unmount } = renderWithSocle(
     <SetupGate module="boite">
       <p>Vraie page</p>
     </SetupGate>,
@@ -356,7 +352,7 @@ it("un service seulement pas encore testé est vérifié de lui-même ; un test 
 
   testOk = false;
   delete tests.gmail;
-  render(
+  renderWithSocle(
     <SetupGate module="boite">
       <p>Vraie page</p>
     </SetupGate>,
@@ -371,7 +367,7 @@ it("une page qui n’utilise que les services prêts s’affiche, même si le mo
   stored = [{ id: "gmail", label: "Gmail", baseUrl: "https://gmail.googleapis.com", auth: { type: "none" } }];
   tests.gmail = { ok: true, message: "Le service répond (200)." };
   modules = [summary("boite", "Boîte", { clients: [GMAIL, { id: "agenda", label: "Agenda" }] })];
-  const { unmount } = render(
+  const { unmount } = renderWithSocle(
     <SetupGate module="boite" uses={{ clients: ["gmail"] }}>
       <p>Vraie page</p>
     </SetupGate>,
@@ -379,7 +375,7 @@ it("une page qui n’utilise que les services prêts s’affiche, même si le mo
   expect(await screen.findByText("Vraie page")).toBeTruthy();
   expect(screen.queryByText(/attend/)).toBeNull();
   unmount();
-  render(
+  renderWithSocle(
     <SetupGate module="boite" uses={{ clients: ["agenda"] }}>
       <p>Vraie page</p>
     </SetupGate>,
@@ -394,7 +390,7 @@ it("la page d’attente nomme chaque compte qui manque à la page, avec ce qu’
   modules = [
     summary("boite", "Boîte", { clients: [GMAIL, { id: "agenda", label: "Agenda" }, { id: "slack", label: "Slack" }] }),
   ];
-  render(
+  renderWithSocle(
     <SetupGate module="boite" uses={{ clients: ["gmail", "agenda"] }}>
       <p>Vraie page</p>
     </SetupGate>,
@@ -439,7 +435,7 @@ it("un compte qui vient d’une dépendance est nommé avec son module, et le pa
     }),
   ];
   useShell.setState({ snapshot: { modules, sections: [] } as unknown as Snapshot });
-  render(
+  renderWithSocle(
     <>
       <SetupGate module="suivi" uses={{ clients: ["atlassian/jira"] }}>
         <p>Vraie page</p>
@@ -459,7 +455,7 @@ it("un compte qui vient d’une dépendance est nommé avec son module, et le pa
 
 it("un service facultatif qui manque ne retient pas la page", async () => {
   modules = [summary("boite", "Boîte", { clients: [{ ...GMAIL, optional: true }] })];
-  render(
+  renderWithSocle(
     <SetupGate module="boite">
       <p>Vraie page</p>
     </SetupGate>,

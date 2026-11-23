@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -17,8 +17,9 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { renderSections } from "../modules/settingsHarness";
 import { skeleton } from "./FunctionParts";
-import { FunctionGroup } from "./ModuleFunctions";
+import { useFunctionSections } from "./ModuleFunctions";
 
 HTMLDialogElement.prototype.showModal = function () {
   this.open = true;
@@ -133,46 +134,53 @@ it("tire un squelette d’entrée du schéma", () => {
   expect(skeleton(null)).toEqual({});
 });
 
-/** Fiche d’un module : un groupe de ses fonctions, ouvert, comme dans Réglages → Modules. */
-function group(id: string) {
-  const summary = snapshot.modules.find((candidate) => candidate.id === id) as ModuleSummary;
-  const functions = useShell.getState().snapshot?.functions.filter((item) => item.module === id) ?? [];
-  return <FunctionGroup module={summary} functions={functions} tests={[]} label="Fonctions" open />;
+/** Fiche d’un module : ses fonctions en une section, comme dans Réglages → Modules ; relues dans l’espace. */
+let shown = "ventes";
+
+function useShownSections() {
+  const summary = useShell((state) => state.snapshot?.modules.find((candidate) => candidate.id === shown));
+  const all = useShell((state) => state.snapshot?.functions);
+  const functions = (all ?? []).filter((item) => item.module === shown);
+  return useFunctionSections(summary, [{ key: "fonctions", label: "Fonctions", functions }], []);
 }
+
 function renderModule(id: string) {
-  return render(group(id));
+  shown = id;
+  return renderSections(useShownSections);
 }
 
 /** Ouvre le menu « … » d’une fonction et rend l’entrée demandée. */
 async function menuItem(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
-  await user.click(screen.getByRole("button", { name: `Actions de la fonction ${name}` }));
+  const actions = screen.getByRole("group", { name: `Actions sur ${name}` });
+  await user.click(within(actions).getByRole("button", { name: "Plus d'actions" }));
   return screen.findByRole("menuitem", { name: item });
 }
 
+const disabled = (element: HTMLElement) => element.getAttribute("aria-disabled") === "true";
+
 it("montre l’état de chaque fonction du module, l’expose aux agents, l’essaie et la supprime", async () => {
   const user = userEvent.setup();
-  const { rerender } = renderModule("ventes");
+  renderModule("ventes");
 
   // Une ligne par fonction ; l’état n’est écrit que s’il y a quelque chose à corriger.
   expect(screen.queryByText("Prête")).not.toBeInTheDocument();
   expect(screen.getByText("Pas encore écrite")).toBeInTheDocument();
   expect(screen.getByText("Ne compile pas")).toBeInTheDocument();
-  expect(screen.getByText("Ligne 12, colonne 3 : Cannot find name 'rows'.")).toBeInTheDocument();
-  expect(await menuItem(user, "relance", "Essayer…")).toBeDisabled();
+  expect(screen.getByText(/Ligne 12, colonne 3 : Cannot find name 'rows'\./)).toBeInTheDocument();
+  expect(disabled(await menuItem(user, "relance", "Essayer…"))).toBe(true);
   await user.keyboard("{Escape}");
 
   // Proposer « total » à l’agent, depuis le menu de la ligne.
   await user.click(await menuItem(user, "total", "Proposer à l’agent"));
   await waitFor(() => expect(lastCall("functions.setTool")).toEqual({ reference: "ventes/total", tool: true }));
   useShell.setState({ snapshot });
-  rerender(group("ventes"));
-  expect(await menuItem(user, "total", "Ne plus proposer à l’agent")).toBeEnabled();
+  expect(disabled(await menuItem(user, "total", "Ne plus proposer à l’agent"))).toBe(false);
   await user.keyboard("{Escape}");
 
   // Essayer : entrée préremplie, JSON invalide refusé, sortie à chasse fixe.
   await user.click(await menuItem(user, "total", "Essayer…"));
-  const dialog = screen.getByRole("dialog", { name: "Essayer « total »" });
-  const input = within(dialog).getByLabelText("Entrée (JSON)");
+  const dialog = await screen.findByRole("dialog", { name: "Essayer « total »" });
+  const input = within(dialog).getByLabelText(/^Entrée \(JSON\)/);
   expect(JSON.parse((input as HTMLTextAreaElement).value)).toEqual({ mois: "2026-11", net: false, max: 0 });
   await user.clear(input);
   await user.type(input, "{{ mois: ");
@@ -195,15 +203,15 @@ it("montre l’état de chaque fonction du module, l’expose aux agents, l’es
 
   // Supprimer : confirmé.
   await user.click(await menuItem(user, "relance", "Supprimer la fonction…"));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Supprimer" }));
   await waitFor(() => expect(lastCall("functions.remove")).toEqual({ reference: "ventes/relance" }));
 });
 
 it("dans un module en lecture seule, l’exposition aux agents suit sa version d’origine", async () => {
   const user = userEvent.setup();
   renderModule("meteo");
-  expect(await menuItem(user, "prevision", "Ne plus proposer à l’agent")).toBeDisabled();
-  expect(screen.getByRole("menuitem", { name: "Supprimer la fonction…" })).toBeDisabled();
+  expect(disabled(await menuItem(user, "prevision", "Ne plus proposer à l’agent"))).toBe(true);
+  expect(disabled(screen.getByRole("menuitem", { name: "Supprimer la fonction…" }))).toBe(true);
 });
 
 it("indique le langage d’un script et l’absence de son interpréteur", () => {
@@ -222,6 +230,6 @@ it("indique le langage d’un script et l’absence de son interpréteur", () =>
   expect(screen.getByText("Python")).toBeInTheDocument();
   expect(screen.getByText("PowerShell")).toBeInTheDocument();
   expect(screen.getByText("Interpréteur absent")).toBeInTheDocument();
-  expect(screen.getByText("Interpréteur PowerShell introuvable : installer PowerShell 7.")).toBeInTheDocument();
+  expect(screen.getByText(/Interpréteur PowerShell introuvable : installer PowerShell 7\./)).toBeInTheDocument();
   expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
 });

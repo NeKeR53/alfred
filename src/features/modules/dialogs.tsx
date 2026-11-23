@@ -1,16 +1,6 @@
-import {
-  Button,
-  Dialog,
-  Disclosure,
-  FeedbackBanner,
-  FormActions,
-  FormField,
-  RadioControl,
-  SelectControl,
-  TextArea,
-  TextInput,
-} from "@alfred/ui";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Button, Code, Dialog, RadioGroup, Select, TextArea, TextField } from "socle-ui";
+import { Notice, Stack, Text } from "../../kit";
 import type { ModuleSummary } from "../../lib/types";
 import {
   accessKindLabel,
@@ -25,59 +15,16 @@ import {
   type PublishProblem,
   publishProblems,
 } from "./api";
-
-/**
- * Modale de l’écran Modules : titre, corps défilant, actions en bas. Échap, le fond et « Annuler » la ferment, sauf
- * pendant l’opération qu’elle a lancée.
- */
-function Modal({
-  title,
-  busy,
-  onClose,
-  children,
-  actions,
-}: {
-  title: string;
-  busy: boolean;
-  onClose: () => void;
-  children: ReactNode;
-  /** Reçoit la fermeture à brancher sur « Annuler ». */
-  actions: (close: () => void) => ReactNode;
-}) {
-  const titleId = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
-  return (
-    <Dialog
-      ref={dialog}
-      className="modules-dialog"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        if (busy) event.preventDefault();
-      }}
-      onClose={onClose}
-    >
-      <h2 id={titleId} className="modules-dialog__title">
-        {title}
-      </h2>
-      <div className="modules-dialog__body">{children}</div>
-      {actions(() => dialog.current?.close())}
-    </Dialog>
-  );
-}
+import { Bullets, Facts } from "./lists";
 
 function AccessList({ accesses }: { accesses: ModuleAccess[] }) {
   return (
-    <ul className="modules-facts">
-      {accesses.map((access) => (
-        <li key={`${access.kind}:${access.id}`}>
-          {accessKindLabel[access.kind]} : {access.label}
-        </li>
-      ))}
-    </ul>
+    <Bullets
+      items={accesses.map((access) => ({
+        key: `${access.kind}:${access.id}`,
+        content: `${accessKindLabel[access.kind]} : ${access.label}`,
+      }))}
+    />
   );
 }
 
@@ -85,52 +32,44 @@ function AccessList({ accesses }: { accesses: ModuleAccess[] }) {
 function DependencySteps({ steps }: { steps: DependencyStep[] }) {
   if (steps.length === 0) return null;
   return (
-    <section>
-      <h3>Modules dont il dépend, du même marketplace</h3>
-      <ul className="modules-facts">
-        {steps.map((step) => (
-          <li key={step.module}>
-            {step.name} v{step.version} :{" "}
-            {step.action === "install"
-              ? "importé avec lui, désactivé (à activer dans Réglages → Modules)"
-              : "mis à jour avec lui (même version majeure)"}
-          </li>
-        ))}
-      </ul>
+    <section aria-label="Modules dont il dépend, du même marketplace">
+      <Stack gap="xs">
+        <Text weight="strong">Modules dont il dépend, du même marketplace</Text>
+        <Bullets
+          items={steps.map((step) => ({
+            key: step.module,
+            content: `${step.name} v${step.version} : ${
+              step.action === "install"
+                ? "importé avec lui, désactivé (à activer dans Réglages → Modules)"
+                : "mis à jour avec lui (même version majeure)"
+            }`,
+          }))}
+        />
+      </Stack>
     </section>
   );
 }
 
-/** Éléments montrés d’emblée dans une liste de la fiche ; les suivants se déplient. */
-const SHOWN_FACTS = 6;
-
-/**
- * Liste de la fiche d’un module (pages, fonctions…) : un élément par ligne, coupé au besoin (en entier au survol), et
- * au-delà de quelques-uns un repli « … et N autres » : un module peut avoir beaucoup de fonctions.
- */
-function Facts({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null;
-  const row = (item: string) => (
-    <li key={item} className="modules-facts__item" title={item}>
-      {item}
-    </li>
-  );
-  const shown = items.length > SHOWN_FACTS + 1 ? items.slice(0, SHOWN_FACTS) : items;
-  const rest = items.slice(shown.length);
-  return (
-    <section>
-      <h3>
-        {title} <span className="modules-facts__count">· {items.length}</span>
-      </h3>
-      <ul className="modules-facts modules-facts--compact">{shown.map(row)}</ul>
-      {rest.length > 0 ? (
-        <Disclosure appearance="subtle" label={`… et ${rest.length} autres`} lazy>
-          <ul className="modules-facts modules-facts--compact">{rest.map(row)}</ul>
-        </Disclosure>
-      ) : null}
-    </section>
-  );
+/** Lance l’opération d’une modale : attente, puis erreur gardée dans la modale si elle échoue. */
+function useApply(action: () => Promise<void>) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const apply = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (failure) {
+      setError(errorMessage(failure));
+      setBusy(false);
+    }
+  };
+  return { busy, error, apply, setError };
 }
+
+const closeOn = (onClose: () => void) => (open: boolean) => {
+  if (!open) onClose();
+};
 
 /** Détail d’une mise à jour avant de l’appliquer : notes, changements, nouveaux accès, modifications locales. */
 export function UpdateDialog({
@@ -142,8 +81,7 @@ export function UpdateDialog({
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, apply } = useApply(onConfirm);
   const { changes } = update;
   const unchanged =
     changes.pagesAdded.length +
@@ -151,73 +89,56 @@ export function UpdateDialog({
       changes.functionsAdded.length +
       changes.functionsRemoved.length ===
     0;
-
-  const apply = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await onConfirm();
-    } catch (failure) {
-      setError(errorMessage(failure));
-      setBusy(false);
-    }
-  };
-
   return (
-    <Modal
+    <Dialog
+      isOpen
+      size="lg"
       title={`Mettre à jour ${update.name}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <FormActions
-          onCancel={close}
-          onSubmit={apply}
-          submitLabel="Mettre à jour"
-          pendingLabel="Mise à jour…"
-          pending={busy}
-          disabled={Boolean(update.blocked)}
-        />
-      )}
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
+            Annuler
+          </Button>
+          <Button variant="primary" isPending={busy} isDisabled={Boolean(update.blocked)} onPress={() => void apply()}>
+            Mettre à jour
+          </Button>
+        </>
+      }
     >
-      <p>
-        Version {update.current} → {update.available}
-        {update.marketplaceName ? `, depuis ${update.marketplaceName}` : ""}. Le contenu du module est remplacé ; ses
-        données sont conservées. La mise à jour s’annule depuis l’historique de l’espace de travail.
-      </p>
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-      {update.blocked ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {update.blocked}
-        </FeedbackBanner>
-      ) : null}
-      <DependencySteps steps={update.dependencies ?? []} />
-      {update.locallyModified ? (
-        <FeedbackBanner tone="warning" appearance="contained">
-          Ce module a été modifié sur place depuis son import. La mise à jour écrase ces modifications ; le détacher
-          d’abord pour les garder.
-        </FeedbackBanner>
-      ) : null}
-      {changes.newAccesses.length > 0 ? (
-        <FeedbackBanner tone="warning" appearance="contained">
-          <strong>Cette version demande de nouveaux accès</strong>
-          <AccessList accesses={changes.newAccesses} />
-        </FeedbackBanner>
-      ) : null}
-      <section>
-        <h3>Notes de version</h3>
-        {update.notes ? <pre className="modules-notes">{update.notes}</pre> : <p>Aucune note pour cette version.</p>}
-      </section>
-      <Facts title="Pages ajoutées" items={changes.pagesAdded} />
-      <Facts title="Pages retirées" items={changes.pagesRemoved} />
-      <Facts title="Fonctions ajoutées" items={changes.functionsAdded} />
-      <Facts title="Fonctions retirées" items={changes.functionsRemoved} />
-      {unchanged ? <p>Aucune page ni fonction ajoutée ou retirée.</p> : null}
-      {update.pinned ? <p>Ce module est figé : il le restera, sur la nouvelle version.</p> : null}
-    </Modal>
+      <Stack gap="md">
+        <Text>
+          {`Version ${update.current} → ${update.available}${update.marketplaceName ? `, depuis ${update.marketplaceName}` : ""}. Le contenu du module est remplacé ; ses données sont conservées. La mise à jour s’annule depuis l’historique de l’espace de travail.`}
+        </Text>
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+        {update.blocked ? <Notice tone="danger">{update.blocked}</Notice> : null}
+        <DependencySteps steps={update.dependencies ?? []} />
+        {update.locallyModified ? (
+          <Notice tone="warning">
+            Ce module a été modifié sur place depuis son import. La mise à jour écrase ces modifications ; le détacher
+            d’abord pour les garder.
+          </Notice>
+        ) : null}
+        {changes.newAccesses.length > 0 ? (
+          <Notice tone="warning" title="Cette version demande de nouveaux accès">
+            <AccessList accesses={changes.newAccesses} />
+          </Notice>
+        ) : null}
+        <section aria-label="Notes de version">
+          <Stack gap="xs">
+            <Text weight="strong">Notes de version</Text>
+            {update.notes ? <Code block>{update.notes}</Code> : <Text>Aucune note pour cette version.</Text>}
+          </Stack>
+        </section>
+        <Facts title="Pages ajoutées" items={changes.pagesAdded} count />
+        <Facts title="Pages retirées" items={changes.pagesRemoved} count />
+        <Facts title="Fonctions ajoutées" items={changes.functionsAdded} count />
+        <Facts title="Fonctions retirées" items={changes.functionsRemoved} count />
+        {unchanged ? <Text>Aucune page ni fonction ajoutée ou retirée.</Text> : null}
+        {update.pinned ? <Text>Ce module est figé : il le restera, sur la nouvelle version.</Text> : null}
+      </Stack>
+    </Dialog>
   );
 }
 
@@ -231,68 +152,49 @@ export function UninstallDialog({
   onClose: () => void;
   onConfirm: (deleteData: boolean) => Promise<void>;
 }) {
-  const group = useId();
   const [deleteData, setDeleteData] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, apply } = useApply(() => onConfirm(deleteData));
   const installed = module.origin !== null && !module.origin.detached;
   const verb = installed ? "Retirer" : "Supprimer";
-
-  const apply = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await onConfirm(deleteData);
-    } catch (failure) {
-      setError(errorMessage(failure));
-      setBusy(false);
-    }
-  };
-
   return (
-    <Modal
+    <Dialog
+      isOpen
       title={installed ? `Retirer ${module.name} de l’espace de travail` : `Supprimer ${module.name}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <div className="form-actions">
-          <Button onClick={close} disabled={busy}>
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
             Annuler
           </Button>
-          <Button variant="danger" loading={busy} loadingLabel="Suppression…" onClick={apply}>
+          <Button variant="danger" isPending={busy} onPress={() => void apply()}>
             {verb}
           </Button>
-        </div>
-      )}
+        </>
+      }
     >
-      <p>
-        {installed
-          ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Il pourra être importé de nouveau depuis son marketplace."
-          : (module.published ?? []).length > 0
-            ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
-            : "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
-      </p>
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-      <fieldset className="modules-choice">
-        <legend>Données enregistrées par ce module</legend>
-        <RadioControl
-          name={group}
-          label="Garder les données (elles resserviront si le module revient)"
-          checked={!deleteData}
-          onChange={() => setDeleteData(false)}
-        />
-        <RadioControl
-          name={group}
-          label="Supprimer les données (définitif)"
-          checked={deleteData}
-          onChange={() => setDeleteData(true)}
-        />
-      </fieldset>
-    </Modal>
+      <Stack gap="md">
+        <Text>
+          {installed
+            ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Il pourra être importé de nouveau depuis son marketplace."
+            : (module.published ?? []).length > 0
+              ? "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Les versions déjà publiées restent sur leur marketplace ; ce qui n’a pas été publié ne se retrouvera que par l’historique de l’espace de travail."
+              : "Ses pages, ses fonctions et ses services (avec leurs comptes) quittent l’espace de travail, sauf les services qu’un autre module utilise encore. Ce module n’existe qu’ici : il ne pourra être retrouvé que par l’historique de l’espace de travail."}
+        </Text>
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+        <RadioGroup
+          label="Données enregistrées par ce module"
+          value={deleteData ? "delete" : "keep"}
+          isDisabled={busy}
+          onChange={(value) => setDeleteData(value === "delete")}
+        >
+          <RadioGroup.Option value="keep">
+            Garder les données (elles resserviront si le module revient)
+          </RadioGroup.Option>
+          <RadioGroup.Option value="delete">Supprimer les données (définitif)</RadioGroup.Option>
+        </RadioGroup>
+      </Stack>
+    </Dialog>
   );
 }
 
@@ -308,72 +210,57 @@ export function InstallDialog({
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, apply } = useApply(onConfirm);
   const accesses = catalogAccesses(module);
-
-  const apply = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await onConfirm();
-    } catch (failure) {
-      setError(errorMessage(failure));
-      setBusy(false);
-    }
-  };
-
   return (
-    <Modal
+    <Dialog
+      isOpen
+      size="lg"
       title={`Importer ${module.name} v${module.version}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <FormActions
-          onCancel={close}
-          onSubmit={apply}
-          submitLabel="Importer"
-          pendingLabel="Import…"
-          pending={busy}
-          disabled={Boolean(module.blocked)}
-        />
-      )}
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
+            Annuler
+          </Button>
+          <Button variant="primary" isPending={busy} isDisabled={Boolean(module.blocked)} onPress={() => void apply()}>
+            Importer
+          </Button>
+        </>
+      }
     >
-      <p>
-        Depuis le marketplace {marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et
-        recevra les mises à jour de ce marketplace ; pour l’adapter, il faudra le détacher.
-      </p>
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-      {module.blocked ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {module.blocked}
-        </FeedbackBanner>
-      ) : null}
-      {module.description ? <p>{module.description}</p> : null}
-      <DependencySteps steps={module.dependencies ?? []} />
-      <section>
-        <h3>Accès demandés</h3>
-        {accesses.length > 0 ? (
-          <>
-            <AccessList accesses={accesses} />
-            {accesses.some((access) => access.kind === "client") ? (
-              <p>Un client demandé reste à relier à un client de l’espace de travail avant de servir.</p>
-            ) : null}
-          </>
-        ) : (
-          <p>Ce module ne demande aucun accès.</p>
-        )}
-      </section>
-      <Facts title="Pages" items={(module.pages ?? []).map((page) => page.title)} />
-      <Facts
-        title="Fonctions"
-        items={(module.functions ?? []).map((fn) => (fn.description ? `${fn.id} — ${fn.description}` : fn.id))}
-      />
-    </Modal>
+      <Stack gap="md">
+        <Text>
+          {`Depuis le marketplace ${marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et recevra les mises à jour de ce marketplace ; pour l’adapter, il faudra le détacher.`}
+        </Text>
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+        {module.blocked ? <Notice tone="danger">{module.blocked}</Notice> : null}
+        {module.description ? <Text>{module.description}</Text> : null}
+        <DependencySteps steps={module.dependencies ?? []} />
+        <section aria-label="Accès demandés">
+          <Stack gap="xs">
+            <Text weight="strong">Accès demandés</Text>
+            {accesses.length > 0 ? (
+              <>
+                <AccessList accesses={accesses} />
+                {accesses.some((access) => access.kind === "client") ? (
+                  <Text>Un client demandé reste à relier à un client de l’espace de travail avant de servir.</Text>
+                ) : null}
+              </>
+            ) : (
+              <Text>Ce module ne demande aucun accès.</Text>
+            )}
+          </Stack>
+        </section>
+        <Facts title="Pages" items={(module.pages ?? []).map((page) => page.title)} count />
+        <Facts
+          title="Fonctions"
+          items={(module.functions ?? []).map((fn) => (fn.description ? `${fn.id} — ${fn.description}` : fn.id))}
+          count
+        />
+      </Stack>
+    </Dialog>
   );
 }
 
@@ -395,16 +282,25 @@ export function PublishDialog({
   onClose: () => void;
   onPublished: (version: string, marketplace: Marketplace) => void;
 }) {
-  const formId = useId();
   const [target, setTarget] = useState(marketplaces[0]?.id ?? "");
   const [version, setVersion] = useState("");
   const [published, setPublished] = useState<string | null | undefined>(undefined);
   const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [problems, setProblems] = useState<PublishProblem[]>([]);
   /** Une version saisie à la main n’est plus remplacée par la proposition. */
   const typed = useRef(false);
+  const { busy, error, apply } = useApply(async () => {
+    const marketplace = marketplaces.find((candidate) => candidate.id === target);
+    if (!marketplace || !version.trim()) return;
+    setProblems([]);
+    try {
+      const result = await marketplaceApi.publish(module.id, marketplace.id, version.trim(), notes.trim());
+      onPublished(result.version, marketplace);
+    } catch (failure) {
+      setProblems(publishProblems(failure));
+      throw failure;
+    }
+  });
 
   useEffect(() => {
     if (!target) return;
@@ -426,23 +322,6 @@ export function PublishDialog({
     };
   }, [module.id, target]);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const marketplace = marketplaces.find((candidate) => candidate.id === target);
-    if (!marketplace || !version.trim()) return;
-    setBusy(true);
-    setError(null);
-    setProblems([]);
-    try {
-      const result = await marketplaceApi.publish(module.id, marketplace.id, version.trim(), notes.trim());
-      onPublished(result.version, marketplace);
-    } catch (failure) {
-      setError(errorMessage(failure));
-      setProblems(publishProblems(failure));
-      setBusy(false);
-    }
-  };
-
   const hint =
     published === undefined
       ? "Recherche de la dernière version publiée…"
@@ -451,78 +330,81 @@ export function PublishDialog({
         : "Pas encore publié sur ce marketplace.";
 
   return (
-    <Modal
+    <Dialog
+      isOpen
       title={`Publier ${module.name}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <FormActions
-          onCancel={close}
-          form={formId}
-          submitLabel="Publier"
-          pendingLabel="Vérification et envoi…"
-          pending={busy}
-          disabled={!target || !version.trim()}
-        />
-      )}
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
+            Annuler
+          </Button>
+          <Button
+            variant="primary"
+            isPending={busy}
+            isDisabled={!target || !version.trim()}
+            onPress={() => void apply()}
+          >
+            Publier
+          </Button>
+        </>
+      }
     >
-      {marketplaces.length === 0 ? (
-        <FeedbackBanner
-          tone="info"
-          appearance="contained"
-          action={<Button onClick={onManage}>Ajouter un marketplace</Button>}
-        >
-          Aucun marketplace n’est branché : ajoutez celui de votre équipe pour publier.
-        </FeedbackBanner>
-      ) : (
-        <p>Alfred vérifie que tout compile et qu’aucun secret ni chemin de ce poste ne part, puis l’envoie.</p>
-      )}
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          <strong>{error}</strong>
-          {problems.length > 0 ? (
-            <ul className="modules-facts modules-facts--plain" aria-label="Problèmes à corriger">
-              {problems.map((problem) => (
-                <li key={`${problem.file}:${problem.line ?? ""}:${problem.message}`}>
-                  <code>
-                    {problem.file}
-                    {problem.line ? `:${problem.line}` : ""}
-                  </code>{" "}
-                  — {problem.message}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </FeedbackBanner>
-      ) : null}
-      <form id={formId} className="modules-form" onSubmit={submit}>
-        <FormField label="Marketplace de destination">
-          <SelectControl value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy} required>
-            {marketplaces.map((marketplace) => (
-              <option key={marketplace.id} value={marketplace.id}>
-                {marketplace.name}
-              </option>
-            ))}
-          </SelectControl>
-        </FormField>
-        <FormField label="Version" hint={target ? hint : undefined}>
-          <TextInput
-            value={version}
-            onChange={(event) => {
-              typed.current = true;
-              setVersion(event.target.value);
-            }}
-            placeholder="1.0.0"
-            inputMode="decimal"
-            spellCheck={false}
-            disabled={busy}
-            required
-          />
-        </FormField>
-        <FormField label="Notes de version" hint="Ce qui change pour ceux qui installeront ou mettront à jour.">
-          <TextArea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} disabled={busy} />
-        </FormField>
-      </form>
-    </Modal>
+      <Stack gap="md">
+        {marketplaces.length === 0 ? (
+          <Notice tone="info" action={<Button onPress={onManage}>Ajouter un marketplace</Button>}>
+            Aucun marketplace n’est branché : ajoutez celui de votre équipe pour publier.
+          </Notice>
+        ) : (
+          <Text>Alfred vérifie que tout compile et qu’aucun secret ni chemin de ce poste ne part, puis l’envoie.</Text>
+        )}
+        {error ? (
+          <Notice tone="danger" title={error}>
+            {problems.length > 0 ? (
+              <Bullets
+                label="Problèmes à corriger"
+                items={problems.map((problem) => ({
+                  key: `${problem.file}:${problem.line ?? ""}:${problem.message}`,
+                  content: (
+                    <>
+                      <Code>{`${problem.file}${problem.line ? `:${problem.line}` : ""}`}</Code> — {problem.message}
+                    </>
+                  ),
+                }))}
+              />
+            ) : null}
+          </Notice>
+        ) : null}
+        <Select
+          label="Marketplace de destination"
+          isRequired
+          isDisabled={busy}
+          value={target || null}
+          options={marketplaces.map((marketplace) => ({ id: marketplace.id, label: marketplace.name }))}
+          onChange={(id) => setTarget(id ?? "")}
+        />
+        <TextField
+          label="Version"
+          isRequired
+          isDisabled={busy}
+          description={target ? hint : undefined}
+          placeholder="1.0.0"
+          value={version}
+          onChange={(value) => {
+            typed.current = true;
+            setVersion(value);
+          }}
+        />
+        <TextArea
+          label="Notes de version"
+          description="Ce qui change pour ceux qui installeront ou mettront à jour."
+          isDisabled={busy}
+          minRows={4}
+          value={notes}
+          onChange={setNotes}
+        />
+      </Stack>
+    </Dialog>
   );
 }

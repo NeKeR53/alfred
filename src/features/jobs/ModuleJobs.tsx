@@ -1,8 +1,8 @@
-import { Button, DataTable, type DataTableColumn, Row, Stack, StatusBadge, Text } from "@alfred/ui";
+import { Play, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import type { Action, SettingsSection } from "socle-ui";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
-import { ModulePart } from "../modules/ModulePart";
 
 export interface JobItem {
   id: string;
@@ -43,29 +43,25 @@ export function advancement(job: JobItem): string {
 }
 
 /**
- * Partie « Tâches de fond » de la fiche d’un module (Réglages → Modules) : ses travaux longs, leur progression,
- * annuler ou reprendre ; rien quand le module n’en a lancé aucun.
+ * Section « Tâches de fond » de la fiche d’un module (Réglages → Modules) : ses travaux longs, leur progression,
+ * annuler ou reprendre ; aucune section quand le module n’en a lancé aucun. `module` absent : aucune fiche ouverte.
  */
-export function ModuleJobs({ module }: { module: string }) {
+export function useJobsSection(module: string | undefined): SettingsSection | null {
   const [all, setJobs] = useState<JobItem[]>();
   const jobs = all?.filter((job) => job.module === module);
   const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string>();
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       setJobs(await invoke<JobItem[]>("jobs.list", { limit: 200 }));
       setError(undefined);
     } catch (failure) {
       setError(errorMessage(failure));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (!module) return;
     void load();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = onNativeEvent("jobs:changed", () => {
@@ -76,129 +72,68 @@ export function ModuleJobs({ module }: { module: string }) {
       clearTimeout(timer);
       stop();
     };
-  }, [load]);
+  }, [load, module]);
 
+  if (!module) return null;
   const act = async (job: JobItem, command: "jobs.cancel" | "jobs.resume" | "jobs.remove", failure: string) => {
-    setBusy(job.id);
     try {
       await invoke(command, { id: job.id });
       await load();
     } catch (problem) {
       notify({ title: failure, description: errorMessage(problem), tone: "error" });
-    } finally {
-      setBusy(undefined);
     }
   };
-
-  const columns: DataTableColumn<JobItem>[] = [
-    {
-      key: "title",
-      header: "Tâche",
-      sortValue: (job) => job.title,
-      render: (job) => (
-        <Stack gap="none">
-          <Text weight="medium">{job.title}</Text>
-          <Text size="meta" tone="muted">
-            Fonction {job.function}
-          </Text>
-          {job.status === "failed" && job.error ? (
-            <Text size="meta" tone="danger">
-              {job.error}
-            </Text>
-          ) : job.message ? (
-            <Text size="meta" tone="muted">
-              {job.message}
-            </Text>
-          ) : null}
-        </Stack>
-      ),
-    },
-    {
-      key: "status",
-      header: "État",
-      width: "190px",
-      sortValue: (job) => job.status,
-      render: (job) => (
-        <Stack gap="xs">
-          <Row gap="xs" wrap>
-            <StatusBadge tone={STATUS[job.status].tone} size="compact">
-              {job.cancelRequested ? "Annulation…" : STATUS[job.status].label}
-            </StatusBadge>
-          </Row>
-          <Text size="meta" tone="muted">
-            {advancement(job)}
-          </Text>
-        </Stack>
-      ),
-    },
-    {
-      key: "createdAt",
-      header: "Lancée",
-      width: "150px",
-      sortValue: (job) => job.createdAt,
-      render: (job) => dateTime.format(new Date(job.createdAt)),
-    },
-    {
-      key: "actions",
-      header: "Actions",
-      width: "120px",
-      align: "end",
-      sortable: false,
-      render: (job) =>
-        job.status === "queued" || job.status === "running" ? (
-          <Button
-            variant="secondary"
-            loading={busy === job.id}
-            disabled={job.cancelRequested || (busy !== undefined && busy !== job.id)}
-            aria-label={`Annuler la tâche ${job.title}`}
-            onClick={() => void act(job, "jobs.cancel", "La tâche n’a pas été annulée")}
-          >
-            Annuler
-          </Button>
-        ) : job.status === "failed" || job.status === "cancelled" ? (
-          <Button
-            variant="secondary"
-            loading={busy === job.id}
-            disabled={busy !== undefined && busy !== job.id}
-            aria-label={`Reprendre la tâche ${job.title}`}
-            onClick={() => void act(job, "jobs.resume", "La tâche n’a pas repris")}
-          >
-            Reprendre
-          </Button>
-        ) : (
-          <Button
-            variant="secondary"
-            loading={busy === job.id}
-            disabled={busy !== undefined && busy !== job.id}
-            aria-label={`Retirer la tâche ${job.title}`}
-            onClick={() => void act(job, "jobs.remove", "La tâche n’a pas été retirée")}
-          >
-            Retirer
-          </Button>
-        ),
-    },
-  ];
+  const actionOf = (job: JobItem): Action =>
+    job.status === "queued" || job.status === "running"
+      ? {
+          id: "cancel",
+          label: `Annuler la tâche ${job.title}`,
+          icon: <X size={16} aria-hidden="true" />,
+          isDisabled: job.cancelRequested,
+          onPress: () => act(job, "jobs.cancel", "La tâche n’a pas été annulée"),
+        }
+      : job.status === "failed" || job.status === "cancelled"
+        ? {
+            id: "resume",
+            label: `Reprendre la tâche ${job.title}`,
+            icon: <Play size={16} aria-hidden="true" />,
+            onPress: () => act(job, "jobs.resume", "La tâche n’a pas repris"),
+          }
+        : {
+            id: "remove",
+            label: `Retirer la tâche ${job.title}`,
+            icon: <Trash2 size={16} aria-hidden="true" />,
+            onPress: () => act(job, "jobs.remove", "La tâche n’a pas été retirée"),
+          };
 
   if (!jobs || jobs.length === 0) {
-    return error ? (
-      <Text size="meta" tone="danger">
-        Les tâches n’ont pas pu être lues : {error}
-      </Text>
-    ) : null;
+    return error
+      ? { id: "jobs", title: "Tâches de fond", emptyMessage: `Les tâches n’ont pas pu être lues : ${error}` }
+      : null;
   }
-  return (
-    <ModulePart
-      part="jobs"
-      title="Tâches de fond"
-      description="Travaux longs lancés par le module ; ils reprennent où ils en étaient à la réouverture d’Alfred."
-    >
-      <DataTable
-        label="Tâches de fond du module"
-        columns={columns}
-        rows={jobs}
-        rowKey={(job) => job.id}
-        loading={loading}
-      />
-    </ModulePart>
-  );
+  return {
+    id: "jobs",
+    title: "Tâches de fond",
+    description: "Travaux longs lancés par le module ; ils reprennent où ils en étaient à la réouverture d’Alfred.",
+    settings: jobs.map((job) => ({
+      type: "item",
+      id: job.id,
+      label: job.title,
+      description: [
+        `Fonction ${job.function}`,
+        job.status === "failed" && job.error ? job.error : job.message,
+        advancement(job),
+        `lancée le ${dateTime.format(new Date(job.createdAt))}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      tags: [
+        {
+          label: job.cancelRequested ? "Annulation…" : STATUS[job.status].label,
+          tone: STATUS[job.status].tone,
+        },
+      ],
+      actions: [actionOf(job)],
+    })),
+  };
 }

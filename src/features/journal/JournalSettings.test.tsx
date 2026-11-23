@@ -1,11 +1,12 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/native");
 
 import { invoke, onNativeEvent } from "../../lib/native";
-import { type JournalEntry, JournalSettings } from "./JournalSettings";
+import { renderSections } from "../modules/settingsHarness";
+import { type JournalEntry, useJournalSections } from "./JournalSettings";
 
 let entries: JournalEntry[];
 let calls: Array<{ command: string; args: Record<string, unknown> }>;
@@ -61,60 +62,40 @@ beforeEach(() => {
 
 const journalCalls = () => calls.filter((call) => call.command === "journal.list").map((call) => call.args);
 
-it("fait ressortir les échecs, ouvre le détail et le garde ouvert quand le journal change", async () => {
-  const user = userEvent.setup();
-  render(<JournalSettings />);
+const log = () => screen.findByRole("log", { name: /^Journal d’exécution/ });
 
-  const table = await screen.findByRole("table", { name: "Journal d’exécution" });
+it("fait ressortir les échecs, montre le détail technique et suit les nouvelles exécutions", async () => {
+  renderSections(useJournalSections, "Journal");
+  const lines = await log();
   expect(journalCalls()[0]).toEqual({ limit: 200 });
-  // L’échec est écrit en toutes lettres, pas seulement en couleur, et compté au-dessus du tableau.
-  expect(within(table).getByText("Échec")).toBeInTheDocument();
-  expect(within(table).getAllByText("Réussi")).toHaveLength(2);
+  // L’échec est écrit en toutes lettres, pas seulement en couleur, et compté au-dessus du journal.
+  expect(within(lines).getByText(/Client · jira · Échec · 1,3 s · HTTP 401 : jeton refusé/)).toBeInTheDocument();
+  expect(within(lines).getAllByText(/Réussi · 42 ms/)).toHaveLength(2);
   expect(screen.getByText(/1 échec parmi les 3 dernières exécutions/)).toBeInTheDocument();
-  expect(within(table).getByText("1,3 s")).toBeInTheDocument();
-  expect(within(table).getAllByText("42 ms")).toHaveLength(2);
+  // Le détail technique suit la ligne, en JSON lisible.
+  expect(within(lines).getByText(/"status": 401/)).toBeInTheDocument();
+  expect(within(lines).getByText(/"method": "GET"/)).toBeInTheDocument();
 
-  // Une ligne s’ouvre au clavier et montre le détail technique en JSON lisible.
-  const failedRow = within(table).getByText("HTTP 401 : jeton refusé").closest("tr") as HTMLElement;
-  failedRow.focus();
-  await user.keyboard("{Enter}");
-  const detail = await screen.findByRole("heading", { name: "Détail : jira" });
-  expect(detail).toBeInTheDocument();
-  const code = document.querySelector("pre code");
-  expect(code?.textContent).toContain('"status": 401');
-  expect(code?.textContent).toContain('"method": "GET"');
-  expect(failedRow).toHaveAttribute("aria-selected", "true");
-
-  // Une nouvelle exécution arrive : la liste se relit, la ligne ouverte reste ouverte.
+  // Une nouvelle exécution arrive : le journal se relit.
   entries = [entry({ id: 4, subject: "ventes/relance", summary: "Relance envoyée" }), ...entries];
   listeners.get("journal:changed")?.(null);
-  expect(await within(table).findByText("Relance envoyée")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Détail : jira" })).toBeInTheDocument();
-
-  // « Échecs seulement » ne garde que les lignes en échec.
-  await user.click(screen.getByRole("button", { name: "Échecs seulement" }));
-  expect(within(table).queryByText("Relance envoyée")).not.toBeInTheDocument();
-  expect(within(table).getByText("HTTP 401 : jeton refusé")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Échecs seulement" }));
-
-  // Fermer le détail.
-  await user.click(screen.getByRole("button", { name: "Fermer le détail de jira" }));
-  expect(screen.queryByRole("heading", { name: "Détail : jira" })).not.toBeInTheDocument();
+  expect(await within(lines).findByText(/Relance envoyée/)).toBeInTheDocument();
 });
 
 it("filtre par type, signale un échec de lecture et propose de réessayer", async () => {
   const user = userEvent.setup();
-  render(<JournalSettings />);
-  await screen.findByRole("table", { name: "Journal d’exécution" });
+  renderSections(useJournalSections, "Journal");
+  await log();
 
-  await user.selectOptions(screen.getByLabelText("Type"), "webhook");
+  await user.click(screen.getByRole("button", { name: /^Tout/ }));
+  await user.click(await screen.findByRole("option", { name: "Webhooks" }));
   await waitFor(() => expect(journalCalls().at(-1)).toEqual({ kind: "webhook", limit: 200 }));
-  const table = screen.getByRole("table", { name: "Journal d’exécution" });
-  await waitFor(() => expect(within(table).queryByText("jira")).not.toBeInTheDocument());
-  expect(within(table).getByText("ventes/stripe")).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText(/jira/)).not.toBeInTheDocument());
+  expect(screen.getByText(/ventes\/stripe/)).toBeInTheDocument();
 
   // Aucun appel d’agent : l’état vide le dit.
-  await user.selectOptions(screen.getByLabelText("Type"), "agent");
+  await user.click(screen.getByRole("button", { name: /^Webhooks/ }));
+  await user.click(await screen.findByRole("option", { name: "Agents" }));
   expect(await screen.findByText("Aucune exécution de type « Agents »")).toBeInTheDocument();
 
   // Échec du backend, puis Réessayer.

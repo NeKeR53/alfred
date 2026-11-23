@@ -51,6 +51,7 @@ export const functionTestsApi = {
 export function useFunctionTests(module: string) {
   const [tests, setTests] = useState<FunctionTests[]>();
   const load = useCallback(async () => {
+    if (!module) return;
     try {
       setTests(await functionTestsApi.status(module));
     } catch {
@@ -58,6 +59,7 @@ export function useFunctionTests(module: string) {
     }
   }, [module]);
   useEffect(() => {
+    if (!module) return;
     void load();
     const offTested = onNativeEvent("functions:tested", () => void load());
     const offSpace = onNativeEvent("space:changed", () => void load());
@@ -65,7 +67,7 @@ export function useFunctionTests(module: string) {
       offTested();
       offSpace();
     };
-  }, [load]);
+  }, [load, module]);
   return { tests, reload: load };
 }
 

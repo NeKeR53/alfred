@@ -1,5 +1,6 @@
-import { Dialog, FormActions, FormField, SelectControl, Stack, TextInput } from "@alfred/ui";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useState } from "react";
+import { Button, Dialog, Select, TextField } from "socle-ui";
+import { Stack } from "../../kit";
 import { notify } from "../../shell/notifications";
 import {
   errorMessage,
@@ -11,8 +12,6 @@ import {
   type VaultKind,
   vaultKindLabel,
 } from "./api";
-import "./settings-dialog.css";
-import { DialogHeader } from "../../shell/DialogHeader";
 
 interface KindFields {
   /** Champ non secret, rangé dans `meta`. */
@@ -60,9 +59,7 @@ export function VaultEntryDialog({
   onClose: () => void;
   onSaved: (entry: VaultEntry) => void;
 }) {
-  const formId = useId();
-  const titleId = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
+  const formId = "coffre-entree";
   const [label, setLabel] = useState(entry?.label ?? suggested?.label ?? "");
   const [id, setId] = useState(entry?.id ?? suggested?.id ?? "");
   // Tant que l’identifiant n’a pas été saisi à la main, il suit le libellé.
@@ -73,11 +70,6 @@ export function VaultEntryDialog({
   const [secret, setSecret] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
 
   const resolvedId = entry ? entry.id : idEdited ? id.trim() : slugify(label);
   const keepsSecret = Boolean(entry?.hasSecret);
@@ -105,7 +97,7 @@ export function VaultEntryDialog({
       });
       notify({ title: entry ? "Mot de passe ou clé enregistré" : "Mot de passe ou clé ajouté", tone: "success" });
       onSaved(saved);
-      dialog.current?.close();
+      onClose();
     } catch (error) {
       notify({
         title: entry
@@ -120,120 +112,99 @@ export function VaultEntryDialog({
 
   return (
     <Dialog
-      ref={dialog}
-      className="settings-dialog"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        // Pas de fermeture pendant l’écriture au trousseau : le résultat doit rester visible.
-        if (pending) event.preventDefault();
+      isOpen
+      title={entry ? `Modifier « ${entry.label} »` : "Nouveau mot de passe ou clé"}
+      // Pas de fermeture pendant l’écriture au trousseau : le résultat doit rester visible.
+      isBusy={pending}
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
-      onClose={onClose}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={pending}>
+            Annuler
+          </Button>
+          <Button type="submit" form={formId} variant="primary" isPending={pending}>
+            {entry ? "Enregistrer" : "Créer"}
+          </Button>
+        </>
+      }
     >
       <form id={formId} noValidate onSubmit={submit}>
-        <DialogHeader
-          title={entry ? `Modifier « ${entry.label} »` : "Nouveau mot de passe ou clé"}
-          titleId={titleId}
-          dialogRef={dialog}
-        />
-        <div className="settings-dialog__body">
-          <Stack gap="md">
-            <FormField label="Libellé" error={errors.label}>
-              <TextInput
-                value={label}
-                aria-required="true"
-                autoComplete="off"
-                onChange={(event) => {
-                  setLabel(event.target.value);
-                  setErrors((current) => ({ ...current, label: undefined }));
-                }}
-              />
-            </FormField>
-            <FormField
-              label="Identifiant"
-              hint={
-                entry
-                  ? "Les services le désignent par cet identifiant : il ne se modifie pas."
-                  : "Les services le désignent par cet identifiant. Minuscules, chiffres et tirets."
-              }
-              error={errors.id}
-            >
-              <TextInput
-                value={resolvedId}
-                disabled={Boolean(entry)}
-                aria-required="true"
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => {
-                  setId(event.target.value);
-                  setIdEdited(true);
-                  setErrors((current) => ({ ...current, id: undefined }));
-                }}
-              />
-            </FormField>
-            <FormField label="Type">
-              <SelectControl
-                value={kind}
-                disabled={Boolean(entry || fixedKind)}
-                onChange={(event) => {
-                  setKind(event.target.value as VaultKind);
-                  setMeta("");
-                  setSecret("");
-                  setErrors({});
-                }}
-              >
-                {VAULT_KINDS.map((item) => (
-                  <option key={item.kind} value={item.kind}>
-                    {vaultKindLabel(item.kind)}
-                  </option>
-                ))}
-              </SelectControl>
-            </FormField>
-            {fields.meta ? (
-              <FormField label={fields.meta.label} error={errors.meta}>
-                <TextInput
-                  value={meta}
-                  aria-required="true"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => {
-                    setMeta(event.target.value);
-                    setErrors((current) => ({ ...current, meta: undefined }));
-                  }}
-                />
-              </FormField>
-            ) : null}
-            <FormField
-              label={fields.secret.label}
-              hint={
-                keepsSecret
-                  ? "Laisser vide pour conserver la valeur enregistrée."
-                  : "Rangé dans le trousseau de ce poste ; Alfred ne l’affiche jamais."
-              }
-              error={errors.secret}
-            >
-              <TextInput
-                type="password"
-                value={secret}
-                aria-required={fields.secret.required && !keepsSecret ? "true" : undefined}
-                autoComplete="new-password"
-                spellCheck={false}
-                onChange={(event) => {
-                  setSecret(event.target.value);
-                  setErrors((current) => ({ ...current, secret: undefined }));
-                }}
-              />
-            </FormField>
-          </Stack>
-        </div>
-        <footer className="settings-dialog__footer">
-          <FormActions
-            form={formId}
-            submitLabel={entry ? "Enregistrer" : "Créer"}
-            pendingLabel={entry ? "Enregistrement…" : "Création…"}
-            pending={pending}
-            onCancel={() => dialog.current?.close()}
+        <Stack gap="md">
+          <TextField
+            label="Libellé"
+            isRequired
+            autoComplete="off"
+            error={errors.label}
+            value={label}
+            onChange={(value) => {
+              setLabel(value);
+              setErrors((current) => ({ ...current, label: undefined }));
+            }}
           />
-        </footer>
+          <TextField
+            label="Identifiant"
+            isRequired
+            isDisabled={Boolean(entry)}
+            autoComplete="off"
+            description={
+              entry
+                ? "Les services le désignent par cet identifiant : il ne se modifie pas."
+                : "Les services le désignent par cet identifiant. Minuscules, chiffres et tirets."
+            }
+            error={errors.id}
+            value={resolvedId}
+            onChange={(value) => {
+              setId(value);
+              setIdEdited(true);
+              setErrors((current) => ({ ...current, id: undefined }));
+            }}
+          />
+          <Select
+            label="Type"
+            isDisabled={Boolean(entry || fixedKind)}
+            value={kind}
+            options={VAULT_KINDS.map((item) => ({ id: item.kind, label: vaultKindLabel(item.kind) }))}
+            onChange={(value) => {
+              if (!value) return;
+              setKind(value as VaultKind);
+              setMeta("");
+              setSecret("");
+              setErrors({});
+            }}
+          />
+          {fields.meta ? (
+            <TextField
+              label={fields.meta.label}
+              isRequired
+              autoComplete="off"
+              error={errors.meta}
+              value={meta}
+              onChange={(value) => {
+                setMeta(value);
+                setErrors((current) => ({ ...current, meta: undefined }));
+              }}
+            />
+          ) : null}
+          <TextField
+            type="password"
+            label={fields.secret.label}
+            isRequired={fields.secret.required && !keepsSecret}
+            autoComplete="new-password"
+            description={
+              keepsSecret
+                ? "Laisser vide pour conserver la valeur enregistrée."
+                : "Rangé dans le trousseau de ce poste ; Alfred ne l’affiche jamais."
+            }
+            error={errors.secret}
+            value={secret}
+            onChange={(value) => {
+              setSecret(value);
+              setErrors((current) => ({ ...current, secret: undefined }));
+            }}
+          />
+        </Stack>
       </form>
     </Dialog>
   );

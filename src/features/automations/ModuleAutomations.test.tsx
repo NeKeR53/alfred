@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -6,9 +6,15 @@ vi.mock("../../lib/native");
 
 import { invoke, onNativeEvent } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
+import { renderSections } from "../modules/settingsHarness";
 import { cadence, type ScheduleItem, spokenTime } from "../schedules/api";
 import type { WebhookItem } from "../webhooks/api";
-import { MASK, ModuleAutomations } from "./ModuleAutomations";
+import { MASK, useAutomationsSection } from "./ModuleAutomations";
+
+const useSections = () => {
+  const section = useAutomationsSection("factures");
+  return section ? [section] : [];
+};
 
 // jsdom n’implémente pas les modales natives.
 HTMLDialogElement.prototype.showModal = function () {
@@ -111,10 +117,10 @@ it("écrit les rythmes en français, l’heure comme on la dit", () => {
 
 it("tient une automatisation sur une ligne : nom, déclencheur en clair, état ; le reste dans son détail", async () => {
   const user = userEvent.setup();
-  const { container } = render(<ModuleAutomations module="factures" />);
+  renderSections(useSections);
   // Sans automatisation, la fiche du module n’en parle pas.
   await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalled());
-  expect(container).toBeEmptyDOMElement();
+  expect(screen.queryByRole("region", { name: "Automatisations" })).toBeNull();
 
   schedules = [
     schedule({}),
@@ -139,29 +145,24 @@ it("tient une automatisation sur une ligne : nom, déclencheur en clair, état ;
     },
   ];
   listeners.get("space:changed")?.(null);
-  const table = await screen.findByRole("table", { name: "Automatisations du module" });
-  // Trois colonnes seulement.
-  expect(
-    within(table)
-      .getAllByRole("columnheader")
-      .map((cell) => cell.textContent),
-  ).toEqual(["Automatisation", "Déclencheur", "État"]);
-  expect(within(table).getByText("Toutes les 15 minutes")).toBeInTheDocument();
-  expect(within(table).getByText("Tous les jours à 7 h")).toBeInTheDocument();
-  expect(within(table).getByText("À chaque appel de son adresse")).toBeInTheDocument();
-  expect(within(table).getAllByText("jamais lancée")).toHaveLength(1);
+  const table = await screen.findByRole("region", { name: "Automatisations" });
+  // Une ligne chacune : le nom, puis le déclencheur et l’état.
+  expect(within(table).getByText(/^Toutes les 15 minutes/)).toBeInTheDocument();
+  expect(within(table).getByText(/^Tous les jours à 7 h/)).toBeInTheDocument();
+  expect(within(table).getByText(/^À chaque appel de son adresse/)).toBeInTheDocument();
+  expect(within(table).getAllByText(/jamais lancée/)).toHaveLength(1);
   expect(within(table).getByText("À corriger")).toBeInTheDocument();
   expect(within(table).queryByText("D’un autre module")).not.toBeInTheDocument();
-  // Ni fonction, ni identifiant, ni adresse dans le tableau.
+  // Ni fonction, ni identifiant, ni adresse dans la liste.
   expect(within(table).queryByText("relancer")).not.toBeInTheDocument();
   expect(within(table).queryByText(URL_PAIEMENT)).not.toBeInTheDocument();
 
-  // Le détail, au clic : la fonction, l’identifiant, la pause et l’exécution immédiate.
-  await user.click(within(table).getByText("Relance des impayés"));
+  // Le détail : la fonction, l’identifiant, la pause et l’exécution immédiate.
+  await user.click(within(table).getByRole("button", { name: "Voir le détail de Relance des impayés" }));
   const detail = await screen.findByRole("dialog", { name: "Relance des impayés" });
   expect(within(detail).getByText("relancer")).toBeInTheDocument();
   expect(within(detail).getByText("factures/relance")).toBeInTheDocument();
-  const toggle = within(detail).getByRole("switch", { name: "Automatisation Relance des impayés active" });
+  const toggle = within(detail).getByRole("switch", { name: "Active" });
   await user.click(toggle);
   await waitFor(() => expect(within(table).getByText("En pause")).toBeInTheDocument());
   expect(calls.find((call) => call.command === "schedules.setEnabled")?.args).toEqual({
@@ -178,7 +179,8 @@ it("tient une automatisation sur une ligne : nom, déclencheur en clair, état ;
   await user.click(within(detail).getByRole("button", { name: "Fermer" }));
 
   // Le webhook : son adresse et son secret, masqué puis révélé, régénéré après confirmation.
-  await user.click(within(table).getByText("Paiement reçu"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await user.click(within(table).getByRole("button", { name: "Voir le détail de Paiement reçu" }));
   const hook = await screen.findByRole("dialog", { name: "Paiement reçu" });
   expect(within(hook).getByText(URL_PAIEMENT)).toBeInTheDocument();
   expect(await within(hook).findByText(MASK)).toBeInTheDocument();
@@ -186,7 +188,7 @@ it("tient une automatisation sur une ligne : nom, déclencheur en clair, état ;
   await user.click(within(hook).getByRole("button", { name: "Révéler le secret" }));
   expect(within(hook).getByText(secret)).toBeInTheDocument();
   await user.click(within(hook).getByRole("button", { name: "Régénérer" }));
-  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Régénérer" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Régénérer" }));
   expect(await within(hook).findByText("b".repeat(64))).toBeInTheDocument();
   expect(calls.find((call) => call.command === "webhooks.rotate")?.args).toEqual({ hook: "factures/paiement" });
 });

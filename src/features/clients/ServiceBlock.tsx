@@ -1,16 +1,15 @@
 /**
- * Un service vu depuis la fiche d’un module : vos comptes chez lui, et de quoi les ajouter, les connecter et les
- * tester. La façon de s’y connecter appartient au module (l’agent la décrit) : elle ne se règle pas ici.
+ * Un service vu depuis la fiche d’un module, en une section des Réglages : vos comptes chez lui (une ligne chacun),
+ * et de quoi les ajouter, les connecter et les tester. La façon de s’y connecter appartient au module (l’agent la décrit) : elle ne se règle pas ici.
  */
-import { Button, MenuItem, OverflowMenu, SettingRow, SettingRows, StatusBadge } from "@alfred/ui";
-import { type ReactNode, useState } from "react";
+import { CheckCircle2, FlaskConical, KeyRound, LogIn, Plus } from "lucide-react";
+import type { Action, SettingsSection } from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { errorMessage } from "../vault/api";
 import type { ClientConfig, ClientInstanceItem, ClientItem, ClientNeedItem } from "./api";
 import { createFromTemplate, templateNeedsAccount } from "./fromTemplate";
 import type { ServiceEditing } from "./ServiceEditor";
 import { type ClientsController, targetKey } from "./useClients";
-import "./services.css";
 
 /** Le service (ou l’un de ses comptes) demande-t-il quelque chose à l’utilisateur ? */
 export function serviceNeedsAttention(client: ClientItem | undefined): boolean {
@@ -29,24 +28,7 @@ export function accountTitle(client: ClientItem, instance: ClientInstanceItem): 
   return instance.label;
 }
 
-export function ServiceBlock({
-  need,
-  client,
-  template,
-  help,
-  controller,
-  onEdit,
-  note,
-  describeInstance,
-  titled = false,
-  heading,
-  purpose,
-  onAdd,
-  addLabel,
-  rowButton,
-  rowActions,
-  children,
-}: {
+export interface ServiceSectionOptions {
   /** Besoin du module auquel ce service répond. */
   need: ClientNeedItem;
   client: ClientItem | undefined;
@@ -56,223 +38,155 @@ export function ServiceBlock({
   help?: string;
   controller: ClientsController;
   onEdit: (editing: ServiceEditing) => void;
-  /** Ligne ajoutée sous l’en-tête. */
-  note?: ReactNode;
   /** Ce que sert un compte, en mots simples (la page qui l’affiche). */
   describeInstance?: (instance: string) => string | undefined;
-  /** Le service porte son nom au-dessus de ses comptes (fiche d’un module). */
-  titled?: boolean;
-  /** Titre à la place du nom du service (une page par compte : « Comptes de Déploiements »). */
-  heading?: string;
-  /** À quoi sert le service dans le module, sous son nom : les pages qui l’utilisent. */
-  purpose?: ReactNode;
-  /** Remplace l’ajout d’un compte : choisir un compte existant ou en créer un (page par compte). */
-  onAdd?: () => void;
-  addLabel?: string;
-  /** Bouton propre à l’endroit, posé sur la ligne d’un compte (« Ajouter la page »). */
-  rowButton?: (instance: ClientInstanceItem) => ReactNode;
-  /** Actions propres à l’endroit, ajoutées au menu « ⋯ » d’un compte (« Retirer de cette page »). */
-  rowActions?: (instance: ClientInstanceItem) => Array<{ label: string; run: () => void }>;
-  /** Ce que le module fait avec le service, sous ses comptes. */
-  children?: ReactNode;
-}) {
-  const { statusBadge, statusDetails, validate, removeInstance, makeDefault, test, connect, disconnect, testing } =
+  /** À quoi sert le service dans le module, sous son nom. */
+  purpose?: string;
+}
+
+const icon16 = { size: 16, "aria-hidden": true } as const;
+
+/** Section d’un service dans la fiche d’un module : son nom en titre, une ligne par compte. */
+export function serviceSection({
+  need,
+  client,
+  template,
+  help,
+  controller,
+  onEdit,
+  describeInstance,
+  purpose,
+}: ServiceSectionOptions): SettingsSection {
+  const { statusTag, statusDetails, validate, removeInstance, makeDefault, test, connect, disconnect, testing } =
     controller;
-  const [creating, setCreating] = useState(false);
   const label = client?.label ?? need.label;
-  const shown = client?.instances ?? [];
+  const id = `service:${need.key}`;
 
   /** Ajoute un compte ; crée d’abord le service d’après le modèle du module s’il n’existe pas encore. */
   const addAccount = async () => {
-    if (client && onAdd) {
-      onAdd();
-      return;
-    }
     if (client) {
       onEdit({ kind: "account", client, help });
       return;
     }
     if (!template) return;
-    setCreating(true);
     try {
       const saved = await createFromTemplate(template, need, controller);
       if (templateNeedsAccount(template)) onEdit({ kind: "account", client: saved, help });
     } catch (failure) {
       notify({ title: `${need.label} n’a pas pu être ajouté`, description: errorMessage(failure), tone: "error" });
-    } finally {
-      setCreating(false);
     }
   };
 
-  const head = titled ? (
-    <div className="service-block__head">
-      <h4 className="service-block__title">{heading ?? label}</h4>
-      {client && !client.simple ? (
-        <span className="service-block__note">
-          {shown.length === 0 ? "Aucun compte" : `${shown.length} compte${shown.length > 1 ? "s" : ""}`}
-        </span>
-      ) : null}
-      {purpose ? <p className="service-block__purpose">{purpose}</p> : null}
-    </div>
-  ) : null;
-
   if (!client) {
-    return (
-      <div className="service-block">
-        {head}
-        <SettingRows label={`Comptes ${label}`}>
-          <SettingRow
-            title={need.label}
-            badge={
-              <StatusBadge tone="pending" size="compact">
-                À configurer
-              </StatusBadge>
-            }
-            description={
-              <>
-                {note ? <span>{note}</span> : null}
-                <span>
-                  {template ? (help ?? "Ajoutez votre compte pour que le module s’y connecte.") : UNDESCRIBED}
-                </span>
-              </>
-            }
-          >
-            {template ? (
-              <Button
-                variant="primary"
-                loading={creating}
-                aria-label={`Ajouter votre compte ${need.label}`}
-                onClick={() => void addAccount()}
-              >
-                {templateNeedsAccount(template) ? "Ajouter votre compte" : "Activer"}
-              </Button>
-            ) : null}
-          </SettingRow>
-        </SettingRows>
-        {children}
-      </div>
-    );
+    return {
+      id,
+      title: label,
+      description: purpose,
+      actions: template
+        ? [
+            {
+              id: "add",
+              label: templateNeedsAccount(template) ? `Ajouter votre compte ${need.label}` : `Activer ${need.label}`,
+              primary: true,
+              onPress: addAccount,
+            },
+          ]
+        : undefined,
+      settings: [
+        {
+          type: "item",
+          id: "missing",
+          label: need.label,
+          description: template ? (help ?? "Ajoutez votre compte pour que le module s’y connecte.") : UNDESCRIBED,
+          tags: [{ label: "À configurer", tone: "pending" }],
+        },
+      ],
+    };
   }
 
   const blocked = (state: Pick<ClientItem, "status">) => state.status === "invalid" || state.status === "toValidate";
-  const busyTesting = (key: string) =>
-    testing === key ? <span className="service-detail">Test en cours…</span> : null;
+  const count = client.simple
+    ? undefined
+    : client.instances.length === 0
+      ? "Aucun compte"
+      : `${client.instances.length} compte${client.instances.length > 1 ? "s" : ""}`;
 
-  return (
-    <div className="service-block">
-      {head}
-      <SettingRows label={`Comptes ${label}`}>
-        {shown.map((instance) => {
-          const title = accountTitle(client, instance);
-          const name = client.simple ? label : `${label} — ${instance.label}`;
-          const key = client.simple ? client.id : targetKey(client.id, instance.id);
-          const target = { client, instance: client.simple ? undefined : instance };
-          const page = describeInstance?.(instance.id);
-          return (
-            <SettingRow
-              key={instance.id}
-              title={client.simple && !titled ? `${label} — ${title}` : title}
-              badge={instance.status === "ready" ? null : statusBadge(instance)}
-              description={
-                <>
-                  {note && client.simple ? <span>{note}</span> : null}
-                  {page ? <span>{page}</span> : null}
-                  {instance.status === "ready" && !page ? <span>Prêt</span> : null}
-                  {statusDetails(instance, key)}
-                  {busyTesting(key)}
-                </>
-              }
-            >
-              {instance.status === "toValidate" ? (
-                <Button variant="primary" aria-label={`Approuver ${name}`} onClick={() => void validate(client)}>
-                  Approuver
-                </Button>
-              ) : null}
-              {instance.status === "missingSecret" ? (
-                <Button
-                  variant="primary"
-                  aria-label={`Saisir les identifiants de ${name}`}
-                  onClick={() => onEdit({ kind: "account", client, instance, help })}
-                >
-                  Saisir vos identifiants…
-                </Button>
-              ) : null}
-              {instance.authType === "oauth2" && instance.status === "toConnect" ? (
-                <Button variant="primary" aria-label={`Se connecter à ${name}`} onClick={() => void connect(target)}>
-                  Se connecter
-                </Button>
-              ) : null}
-              {rowButton?.(instance)}
-              {instance.status === "ready" ? (
-                <Button
-                  variant="secondary"
-                  aria-label={`Tester ${name}`}
-                  disabled={testing !== undefined}
-                  onClick={() => void test(target)}
-                >
-                  Tester
-                </Button>
-              ) : null}
-              <OverflowMenu label={`Actions de ${name}`} size="small">
-                {(
-                  [
-                    {
-                      label: "Tester",
-                      hidden: instance.status === "ready",
-                      disabled: blocked(instance) || testing !== undefined,
-                      run: () => void test(target),
-                    },
-                    ...(rowActions?.(instance) ?? []),
-                    {
-                      label: "Se déconnecter",
-                      hidden: instance.authType !== "oauth2" || !instance.connected,
-                      run: () => void disconnect(target),
-                    },
-                    {
-                      label: "Utiliser par défaut",
-                      hidden: client.simple || instance.default,
-                      run: () => void makeDefault(client, instance),
-                    },
-                    {
-                      label: "Modifier le compte…",
-                      hidden: instance.authType === "none" && (client.simple || Boolean(client.baseUrl)),
-                      run: () => onEdit({ kind: "account", client, instance, help }),
-                    },
-                    {
-                      label: "Supprimer le compte…",
-                      hidden: client.simple,
-                      run: () => void removeInstance(client, instance),
-                    },
-                  ] as Array<{ label: string; run: () => void; hidden?: boolean; disabled?: boolean }>
-                )
-                  .filter((item) => !item.hidden)
-                  .map((item) => (
-                    // L’action part dès la capture : le menu se ferme avant la remontée du clic (voir `ModulesSettings`).
-                    <MenuItem key={item.label} disabled={item.disabled} onClickCapture={item.run}>
-                      {item.label}
-                    </MenuItem>
-                  ))}
-              </OverflowMenu>
-            </SettingRow>
-          );
-        })}
-      </SettingRows>
-      {client.status === "invalid" && client.instances.length === 0 ? (
-        <p className="service-block__note service-detail--warning">{client.problem ?? UNDESCRIBED}</p>
-      ) : null}
-      {client.simple ? null : (
-        <div className="service-block__footer">
-          <Button
-            variant={client.instances.length === 0 ? "primary" : "secondary"}
-            aria-label={`Ajouter un compte à ${label}`}
-            disabled={client.methods.length === 0}
-            onClick={() => void addAccount()}
-          >
-            {addLabel ?? (client.instances.length === 0 ? "Ajouter votre compte" : "Ajouter un compte")}
-          </Button>
-        </div>
-      )}
-      {children}
-    </div>
-  );
+  return {
+    id,
+    title: label,
+    description: [count, purpose].filter(Boolean).join(" · ") || undefined,
+    actions: client.simple
+      ? undefined
+      : [
+          {
+            id: "add",
+            label: `Ajouter un compte à ${label}`,
+            // Sans compte, l’action principale ; ensuite, un bouton-icône de la section.
+            primary: client.instances.length === 0,
+            icon: client.instances.length === 0 ? undefined : <Plus {...icon16} />,
+            isDisabled: client.methods.length === 0,
+            onPress: addAccount,
+          },
+        ],
+    emptyMessage:
+      client.status === "invalid" && client.instances.length === 0 ? (client.problem ?? UNDESCRIBED) : undefined,
+    settings: client.instances.map((instance) => {
+      const name = client.simple ? label : `${label} — ${instance.label}`;
+      const key = client.simple ? client.id : targetKey(client.id, instance.id);
+      const target = { client, instance: client.simple ? undefined : instance };
+      const page = describeInstance?.(instance.id);
+      const actions: Action[] = [];
+      if (instance.status === "toValidate")
+        actions.push({
+          id: "approve",
+          label: `Approuver ${name}`,
+          icon: <CheckCircle2 {...icon16} />,
+          onPress: () => validate(client),
+        });
+      if (instance.status === "missingSecret")
+        actions.push({
+          id: "secret",
+          label: `Saisir les identifiants de ${name}`,
+          icon: <KeyRound {...icon16} />,
+          onPress: () => onEdit({ kind: "account", client, instance, help }),
+        });
+      if (instance.authType === "oauth2" && instance.status === "toConnect")
+        actions.push({
+          id: "connect",
+          label: `Se connecter à ${name}`,
+          icon: <LogIn {...icon16} />,
+          onPress: () => connect(target),
+        });
+      actions.push({
+        id: "test",
+        label: `Tester ${name}`,
+        icon: <FlaskConical {...icon16} />,
+        isDisabled: blocked(instance) || testing !== undefined,
+        onPress: () => test(target),
+      });
+      if (instance.authType === "oauth2" && instance.connected)
+        actions.push({ id: "disconnect", label: "Se déconnecter", onPress: () => disconnect(target) });
+      if (!client.simple && !instance.default)
+        actions.push({ id: "default", label: "Utiliser par défaut", onPress: () => makeDefault(client, instance) });
+      if (!(instance.authType === "none" && (client.simple || Boolean(client.baseUrl))))
+        actions.push({
+          id: "edit",
+          label: "Modifier le compte…",
+          onPress: () => onEdit({ kind: "account", client, instance, help }),
+        });
+      if (!client.simple)
+        actions.push({ id: "remove", label: "Supprimer le compte…", onPress: () => removeInstance(client, instance) });
+      return {
+        type: "item" as const,
+        id: instance.id,
+        label: accountTitle(client, instance),
+        description:
+          [page, instance.status === "ready" && !page ? "Prêt" : null, ...statusDetails(instance, key)]
+            .filter(Boolean)
+            .join(" · ") || undefined,
+        tags: instance.status === "ready" ? undefined : [statusTag(instance)],
+        actions,
+      };
+    }),
+  };
 }

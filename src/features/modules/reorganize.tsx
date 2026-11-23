@@ -4,20 +4,17 @@
  * refuse en disant pourquoi ; chaque opération est un commit de l’espace, annulable par l’historique.
  */
 
-import {
-  Button,
-  CheckboxControl,
-  Dialog,
-  FeedbackBanner,
-  FormField,
-  SelectControl,
-  Spinner,
-  TextInput,
-} from "@alfred/ui";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Button, Checkbox, CheckboxGroup, Dialog, ProgressBar, Select, TextField } from "socle-ui";
+import { Notice, Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { errorMessage } from "./api";
+import { Bullets, Facts } from "./lists";
+
+const closeOn = (onClose: () => void) => (open: boolean) => {
+  if (!open) onClose();
+};
 
 export interface SplitPlan {
   pages: string[];
@@ -56,44 +53,6 @@ function isLocal(module: ModuleSummary) {
   return module.origin === null || module.origin.detached;
 }
 
-function Modal({
-  title,
-  busy,
-  onClose,
-  children,
-  actions,
-}: {
-  title: string;
-  busy: boolean;
-  onClose: () => void;
-  children: ReactNode;
-  actions: (close: () => void) => ReactNode;
-}) {
-  const titleId = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
-  }, []);
-  return (
-    <Dialog
-      ref={dialog}
-      className="modules-dialog"
-      aria-labelledby={titleId}
-      onCancel={(event) => {
-        if (busy) event.preventDefault();
-      }}
-      onClose={onClose}
-    >
-      <h2 id={titleId} className="modules-dialog__title">
-        {title}
-      </h2>
-      <div className="modules-dialog__body">{children}</div>
-      {actions(() => dialog.current?.close())}
-    </Dialog>
-  );
-}
-
 /** Fusion : le module choisi rejoint un autre module local, qui garde son nom. */
 export function MergeDialog({
   module,
@@ -126,61 +85,44 @@ export function MergeDialog({
   };
 
   return (
-    <Modal
+    <Dialog
+      isOpen
       title={`Fusionner ${module.name}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <div className="form-actions">
-          <Button onClick={close} disabled={busy}>
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
             Annuler
           </Button>
-          <Button variant="primary" loading={busy} loadingLabel="Fusion…" disabled={!chosen} onClick={apply}>
+          <Button variant="primary" isPending={busy} isDisabled={!chosen} onPress={() => void apply()}>
             Fusionner
           </Button>
-        </div>
-      )}
-    >
-      {targets.length === 0 ? (
-        <p>Aucun autre module local : un module installé reste en lecture seule et n’accueille pas de fusion.</p>
-      ) : (
-        <>
-          <FormField label="Module qui l’accueille">
-            <SelectControl value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy}>
-              {targets.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </SelectControl>
-          </FormField>
-          <p>
-            Pages, fonctions, sections, planifications, code partagé et migrations de « {module.name} » rejoignent «{" "}
-            {chosen?.name ?? "…"} ». Ses tables gardent leurs données et prennent le préfixe du module d’accueil.
-            L’opération s’annule depuis l’historique de l’espace de travail.
-          </p>
         </>
-      )}
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-    </Modal>
-  );
-}
-
-function Facts({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <section>
-      <h3>{title}</h3>
-      <ul className="modules-facts">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </section>
+      }
+    >
+      <Stack gap="md">
+        {targets.length === 0 ? (
+          <Text>
+            Aucun autre module local : un module installé reste en lecture seule et n’accueille pas de fusion.
+          </Text>
+        ) : (
+          <>
+            <Select
+              label="Module qui l’accueille"
+              isDisabled={busy}
+              value={target || null}
+              options={targets.map((candidate) => ({ id: candidate.id, label: candidate.name }))}
+              onChange={(id) => setTarget(id ?? "")}
+            />
+            <Text>
+              {`Pages, fonctions, sections, planifications, code partagé et migrations de « ${module.name} » rejoignent « ${chosen?.name ?? "…"} ». Ses tables gardent leurs données et prennent le préfixe du module d’accueil. L’opération s’annule depuis l’historique de l’espace de travail.`}
+            </Text>
+          </>
+        )}
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+      </Stack>
+    </Dialog>
   );
 }
 
@@ -227,8 +169,6 @@ export function SplitDialog({
     };
   }, [module.id, selected]);
 
-  const toggle = (id: string, checked: boolean) =>
-    setSelected((current) => (checked ? [...current, id] : current.filter((item) => item !== id)));
   const ready = plan !== null && plan.problems.length === 0 && name.trim() !== "" && !planning;
 
   const apply = async () => {
@@ -244,68 +184,55 @@ export function SplitDialog({
   };
 
   return (
-    <Modal
+    <Dialog
+      isOpen
       title={`Scinder ${module.name}`}
-      busy={busy}
-      onClose={onClose}
-      actions={(close) => (
-        <div className="form-actions">
-          <Button onClick={close} disabled={busy}>
+      isBusy={busy}
+      onOpenChange={closeOn(onClose)}
+      footer={
+        <>
+          <Button onPress={onClose} isDisabled={busy}>
             Annuler
           </Button>
-          <Button variant="primary" loading={busy} loadingLabel="Scission…" disabled={!ready} onClick={apply}>
+          <Button variant="primary" isPending={busy} isDisabled={!ready} onPress={() => void apply()}>
             Créer le module
           </Button>
-        </div>
-      )}
-    >
-      <FormField label="Nom du nouveau module">
-        <TextInput value={name} onChange={(event) => setName(event.target.value)} disabled={busy} />
-      </FormField>
-      <fieldset className="modules-choice">
-        <legend>Pages à déplacer</legend>
-        {pages.map((page) => (
-          <CheckboxControl
-            key={page.reference}
-            label={page.title}
-            checked={selected.includes(page.id)}
-            disabled={busy}
-            onChange={(event) => toggle(page.id, event.target.checked)}
-          />
-        ))}
-      </fieldset>
-      {planning ? <Spinner label="Calcul de ce qui part avec ces pages" /> : null}
-      {plan && !planning ? (
-        <>
-          <Facts
-            title="Partent aussi"
-            items={[
-              ...plan.functions.map((id) => `Fonction ${id}`),
-              ...plan.sections.map((id) => `Section ${id}`),
-              ...plan.tables.map((id) => `Table ${id} (avec ses données)`),
-            ]}
-          />
-          <Facts
-            title="Restent dans le module, appelées par les pages déplacées"
-            items={plan.sharedFunctions.map((id) => `Fonction ${id}`)}
-          />
-          {plan.problems.length ? (
-            <FeedbackBanner tone="warning" appearance="contained">
-              Scission impossible :
-              <ul className="modules-facts">
-                {plan.problems.map((problem) => (
-                  <li key={problem}>{problem}</li>
-                ))}
-              </ul>
-            </FeedbackBanner>
-          ) : null}
         </>
-      ) : null}
-      {error ? (
-        <FeedbackBanner tone="error" appearance="contained">
-          {error}
-        </FeedbackBanner>
-      ) : null}
-    </Modal>
+      }
+    >
+      <Stack gap="md">
+        <TextField label="Nom du nouveau module" isRequired isDisabled={busy} value={name} onChange={setName} />
+        <CheckboxGroup label="Pages à déplacer" isDisabled={busy} value={selected} onChange={setSelected}>
+          {pages.map((page) => (
+            <Checkbox key={page.reference} value={page.id}>
+              {page.title}
+            </Checkbox>
+          ))}
+        </CheckboxGroup>
+        {planning ? <ProgressBar label="Calcul de ce qui part avec ces pages" /> : null}
+        {plan && !planning ? (
+          <>
+            <Facts
+              title="Partent aussi"
+              items={[
+                ...plan.functions.map((id) => `Fonction ${id}`),
+                ...plan.sections.map((id) => `Section ${id}`),
+                ...plan.tables.map((id) => `Table ${id} (avec ses données)`),
+              ]}
+            />
+            <Facts
+              title="Restent dans le module, appelées par les pages déplacées"
+              items={plan.sharedFunctions.map((id) => `Fonction ${id}`)}
+            />
+            {plan.problems.length ? (
+              <Notice tone="warning" title="Scission impossible :">
+                <Bullets items={plan.problems.map((problem) => ({ key: problem, content: problem }))} />
+              </Notice>
+            ) : null}
+          </>
+        ) : null}
+        {error ? <Notice tone="danger">{error}</Notice> : null}
+      </Stack>
+    </Dialog>
   );
 }

@@ -7,22 +7,11 @@
  * plusieurs, et son identifiant, son mot de passe ou son jeton. Le nom et l’identifiant technique du compte, comme
  * l’entrée du coffre qui garde le secret, se déduisent seuls.
  */
-import {
-  CheckboxControl,
-  Disclosure,
-  FeedbackBanner,
-  FormActions,
-  FormField,
-  Page,
-  Section,
-  SelectControl,
-  Stack,
-  Text,
-  TextArea,
-  TextInput,
-} from "@alfred/ui";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
+import { Button, Checkbox, Disclosure, Select, TextArea, TextField } from "socle-ui";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { notify } from "../../shell/notifications";
+import { ModulePart } from "../modules/ModulePart";
 import { errorMessage, listVault, saveVaultEntry, type VaultEntry, type VaultKind } from "../vault/api";
 import { AccountPages } from "./AccountPages";
 import {
@@ -36,7 +25,6 @@ import {
   saveInstance,
 } from "./api";
 import { ParamFields, paramErrors, paramValues } from "./ParamFields";
-import "./services.css";
 
 const SECURE_URL = /^https:\/\/[^\s/?#]+[^\s?#]*$/i;
 const LOCAL_URL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/[^\s?#]*)?$/i;
@@ -179,7 +167,6 @@ export function AccountEditor({
   /** `created` : le compte est nouveau ; `saved`, le service tel qu’il est maintenant. */
   onSaved: (result: { saved: ClientItem; instance: string; created: boolean }) => void;
 }) {
-  const formId = useId();
   const simple = client.simple;
   const editing = simple ? client.instances[0] : initial;
   const [method, setMethod] = useState(editing?.method ?? client.methods[0]?.id ?? "");
@@ -276,53 +263,54 @@ export function AccountEditor({
   const pages = editing ? <AccountPages client={client} instance={editing} created={created} /> : null;
 
   return (
-    <Page width="text">
+    <Stack gap="lg">
       {created ? pages : null}
-      <Section
+      <ModulePart
+        part="account"
         title={adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`}
         description="Vos identifiants restent sur cet ordinateur, dans le coffre."
       >
-        <form id={formId} className="settings-form" noValidate onSubmit={submit}>
+        <form noValidate onSubmit={submit}>
           <Stack gap="md">
+            <Stack gap="none">
+              <Text weight="strong">
+                {adding ? `Ajouter un compte ${client.label}` : `Votre compte ${client.label}`}
+              </Text>
+              <Text size="meta" tone="muted">
+                Vos identifiants restent sur cet ordinateur, dans le coffre.
+              </Text>
+            </Stack>
             {help ? <Text tone="muted">{help}</Text> : null}
             {askUrl ? (
-              <FormField
+              <TextField
                 label="Adresse de votre compte"
-                hint={client.baseUrl ? `Laissez vide pour ${client.baseUrl}.` : "L’adresse où vous vous connectez."}
+                isRequired={!client.baseUrl}
+                description={
+                  client.baseUrl ? `Laissez vide pour ${client.baseUrl}.` : "L’adresse où vous vous connectez."
+                }
                 error={errors.url}
-              >
-                <TextInput
-                  value={url}
-                  placeholder={client.baseUrl || "Ex. https://acme.atlassian.net"}
-                  aria-required={client.baseUrl ? undefined : "true"}
-                  autoComplete="off"
-                  spellCheck={false}
-                  inputMode="url"
-                  onChange={(event) => {
-                    setUrl(event.target.value);
-                    clear("url");
-                  }}
-                />
-              </FormField>
+                placeholder={client.baseUrl || "Ex. https://acme.atlassian.net"}
+                autoComplete="off"
+                value={url}
+                onChange={(value) => {
+                  setUrl(value);
+                  clear("url");
+                }}
+              />
             ) : null}
             {!simple && client.methods.length > 1 ? (
-              <FormField label="Connexion">
-                <SelectControl
-                  value={method}
-                  onChange={(event) => {
-                    setMethod(event.target.value);
-                    setLogin("");
-                    setSecret("");
-                    setErrors({});
-                  }}
-                >
-                  {client.methods.map((known) => (
-                    <option key={known.id} value={known.id}>
-                      {methodLabel(known)}
-                    </option>
-                  ))}
-                </SelectControl>
-              </FormField>
+              <Select
+                label="Connexion"
+                value={method}
+                options={client.methods.map((known) => ({ id: known.id, label: methodLabel(known) }))}
+                onChange={(id) => {
+                  if (!id) return;
+                  setMethod(id);
+                  setLogin("");
+                  setSecret("");
+                  setErrors({});
+                }}
+              />
             ) : null}
             <ParamFields
               params={declaredParams}
@@ -334,90 +322,75 @@ export function AccountEditor({
               }}
             />
             {fields.login ? (
-              <FormField label={fields.login.label} error={errors.login}>
-                <TextInput
-                  value={login}
-                  aria-required="true"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => {
-                    setLogin(event.target.value);
-                    clear("login");
-                  }}
-                />
-              </FormField>
+              <TextField
+                label={fields.login.label}
+                isRequired
+                autoComplete="off"
+                error={errors.login}
+                value={login}
+                onChange={(value) => {
+                  setLogin(value);
+                  clear("login");
+                }}
+              />
             ) : null}
             {fields.secret ? (
-              <FormField
+              <TextField
+                type="password"
                 label={fields.secret.label}
-                hint={keepsSecret ? "Laissez vide pour garder celui enregistré." : undefined}
+                isRequired={fields.secret.required && !keepsSecret}
+                description={keepsSecret ? "Laissez vide pour garder celui enregistré." : undefined}
                 error={errors.secret}
-              >
-                <TextInput
-                  type="password"
-                  value={secret}
-                  aria-required={fields.secret.required && !keepsSecret ? "true" : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => {
-                    setSecret(event.target.value);
-                    clear("secret");
-                  }}
-                />
-              </FormField>
+                autoComplete="off"
+                value={secret}
+                onChange={(value) => {
+                  setSecret(value);
+                  clear("secret");
+                }}
+              />
             ) : null}
             {type === "oauth2" && redirectUri ? (
-              <FeedbackBanner tone="info" appearance="contained">
-                Adresse de retour à donner au service : {redirectUri}. Vous vous connecterez ensuite dans votre
-                navigateur.
-              </FeedbackBanner>
+              <Notice tone="info">
+                {`Adresse de retour à donner au service : ${redirectUri}. Vous vous connecterez ensuite dans votre navigateur.`}
+              </Notice>
             ) : null}
-            <Disclosure
-              label="Options avancées"
-              appearance="subtle"
-              open={errors.headers || insecureTls || headers ? true : undefined}
-            >
+            <Disclosure title="Options avancées" defaultExpanded={Boolean(errors.headers || insecureTls || headers)}>
               <Stack gap="md">
-                <FormField
-                  label="En-têtes en plus (facultatif)"
-                  hint="Un par ligne, « Nom: valeur ». Ajoutés à chaque appel de ce compte."
+                <TextArea
+                  label="En-têtes en plus"
+                  description="Un par ligne, « Nom: valeur ». Ajoutés à chaque appel de ce compte."
                   error={errors.headers}
-                >
-                  <TextArea
-                    value={headers}
-                    rows={3}
-                    spellCheck={false}
-                    placeholder="X-Tenant: acme"
-                    onChange={(event) => {
-                      setHeaders(event.target.value);
-                      clear("headers");
-                    }}
-                  />
-                </FormField>
-                <FormField
-                  label="Certificat du serveur"
-                  hint="Pour un serveur interne dont le certificat n’est pas reconnu (auto-signé). La connexion reste chiffrée, mais l’identité du serveur n’est plus vérifiée."
-                >
-                  <CheckboxControl
-                    label="Accepter un certificat non vérifié"
-                    checked={insecureTls}
-                    onChange={(event) => setInsecureTls(event.target.checked)}
-                  />
-                </FormField>
+                  minRows={3}
+                  placeholder="X-Tenant: acme"
+                  value={headers}
+                  onChange={(value) => {
+                    setHeaders(value);
+                    clear("headers");
+                  }}
+                />
+                <Stack gap="xs">
+                  <Checkbox isSelected={insecureTls} onChange={setInsecureTls}>
+                    Accepter un certificat non vérifié
+                  </Checkbox>
+                  <Text size="meta" tone="muted">
+                    Pour un serveur interne dont le certificat n’est pas reconnu (auto-signé). La connexion reste
+                    chiffrée, mais l’identité du serveur n’est plus vérifiée.
+                  </Text>
+                </Stack>
               </Stack>
             </Disclosure>
-            <FormActions
-              form={formId}
-              submitLabel={adding ? "Ajouter" : "Enregistrer"}
-              pendingLabel="Enregistrement…"
-              pending={pending}
-              cancelLabel={created ? "Terminer" : undefined}
-              onCancel={onCancel}
-            />
+            <Row gap="sm" justify="end">
+              <Button onPress={onCancel} isDisabled={pending}>
+                {created ? "Terminer" : "Annuler"}
+              </Button>
+              <Button type="submit" variant="primary" isPending={pending}>
+                {adding ? "Ajouter" : "Enregistrer"}
+              </Button>
+            </Row>
           </Stack>
         </form>
-      </Section>
+      </ModulePart>
       {created ? null : pages}
-    </Page>
+    </Stack>
   );
 }

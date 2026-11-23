@@ -1,12 +1,12 @@
 import { Bot, Boxes, FolderOpen, KeyRound, ListOrdered, Mic, Palette, ScrollText, Store } from "lucide-react";
 import type { BuiltInTab } from "../../shell/types";
 import { AgentSettings } from "../agentSettings/AgentSettings";
-import { JournalSettings } from "../journal/JournalSettings";
-import { MarketplaceSettings } from "../modules/MarketplaceSettings";
-import { ModulesSettings } from "../modules/ModulesSettings";
+import { useJournalSections } from "../journal/JournalSettings";
+import { useMarketplaceSections } from "../modules/MarketplaceSettings";
+import { useModulesSections } from "../modules/ModulesSettings";
 import { NavigationSettings } from "../navigation/NavigationSettings";
 import { AppearanceSettings, SpaceSettings } from "../space/SpaceSettings";
-import { VaultSettings } from "../vault/VaultSettings";
+import { useVaultSections } from "../vault/VaultSettings";
 import { VoiceSettings } from "../voice/VoiceSettings";
 
 const icon = (Icon: typeof Bot) => <Icon size={15} aria-hidden="true" />;
@@ -34,14 +34,14 @@ export const settingsTabs: BuiltInTab[] = [
     label: "Modules",
     group: "espace",
     icon: icon(Boxes),
-    render: () => <ModulesSettings />,
+    useSections: useModulesSections,
   },
   {
     id: "marketplace",
     label: "Marketplace",
     group: "espace",
     icon: icon(Store),
-    render: () => <MarketplaceSettings />,
+    useSections: useMarketplaceSections,
   },
   {
     id: "appearance",
@@ -57,7 +57,7 @@ export const settingsTabs: BuiltInTab[] = [
     icon: icon(ListOrdered),
     render: () => <NavigationSettings />,
   },
-  { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), render: () => <JournalSettings /> },
+  { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), useSections: useJournalSections },
   {
     id: "agents",
     label: "Agent",
@@ -72,7 +72,7 @@ export const settingsTabs: BuiltInTab[] = [
     label: "Mots de passe et clés",
     group: "alfred",
     icon: icon(KeyRound),
-    render: () => <VaultSettings />,
+    useSections: useVaultSections,
   },
 ];
 

@@ -1,4 +1,4 @@
-/* Modale de formulaire des Réglages : en-tête, corps défilant, actions. Uniquement les variables de `src/ui/styles.css`. */
+/* Modale de formulaire des Réglages : en-tête, corps défilant, actions. Gardée pour `space/ModelSourceSection.tsx` (hors de cette zone). Tokens Socle seulement. */
 .settings-dialog {
   width: min(560px, calc(100vw - 32px));
   overflow: hidden;
@@ -14,7 +14,7 @@
 }
 .settings-dialog__header h2 {
   margin: 0;
-  font-size: var(--font-size-panel);
+  font-size: var(--fs-md);
   font-weight: 600;
   line-height: 20px;
   overflow-wrap: anywhere;
@@ -32,17 +32,4 @@
   justify-content: flex-end;
   padding: 4px 16px;
   border-top: 1px solid var(--line);
-}
-/* Valeur scellée affichée par la coquille (`SecretReveal`) : police à chasse fixe, coupée n’importe où. */
-.secret-reveal__value {
-  display: block;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-  user-select: all;
-}
-.secret-reveal__actions {
-  gap: 8px;
 }

@@ -3,13 +3,12 @@
  * valeur. La boîte dit d’où elle vient, puis la montre sur « Afficher » ou la copie sur « Copier » ; Alfred note au
  * journal qu’elle a été affichée, sans la valeur. Fermée, la valeur est oubliée.
  */
-import { Button, Dialog, Stack, Text } from "@alfred/ui";
 import { Copy, Eye } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Button, Code, Dialog } from "socle-ui";
+import { Stack, Text } from "../../kit";
 import { invoke } from "../../lib/native";
-import { DialogHeader } from "../../shell/DialogHeader";
 import { errorMessage } from "./api";
-import "./settings-dialog.css";
 
 export interface RevealSubject {
   kind: string;
@@ -62,8 +61,6 @@ export function SecretRevealHost() {
 }
 
 function SecretRevealDialog({ request, onClose }: { request: RevealRequest; onClose: (shown: boolean) => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const titleId = useId();
   const [origin, setOrigin] = useState<{ client: string; instance: string } | null>(null);
   const [value, setValue] = useState<string | null>(null);
   const [error, setError] = useState<string>();
@@ -71,8 +68,6 @@ function SecretRevealDialog({ request, onClose }: { request: RevealRequest; onCl
   const shown = useRef(false);
 
   useEffect(() => {
-    const element = dialog.current;
-    if (element && !element.open) element.showModal();
     void invoke<{ client: string; instance: string }>("secrets.describe", {
       subject: request.subject,
       reference: request.ref,
@@ -108,60 +103,62 @@ function SecretRevealDialog({ request, onClose }: { request: RevealRequest; onCl
   };
 
   const name = request.label ? `« ${request.label} »` : "la valeur secrète";
+  const close = () => {
+    // La valeur n’est gardée nulle part une fois la boîte fermée.
+    setValue(null);
+    onClose(shown.current);
+  };
   return (
     <Dialog
-      ref={dialog}
-      className="settings-dialog"
-      aria-labelledby={titleId}
-      onClose={() => {
-        // La valeur n’est gardée nulle part une fois la boîte fermée.
-        setValue(null);
-        onClose(shown.current);
+      isOpen
+      title={`Afficher ${name} ?`}
+      onOpenChange={(open) => {
+        if (!open) close();
       }}
-    >
-      <form method="dialog">
-        <DialogHeader title={`Afficher ${name} ?`} titleId={titleId} dialogRef={dialog} />
-        <div className="settings-dialog__body">
-          <Stack gap="md">
-            <Text>
-              {request.from} veut vous montrer {name}
-              {origin ? `, lue sur le compte ${origin.instance} de ${origin.client}` : ""}. La page ne la voit pas :
-              elle ne s’affiche qu’ici.
-            </Text>
-            {value !== null ? (
-              <output className="secret-reveal__value" aria-label={request.label ?? "Valeur"}>
-                {value}
-              </output>
-            ) : null}
-            {copied ? (
-              <Text size="meta" tone="success">
-                Copiée dans le presse-papiers.
-              </Text>
-            ) : null}
-            {error ? (
-              <div role="alert">
-                <Text tone="danger">{error}</Text>
-              </div>
-            ) : null}
-          </Stack>
-        </div>
-        <footer className="settings-dialog__footer secret-reveal__actions">
-          <Button disabled={Boolean(error)} onClick={() => void copy()}>
-            <Copy size={14} aria-hidden="true" />
+      footer={
+        <>
+          <Button icon={<Copy size={16} aria-hidden="true" />} isDisabled={Boolean(error)} onPress={() => void copy()}>
             Copier
           </Button>
           {value === null ? (
-            <Button variant="primary" disabled={Boolean(error)} onClick={() => void show()}>
-              <Eye size={14} aria-hidden="true" />
+            <Button
+              variant="primary"
+              icon={<Eye size={16} aria-hidden="true" />}
+              isDisabled={Boolean(error)}
+              onPress={() => void show()}
+            >
               Afficher
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => dialog.current?.close()}>
+            <Button variant="primary" onPress={close}>
               Fermer
             </Button>
           )}
-        </footer>
-      </form>
+        </>
+      }
+    >
+      <Stack gap="md">
+        <Text>
+          {`${request.from} veut vous montrer ${name}${origin ? `, lue sur le compte ${origin.instance} de ${origin.client}` : ""}. La page ne la voit pas : elle ne s’affiche qu’ici.`}
+        </Text>
+        {value !== null ? (
+          <output aria-label={request.label ?? "Valeur"}>
+            <Code block label={request.label ?? "Valeur"}>
+              {value}
+            </Code>
+          </output>
+        ) : null}
+        {copied ? (
+          <Text size="meta" tone="success">
+            Copiée dans le presse-papiers.
+          </Text>
+        ) : null}
+        {error ? (
+          <div role="alert">
+            <Text tone="danger">{error}</Text>
+          </div>
+        ) : null}
+      </Stack>
     </Dialog>
   );
 }
