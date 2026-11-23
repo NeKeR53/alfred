@@ -1,0 +1,133 @@
+/* Arbre : lignes denses de 28 px, retrait par niveau, actions visibles au survol et au focus. */
+.al-tree {
+  --tree-indent: 16px;
+  min-width: 0;
+  overflow: auto;
+  font-size: var(--font-size-body);
+}
+.al-tree--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* Une grande arborescence défile dans sa propre hauteur, même hors d’un conteneur `fill`. */
+.al-tree--virtual:not(.al-tree--fill) {
+  max-height: 480px;
+}
+.al-tree__list {
+  box-sizing: border-box;
+  padding: 2px;
+}
+.al-tree__item,
+.al-tree__status {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-inline-end: 4px;
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+.al-tree__item {
+  cursor: default;
+  user-select: none;
+}
+.al-tree__item:hover {
+  background: var(--color-surface);
+}
+.al-tree__item[aria-selected="true"] {
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+.al-tree__item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.al-tree__item[aria-disabled="true"] {
+  color: var(--color-muted);
+}
+.al-tree__toggle {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-muted);
+}
+.al-tree__toggle > svg {
+  transition: transform 120ms ease;
+}
+.al-tree__toggle > svg.is-open {
+  transform: rotate(90deg);
+}
+.al-tree__icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 16px;
+  color: var(--color-muted);
+}
+.al-tree__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.al-tree__meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  text-overflow: ellipsis;
+}
+.al-tree__actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  visibility: hidden;
+}
+.al-tree__item:is(:hover, :focus-within) > .al-tree__actions {
+  visibility: visible;
+}
+.al-tree__status {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+  gap: 8px;
+}
+.al-tree__status--error {
+  color: var(--color-danger-ink);
+}
+.al-tree__status > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.al-tree__retry {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font: inherit;
+}
+.al-tree__retry:hover {
+  background: var(--color-surface);
+}
+@media (prefers-reduced-motion: reduce) {
+  .al-tree__toggle > svg {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .al-tree__item[aria-selected="true"] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  .al-tree__item[aria-selected="true"] :is(.al-tree__icon, .al-tree__meta, .al-tree__toggle) {
+    color: HighlightText;
+  }
+  .al-tree__item:focus-visible {
+    outline: 2px solid CanvasText;
+  }
+}

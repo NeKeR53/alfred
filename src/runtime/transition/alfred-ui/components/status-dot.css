@@ -1,0 +1,37 @@
+.status-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: var(--color-muted);
+  vertical-align: middle;
+}
+.status-dot--success {
+  background: var(--color-success);
+}
+.status-dot--warning {
+  background: var(--color-warning);
+}
+.status-dot--danger {
+  background: var(--color-danger);
+}
+.status-dot--pending {
+  border-color: var(--color-muted);
+  background: transparent;
+}
+@media (forced-colors: active) {
+  .status-dot {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+  .status-dot--neutral {
+    background: GrayText;
+  }
+  .status-dot--pending {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+}

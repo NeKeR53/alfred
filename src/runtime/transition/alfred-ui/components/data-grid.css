@@ -1,0 +1,347 @@
+/* Grille (`variant="grid"`) : une seule zone de défilement ; l’en-tête et les colonnes figées y restent collés. */
+.al-datagrid-frame {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.al-datagrid-scroll {
+  min-width: 0;
+  max-height: 480px;
+  overflow: auto;
+}
+.al-table-frame--fill > .al-datagrid-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+/* Disposition fixe : chaque colonne garde sa largeur (`width`, 160 px par défaut) et le texte trop long se termine par
+   « … » ; la table fait la somme des colonnes, au moins toute la largeur, et défile au-delà. */
+.al-datagrid {
+  width: 1px;
+  min-width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.al-datagrid thead th,
+.al-datagrid thead td {
+  position: sticky;
+  z-index: 2;
+  background: var(--color-surface);
+}
+.al-datagrid thead tr:first-child > th {
+  top: 0;
+  height: 32px;
+}
+.al-datagrid thead tr.al-table__filters > td {
+  top: 32px;
+}
+.al-datagrid thead tr:last-child > :is(th, td) {
+  border-bottom: 1px solid var(--line);
+}
+.al-datagrid td {
+  height: 36px;
+  min-height: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--color-bg);
+}
+.al-datagrid tbody tr:last-child td {
+  border-bottom: 1px solid var(--line);
+}
+.al-datagrid tr[aria-selected="true"] > td {
+  background: color-mix(in oklch, var(--color-primary) 8%, var(--color-bg));
+}
+.al-datagrid .al-table__row--clickable:hover > td {
+  background: var(--color-surface);
+}
+.al-datagrid__frozen {
+  position: sticky;
+  z-index: 1;
+}
+.al-datagrid thead .al-datagrid__frozen {
+  z-index: 3;
+}
+.al-datagrid__frozen--edge {
+  border-right: 1px solid var(--line);
+}
+.al-datagrid__cell:focus-visible,
+.al-datagrid__check:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.al-datagrid__cell--check {
+  padding: 0;
+  text-align: center;
+}
+.al-datagrid__check {
+  width: 100%;
+  height: 100%;
+  display: inline-grid;
+  place-items: center;
+  cursor: default;
+}
+.al-datagrid__check:focus-visible {
+  outline-offset: -4px;
+  border-radius: var(--radius-control);
+}
+.al-datagrid__check-on {
+  color: var(--color-success-ink);
+}
+.al-datagrid__check-off {
+  color: var(--color-muted);
+}
+.al-datagrid__check[aria-disabled="true"] {
+  opacity: 0.55;
+}
+.al-datagrid__cell--editable:not(.al-datagrid__cell--check):hover {
+  box-shadow: inset 0 0 0 1px var(--control-border);
+}
+.al-datagrid__cell--editing {
+  padding: 0 2px;
+  overflow: visible;
+}
+.al-datagrid__input {
+  width: 100%;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 8px;
+  font: inherit;
+}
+/* Refus d’une saisie, sous la grille : jamais rogné par la zone qui défile. */
+.al-datagrid__error {
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--color-danger-ink);
+  font-size: var(--font-size-meta);
+}
+.al-datagrid__cell--error {
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+}
+.al-datagrid__cell--pending {
+  color: var(--color-muted);
+}
+.al-datagrid__spacer > td {
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+.al-datagrid__no-match {
+  white-space: normal;
+}
+@media (forced-colors: active) {
+  .al-datagrid__cell:focus-visible,
+  .al-datagrid__check:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .al-datagrid tr[aria-selected="true"] > td {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+  .al-datagrid__cell--error {
+    outline: 1px dashed CanvasText;
+    outline-offset: -2px;
+  }
+  .al-datagrid__check-on,
+  .al-datagrid__check-off {
+    color: CanvasText;
+  }
+}
+/* Lignes doubles (`rowHeight="double"`) : un nom et sa précision dessous, chacun sur sa ligne. */
+.al-datagrid-frame--double .al-datagrid td {
+  height: 44px;
+}
+/* Une pastille d’état dans une cellule de grille se termine par « … » plutôt que d’être coupée net (comme OneApp). */
+.al-datagrid td .state-label {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  line-height: 20px;
+}
+/* `appearance="plain"` : sans cadre ni coins, en-tête non teinté, comme les tableaux de OneApp. */
+.al-datagrid-frame--plain {
+  border: 0;
+  border-radius: 0;
+}
+.al-datagrid-frame--plain .al-datagrid :is(thead th, thead td) {
+  background: var(--color-bg);
+  color: var(--color-muted);
+  font-weight: 400;
+}
+/* Ligne de titre d’un groupe (`groups`) : sur toute la largeur, teintée, chevron, nom et nombre de lignes. */
+.al-datagrid tr.al-datagrid__group > td {
+  height: 32px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.al-datagrid-frame--double .al-datagrid tr.al-datagrid__group > td {
+  height: 36px;
+}
+.al-datagrid__group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.al-datagrid__group-name {
+  overflow: hidden;
+  color: var(--color-ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.al-datagrid__group-count {
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+}
+.al-datagrid tr.al-datagrid__group > td:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+/* Case de sélection (`selection`) : une case à cocher, et « Tout sélectionner » dans l’en-tête. */
+.al-datagrid__box {
+  width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in oklch, var(--color-muted) 60%, transparent);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-on-brand);
+}
+.al-datagrid__box--on {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+.al-datagrid__select-all {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+/* `appearance="plain"` : un trait court entre les en-têtes (le séparateur de colonnes de OneApp), et des cases
+   collées aux bords du tableau. */
+.al-datagrid-frame--plain .al-datagrid thead tr:first-child > th {
+  position: sticky;
+}
+.al-datagrid-frame--plain .al-datagrid thead tr:first-child > th:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 1px;
+  height: 12px;
+  transform: translateY(-50%);
+  background: color-mix(in oklch, var(--color-muted) 24%, transparent);
+}
+.al-datagrid-frame--plain .al-datagrid :is(th, td):first-child,
+.al-datagrid-frame--plain .al-datagrid :is(th, td):first-child > :is(button, .al-table__header) {
+  padding-left: 0;
+}
+.al-datagrid-frame--plain .al-datagrid :is(th, td):last-child,
+.al-datagrid-frame--plain .al-datagrid :is(th, td):last-child > :is(button, .al-table__header) {
+  padding-right: 0;
+}
+/* `density="compact"` : lignes de 25 px (41 px en double), en-tête de 28 px, cases à 4 × 8 px. */
+.al-datagrid-frame--compact .al-datagrid td {
+  height: 25px;
+  padding: 4px 8px;
+}
+.al-datagrid-frame--compact.al-datagrid-frame--double .al-datagrid td {
+  height: 41px;
+}
+.al-datagrid-frame--compact .al-datagrid thead tr:first-child > th {
+  height: 28px;
+}
+.al-datagrid-frame--compact .al-datagrid th > :is(button, .al-table__header) {
+  min-height: 28px;
+  padding: 0 8px;
+}
+.al-datagrid-frame--compact .al-datagrid thead tr.al-table__filters > td {
+  top: 28px;
+}
+/* Groupe `appearance: "text"` : titre en gras sans teinte ni chevron, « · 2 variables » atténué, filet dessous. */
+.al-datagrid tr.al-datagrid__group--text > td {
+  height: 32px;
+  padding: 12px 0 4px;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  vertical-align: bottom;
+}
+.al-datagrid tr.al-datagrid__group--text .al-datagrid__group-title {
+  gap: 4px;
+}
+.al-datagrid tr.al-datagrid__group--text .al-datagrid__group-count {
+  font-size: inherit;
+  font-weight: 400;
+}
+/* Cases teintées (`tone`) : `fill` teinte toute la case ; `frame` dessine un cadre arrondi teinté dans la case. */
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-danger {
+  background: color-mix(in oklch, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
+}
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-warning {
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+  color: var(--color-warning-ink);
+}
+.al-datagrid td.al-datagrid__cell--fill.al-datagrid__cell--tone-success {
+  background: color-mix(in oklch, var(--color-success) 8%, transparent);
+}
+.al-datagrid td.al-datagrid__cell--frame {
+  padding: 4px;
+}
+.al-datagrid__frame {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.al-datagrid__cell--tone-danger > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-danger) 60%, transparent);
+  background: color-mix(in oklch, var(--color-danger) 10%, transparent);
+}
+.al-datagrid__cell--tone-warning > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-warning) 60%, transparent);
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+}
+.al-datagrid__cell--tone-success > .al-datagrid__frame {
+  border-color: color-mix(in oklch, var(--color-success) 60%, transparent);
+  background: color-mix(in oklch, var(--color-success) 10%, transparent);
+}
+.al-datagrid__cell--tone-neutral > .al-datagrid__frame {
+  border-color: var(--line);
+}
+@media (forced-colors: active) {
+  .al-datagrid td[class*="al-datagrid__cell--tone-"]:not(.al-datagrid__cell--tone-neutral) {
+    outline: 1px solid CanvasText;
+    outline-offset: -2px;
+  }
+}
+
+/* Case qui ouvre un menu (`column.menu`) : un cadre fin au survol et quand le menu est ouvert ; sans menu, inerte. */
+.al-datagrid td.al-datagrid__cell--menu {
+  cursor: pointer;
+}
+.al-datagrid td.al-datagrid__cell--menu:hover > .al-datagrid__frame,
+.al-datagrid td.al-datagrid__cell--menu[aria-expanded="true"] > .al-datagrid__frame {
+  border-color: var(--line);
+}
+.al-datagrid td.al-datagrid__cell--menu.al-datagrid__cell--tone-warning:hover > .al-datagrid__frame,
+.al-datagrid td.al-datagrid__cell--menu.al-datagrid__cell--tone-danger:hover > .al-datagrid__frame {
+  border-color: currentColor;
+}
+.al-datagrid td.al-datagrid__cell--inert {
+  cursor: default;
+}

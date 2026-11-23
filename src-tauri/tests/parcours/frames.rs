@@ -36,7 +36,8 @@ async fn documents_hotes_modules_transpiles_et_chemins_refuses() {
         for package in ["\"react\"", "\"socle-ui\"", "\"socle-ui/markdown\"", "\"@alfred/sdk\"", "\"@alfred/kit\"", "\"lucide-react\""] {
             assert!(host.body.contains(package), "{package} absent de la carte d’imports");
         }
-        assert!(!host.body.contains("@alfred/ui"), "l’ancienne bibliothèque n’est plus servie : {}", host.body);
+        // Transition : l’ancienne bibliothèque reste servie aux pages pas encore migrées vers socle-ui.
+        assert!(host.body.contains("\"@alfred/ui\""), "{}", host.body);
     }
     // L’environnement d’exécution est généré (`pnpm build:runtime`) : vérifié seulement s’il est construit.
     if std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/sdk.js").is_file() {

@@ -1,0 +1,124 @@
+/* Éditeur Markdown : barre de mise en forme au-dessus, éditeur et aperçu chacun dans sa zone de défilement. */
+.ui-markdown-editor {
+  --ui-markdown-editor-height: min(720px, max(320px, calc(100dvh - 200px)));
+  height: var(--ui-markdown-editor-height);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  container-type: inline-size;
+}
+.ui-markdown-editor--fill {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ui-markdown-editor:has(.cm-editor.cm-focused) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.ui-markdown-editor__bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
+}
+.ui-markdown-editor__bar > .settings-editor-tabs {
+  align-self: stretch;
+  margin-block: -4px;
+}
+.ui-markdown-editor__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+.ui-markdown-editor__tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.ui-markdown-editor__separator {
+  width: 1px;
+  height: 20px;
+  margin-inline: 4px;
+  background: var(--line);
+}
+.ui-markdown-editor__status {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  white-space: nowrap;
+}
+.ui-markdown-editor__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.ui-markdown-editor--split .ui-markdown-editor__body {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* Trop étroit pour deux colonnes : l’aperçu passe sous l’éditeur. */
+@container (width < 560px) {
+  .ui-markdown-editor--split .ui-markdown-editor__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ui-markdown-editor--split .ui-markdown-editor__preview {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+}
+.ui-markdown-editor__editor {
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-body);
+}
+.ui-markdown-editor__editor[hidden] {
+  display: none;
+}
+.ui-markdown-editor__preview {
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-size: var(--font-size-body);
+  line-height: 1.55;
+}
+.ui-markdown-editor--split .ui-markdown-editor__preview {
+  border-left: 1px solid var(--line);
+  background: var(--color-surface);
+}
+.ui-markdown-editor__preview:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.ui-markdown-editor__empty {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+@media (forced-colors: active) {
+  .ui-markdown-editor:has(.cm-editor.cm-focused) {
+    border-color: Highlight;
+    box-shadow: none;
+    outline: 2px solid Highlight;
+  }
+  .ui-markdown-editor__preview:focus-visible {
+    outline-color: Highlight;
+  }
+  .ui-markdown-editor__separator {
+    background: CanvasText;
+  }
+}

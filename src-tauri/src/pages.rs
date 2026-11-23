@@ -61,7 +61,7 @@ fn host_document(entry: &str, prefix: &str, origin: &str) -> PageResponse {
 <meta charset="utf-8">
 <meta http-equiv="x-dns-prefetch-control" content="off">
 <link rel="stylesheet" href="{prefix}/runtime/alfred.css">
-<script type="importmap">{{"imports":{{"react":"{prefix}/runtime/react.js","react-dom":"{prefix}/runtime/react-dom.js","react-dom/client":"{prefix}/runtime/react-dom-client.js","react/jsx-runtime":"{prefix}/runtime/jsx-runtime.js","lucide-react":"{prefix}/runtime/lucide.js","socle-ui":"{prefix}/runtime/socle.js","socle-ui/markdown":"{prefix}/runtime/socle-markdown.js","socle-ui/markdown-editor":"{prefix}/runtime/socle-markdown-editor.js","@alfred/sdk":"{prefix}/runtime/sdk.js","@alfred/kit":"{prefix}/runtime/kit.js"}}}}</script>
+<script type="importmap">{{"imports":{{"react":"{prefix}/runtime/react.js","react-dom":"{prefix}/runtime/react-dom.js","react-dom/client":"{prefix}/runtime/react-dom-client.js","react/jsx-runtime":"{prefix}/runtime/jsx-runtime.js","lucide-react":"{prefix}/runtime/lucide.js","socle-ui":"{prefix}/runtime/socle.js","socle-ui/markdown":"{prefix}/runtime/socle-markdown.js","socle-ui/markdown-editor":"{prefix}/runtime/socle-markdown-editor.js","@alfred/sdk":"{prefix}/runtime/sdk.js","@alfred/kit":"{prefix}/runtime/kit.js","@alfred/ui":"{prefix}/runtime/ui.js"}}}}</script>
 </head>
 <body class="alfred-frame">
 <div id="root"></div>
@@ -202,7 +202,8 @@ mod tests {
         assert!(String::from_utf8(page.body).unwrap().contains(r#"x-dns-prefetch-control" content="off""#));
     }
 
-    /// La carte d’imports relie chaque paquet admis par le transpileur à son fichier du runtime, et plus `@alfred/ui`.
+    /// La carte d’imports relie chaque paquet admis par le transpileur à son fichier du runtime, et `@alfred/ui` en
+    /// transition pour les pages pas encore migrées.
     #[test]
     fn the_import_map_serves_socle_ui_and_every_allowed_package() {
         let body = String::from_utf8(host_document("page-host", "", "alfred-page:").body).unwrap();
@@ -210,7 +211,7 @@ mod tests {
             assert!(body.contains(&format!("\"{package}\":")), "{package} absent de la carte d’imports");
         }
         assert!(body.contains(r#""socle-ui":"/runtime/socle.js""#), "{body}");
-        assert!(!body.contains("@alfred/ui"), "{body}");
+        assert!(body.contains(r#""@alfred/ui":"/runtime/ui.js""#), "{body}");
     }
 
     /// Une librairie installée se charge par la clé du module, et une page l’importe par son nom.

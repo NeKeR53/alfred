@@ -1,0 +1,111 @@
+/* Lignes de réglage (`SettingRow`, `SettingRows`). Uniquement les variables de `styles.css`. */
+.setting-rows {
+  display: flex;
+  flex-direction: column;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 8px 0;
+}
+/* Un trait entre deux lignes, qu’elles soient posées directement ou enveloppées (lignes en retrait…). */
+:where(.setting-rows > * + .setting-row, .setting-rows > * + * > .setting-row) {
+  border-top: 1px solid var(--line);
+}
+.setting-row__text {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.setting-row__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-ink);
+  font-size: var(--font-size-body);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.setting-row__description {
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.setting-row__control {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+/* Un champ ou une liste à droite garde une largeur confortable. */
+/* Une liste à droite s’aligne sur la colonne des contrôles : 240 px, comme un champ. */
+.setting-row__control > [data-slot="native-select-wrapper"][data-width="auto"] {
+  width: min(240px, 36vw);
+  min-width: 0;
+}
+.setting-row__control > .setting-row__field {
+  width: min(240px, 36vw);
+}
+@media (max-width: 720px) {
+  .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .setting-row__control {
+    justify-content: flex-start;
+  }
+}
+.setting-row__inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.setting-row__error {
+  color: var(--color-danger-ink);
+}
+.setting-row--nested > .setting-row {
+  padding-left: 24px;
+}
+/* Saisie libre sur sa ligne : le champ, puis « Annuler » et « Enregistrer » quand la valeur a changé. */
+.setting-row__control > form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.setting-row__control > .ui-input:not([data-width]),
+.setting-row__control > form > .ui-input:not([data-width]) {
+  width: min(240px, 36vw);
+}
+/* Élément d’une liste réglée ici (`SettingsPage`, réglage `item`) : nom en gras et code, explication, puis étiquettes. */
+.setting-row:has(.setting-item__tags, .setting-item__text) .setting-row__title {
+  font-weight: 600;
+}
+.setting-row__description:has(.setting-item__tags) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.setting-item__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.setting-item__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}

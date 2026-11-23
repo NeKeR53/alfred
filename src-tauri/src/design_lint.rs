@@ -447,7 +447,7 @@ pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
         if source_name == crate::transpile::RETIRED_UI {
             let names: Vec<_> = named().collect();
             if names.is_empty() {
-                lint.report(import.span.start, "`@alfred/ui` n’existe plus : importer `socle-ui` (DESIGN.md, section 15).".to_string());
+                lint.report(import.span.start, "`@alfred/ui` est en transition : à migrer vers socle-ui (DESIGN.md, section 15).".to_string());
             }
             for (_, imported, offset) in names {
                 let instead = UI_REPLACEMENTS
@@ -455,7 +455,7 @@ pub fn lint(source: &str, settings: bool) -> Vec<Diagnostic> {
                     .find(|(old, _)| *old == imported)
                     .map(|(_, instead)| (*instead).to_string())
                     .unwrap_or_else(|| format!("`{imported}` de `socle-ui` (lire sa spec : options différentes)"));
-                lint.report(offset, format!("`@alfred/ui` n’existe plus : `{imported}` devient {instead} (DESIGN.md, section 15)."));
+                lint.report(offset, format!("`@alfred/ui` est en transition : à migrer vers socle-ui ; `{imported}` devient {instead} (DESIGN.md, section 15)."));
             }
             continue;
         }
@@ -515,6 +515,7 @@ export default function P() {
 }
 "#;
         let found = messages(page);
+        assert!(found.iter().all(|m| m.contains("à migrer vers socle-ui")), "{found:?}");
         assert!(found.iter().any(|m| m.contains("`CollectionPage` devient `ListPage`")), "{found:?}");
         assert!(found.iter().any(|m| m.contains("`openForm` devient `useOpenForm()`")), "{found:?}");
         assert!(found.iter().any(|m| m.contains("`Pagination` devient `pagination` de `ListPage`")), "{found:?}");

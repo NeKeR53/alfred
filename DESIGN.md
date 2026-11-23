@@ -12,7 +12,7 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 
 1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `DetailPanel` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`. `Page` et `PageSection` seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (section 2).
 2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Dialog` et à l’action d’un `EmptyState`.
-3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
+3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` ne s’importe plus dans une page nouvelle : elle reste servie en transition aux pages anciennes, que `check` signale « à migrer vers socle-ui » (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
 5. **Aucun style propre.** Ni `style`, ni `className`, ni `<style>`, ni balise HTML (`<div>`, `<span>`, `<button>`…), ni couleur en dur (`#3366ff`, `rgb(…)`). Une page règle les options des composants (`variant`, `size`, `tone`, `width`, `density`). L’écart entre deux composants vient de `Stack` et `Row` de `@alfred/kit`.
 6. **Aucun doublon de la coquille.** Le nom de la page, les onglets, la cloche, le bouton du panneau et la navigation sont dessinés par Alfred. Une page ne rend ni `AppShell`, ni `Sidebar`, ni `NotificationCenter`, ni `SettingsPage`.
@@ -626,7 +626,7 @@ export default function Semaine() {
 
 ## 15. Correspondance avec l’ancienne `@alfred/ui`
 
-Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La réécrire ainsi :
+Une page écrite avant socle-ui compile encore : `@alfred/ui` reste servie en transition (depuis le 2026-11-23), et `check` la signale « à migrer vers socle-ui ». Toute page qu’on touche se réécrit ainsi :
 
 | `@alfred/ui` | socle-ui |
 |---|---|

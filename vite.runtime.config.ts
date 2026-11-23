@@ -9,7 +9,7 @@ const entry = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 /**
  * Environnement d’exécution des pages et des fonctions : des modules ES aux noms fixes, que la carte d’imports du
  * document hôte relie aux imports nus (`react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`,
- * `@alfred/sdk`, `@alfred/kit`, `lucide-react`). Rust les embarque et les sert par le protocole des pages.
+ * `@alfred/sdk`, `@alfred/kit`, `lucide-react`, et `@alfred/ui` en transition). Rust les embarque et les sert par le protocole des pages.
  */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -33,6 +33,9 @@ export default defineConfig({
         "socle-markdown": entry("./src/runtime/generated/socle-markdown.js"),
         "socle-markdown-editor": entry("./src/runtime/generated/socle-markdown-editor.js"),
         kit: entry("./src/kit/index.tsx"),
+        // Transition (2026-11-23) : l’ancienne `@alfred/ui`, pour les pages de modules pas encore passées à socle-ui.
+        // À retirer quand les espaces sont migrés.
+        ui: entry("./src/runtime/transition/alfred-ui/index.ts"),
         sdk: entry("./src/sdk/index.ts"),
         "page-host": entry("./src/runtime/pageHost.tsx"),
         "function-host": entry("./src/runtime/functionHost.ts"),
@@ -60,7 +63,7 @@ export default defineConfig({
         ) {
           return !generated;
         }
-        if (id === "@alfred/sdk" || id === "@alfred/kit") return true;
+        if (id === "@alfred/sdk" || id === "@alfred/kit" || id === "@alfred/ui") return true;
         return false;
       },
       output: { chunkFileNames: "chunks/[name]-[hash].js" },

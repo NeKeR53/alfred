@@ -1,0 +1,32 @@
+/* Volet flottant ancré à son bouton : surface flottante, sans voile sur la page. */
+.anchored-panel {
+  position: fixed;
+  z-index: var(--z-popover);
+  max-height: calc(100vh - 16px);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-floating);
+  font-size: var(--font-size-body);
+}
+.anchored-panel--refused {
+  animation: anchored-panel-refused 180ms ease-out;
+}
+@keyframes anchored-panel-refused {
+  0%,
+  100% {
+    scale: 1;
+  }
+  40% {
+    scale: 1.015;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .anchored-panel--refused {
+    animation: none;
+  }
+}

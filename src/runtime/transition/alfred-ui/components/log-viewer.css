@@ -1,0 +1,471 @@
+/* Journal virtualisé : barre fixe, lignes à chasse fixe qui défilent, barre d’état. */
+.ui-log-viewer {
+  --ui-log-viewer-height: min(720px, max(360px, calc(100dvh - 200px)));
+  height: var(--ui-log-viewer-height);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+.ui-log-viewer--fill {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ui-log-viewer__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-bg);
+  font-size: var(--font-size-secondary);
+}
+.ui-log-viewer__search.page-toolbar-search {
+  width: 240px;
+  min-width: 120px;
+  flex: 0 1 240px;
+}
+.ui-log-viewer__matches {
+  min-width: 0;
+  padding: 0 4px;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-log-viewer__spacer {
+  flex: 1 1 auto;
+}
+.ui-log-viewer__bar .icon-button[aria-pressed="true"] {
+  background: color-mix(in oklch, var(--color-primary) 14%, var(--color-bg));
+  color: var(--color-primary-strong);
+}
+.ui-log-viewer__empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.ui-log-viewer__viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-secondary);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  tab-size: 4;
+}
+.ui-log-viewer__viewport[hidden] {
+  display: none;
+}
+.ui-log-viewer__viewport:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.ui-log-viewer__content {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+.ui-log-viewer--wrap .ui-log-viewer__content {
+  width: 100%;
+}
+.ui-log-viewer__window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 100%;
+  padding-bottom: 4px;
+  will-change: transform;
+}
+.ui-log-viewer--wrap .ui-log-viewer__window {
+  width: 100%;
+}
+.ui-log-viewer__line {
+  display: flex;
+  min-height: 18px;
+  padding-right: 12px;
+  white-space: pre;
+}
+.ui-log-viewer--wrap .ui-log-viewer__line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Numéro et heure en pseudo-éléments : ils ne se sélectionnent ni ne se copient avec le texte. */
+.ui-log-viewer__line::before {
+  content: attr(data-number);
+  flex: none;
+  width: var(--ui-log-gutter, 6ch);
+  padding: 0 8px 0 0;
+  border-left: 2px solid transparent;
+  color: var(--color-muted);
+  text-align: right;
+  user-select: none;
+}
+.ui-log-viewer__line[data-time]::after {
+  content: attr(data-time);
+  order: -1;
+  flex: none;
+  padding-right: 12px;
+  color: var(--color-muted);
+  user-select: none;
+}
+.ui-log-viewer__line[data-time]::before {
+  order: -2;
+}
+.ui-log-viewer__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ui-log-viewer__line.is-stderr::before {
+  border-left-color: var(--color-danger);
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__line.is-match {
+  background: color-mix(in oklch, var(--color-warning) 10%, transparent);
+}
+.ui-log-viewer__line.is-current {
+  background: color-mix(in oklch, var(--color-primary) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+.ui-log-viewer__line mark {
+  border-radius: 2px;
+  background: color-mix(in oklch, var(--color-warning) 45%, transparent);
+  color: inherit;
+}
+.ui-log-viewer__cut {
+  color: var(--color-muted);
+  font-style: italic;
+}
+.ui-log-viewer__status {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 32px;
+  padding: 2px 8px 2px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--color-bg);
+  color: var(--color-muted);
+  font-size: var(--font-size-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.ui-log-viewer__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-log-viewer__state--danger {
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__paused {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--color-ink);
+}
+.ui-log-viewer__resume[data-slot="button"] {
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--font-size-secondary);
+}
+
+/* Styles ANSI : les couleurs viennent de la palette du thème (ansi.css). */
+.ui-log-viewer .is-bold {
+  font-weight: 600;
+}
+.ui-log-viewer .is-dim {
+  opacity: 0.72;
+}
+.ui-log-viewer .is-italic {
+  font-style: italic;
+}
+.ui-log-viewer .is-underline {
+  text-decoration: underline;
+}
+.ui-log-viewer .is-strike {
+  text-decoration: line-through;
+}
+.ui-log-viewer .is-underline.is-strike {
+  text-decoration: underline line-through;
+}
+.ui-log-viewer .is-inverse {
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+.ui-log-viewer .ui-ansi-fg-0 {
+  color: var(--ui-ansi-0);
+}
+.ui-log-viewer .ui-ansi-fg-1 {
+  color: var(--ui-ansi-1);
+}
+.ui-log-viewer .ui-ansi-fg-2 {
+  color: var(--ui-ansi-2);
+}
+.ui-log-viewer .ui-ansi-fg-3 {
+  color: var(--ui-ansi-3);
+}
+.ui-log-viewer .ui-ansi-fg-4 {
+  color: var(--ui-ansi-4);
+}
+.ui-log-viewer .ui-ansi-fg-5 {
+  color: var(--ui-ansi-5);
+}
+.ui-log-viewer .ui-ansi-fg-6 {
+  color: var(--ui-ansi-6);
+}
+.ui-log-viewer .ui-ansi-fg-7 {
+  color: var(--ui-ansi-7);
+}
+.ui-log-viewer .ui-ansi-fg-8 {
+  color: var(--ui-ansi-8);
+}
+.ui-log-viewer .ui-ansi-fg-9 {
+  color: var(--ui-ansi-9);
+}
+.ui-log-viewer .ui-ansi-fg-10 {
+  color: var(--ui-ansi-10);
+}
+.ui-log-viewer .ui-ansi-fg-11 {
+  color: var(--ui-ansi-11);
+}
+.ui-log-viewer .ui-ansi-fg-12 {
+  color: var(--ui-ansi-12);
+}
+.ui-log-viewer .ui-ansi-fg-13 {
+  color: var(--ui-ansi-13);
+}
+.ui-log-viewer .ui-ansi-fg-14 {
+  color: var(--ui-ansi-14);
+}
+.ui-log-viewer .ui-ansi-fg-15 {
+  color: var(--ui-ansi-15);
+}
+.ui-log-viewer .ui-ansi-bg-0 {
+  --ui-log-bg: var(--ui-ansi-0);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-1 {
+  --ui-log-bg: var(--ui-ansi-1);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-2 {
+  --ui-log-bg: var(--ui-ansi-2);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-3 {
+  --ui-log-bg: var(--ui-ansi-3);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-4 {
+  --ui-log-bg: var(--ui-ansi-4);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-5 {
+  --ui-log-bg: var(--ui-ansi-5);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-6 {
+  --ui-log-bg: var(--ui-ansi-6);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-7 {
+  --ui-log-bg: var(--ui-ansi-7);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-8 {
+  --ui-log-bg: var(--ui-ansi-8);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-9 {
+  --ui-log-bg: var(--ui-ansi-9);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-10 {
+  --ui-log-bg: var(--ui-ansi-10);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-11 {
+  --ui-log-bg: var(--ui-ansi-11);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-12 {
+  --ui-log-bg: var(--ui-ansi-12);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-13 {
+  --ui-log-bg: var(--ui-ansi-13);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-14 {
+  --ui-log-bg: var(--ui-ansi-14);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+.ui-log-viewer .ui-ansi-bg-15 {
+  --ui-log-bg: var(--ui-ansi-15);
+  background: color-mix(in oklch, var(--ui-log-bg) 24%, transparent);
+}
+/* Vidéo inverse d’une couleur : l’aplat plein, le texte dans la couleur du fond. */
+.ui-log-viewer .is-inverse[class*="ui-ansi-bg-"] {
+  background: var(--ui-log-bg);
+  color: var(--color-surface);
+}
+
+@media (forced-colors: active) {
+  .ui-log-viewer,
+  .ui-log-viewer__bar,
+  .ui-log-viewer__status {
+    border-color: CanvasText;
+  }
+  .ui-log-viewer__viewport:focus-visible {
+    outline-color: Highlight;
+  }
+  .ui-log-viewer__line.is-current {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+  .ui-log-viewer__line mark {
+    background: Mark;
+    color: MarkText;
+    forced-color-adjust: none;
+  }
+  .ui-log-viewer__line.is-stderr::before {
+    border-left-color: CanvasText;
+  }
+  .ui-log-viewer__bar .icon-button[aria-pressed="true"] {
+    outline: 1px solid Highlight;
+  }
+}
+
+/* Journal à niveaux (`levels`) : erreurs et alertes teintées, liste des erreurs à droite, compteurs. */
+.ui-log-viewer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.ui-log-viewer__body[hidden] {
+  display: none;
+}
+.ui-log-viewer__body > .ui-log-viewer__viewport,
+.ui-log-viewer__body > .ui-log-viewer__empty {
+  min-width: 0;
+}
+.ui-log-viewer__line.is-error .ui-log-viewer__text {
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__line.is-warning .ui-log-viewer__text {
+  color: var(--color-warning-ink);
+}
+.ui-log-viewer__level-count {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ui-log-viewer__actions,
+.ui-log-viewer__extra {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-log-viewer__extra {
+  margin-left: auto;
+}
+.ui-log-viewer__paused + .ui-log-viewer__extra {
+  margin-left: 0;
+}
+.ui-log-viewer__count--error {
+  color: var(--color-danger-ink);
+}
+.ui-log-viewer__count--warning {
+  color: var(--color-warning-ink);
+}
+.ui-log-viewer__errors {
+  flex: 0 0 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+  padding: 8px;
+  border-left: 1px solid var(--line);
+  background: var(--color-bg);
+  font-size: var(--font-size-secondary);
+}
+.ui-log-viewer__errors h2 {
+  margin: 0 0 4px;
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+}
+.ui-log-viewer__errors ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-log-viewer__errors button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-log-viewer__errors button:hover {
+  background: var(--color-hover, color-mix(in oklch, var(--color-ink) 6%, transparent));
+}
+.ui-log-viewer__errors button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+.ui-log-viewer__errors small {
+  color: var(--color-muted);
+}
+.ui-log-viewer__errors code {
+  overflow: hidden;
+  color: var(--color-danger-ink);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-log-viewer__errors p {
+  margin: 4px 0 0;
+  color: var(--color-muted);
+}
+/* Avec des outils de page (niveaux, nombre de lignes, actions), la barre passe sur deux lignes plutôt que de tasser. */
+.ui-log-viewer__bar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.ui-log-viewer__bar > .choice-group {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.ui-log-viewer__bar .choice-button--label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-log-viewer__bar > .form-field--inline {
+  flex: none;
+}
+.ui-log-viewer__bar > .form-field {
+  width: auto;
+}
+.ui-log-viewer__bar > .form-field > [data-slot="field-label"] {
+  flex: none;
+}

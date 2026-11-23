@@ -1,0 +1,287 @@
+/* Différences : une barre fixe au-dessus, les rangées dans leur propre zone de défilement (seules les visibles sont
+ * dessinées). Chaque rangée a une hauteur fixe, que DiffView.tsx reprend (ROW_HEIGHT). */
+.ui-diff {
+  --ui-diff-height: min(720px, max(360px, calc(100dvh - 200px)));
+  --ui-diff-removed: color-mix(in oklch, var(--color-danger) 9%, var(--color-bg));
+  --ui-diff-removed-word: color-mix(in oklch, var(--color-danger) 32%, var(--color-bg));
+  --ui-diff-added: color-mix(in oklch, var(--color-success) 11%, var(--color-bg));
+  --ui-diff-added-word: color-mix(in oklch, var(--color-success) 36%, var(--color-bg));
+  --ui-diff-gutter: calc(var(--ui-diff-digits, 2ch) + 16px);
+  /* La hauteur du contenu, jusqu’au plafond : un petit diff ne laisse pas de vide. */
+  max-height: var(--ui-diff-height);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+.ui-diff--fill {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ui-diff__bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-surface);
+  font-size: var(--font-size-secondary);
+}
+.ui-diff__summary {
+  min-width: 0;
+  margin-right: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--color-ink);
+  font-weight: 500;
+}
+.ui-diff__counts {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.ui-diff__count-added {
+  color: var(--color-success-ink);
+}
+.ui-diff__count-removed {
+  color: var(--color-danger-ink);
+}
+.ui-diff__scroller {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-ligatures: none;
+}
+/* Le focus du diff se voit sur son cadre : les rangées couvriraient un contour intérieur. */
+.ui-diff__scroller:focus-visible {
+  outline: none;
+}
+.ui-diff:has(.ui-diff__scroller:focus-visible) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.ui-diff__content {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+.ui-diff__window {
+  position: absolute;
+  inset: 0 0 auto;
+}
+.ui-diff__row {
+  position: relative;
+  height: 20px;
+  display: grid;
+  align-items: stretch;
+  white-space: pre;
+  tab-size: 4;
+}
+.ui-diff--unified .ui-diff__line {
+  grid-template-columns: var(--ui-diff-gutter) var(--ui-diff-gutter) 20px minmax(calc(var(--ui-diff-left) + 16px), 1fr);
+}
+.ui-diff__pair {
+  grid-template-columns:
+    var(--ui-diff-gutter) minmax(calc(var(--ui-diff-left) + 36px), 1fr)
+    var(--ui-diff-gutter) minmax(calc(var(--ui-diff-right) + 36px), 1fr);
+}
+.ui-diff__number {
+  padding: 0 8px;
+  color: var(--color-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background: var(--color-surface);
+}
+.ui-diff__pair > .ui-diff__number:nth-child(3) {
+  border-left: 1px solid var(--line);
+}
+.ui-diff__half {
+  min-width: 0;
+  display: flex;
+}
+.ui-diff__sign {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  color: var(--color-muted);
+  user-select: none;
+}
+.ui-diff__text {
+  padding-right: 16px;
+  color: var(--color-ink);
+}
+.ui-diff__line.is-removed,
+.ui-diff__half.is-removed {
+  background: var(--ui-diff-removed);
+}
+.ui-diff__line.is-added,
+.ui-diff__half.is-added {
+  background: var(--ui-diff-added);
+}
+.ui-diff__line.is-removed > .ui-diff__number,
+.ui-diff__number.is-removed {
+  background: var(--ui-diff-removed-word);
+  color: var(--color-ink);
+}
+.ui-diff__line.is-added > .ui-diff__number,
+.ui-diff__number.is-added {
+  background: var(--ui-diff-added-word);
+  color: var(--color-ink);
+}
+.ui-diff__line.is-removed .ui-diff__sign,
+.ui-diff__half.is-removed .ui-diff__sign {
+  color: var(--color-danger-ink);
+}
+.ui-diff__line.is-added .ui-diff__sign,
+.ui-diff__half.is-added .ui-diff__sign {
+  color: var(--color-success-ink);
+}
+.ui-diff__half.is-empty {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-surface),
+    var(--color-surface) 4px,
+    var(--color-bg) 4px,
+    var(--color-bg) 8px
+  );
+}
+.ui-diff__text del,
+.ui-diff__text ins {
+  border-radius: 2px;
+  color: inherit;
+  text-decoration: none;
+}
+.ui-diff__text del {
+  background: var(--ui-diff-removed-word);
+}
+.ui-diff__text ins {
+  background: var(--ui-diff-added-word);
+}
+.ui-diff__eol {
+  margin-left: 8px;
+  padding: 0 4px;
+  border: 1px solid var(--control-border);
+  border-radius: 3px;
+  color: var(--color-muted);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+}
+/* Changement courant (F7) : un trait d’accent devant ses rangées. */
+.ui-diff__row.is-current::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 1;
+  width: 3px;
+  background: var(--color-primary);
+}
+.ui-diff__gap,
+.ui-diff__notice,
+.ui-diff__file {
+  display: flex;
+  align-items: center;
+  position: sticky;
+  left: 0;
+  width: min(100%, var(--ui-diff-viewport, 100%));
+  padding: 0 12px;
+  font-family:
+    "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-size: var(--font-size-secondary);
+  white-space: nowrap;
+}
+.ui-diff__gap {
+  height: 28px;
+  border-block: 1px solid var(--line);
+  background: var(--color-surface);
+  color: var(--color-muted);
+}
+.ui-diff__notice {
+  height: 28px;
+  color: var(--color-muted);
+}
+.ui-diff__file {
+  height: 32px;
+  margin: 0;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--color-surface-strong);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.ui-diff__file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-diff__file-status {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.ui-diff__file .ui-diff__counts {
+  margin-left: auto;
+}
+.ui-diff__expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-primary-strong);
+  font: inherit;
+  cursor: pointer;
+}
+.ui-diff__expand:hover {
+  background: var(--color-surface-strong);
+}
+.ui-diff__expand:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+@media (forced-colors: active) {
+  .ui-diff:has(.ui-diff__scroller:focus-visible) {
+    border-color: Highlight;
+    box-shadow: none;
+    outline: 2px solid Highlight;
+  }
+  .ui-diff__expand:focus-visible {
+    outline-color: Highlight;
+  }
+  .ui-diff__text del {
+    text-decoration: line-through;
+  }
+  .ui-diff__text ins {
+    text-decoration: underline;
+  }
+  .ui-diff__line:is(.is-removed, .is-added) .ui-diff__sign,
+  .ui-diff__half:is(.is-removed, .is-added) .ui-diff__sign {
+    color: CanvasText;
+    font-weight: 700;
+  }
+  .ui-diff__row.is-current::before {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  .ui-diff__expand {
+    color: LinkText;
+  }
+}
