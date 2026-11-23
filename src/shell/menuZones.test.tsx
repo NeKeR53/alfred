@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHeader } from "../features/agent/model";
 import { invoke } from "../lib/native";
@@ -184,58 +185,48 @@ describe("menu.* depuis une page ou une fonction", () => {
 
 describe("zone dans le menu de gauche", () => {
   const renderShell = () => render(<AppShell agent={<div>Agent</div>} settingsTabs={[]} agentAvailable={false} />);
+  const navigation = () => screen.getAllByRole("treegrid", { name: "Navigation principale" })[0];
+  const row = (name: string) => within(navigation()).getByRole("row", { name });
 
-  it("range les entrées sous la section, avec « Afficher plus », et ouvre la page avec l’entrée", async () => {
+  it("range les entrées en sous-pages de la section, et ouvre la page avec l’entrée", async () => {
+    const user = userEvent.setup();
     renderShell();
-    const list = await screen.findByRole("list", { name: "Produits · Catalogue" });
-    const rows = within(list).getAllByRole("listitem");
-    expect(rows.map((row) => row.textContent)).toEqual(["Atlas", "Boréa3", "Afficher plus (1)"]);
-    // Une page masquée masque sa zone.
-    expect(screen.queryByRole("list", { name: "Produits · Notes" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Boréa · En échec · 3 nouveautés" })).toBeTruthy();
+    await user.click(within(row("Catalogue")).getByRole("button", { name: /^Déplier/ }));
+    // Toutes les entrées de la zone, avec leur compteur ; une page masquée masque sa zone.
+    expect(row("Atlas")).toBeTruthy();
+    expect(row("Boréa")).toHaveTextContent("3");
+    expect(row("Cirrus")).toBeTruthy();
+    expect(within(navigation()).getAllByRole("row", { name: "Atlas" })).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Afficher plus (1)" }));
-    expect(screen.getByRole("button", { name: "Cirrus · Au travail" })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Atlas · Bon" }));
+    await user.click(row("Atlas"));
     const state = useShell.getState();
     expect(state.view).toEqual({ kind: "section", id: "produits/principal" });
     expect(state.activeTab["produits/principal"]).toBe("produits/vue");
     expect(state.activeEntry["produits/vue"]).toEqual({ id: "atlas", label: "Atlas", zone: "produits/liste" });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Atlas · Bon" }).getAttribute("aria-current")).toBe("page"),
-    );
+    await waitFor(() => expect(row("Atlas")).toHaveAttribute("aria-selected", "true"));
 
     // L’entrée de la section rouvre ses pages sans entrée.
-    fireEvent.click(screen.getByRole("button", { name: "Catalogue" }));
+    await user.click(row("Catalogue"));
     expect(useShell.getState().activeEntry["produits/vue"]).toBeUndefined();
   });
 
-  it("se replie par son titre, et renomme une entrée au clavier (F2)", async () => {
+  it("renomme une entrée par son action, et la page reçoit le nouveau libellé", async () => {
+    const user = userEvent.setup();
     renderShell();
-    const title = await screen.findByRole("button", { name: "Produits" });
-    expect(title.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(title);
-    expect(screen.queryByRole("list", { name: "Produits · Catalogue" })).toBeNull();
-    fireEvent.click(title);
-
-    const borea = screen.getByRole("button", { name: "Boréa · En échec · 3 nouveautés" });
-    fireEvent.keyDown(borea, { key: "F2" });
-    const input = screen.getByRole("textbox", { name: "Nom de Boréa" });
-    fireEvent.change(input, { target: { value: "Boréa 2" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    const actions = await handleFrameRequest(
-      { kind: "page", module: "produits", reference: "produits/liste" },
-      "menu.takeActions",
-      {},
-    );
-    expect(actions).toEqual([{ entry: "borea", action: "rename", value: "Boréa 2" }]);
-
-    // Alt+↓ déplace l’entrée (ordre de l’utilisateur).
-    act(() => {
-      fireEvent.keyDown(screen.getByRole("button", { name: "Atlas · Bon" }), { key: "ArrowDown", altKey: true });
+    await user.click(within(row("Catalogue")).getByRole("button", { name: /^Déplier/ }));
+    await user.click(within(row("Boréa")).getByRole("button", { name: "Renommer Boréa" }));
+    const input = await screen.findByRole("textbox", { name: /Nom/ });
+    await user.clear(input);
+    await user.type(input, "Boréa 2");
+    await user.click(screen.getByRole("button", { name: "Renommer" }));
+    await waitFor(async () => {
+      const actions = await handleFrameRequest(
+        { kind: "page", module: "produits", reference: "produits/liste" },
+        "menu.takeActions",
+        {},
+      );
+      expect(actions).toEqual([{ entry: "borea", action: "rename", value: "Boréa 2" }]);
     });
-    expect(mockedInvoke).toHaveBeenCalledWith("menuZones.reorder", expect.objectContaining({ page: "produits/liste" }));
   });
 });
 

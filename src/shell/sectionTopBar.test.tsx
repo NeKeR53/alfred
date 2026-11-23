@@ -1,8 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
+import { Sidebar, AppShell as SocleShell } from "socle-ui";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ResolvedPage, Snapshot } from "../lib/types";
-import { SectionView } from "./AppShell";
+import { useSectionFrame } from "./AppShell";
 import { useShell } from "./store";
+import type { PageToolsRenderer } from "./types";
 
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -57,47 +59,47 @@ beforeEach(() => {
   useShell.setState({ snapshot, activeTab: {} });
 });
 
-it("place les onglets de la section à gauche, juste après son titre, et les actions à droite", () => {
-  render(
-    <SectionView
-      title="Suivi"
-      sectionId="suivi/principal"
-      pages={pages}
-      actions={<button type="button">Action</button>}
-    />,
+function Harness({ tools }: { tools?: PageToolsRenderer }) {
+  const frame = useSectionFrame({ title: "Suivi", sectionId: "suivi/principal", pages, renderPageTools: tools });
+  return (
+    <SocleShell
+      sidebar={
+        <Sidebar
+          selectedId="s"
+          onSelectionChange={() => undefined}
+          account={<Sidebar.Account name="A" onSettings={() => undefined} />}
+        >
+          <Sidebar.Item id="s" icon={<span />} label="Suivi" />
+        </Sidebar>
+      }
+      pageTitle={frame.pageTitle}
+      views={frame.views}
+      activeView={frame.activeView}
+      onViewChange={frame.onViewChange}
+      actions={frame.actions}
+    >
+      {frame.main}
+    </SocleShell>
   );
+}
+
+it("montre les pages de la section en vues de la barre du haut, après son titre", () => {
+  render(<Harness />);
   const bar = screen.getByRole("banner");
-  const title = bar.querySelector(".page-topbar__title");
-  const actions = bar.querySelector(".page-topbar__actions");
-  if (!(title instanceof HTMLElement) || !(actions instanceof HTMLElement)) throw new Error("barre incomplète");
-  const tablist = within(title).getByRole("tablist", { name: "Onglets de Suivi" });
+  const tablist = within(bar).getByRole("tablist");
   expect(
     within(tablist)
       .getAllByRole("tab")
       .map((tab) => tab.textContent),
   ).toEqual(["Tâches", "Notes"]);
-  // Le titre d’abord, puis les onglets ; rien des onglets dans les actions.
-  const heading = within(title).getByRole("heading", { level: 1, name: "Suivi" });
+  const heading = within(bar).getByRole("heading", { level: 1, name: "Suivi" });
   expect(heading.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(within(actions).queryByRole("tablist")).toBeNull();
-  expect(within(actions).getByRole("button", { name: "Action" })).toBeInTheDocument();
 });
 
-it("sépare d’un trait les outils de la page de ceux de la coquille, et fond le bord des onglets qui débordent", () => {
-  render(
-    <SectionView
-      title="Suivi"
-      sectionId="suivi/principal"
-      pages={pages}
-      renderPageTools={() => <button type="button">Corriger l’interface</button>}
-    />,
-  );
+it("place les outils de la page avant la cloche du centre de notifications", () => {
+  render(<Harness tools={() => <button type="button">Corriger l’interface</button>} />);
   const bar = screen.getByRole("banner");
   const tool = within(bar).getByRole("button", { name: "Corriger l’interface" });
-  const separator = bar.querySelector(".page-topbar__separator");
   const bell = within(bar).getByRole("button", { name: /notification/i });
-  if (!separator) throw new Error("trait absent");
-  expect(tool.compareDocumentPosition(separator) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(separator.compareDocumentPosition(bell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(bar.querySelector(".shell-tabs")?.classList.contains("overflow-fade")).toBe(true);
+  expect(tool.compareDocumentPosition(bell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

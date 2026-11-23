@@ -140,6 +140,8 @@ export const useNotifications = create<NotificationState>((set, get) => {
           source,
           // Socle ne montre qu’une action par toast (D-155) : la première. La seconde reste dans l’historique.
           action: action ? { label: action.label, onAction: action.run } : undefined,
+          // Dans le centre, la ligne ouvre ce que fait la première action (« Ouvrir », « Journal »).
+          onOpen: action?.run,
           duration: shown === null ? null : Math.max(5_000, shown),
         }),
       );

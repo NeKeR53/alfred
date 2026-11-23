@@ -11,6 +11,7 @@ import { App } from "../src/App";
 import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 type Posted = {
   kind: string;
@@ -56,8 +57,8 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
   const user = userEvent.setup();
   render(<App />);
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
-  await user.click(await within(navigation).findByRole("button", { name: "Suivi" }));
+  const navigation = await findNavigation();
+  await user.click(await within(navigation).findByRole("row", { name: "Suivi" }));
   const page = frameOf(await screen.findByTitle("Tâches"));
   expect(await screen.findByTitle("Détail")).toBeInTheDocument();
 
@@ -139,7 +140,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   expect(backend.journal[0]?.summary).toBe("Appelée par suivi/taches");
 
   // Fonction d’un autre module : l’utilisateur refuse, le cadre reçoit l’erreur.
-  await user.click(within(navigation).getByRole("button", { name: "Notes" }));
+  await user.click(within(navigation).getByRole("row", { name: "Notes" }));
   const carnet = frameOf(await screen.findByTitle("Carnet"));
   const refused = carnet.request("functions.call", { function: "suivi/synchroniser" });
   const question = await screen.findByRole("alertdialog");
@@ -148,7 +149,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   expect((await refused).error?.message).toMatch(/^Accès refusé/);
 
   // Retour à la section : la page publie sa sélection, son panneau la reçoit ; elle lui écrit aussi.
-  await user.click(within(navigation).getByRole("button", { name: "Suivi" }));
+  await user.click(within(navigation).getByRole("row", { name: "Suivi" }));
   const shown = frameOf(await screen.findByTitle("Tâches"));
   const side = frameOf(await screen.findByTitle("Détail"));
   await shown.request("shell.publish", { selection: { tache: 42 } });

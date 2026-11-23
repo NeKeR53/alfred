@@ -11,6 +11,7 @@ import { App } from "../src/App";
 import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 it("une page range ses entrées dans le menu, les ouvre et reçoit leurs actions", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
@@ -19,13 +20,15 @@ it("une page range ses entrées dans le menu, les ouvre et reçoit leurs actions
   };
   const user = userEvent.setup();
   render(<App />);
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
+  const navigation = await findNavigation();
 
   // Gardée du lancement précédent : la zone de Notes s’affiche avant que la page ne soit chargée.
-  const carnets = await within(navigation).findByRole("list", { name: "Carnets · Notes" });
-  expect(within(carnets).getByRole("button", { name: "Personnel · Bon" })).toBeVisible();
+  const notes = await within(navigation).findByRole("row", { name: "Notes" });
+  await waitFor(() => expect(notes).toHaveAttribute("aria-expanded", "false"));
+  await user.click(within(notes).getByRole("button", { name: /^Déplier/ }));
+  expect(await within(navigation).findByRole("row", { name: "Personnel" })).toBeInTheDocument();
 
-  await user.click(within(navigation).getByRole("button", { name: "Suivi" }));
+  await user.click(within(navigation).getByRole("row", { name: "Suivi" }));
   const frame = (await screen.findByTitle("Tâches")) as HTMLIFrameElement;
   const received: Array<{ name?: string; payload?: unknown; result?: unknown; id?: string }> = [];
   const original = frame.contentWindow?.postMessage.bind(frame.contentWindow);
@@ -61,14 +64,17 @@ it("une page range ses entrées dans le menu, les ouvre et reçoit leurs actions
     subject: { kind: "page", module: "suivi", reference: "suivi/taches" },
     page: "suivi/taches",
   });
-  const projets = await within(navigation).findByRole("list", { name: "Projets · Suivi" });
-  expect(within(projets).getByRole("button", { name: "Afficher plus (1)" })).toBeVisible();
-  await user.click(within(projets).getByRole("button", { name: "Afficher plus (1)" }));
+  // Les entrées vont en sous-pages de la section Suivi ; un compteur suit l’entrée.
+  const suiviRow = within(navigation).getByRole("row", { name: "Suivi" });
+  await waitFor(() => expect(suiviRow).toHaveAttribute("aria-expanded"));
+  if (suiviRow.getAttribute("aria-expanded") !== "true")
+    await user.click(within(suiviRow).getByRole("button", { name: /^Déplier/ }));
+  expect(await within(navigation).findByRole("row", { name: "Boréa" })).toHaveTextContent("2");
   await send("r3", "menu.update", { op: "updateEntry", id: "borea", patch: { status: "ok", badge: null } });
-  expect(await within(projets).findByRole("button", { name: "Boréa · Bon" })).toBeVisible();
+  await waitFor(() => expect(within(navigation).getByRole("row", { name: "Boréa" })).not.toHaveTextContent("2"));
 
   // Clic : la page affichée reçoit l’entrée dans son contexte, et l’entrée est surlignée à la place de la section.
-  await user.click(within(projets).getByRole("button", { name: "Atlas · Au travail" }));
+  await user.click(within(navigation).getByRole("row", { name: "Atlas" }));
   await waitFor(() =>
     expect(
       received.some(
@@ -80,11 +86,13 @@ it("une page range ses entrées dans le menu, les ouvre et reçoit leurs actions
     entry: { id: string; label: string };
   };
   expect(context.entry).toEqual({ id: "atlas", label: "Atlas" });
-  expect(within(projets).getByRole("button", { name: "Atlas · Au travail" })).toHaveAttribute("aria-current", "page");
-  expect(within(navigation).getByRole("button", { name: "Suivi" })).not.toHaveAttribute("aria-current");
+  expect(within(navigation).getByRole("row", { name: "Atlas" })).toHaveAttribute("aria-selected", "true");
+  expect(within(navigation).getByRole("row", { name: "Suivi" })).toHaveAttribute("aria-selected", "false");
 
   // Action au survol : la page est prévenue, puis lit l’action en attente.
-  await user.click(within(projets).getByRole("button", { name: "Archiver Atlas" }));
+  await user.click(
+    within(within(navigation).getByRole("row", { name: "Atlas" })).getByRole("button", { name: "Archiver Atlas" }),
+  );
   await waitFor(() => expect(received.some((message) => message.name === "menuEntryAction")).toBe(true));
   await send("r4", "menu.takeActions");
   await waitFor(() =>
@@ -92,7 +100,7 @@ it("une page range ses entrées dans le menu, les ouvre et reçoit leurs actions
   );
 
   // L’entrée de la section rouvre la page sans entrée.
-  await user.click(within(navigation).getByRole("button", { name: "Suivi" }));
+  await user.click(within(navigation).getByRole("row", { name: "Suivi" }));
   const lastEntry = () =>
     (received.filter((message) => message.name === "context").at(-1)?.payload as { entry?: unknown } | undefined)
       ?.entry;

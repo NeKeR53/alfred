@@ -17,7 +17,6 @@ vi.mock("../lib/native", async (importOriginal) => ({
 }));
 
 import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
-import { TopBarSearch } from "./TopBarSearch";
 import { clearTopBarSearches, onTopBarQuery, topBarQueryOf, useTopBarSearches } from "./topBarSearchStore";
 
 const page: FrameIdentity = { kind: "page", module: "suivi", reference: "suivi/taches" };
@@ -53,57 +52,5 @@ describe("recherche de la barre du haut, côté pont", () => {
     releaseFrame(page);
     expect(useTopBarSearches.getState().declared).toEqual({});
     expect(topBarQueryOf("suivi/taches")).toBe("relance");
-  });
-});
-
-describe("TopBarSearch", () => {
-  it("n’affiche rien tant que la page n’a pas de recherche", () => {
-    const { container } = render(<TopBarSearch reference="suivi/taches" />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("envoie chaque frappe à la page, efface avec Échap et répond à ⌘F ou Ctrl+F", async () => {
-    const user = userEvent.setup();
-    const received = vi.fn();
-    onTopBarQuery("suivi/taches", received);
-    await handleFrameRequest(page, "shell.search.declare", { label: "Rechercher une tâche", placeholder: "Tâche…" });
-    render(
-      <>
-        <button type="button">Ailleurs</button>
-        <TopBarSearch reference="suivi/taches" />
-      </>,
-    );
-    const field = screen.getByRole("searchbox", { name: "Rechercher une tâche" });
-    expect(field).toHaveAttribute("placeholder", "Tâche…");
-    await user.type(field, "rev");
-    expect(received).toHaveBeenLastCalledWith("rev");
-    await user.keyboard("{Escape}");
-    expect(field).toHaveValue("");
-    expect(received).toHaveBeenLastCalledWith("");
-    // Champ vide : Échap rend la main.
-    await user.keyboard("{Escape}");
-    expect(field).not.toHaveFocus();
-
-    screen.getByRole("button", { name: "Ailleurs" }).focus();
-    for (const modifier of [{ metaKey: true }, { ctrlKey: true }]) {
-      field.blur();
-      const event = new KeyboardEvent("keydown", { key: "f", cancelable: true, ...modifier });
-      act(() => {
-        window.dispatchEvent(event);
-      });
-      expect(event.defaultPrevented).toBe(true);
-      expect(field).toHaveFocus();
-    }
-  });
-
-  it("montre le texte que la page a changé, sans le lui renvoyer", async () => {
-    const received = vi.fn();
-    onTopBarQuery("suivi/taches", received);
-    await handleFrameRequest(page, "shell.search.declare", {});
-    render(<TopBarSearch reference="suivi/taches" />);
-    await act(() => handleFrameRequest(page, "shell.search.set", { query: "client" }));
-    expect(screen.getByRole("searchbox")).toHaveValue("client");
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
-    expect(received).toHaveBeenCalledTimes(1);
   });
 });

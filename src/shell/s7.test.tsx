@@ -3,13 +3,13 @@
  * clé, titre, entrée du menu), et rythme à la seconde des planifications.
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { NotificationCenter } from "socle-ui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cadence } from "../features/schedules/api";
 import { openPageWindow } from "../lib/native";
 import type { ResolvedPage, Snapshot } from "../lib/types";
 import { frameContext, frameServices, handleFrameRequest } from "./frameBridge";
 import { useMenuZones } from "./menuZones";
-import { NotificationBell } from "./NotificationCenter";
 import { useNotifications } from "./notifications";
 import { PageWindow } from "./PageWindow";
 import { runZoneAction } from "./PageZones";
@@ -112,18 +112,11 @@ describe("notifications à actions", () => {
       "Relancer",
     ]);
 
-    render(<NotificationBell />);
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
-    const row = screen.getByText("Build #42 en échec").closest("li") as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "Journal" }));
+    // Le toast porte la première action (D-155) ; la seconde reste dans l’historique d’Alfred.
+    render(<NotificationCenter />);
+    fireEvent.click(await screen.findByRole("button", { name: "Journal" }));
     expect(opened).toHaveBeenCalledWith("ci/journal", { params: { build: 42 }, title: "Build #42" });
-
-    fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
-    fireEvent.click(
-      within(screen.getByText("Build #42 en échec").closest("li") as HTMLElement).getByRole("button", {
-        name: "Relancer",
-      }),
-    );
+    item.actions?.[0]?.run();
     expect(calls).toEqual([["ci/relancer", { build: 42 }]]);
   });
 

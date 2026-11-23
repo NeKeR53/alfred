@@ -31,7 +31,7 @@ import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
 import { NamedIcon, SectionIcon } from "./icons";
 import type { ZoneRow } from "./MenuZone";
-import { entryTarget, orderedEntries, startMenuZones, useMenuZones } from "./menuZones";
+import { entryTarget, type MenuZone, orderedEntries, startMenuZones, useMenuZones } from "./menuZones";
 import { useNavigationEditor } from "./navigationEditing";
 import { SETTINGS_SECTION } from "./navigationLayout";
 import { notify } from "./notifications";
@@ -96,6 +96,34 @@ export function frameActions(reference: string, list: readonly TopBarActionDescr
     isDisabled: action.disabled || action.running || (Boolean(action.group) && action.selected),
     onPress: () => activateTopBarAction(reference, action.id),
   }));
+}
+
+/**
+ * État « Exemple » de la barre du haut d’une page en mode « données d’exemple » : compact, après le titre ; son menu
+ * quitte le mode (D-251). Hors de ce mode, rien.
+ */
+export function useExampleStatus(module: string): PageStatus | undefined {
+  const examples = useExampleMode(module);
+  if (!examples || !module) return undefined;
+  return {
+    label: "Exemple",
+    tone: "info",
+    description: EXAMPLE_HINT,
+    menu: (
+      <Menu.Item
+        label="Quitter les données d’exemple"
+        onAction={() =>
+          void setExampleMode(module, false).catch((error: unknown) =>
+            notify({
+              title: "Les données d’exemple n’ont pas pu être quittées",
+              description: error instanceof Error ? error.message : String(error),
+              tone: "error",
+            }),
+          )
+        }
+      />
+    ),
+  };
 }
 
 /** Ce que la coquille montre pour une section : la barre du haut, la page, et son panneau de droite. */
@@ -168,35 +196,14 @@ export function useSectionFrame({
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);
   const summary = useTopBarSummaries((state) => (page ? state.summaries[page.reference] : undefined));
   const described = useTopBarActionStore((state) => (page ? state.actions[page.reference] : undefined));
-  const examples = useExampleMode(page?.module ?? "");
   const main = useRef<HTMLDivElement>(null);
   const live = Boolean(page && !builtInTab && !waiting);
 
   const actions: Action[] = live && page ? [...frameActions(page.reference, described)] : [];
   if (live && page && pageActions) actions.push(...pageActions(page.reference));
 
-  const pageStatus: PageStatus | undefined =
-    live && examples && page
-      ? {
-          label: "Exemple",
-          tone: "info",
-          description: EXAMPLE_HINT,
-          menu: (
-            <Menu.Item
-              label="Quitter les données d’exemple"
-              onAction={() =>
-                void setExampleMode(page.module, false).catch((error: unknown) =>
-                  notify({
-                    title: "Les données d’exemple n’ont pas pu être quittées",
-                    description: error instanceof Error ? error.message : String(error),
-                    tone: "error",
-                  }),
-                )
-              }
-            />
-          ),
-        }
-      : undefined;
+  const exampleStatus = useExampleStatus(page?.module ?? "");
+  const pageStatus = live ? exampleStatus : undefined;
 
   const body = builtInTab ? (
     builtInTab.render?.()
@@ -326,10 +333,20 @@ function zoneItem(id: string, row: ZoneRow, onAction: (action: string) => void) 
   );
 }
 
-/** Entrées de zone des pages visibles d’une section, dans l’ordre de ses onglets. */
-function useSectionEntries(section: ResolvedSection, rename: Rename) {
-  const zones = useMenuZones((state) => state.zones);
-  return section.pages
+/**
+ * Entrée d’une section, avec les entrées de zone de ses pages visibles en sous-pages, dans l’ordre de ses onglets.
+ * `Sidebar` lit les options de ses enfants directs : l’élément est rendu tel quel, sans composant intermédiaire.
+ */
+function sectionItem(
+  section: ResolvedSection,
+  {
+    zones,
+    counts,
+    menu,
+    rename,
+  }: { zones: Record<string, MenuZone>; counts: Record<string, number>; menu: ReactNode; rename: Rename },
+) {
+  const entries = section.pages
     .filter((page) => !page.hidden && zones[page.reference]?.entries.length)
     .flatMap((page) =>
       orderedEntries(zones[page.reference]).map((entry) =>
@@ -342,19 +359,21 @@ function useSectionEntries(section: ResolvedSection, rename: Rename) {
         }),
       ),
     );
-}
-
-function SectionItem({ section, menu, rename }: { section: ResolvedSection; menu: ReactNode; rename: Rename }) {
-  const counts = useBadges((state) => state.counts);
-  const entries = useSectionEntries(section, rename);
   const count = sectionCount(counts, section.pages);
   return (
     <Sidebar.Item
+      key={section.id}
       id={navId.section(section.id)}
       icon={<SectionIcon section={section} size={16} />}
       label={section.label}
       count={count > 0 ? count : undefined}
-      actions={[{ icon: <MoreHorizontal size={16} aria-hidden="true" />, label: `Actions de la section ${section.label}`, menu }]}
+      actions={[
+        {
+          icon: <MoreHorizontal size={16} aria-hidden="true" />,
+          label: `Actions de la section ${section.label}`,
+          menu,
+        },
+      ]}
     >
       {entries.length ? entries : undefined}
     </Sidebar.Item>
@@ -398,6 +417,7 @@ export function AppShell({
   const activeTabs = useShell((state) => state.activeTab);
   const activeEntry = useShell((state) => state.activeEntry);
   const zones = useMenuZones((state) => state.zones);
+  const badgeCounts = useBadges((state) => state.counts);
   const editor = useNavigationEditor();
   const spaces = useSpaceActions();
   useEffect(() => startBadges(), []);
@@ -501,9 +521,14 @@ export function AppShell({
       }
       account={<Sidebar.Account name="Alfred" onSettings={() => setView({ kind: "settings" })} />}
     >
-      {sections.map((section) => (
-        <SectionItem key={section.id} section={section} menu={editor.sectionMenu(section.id)} rename={editor.rename} />
-      ))}
+      {sections.map((section) =>
+        sectionItem(section, {
+          zones,
+          counts: badgeCounts,
+          menu: editor.sectionMenu(section.id),
+          rename: editor.rename,
+        }),
+      )}
       {agentAvailable === true && agentZone?.rows.length ? (
         <Sidebar.Section id="agent-conversations" title="Conversations" limit={agentZone.visible}>
           {agentZone.rows.map((row) => (

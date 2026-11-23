@@ -10,6 +10,7 @@ import { expect, it } from "vitest";
 import { App } from "../src/App";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 it("de l’accueil à un espace de travail construit : navigation, Réglages, palette et accord d’accès", async () => {
   const backend = new FakeBackend().install();
@@ -32,8 +33,8 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   // Espace ouvert, encore vide : la page Agent invite à construire.
   expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
   expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison", name: "Maison" });
-  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
-  expect(within(navigation).queryAllByRole("button")).toHaveLength(0);
+  const navigation = getNavigation();
+  expect(within(navigation).queryAllByRole("row")).toHaveLength(0);
 
   // Le bouton qui replie le menu est dans l’en-tête, hors du menu. En bas du menu, dans cet ordre : Agent, l’espace, qui
   // ouvre le menu des espaces, puis Réglages, toute dernière entrée.
@@ -58,8 +59,8 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   // L’agent construit dans le dossier : le backend signale le changement, la navigation se relit.
   backend.withSpace("/Users/lea/Maison", "Maison", builtModules());
   act(() => backend.emit("space:changed"));
-  const suivi = await within(navigation).findByRole("button", { name: "Suivi" });
-  expect(within(navigation).getByRole("button", { name: "Notes" })).toBeVisible();
+  const suivi = await within(navigation).findByRole("row", { name: "Suivi" });
+  expect(within(navigation).getByRole("row", { name: "Notes" })).toBeVisible();
   // Les sections suivent directement le nom de l’espace, sans libellé de groupe.
   expect(within(navigation).queryByText("Espace de travail")).not.toBeInTheDocument();
   expect(backend.commandsCalled()).toContain("db.applyMigrations");

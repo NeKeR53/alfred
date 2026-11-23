@@ -11,6 +11,7 @@ import { useHarnesses } from "../src/features/agent/harness";
 import { useShell } from "../src/shell/store";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 it("sans agent installé, ni entrée Agent ni harnais absents : la première section s’affiche", async () => {
   useHarnesses.setState({ probes: {} });
@@ -20,17 +21,11 @@ it("sans agent installé, ni entrée Agent ni harnais absents : la première sec
   const user = userEvent.setup();
   render(<App />);
 
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
-  const first = await within(navigation).findByRole("button", { name: "Suivi" });
+  const navigation = await findNavigation();
+  const first = await within(navigation).findByRole("row", { name: "Suivi" });
   // La vérification finie, l’entrée Agent disparaît et la première section prend sa place.
-  await waitFor(() =>
-    expect(
-      within(screen.getByRole("complementary", { name: "Navigation principale" })).queryByRole("button", {
-        name: /^Agent/,
-      }),
-    ).not.toBeInTheDocument(),
-  );
-  expect(first).toHaveAttribute("aria-current", "page");
+  await waitFor(() => expect(screen.queryByRole("row", { name: "Agent" })).not.toBeInTheDocument());
+  expect(first).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByText("Que puis-je faire pour vous ?")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Réglages" }));
@@ -51,13 +46,9 @@ it("pendant la vérification des agents, l’entrée Agent reste cachée et la p
   backend.withSpace("/Users/lea/Maison", "Maison", builtModules());
   render(<App />);
 
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
-  await within(navigation).findByRole("button", { name: "Suivi" });
-  expect(
-    within(screen.getByRole("complementary", { name: "Navigation principale" })).queryByRole("button", {
-      name: /^Agent/,
-    }),
-  ).not.toBeInTheDocument();
+  const navigation = await findNavigation();
+  await within(navigation).findByRole("row", { name: "Suivi" });
+  expect(screen.queryByRole("row", { name: "Agent" })).not.toBeInTheDocument();
   expect(screen.queryByText("Que puis-je faire pour vous ?")).not.toBeInTheDocument();
   expect(screen.queryByText("Aucun agent installé")).not.toBeInTheDocument();
 });

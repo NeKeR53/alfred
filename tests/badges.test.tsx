@@ -11,18 +11,19 @@ import { App } from "../src/App";
 import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 it("la pastille suit le compteur réglé par la page", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
   backend.badges = { "notes/carnet": 2 };
   const user = userEvent.setup();
   render(<App />);
-  const navigation = await screen.findByRole("navigation", { name: "Sections de l’espace de travail" });
+  const navigation = await findNavigation();
 
   // Gardé du lancement précédent : la section Notes l’affiche avant même d’être ouverte.
-  expect(await within(navigation).findByRole("button", { name: "Notes · 2 nouveautés" })).toBeVisible();
+  expect(await within(navigation).findByRole("row", { name: "Notes" })).toHaveTextContent("2");
 
-  await user.click(within(navigation).getByRole("button", { name: "Suivi" }));
+  await user.click(within(navigation).getByRole("row", { name: "Suivi" }));
   const frame = (await screen.findByTitle("Tâches")) as HTMLIFrameElement;
   const send = (id: string, method: string, params: Record<string, unknown>) =>
     act(() => {
@@ -36,18 +37,17 @@ it("la pastille suit le compteur réglé par la page", async () => {
 
   await send("r1", "badge.update", { op: "set", value: 3 });
   await send("r2", "badge.update", { op: "increment", value: 1 });
-  const suivi = await within(navigation).findByRole("button", { name: "Suivi · 4 nouveautés" });
-  expect(within(suivi).getByText("4")).toBeVisible();
+  const suivi = within(navigation).getByRole("row", { name: "Suivi" });
+  await waitFor(() => expect(within(suivi).getByText("4")).toBeInTheDocument());
   expect(backend.lastCall("frame.badges.update")).toMatchObject({
     subject: { kind: "page", module: "suivi", reference: "suivi/taches" },
     page: "suivi/taches",
   });
-  const tabs = screen.getByRole("tablist", { name: "Onglets de Suivi" });
-  expect(within(tabs).getByRole("img", { name: "4 nouveautés" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Tâches (4)" })).toBeInTheDocument();
 
   // Remis à zéro : la pastille disparaît.
   await send("r3", "badge.update", { op: "set", value: 0 });
-  await waitFor(() => expect(within(navigation).getByRole("button", { name: "Suivi" })).toBeVisible());
-  expect(within(tabs).queryByRole("img")).not.toBeInTheDocument();
+  await waitFor(() => expect(within(suivi).queryByText("4")).not.toBeInTheDocument());
+  expect(screen.getByRole("tab", { name: "Tâches" })).toBeInTheDocument();
   expect(backend.unknown, "commandes absentes du faux backend").toEqual([]);
 });

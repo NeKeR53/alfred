@@ -9,6 +9,7 @@ import { expect, it } from "vitest";
 import { App } from "../src/App";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
+import { findNavigation, getNavigation } from "./support/shell";
 
 it("message, activités, accord, carte de placement, fin de tour enregistrée, puis annulation", async () => {
   const backend = new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
@@ -71,8 +72,8 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
 
   // Fin de tour : la réponse finale, la nouvelle entrée du menu, et le tour enregistré dans un commit.
   expect(await screen.findByText("cuisine/recettes")).toBeVisible();
-  const navigation = screen.getByRole("navigation", { name: "Sections de l’espace de travail" });
-  expect(await within(navigation).findByRole("button", { name: "Cuisine" })).toBeVisible();
+  const navigation = getNavigation();
+  expect(await within(navigation).findByRole("row", { name: "Cuisine" })).toBeVisible();
   const summary = await screen.findByRole("region", { name: "Bilan des modifications" });
   expect(within(summary).getByText("2 fichiers de l’espace de travail modifiés")).toBeVisible();
   expect(backend.lastCall("space.commit")?.message).toMatch(/recettes/i);
@@ -87,7 +88,7 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
   const confirm = await screen.findByRole("alertdialog");
   await user.click(within(confirm).getByRole("button", { name: "Annuler la modification" }));
   await waitFor(() => expect(backend.lastCall("space.undo")).toEqual({ commit: backend.commits[0]?.id }));
-  await waitFor(() => expect(within(navigation).queryByRole("button", { name: "Cuisine" })).not.toBeInTheDocument());
+  await waitFor(() => expect(within(navigation).queryByRole("row", { name: "Cuisine" })).not.toBeInTheDocument());
   expect(screen.queryByRole("region", { name: "Bilan des modifications" })).not.toBeInTheDocument();
   expect((await screen.findAllByText("Modification annulée"))[0]).toBeVisible();
   expect(backend.commits.at(-1)?.message).toMatch(/^Revert/);

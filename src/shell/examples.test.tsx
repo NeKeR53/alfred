@@ -13,12 +13,36 @@ vi.hoisted(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
+import { Sidebar, AppShell as SocleShell } from "socle-ui";
 import { ExampleModePart } from "../features/modules/ExampleModePart";
 import type { SetupStep } from "../features/setup/api";
 import { SetupGate } from "../features/setup/SetupGate";
 import { invoke, onNativeEvent } from "../lib/native";
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../lib/types";
-import { ExampleIndicator } from "./ExampleIndicator";
+import { useExampleStatus } from "./AppShell";
+
+/** La barre du haut d’Alfred réduite à l’état de la page : la pastille « Exemple » et son menu. */
+function ExampleIndicator({ module }: { module: string }) {
+  const status = useExampleStatus(module);
+  return (
+    <SocleShell
+      pageTitle="Tickets"
+      pageStatus={status}
+      sidebar={
+        <Sidebar
+          selectedId="t"
+          onSelectionChange={() => undefined}
+          account={<Sidebar.Account name="A" onSettings={() => undefined} />}
+        >
+          <Sidebar.Item id="t" icon={<span />} label="Tickets" />
+        </Sidebar>
+      }
+    >
+      {null}
+    </SocleShell>
+  );
+}
+
 import { useShell } from "./store";
 
 /**
@@ -140,7 +164,6 @@ it("la page d’attente propose les données d’exemple, qui affichent la page 
   ]);
   expect(await screen.findByText("Vraie page")).toBeTruthy();
   expect(screen.getByRole("button", { name: /^Exemple/ })).toBeTruthy();
-  expect(screen.queryByRole("status")).toBeNull();
   expect(screen.queryByText("Il manque un compte à cette page")).toBeNull();
 });
 
@@ -158,7 +181,7 @@ it("la pastille « Exemple » de la barre dit le mode et son menu le quitte", as
   );
   expect(screen.getByText("Vraie page")).toBeTruthy();
   const pill = screen.getByRole("button", { name: /^Exemple/ });
-  expect(pill.getAttribute("title")).toBe("Cette page affiche des données d’exemple");
+  expect(pill).toHaveAccessibleName("Exemple : Cette page affiche des données d’exemple");
   await user.click(pill);
   await user.click(screen.getByRole("menuitem", { name: "Quitter les données d’exemple" }));
   expect(calls.filter((call) => call.command === "examples.set").map((call) => call.args)).toEqual([

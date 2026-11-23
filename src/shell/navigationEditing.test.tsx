@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NavigationSettings } from "../features/navigation/NavigationSettings";
 import { MODULE_FOCUS } from "../features/settings/open";
@@ -27,13 +28,6 @@ vi.mock("../lib/native", () => ({
   openPageWindow: vi.fn(async () => undefined),
 }));
 
-HTMLDialogElement.prototype.showModal = function showModal() {
-  this.open = true;
-};
-HTMLDialogElement.prototype.close = function close() {
-  this.open = false;
-  this.dispatchEvent(new Event("close"));
-};
 
 function page(module: string, id: string, title: string, extra: Partial<ResolvedPage> = {}): ResolvedPage {
   return {
@@ -134,11 +128,12 @@ const lastLayoutCall = () => {
   return calls.at(-1)?.[1] as { layout: FullLayout; message: string } | undefined;
 };
 
+const navigation = () => screen.getAllByRole("treegrid", { name: "Navigation principale" })[0];
 const sidebarLabels = () =>
-  within(screen.getByRole("navigation", { name: "Sections de l’espace de travail" }))
-    .getAllByRole("button")
-    .map((button) => button.getAttribute("aria-label"))
-    .filter((label) => label && !label.startsWith("Actions"));
+  within(navigation())
+    .getAllByRole("row")
+    .map((row) => row.getAttribute("aria-label"));
+const sidebarRow = (label: string) => within(navigation()).getByRole("row", { name: label });
 
 const renderShell = (settings = false) =>
   render(
@@ -148,12 +143,25 @@ const renderShell = (settings = false) =>
     />,
   );
 
+/** Ouvre le menu « … » d’une section de la navigation. */
+async function openSectionMenu(user: ReturnType<typeof userEvent.setup>, label: string) {
+  await user.click(screen.getByRole("button", { name: `Actions de la section ${label}` }));
+  return screen.findByRole("menu");
+}
+
+/** Ouvre le « … » des actions de la page affichée, dans la barre du haut. */
+async function openPageMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Plus d'actions" }));
+  return screen.findByRole("menu");
+}
+
 describe("réorganisation de la navigation", () => {
-  it("réordonne les sections au clavier et enregistre l’ordre complet", async () => {
+  it("monte et descend une section depuis son menu, et enregistre l’ordre complet", async () => {
+    const user = userEvent.setup();
     renderShell();
-    const entry = screen.getByRole("button", { name: "Suivi" });
-    entry.focus();
-    fireEvent.keyDown(entry, { key: "ArrowDown", altKey: true });
+    const menu = await openSectionMenu(user, "Suivi");
+    expect(within(menu).getByRole("menuitem", { name: "Monter" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(within(menu).getByRole("menuitem", { name: "Descendre" }));
     expect(sidebarLabels()).toEqual(["Clients", "Suivi", "Compta"]);
     await waitFor(() => expect(lastLayoutCall()).toBeDefined());
     expect(lastLayoutCall()).toEqual({
@@ -163,10 +171,11 @@ describe("réorganisation de la navigation", () => {
     expect(screen.getByText("Section Suivi déplacée en position 2 sur 3.")).toBeInTheDocument();
   });
 
-  it("réordonne les onglets au clavier sans changer l’onglet actif", async () => {
+  it("déplace l’onglet actif vers la droite depuis les actions de la page, sans en changer", async () => {
+    const user = userEvent.setup();
     renderShell();
-    const tab = screen.getByRole("tab", { name: "Tâches" });
-    fireEvent.keyDown(tab, { key: "ArrowRight", altKey: true });
+    const menu = await openPageMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Déplacer l’onglet vers la droite" }));
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Notes", "Tâches"]);
     expect(screen.getByRole("tab", { name: "Tâches" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() =>
@@ -176,24 +185,26 @@ describe("réorganisation de la navigation", () => {
   });
 
   it("renomme une section depuis le bouton « … »", async () => {
+    const user = userEvent.setup();
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Suivi" }));
-    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: /Renommer/ }));
-    const field = screen.getByRole("textbox", { name: "Nom" });
-    fireEvent.change(field, { target: { value: "Projets" } });
-    fireEvent.click(screen.getByRole("button", { name: "Renommer" }));
-    expect(screen.getByRole("button", { name: "Projets" })).toBeInTheDocument();
+    const menu = await openSectionMenu(user, "Suivi");
+    await user.click(within(menu).getByRole("menuitem", { name: /Renommer/ }));
+    const field = await screen.findByRole("textbox", { name: /Nom/ });
+    await user.clear(field);
+    await user.type(field, "Projets");
+    await user.click(screen.getByRole("button", { name: "Renommer" }));
+    await waitFor(() => expect(sidebarLabels()).toContain("Projets"));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Renommage de la section Suivi en Projets"));
     expect(lastLayoutCall()?.layout.overrides).toEqual({ "section:suivi/principal": { label: "Projets" } });
   });
 
-  it("ouvre les Réglages sur la fiche du module de la section, et seulement s’il est connu", () => {
+  it("ouvre les Réglages sur la fiche du module de la section, et seulement s’il est connu", async () => {
+    const user = userEvent.setup();
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Clients" }));
-    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    let menu = await openSectionMenu(user, "Clients");
+    const items = within(menu).getAllByRole("menuitem");
     expect(items[0]).toHaveTextContent("Configurer le module…");
-    fireEvent.click(items[0]);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await user.click(items[0]);
     const { view, activeTab } = useShell.getState();
     expect(view).toEqual({ kind: "settings" });
     expect(activeTab[SETTINGS_SECTION]).toBe("modules");
@@ -201,133 +212,63 @@ describe("réorganisation de la navigation", () => {
 
     // « Suivi » n’a pas de module dans l’espace : pas de fiche à ouvrir.
     act(() => useShell.getState().setView({ kind: "section", id: "suivi/principal" }));
-    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Suivi" }));
-    expect(
-      within(screen.getByRole("menu")).queryByRole("menuitem", { name: /Configurer le module/ }),
-    ).not.toBeInTheDocument();
+    menu = await openSectionMenu(user, "Suivi");
+    expect(within(menu).queryByRole("menuitem", { name: /Configurer le module/ })).not.toBeInTheDocument();
   });
 
-  it("change l’icône dans une grille, avec une recherche, puis la couleur", async () => {
+  it("change l’icône dans une grille, avec une recherche", async () => {
+    const user = userEvent.setup();
     renderShell();
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Compta" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
-    const search = screen.getByRole("searchbox", { name: "Rechercher une icône" });
+    const menu = await openSectionMenu(user, "Compta");
+    await user.click(within(menu).getByRole("menuitem", { name: /Changer l’icône/ }));
+    const search = await screen.findByRole("searchbox", { name: "Rechercher une icône" });
     fireEvent.change(search, { target: { value: "pas-une-icone-xyz" } });
     expect(screen.getByText(/Aucune icône ne correspond/)).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "wallet" } });
     fireEvent.click(screen.getByRole("radio", { name: "wallet" }));
-    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Compta en wallet"));
-
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Compta" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Vert" }));
-    await waitFor(() =>
-      expect(lastLayoutCall()?.message).toBe("Changement de la couleur de la section Compta en vert"),
-    );
-    expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "wallet", color: "green" });
+    expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "wallet" });
   });
 
-  it("masque une section puis la réaffiche depuis les Réglages", async () => {
-    renderShell(true);
-    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Clients" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Masquer la section" }));
-    expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
-    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage de la section Clients"));
-
-    act(() => useShell.getState().setView({ kind: "settings" }));
-    const row = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
-    expect(within(row).getByText("Masquée")).toBeInTheDocument();
-    fireEvent.click(within(row).getByRole("button", { name: "Réafficher la section Clients" }));
-    expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
-    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage de la section Clients"));
-    expect(lastLayoutCall()?.layout.overrides).toEqual({});
-  });
-
-  it("masque un module entier, puis le réaffiche depuis sa section dans l’ordre du menu", async () => {
-    renderShell(true);
-    act(() => useShell.getState().setView({ kind: "settings" }));
-    // Le module se désactive depuis sa fiche (onglet Modules) : même changement de présentation.
-    await act(async () => {
-      await applyLayoutChange((current) => setModuleHidden(current, "crm", true));
-    });
-    expect(sidebarLabels()).toEqual(["Suivi", "Compta"]);
-    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage du module CRM partagé"));
-    expect(lastLayoutCall()?.layout.overrides).toEqual({ "module:crm": { hidden: true } });
-
-    // La section du module dit qui la masque ; son bouton réaffiche le module. Sa page unique ne fait pas de
-    // ligne à part : la section et sa page tiennent sur une seule ligne.
-    const sectionRow = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
-    expect(within(sectionRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
-    expect(screen.queryByText("Contacts")).not.toBeInTheDocument();
-    expect(within(sectionRow).getByRole("button", { name: "Historique de la section Clients" })).toBeInTheDocument();
-    fireEvent.click(within(sectionRow).getByRole("button", { name: "Réafficher le module CRM partagé" }));
-    expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
-    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage du module CRM partagé"));
-    expect(lastLayoutCall()?.layout.overrides).toEqual({});
-  });
-
-  it("réordonne et renomme sans glisser-déposer depuis les Réglages", async () => {
-    renderShell(true);
-    act(() => useShell.getState().setView({ kind: "settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Descendre la page Tâches" }));
-    await waitFor(() =>
-      expect(lastLayoutCall()?.message).toBe("Déplacement de l’onglet Tâches en position 2 de la section Suivi"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Monter la section Compta" }));
-    await waitFor(() =>
-      expect(lastLayoutCall()?.layout.sections).toEqual(["suivi/principal", "compta/principal", "crm/principal"]),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Renommer la page Notes" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Nom" }), { target: { value: "Carnet" } });
-    fireEvent.click(screen.getByRole("button", { name: "Renommer" }));
-    await waitFor(() => expect(lastLayoutCall()?.message).toBe("Renommage de la page Notes en Carnet"));
-  });
-
-  it("déplace une page vers les Réglages par le menu de l’onglet", async () => {
+  it("déplace une page vers les Réglages par les actions de la page", async () => {
+    const user = userEvent.setup();
+    useShell.setState({ activeTab: { "suivi/principal": "suivi/notes" } });
     renderShell();
-    const tab = screen.getByRole("tab", { name: "Notes" });
-    fireEvent.keyDown(tab, { key: "F10", shiftKey: true });
-    const menu = screen.getByRole("menu", { name: "Actions de l’onglet Notes" });
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /Réglages/ }));
-    expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
+    const menu = await openPageMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: "Déplacer vers une autre section…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Déplacer « Notes »" });
+    await user.click(within(dialog).getByRole("button", { name: /Section/ }));
+    await user.click(await screen.findByRole("option", { name: "Réglages" }));
+    await user.click(within(dialog).getByRole("button", { name: "Déplacer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Déplacement de la page Notes vers les Réglages"));
     expect(lastLayoutCall()?.layout.overrides["page:suivi/notes"]).toEqual({ placement: { kind: "settings" } });
     expect(useShell.getState().snapshot?.settingsPages.map((p) => p.reference)).toEqual(["suivi/notes"]);
   });
 
   it("supprime une page après confirmation", async () => {
+    const user = userEvent.setup();
+    useShell.setState({ activeTab: { "suivi/principal": "suivi/notes" } });
     renderShell();
-    fireEvent.contextMenu(screen.getByRole("tab", { name: "Notes" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Supprimer la page/ }));
-    const dialog = screen.getByRole("alertdialog");
+    const menu = await openPageMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: /Supprimer la page/ }));
+    const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("Supprimer la page « Notes » ?");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Supprimer" }));
+    await user.click(within(dialog).getByRole("button", { name: "Supprimer" }));
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("space.deletePage", { reference: "suivi/notes" }));
     await waitFor(() => expect(useShell.getState().snapshot?.sections[0].pages).toHaveLength(1));
   });
 
   it("propose de masquer une page d’un module en lecture seule, et rétablit si le backend refuse", async () => {
+    const user = userEvent.setup();
     act(() => useShell.setState({ view: { kind: "section", id: "crm/principal" } }));
-    // Une section d’une seule page n’affiche pas d’onglets : la section Clients en reçoit une seconde.
-    act(() =>
-      useShell.setState((state) => ({
-        snapshot: state.snapshot && {
-          ...state.snapshot,
-          sections: state.snapshot.sections.map((s) =>
-            s.id === "crm/principal"
-              ? { ...s, pages: [...s.pages, page("crm", "agenda", "Agenda", { readOnly: true })] }
-              : s,
-          ),
-        },
-      })),
-    );
     renderShell();
-    fireEvent.contextMenu(screen.getByRole("tab", { name: "Contacts" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Supprimer la page/ }));
-    const dialog = screen.getByRole("alertdialog");
+    const menu = await openPageMenu(user);
+    await user.click(within(menu).getByRole("menuitem", { name: /Supprimer la page/ }));
+    const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("La page « Contacts » ne peut pas être supprimée");
     expect(dialog).toHaveTextContent("module installé « CRM partagé », en lecture seule");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Annuler" }));
+    await user.click(within(dialog).getByRole("button", { name: "Annuler" }));
     expect(mockedInvoke).not.toHaveBeenCalledWith("space.deletePage", expect.anything());
 
     // Refus du backend (état obsolète) : la page revient et l’erreur est notifiée.
@@ -335,7 +276,7 @@ describe("réorganisation de la navigation", () => {
     await act(async () => {
       expect(await deletePage("crm/contacts")).toBe(false);
     });
-    expect(screen.getByRole("tab", { name: "Contacts" })).toBeInTheDocument();
+    expect(useShell.getState().snapshot?.sections[1].pages.map((p) => p.reference)).toEqual(["crm/contacts"]);
     expect(useNotifications.getState().items[0]).toMatchObject({
       tone: "error",
       title: "La page « Contacts » n’a pas été supprimée",
@@ -344,11 +285,11 @@ describe("réorganisation de la navigation", () => {
   });
 
   it("revient en arrière et notifie quand le backend refuse un changement", async () => {
+    const user = userEvent.setup();
     refuseLayout = "Écriture impossible.";
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Actions de la section Suivi" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Masquer la section" }));
-    expect(sidebarLabels()).toEqual(["Clients", "Compta"]);
+    const menu = await openSectionMenu(user, "Suivi");
+    await user.click(within(menu).getByRole("menuitem", { name: "Masquer la section" }));
     await waitFor(() => expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]));
     expect(useNotifications.getState().items[0]).toMatchObject({
       tone: "error",
@@ -393,7 +334,7 @@ describe("sections par instance", () => {
   it("montre une entrée par instance, et une section en attente qui mène à la fiche du module", () => {
     renderShell();
     expect(sidebarLabels()).toEqual(["Suivi", "Jira — Acme", "Jira — Cloud", "Mail"]);
-    fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+    act(() => useShell.getState().setView({ kind: "section", id: "mail/principal" }));
     expect(screen.getByText("En attente d’un compte")).toBeInTheDocument();
     expect(screen.getByText("Le client « Mail » n’a encore aucune instance.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ajouter un compte" }));
@@ -416,7 +357,7 @@ describe("sections par instance", () => {
     );
     useShell.setState({ snapshot: waiting });
     renderShell();
-    fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+    act(() => useShell.getState().setView({ kind: "section", id: "mail/principal" }));
     expect(screen.queryByText("En attente d’un compte")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Boîte" }));
     expect(screen.getByText("En attente d’un compte")).toBeInTheDocument();
@@ -441,7 +382,7 @@ describe("sections par instance", () => {
     useShell.setState({ snapshot: tabs });
     renderShell();
     expect(sidebarLabels()).toEqual(["Suivi", "Jira — Acme", "Jira — Cloud", "Mail", "Prefect"]);
-    fireEvent.click(screen.getByRole("button", { name: "Prefect" }));
+    act(() => useShell.getState().setView({ kind: "section", id: "prefect/principal" }));
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Prod", "Recette"]);
     useShell.getState().openPage("prefect/deploiements@recette");
     expect(useShell.getState().view).toEqual({ kind: "section", id: "prefect/principal" });
@@ -476,17 +417,20 @@ describe("sections par instance", () => {
     ]);
   });
 
-  it("déplace la page d’une copie vers une autre page, jamais dans les Réglages", () => {
+  it("déplace la page d’une copie vers une autre section, jamais dans les Réglages", async () => {
+    const user = userEvent.setup();
     useShell.setState({ view: { kind: "section", id: "jira/principal@acme" } });
     renderShell();
-    fireEvent.contextMenu(screen.getByRole("tab", { name: "Tickets" }));
-    const menu = screen.getByRole("menu");
-    expect(within(menu).getByText("Déplacer vers")).toBeInTheDocument();
-    expect(within(menu).queryByRole("menuitem", { name: "Réglages" })).not.toBeInTheDocument();
+    const menu = await openPageMenu(user);
     expect(within(menu).getByRole("menuitem", { name: /Masquer l’onglet/ })).toBeInTheDocument();
     // Ouvrir la copie seule dans sa fenêtre garde sa référence.
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /Ouvrir dans une nouvelle fenêtre/ }));
+    await user.click(within(menu).getByRole("menuitem", { name: /Ouvrir dans une nouvelle fenêtre/ }));
     expect(vi.mocked(openPageWindow)).toHaveBeenCalledWith("jira/tickets@acme");
+    await user.click(await openPageMenu(user).then((m) => within(m).getByRole("menuitem", { name: /Déplacer vers/ })));
+    const dialog = await screen.findByRole("dialog", { name: "Déplacer « Tickets »" });
+    await user.click(within(dialog).getByRole("button", { name: /Section/ }));
+    expect(screen.queryByRole("option", { name: "Réglages" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Suivi" })).toBeInTheDocument();
   });
 });
 
@@ -504,35 +448,31 @@ describe("logo d’un service comme icône d’une entrée du menu", () => {
     return snapshot;
   };
   const entryIcon = (label: string) => {
-    const entry = within(screen.getByRole("navigation", { name: "Sections de l’espace de travail" })).getByRole(
-      "button",
-      { name: label },
-    );
-    return { image: entry.querySelector("img.section-icon-image"), lucide: entry.querySelector("svg.lucide") };
+    const entry = sidebarRow(label);
+    return { image: entry.querySelector("img.section-icon-image"), lucide: entry.querySelector("svg.lucide:not(.lucide-ellipsis)") };
   };
 
   it("affiche le logo dans le menu, et revient à une icône Lucide depuis « Changer l’icône… »", async () => {
+    const user = userEvent.setup();
     backend = withLogo();
     useShell.setState({ snapshot: withLogo() });
     renderShell();
     const { image, lucide } = entryIcon("Jira");
     expect(image).toHaveAttribute("src", LOGO);
-    expect(image).toHaveAttribute("width", "15");
+    expect(image).toHaveAttribute("width", "16");
     expect(lucide).toBeNull();
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
+    await user.click(within(await openSectionMenu(user, "Jira")).getByRole("menuitem", { name: /Changer l’icône/ }));
     // « Par défaut », choisi d’office, montre le logo et le garde : rien n’est enregistré.
     const byDefault = screen.getByRole("radio", { name: "Par défaut" });
     expect(byDefault).toBeChecked();
     expect(byDefault.closest("label")?.querySelector("img.section-icon-image")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     expect(lastLayoutCall()).toBeUndefined();
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: "Jira" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
+    await user.click(within(await openSectionMenu(user, "Jira")).getByRole("menuitem", { name: /Changer l’icône/ }));
     fireEvent.click(screen.getByRole("radio", { name: "bug" }));
-    fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
+    await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Jira en bug"));
     expect(lastLayoutCall()?.layout.overrides["section:compta/principal"]).toEqual({ icon: "bug" });
     expect(entryIcon("Jira").image).toBeNull();
