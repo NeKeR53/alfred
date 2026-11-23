@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { installDialogPolyfill } from "../../../ui/dialog.test-helper";
+import { render } from "../socle.test-helper";
 
 const native = vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -17,7 +17,7 @@ vi.mock("../../../lib/native", async (importOriginal) => ({
   onNativeEvent: vi.fn(() => () => undefined),
 }));
 
-import { Markdown } from "@alfred/ui";
+import { Markdown } from "socle-ui/markdown";
 import { Activities, activityStatusLabel } from "../Activities";
 import { referencedLocalImages } from "../lib/chatImages";
 import type { Conversation, ConversationRuntime, Turn } from "../model";
@@ -41,8 +41,6 @@ import {
 import { agentQuestion, withoutAgentQuestion } from "./agentQuestions";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ReferencePills } from "./ReferencePills";
-
-installDialogPolyfill();
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
@@ -386,7 +384,7 @@ describe("relevé", () => {
     await waitFor(() =>
       expect(native.invoke).toHaveBeenCalledWith("files.open", { path: "rapport.pdf", base: "/espace" }),
     );
-    expect(within(files).getByRole("button", { name: "Enregistrer une copie de rapport.pdf" })).toBeInTheDocument();
+    expect(within(files).getByRole("button", { name: "Enregistrer… une copie de rapport.pdf" })).toBeInTheDocument();
     expect(within(files).getByText("Aperçu")).toBeInTheDocument();
   });
 
@@ -538,6 +536,8 @@ describe("activités", () => {
         ]}
       />,
     );
+    // La suite d’activités est repliée derrière son résumé.
+    fireEvent.click(screen.getByRole("button", { name: /^3 activités|^3 outils/ }));
     fireEvent.click(screen.getByRole("button", { name: "page.tsx" }));
     expect(open).toHaveBeenCalledWith("src/page.tsx");
     fireEvent.click(screen.getByRole("button", { name: "notes/plan.md" }));
@@ -620,7 +620,10 @@ describe("parité avec OneApp", () => {
     const final = screen.getByText("C’est corrigé.");
     expect(final.closest("details")).toBeNull();
     // Le reste du tour, activités d’avant et d’après réunies, se replie derrière le résumé.
-    expect(screen.getByText("A travaillé pendant 4 s · 2 outils appelés").closest("summary")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "A travaillé pendant 4 s · 2 outils appelés" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("montre tout le travail d’un tour arrêté ou en erreur, sans le replier ni le résumer", () => {
@@ -707,15 +710,14 @@ describe("parité avec OneApp", () => {
       />,
     );
     expect(screen.getByRole("heading", { level: 3, name: "Bilan" })).toBeInTheDocument();
-    const file = screen.getByRole("button", { name: "le plan" });
-    expect(file).toHaveClass("markdown-text__file-link");
+    const file = screen.getByRole("link", { name: "le plan" });
     fireEvent.click(file);
     await waitFor(() =>
       expect(native.invoke).toHaveBeenCalledWith("files.open", { path: "notes/plan.md", base: "/espace" }),
     );
-    expect(screen.getByRole("link", { name: "le site" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: /^le site/ })).toHaveAttribute("target", "_blank");
     expect(screen.queryByRole("link", { name: "ceci" })).not.toBeInTheDocument();
-    expect(screen.getByText("ceci")).toBeInTheDocument();
+    expect(screen.getByText(/et ceci\./)).toBeInTheDocument();
     expect(screen.queryByText(/<b>/)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Tableau" })).toHaveAttribute("tabindex", "0");
   });

@@ -19,7 +19,13 @@ export function TextPreview({
   const summary = `${label} · ${text.length.toLocaleString("fr-FR")} caractères`;
   return (
     <span className="chat-text-preview">
-      <Button size="sm" variant="subtle" icon={<FileText size={15} />} aria-label={`Voir ${summary}`} onPress={() => setExpanded(true)}>
+      <Button
+        size="sm"
+        variant="subtle"
+        icon={<FileText size={15} />}
+        aria-label={`Voir ${summary}`}
+        onPress={() => setExpanded(true)}
+      >
         {summary}
       </Button>
       {onRemove ? <IconButton icon={<X size={14} />} label={`Retirer ${label}`} onPress={onRemove} /> : null}

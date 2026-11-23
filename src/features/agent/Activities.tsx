@@ -1,6 +1,6 @@
-import { Disclosure } from "@alfred/ui";
 import { BookOpen, Brain, FolderOpen, LoaderCircle, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
 import { useMemo } from "react";
+import { Disclosure } from "socle-ui";
 import type { ActivityAction } from "./harness";
 import { isAgentFileReference } from "./lib/agentFileLinks";
 import { activityImageOutput } from "./lib/chatImages";
@@ -69,6 +69,12 @@ export function activityStatusLabel(status: string): string {
 
 function isRunning(activity: Activity): boolean {
   return !["completed", "failed", "cancelled", "stopped"].includes(activity.status);
+}
+
+/** Titre texte d’une activité, pour le titre d’un `Disclosure` : son statut s’y ajoute s’il n’est pas « Terminé ». */
+function activityLabelText(activity: Activity): string {
+  const title = activityTitle(activity).replace(/\s*\n\s*/g, " ");
+  return activity.status === "completed" ? title : `${title} · ${activityStatusLabel(activity.status)}`;
 }
 
 function ActivityLabel({ activity }: { activity: Activity }) {
@@ -212,7 +218,7 @@ function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile
       </div>
     );
   return (
-    <Disclosure appearance="subtle" label={<ActivityLabel activity={activity} />}>
+    <Disclosure title={activityLabelText(activity)}>
       <ActivityOutput activity={activity} />
     </Disclosure>
   );
@@ -248,23 +254,16 @@ export function Activities({
     );
   const failed = activities.some((activity) => activity.status === "failed");
   return (
-    <Disclosure
-      appearance="subtle"
-      className="agent-chat__activity-group"
-      label={
-        <>
-          <Wrench size={15} aria-hidden="true" />
-          <span className={`agent-chat__tool-title${failed ? " is-failed" : ""}`}>{activitySummary(activities)}</span>
-        </>
-      }
-    >
-      <ol className="agent-chat__tool-list">
-        {activities.map((activity) => (
-          <li key={activity.id}>
-            <ActivityLine activity={activity} onOpenFile={onOpenFile} />
-          </li>
-        ))}
-      </ol>
-    </Disclosure>
+    <div className={`agent-chat__activity-group${failed ? " is-failed" : ""}`}>
+      <Disclosure title={activitySummary(activities)}>
+        <ol className="agent-chat__tool-list">
+          {activities.map((activity) => (
+            <li key={activity.id}>
+              <ActivityLine activity={activity} onOpenFile={onOpenFile} />
+            </li>
+          ))}
+        </ol>
+      </Disclosure>
+    </div>
   );
 }

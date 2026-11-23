@@ -1,5 +1,6 @@
-import { Button, FormField, RadioControl, SelectControl, TextInput } from "@alfred/ui";
 import { type FormEvent, useMemo, useState } from "react";
+import { Button, RadioGroup, Select, TextField } from "socle-ui";
+import { Row, Stack } from "../../kit";
 import { type PlaceTarget, SECTION_COLORS } from "../../lib/types";
 import { useShell } from "../../shell/store";
 
@@ -71,89 +72,59 @@ export function PlacementCard({
       {typeof payload.description === "string" && payload.description ? (
         <p className="agent-card__note">{payload.description}</p>
       ) : null}
-      <FormField label="Titre de la page">
-        <TextInput value={title} onChange={(event) => setTitle(event.target.value)} required />
-      </FormField>
-      <fieldset className="agent-placement__choices">
-        <legend className="sr-only">Emplacement</legend>
-        <RadioControl
-          name="placement"
-          checked={kind === "menu"}
-          onChange={() => setKind("menu")}
-          label="Nouvelle entrée du menu de gauche"
-        />
+      <Stack gap="sm">
+        <TextField label="Titre de la page" value={title} onChange={setTitle} isRequired />
+        <RadioGroup label="Emplacement" value={kind} onChange={(value) => setKind(value as Kind)}>
+          <RadioGroup.Option value="menu">Nouvelle entrée du menu de gauche</RadioGroup.Option>
+          <RadioGroup.Option value="tab" isDisabled={!sections.length}>
+            Onglet d’une section existante
+          </RadioGroup.Option>
+          <RadioGroup.Option value="panel" isDisabled={!hosts.length}>
+            Panneau de droite d’une page existante
+          </RadioGroup.Option>
+          <RadioGroup.Option value="settings">Onglet des Réglages</RadioGroup.Option>
+        </RadioGroup>
         {kind === "menu" ? (
-          <div className="agent-placement__details">
-            <FormField label="Nom dans le menu">
-              <TextInput value={label} onChange={(event) => setLabel(event.target.value)} required />
-            </FormField>
-            <FormField label="Icône" hint="Nom Lucide, par exemple list-checks.">
-              <TextInput value={icon} onChange={(event) => setIcon(event.target.value)} spellCheck={false} />
-            </FormField>
-            <FormField label="Couleur">
-              <SelectControl value={color} onChange={(event) => setColor(event.target.value)}>
-                {SECTION_COLORS.map((name) => (
-                  <option key={name} value={name}>
-                    {COLOR_LABEL[name]}
-                  </option>
-                ))}
-              </SelectControl>
-            </FormField>
-          </div>
+          <>
+            <TextField label="Nom dans le menu" value={label} onChange={setLabel} isRequired />
+            <TextField
+              label="Icône"
+              description="Nom Lucide, par exemple list-checks."
+              value={icon}
+              onChange={setIcon}
+            />
+            <Select
+              label="Couleur"
+              value={color}
+              onChange={(value) => value && setColor(value)}
+              options={SECTION_COLORS.map((name) => ({ id: name, label: COLOR_LABEL[name] }))}
+            />
+          </>
+        ) : kind === "tab" ? (
+          <Select
+            label="Section"
+            value={section}
+            onChange={(value) => value && setSection(value)}
+            options={sections.map((candidate) => ({ id: candidate.id, label: candidate.label }))}
+          />
+        ) : kind === "panel" ? (
+          <Select
+            label="Page"
+            value={host}
+            onChange={(value) => value && setHost(value)}
+            options={hosts.map(({ page, section: owner }) => ({
+              id: page.reference,
+              label: `${owner.label} · ${page.title}`,
+            }))}
+          />
         ) : null}
-        <RadioControl
-          name="placement"
-          checked={kind === "tab"}
-          disabled={!sections.length}
-          onChange={() => setKind("tab")}
-          label="Onglet d’une section existante"
-        />
-        {kind === "tab" ? (
-          <div className="agent-placement__details">
-            <FormField label="Section">
-              <SelectControl value={section} onChange={(event) => setSection(event.target.value)}>
-                {sections.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {candidate.label}
-                  </option>
-                ))}
-              </SelectControl>
-            </FormField>
-          </div>
-        ) : null}
-        <RadioControl
-          name="placement"
-          checked={kind === "panel"}
-          disabled={!hosts.length}
-          onChange={() => setKind("panel")}
-          label="Panneau de droite d’une page existante"
-        />
-        {kind === "panel" ? (
-          <div className="agent-placement__details">
-            <FormField label="Page">
-              <SelectControl value={host} onChange={(event) => setHost(event.target.value)}>
-                {hosts.map(({ page, section: owner }) => (
-                  <option key={page.reference} value={page.reference}>
-                    {owner.label} · {page.title}
-                  </option>
-                ))}
-              </SelectControl>
-            </FormField>
-          </div>
-        ) : null}
-        <RadioControl
-          name="placement"
-          checked={kind === "settings"}
-          onChange={() => setKind("settings")}
-          label="Onglet des Réglages"
-        />
-      </fieldset>
-      <div className="agent-card__actions">
-        <Button type="submit" variant="primary" disabled={!title.trim()}>
-          Placer la page
-        </Button>
-        <Button onClick={onCancel}>Annuler</Button>
-      </div>
+        <Row gap="sm" justify="end">
+          <Button onPress={onCancel}>Annuler</Button>
+          <Button type="submit" variant="primary" isDisabled={!title.trim()}>
+            Placer la page
+          </Button>
+        </Row>
+      </Stack>
     </form>
   );
 }

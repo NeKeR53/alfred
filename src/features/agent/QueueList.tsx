@@ -3,9 +3,9 @@
  * pastilles de références. Ils partent à la fin de l’étape en cours, ou tout de suite avec « Envoyer maintenant » ;
  * leur ordre se change par glisser-déposer ou Flèches haut et bas sur la poignée, quand le store sait réordonner.
  */
-import { IconButton } from "@alfred/ui";
 import { Clock3, GripVertical, Pencil, X } from "lucide-react";
 import { type ReactNode, type PointerEvent as ReactPointerEvent, useEffect, useId, useRef, useState } from "react";
+import { IconButton } from "socle-ui";
 import { AgentSendButton } from "./AgentSendButton";
 import { type ComposerReference, type ComposerReferenceMention, referenceDisplayName } from "./lib/composerReferences";
 import { ATTACHMENTS_ONLY_TEXT, type QueuedMessage } from "./model";
@@ -262,31 +262,23 @@ export function QueueList({
             </span>
             <span className="agent-queue__actions">
               <IconButton
-                className="agent-queue__action"
+                icon={<Pencil size={12} />}
                 label={`Modifier le message ${index + 1}`}
-                tooltip="Modifier"
-                disabled={disabled || !queuedEditable(item.message)}
-                onClick={() => onEdit(item)}
-              >
-                <Pencil size={12} aria-hidden="true" />
-              </IconButton>
+                isDisabled={disabled || !queuedEditable(item.message)}
+                onPress={() => onEdit(item)}
+              />
               <IconButton
-                className="agent-queue__action"
+                icon={<X size={12} />}
                 label={`Retirer le message ${index + 1}`}
-                tooltip="Retirer"
-                disabled={disabled}
-                onClick={() => onRemove(item)}
-              >
-                <X size={12} aria-hidden="true" />
-              </IconButton>
+                isDisabled={disabled}
+                onPress={() => onRemove(item)}
+              />
             </span>
             <AgentSendButton
-              micro
               direction="upRight"
               label={`Envoyer le message ${index + 1} maintenant`}
-              tooltip="Envoyer maintenant"
-              disabled={disabled}
-              onClick={() => onSendNow(item)}
+              isDisabled={disabled}
+              onPress={() => onSendNow(item)}
             />
           </li>
         ))}

@@ -5,8 +5,7 @@
  * déjà jointes. Il n’a plus qu’à écrire ce qu’il veut changer.
  */
 
-import { Button, IconButton } from "@alfred/ui";
-import { Crosshair, LoaderCircle } from "lucide-react";
+import { Crosshair } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -16,6 +15,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { Button, IconButton } from "socle-ui";
 import type { ResolvedPage } from "../../lib/types";
 import { type AppScreenshot, inspectApp, screenshotApp } from "../../shell/appScreenshot";
 import { notify } from "../../shell/notifications";
@@ -54,12 +54,14 @@ async function annotate(url: string, rect: Rect | null): Promise<Blob> {
   if (!context) throw new Error("Canevas indisponible.");
   context.drawImage(image, 0, 0);
   if (rect) {
-    context.fillStyle = "rgba(0, 0, 0, 0.28)";
+    // Le dessin de la capture suit les tokens Socle : voile et cadre de l’élément.
+    const tokens = getComputedStyle(document.documentElement);
+    context.fillStyle = tokens.getPropertyValue("--scrim").trim() || "black";
     context.beginPath();
     context.rect(0, 0, canvas.width, canvas.height);
     context.rect(rect.x, rect.y, rect.width, rect.height);
     context.fill("evenodd");
-    context.strokeStyle = "#e5484d";
+    context.strokeStyle = tokens.getPropertyValue("--danger").trim() || "red";
     context.lineWidth = 3;
     context.strokeRect(rect.x - 1.5, rect.y - 1.5, rect.width + 3, rect.height + 3);
   }
@@ -145,17 +147,12 @@ export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<H
   return (
     <>
       <IconButton
+        icon={<Crosshair size={15} />}
         label="Corriger un élément avec l’agent"
-        aria-pressed={phase.kind === "selecting"}
-        disabled={busy || page.missing}
-        onClick={() => void start()}
-      >
-        {busy ? (
-          <LoaderCircle className="is-spinning" size={15} aria-hidden="true" />
-        ) : (
-          <Crosshair size={15} aria-hidden="true" />
-        )}
-      </IconButton>
+        isPending={busy}
+        isDisabled={page.missing}
+        onPress={() => void start()}
+      />
       {phase.kind === "selecting"
         ? createPortal(
             <RegionPicker
@@ -270,8 +267,10 @@ function RegionPicker({
       </div>
       <div className="ui-fix__bar" role="toolbar" aria-label="Correction d’un élément">
         <span className="ui-fix__hint">Encadrez l’élément à corriger</span>
-        <Button onClick={() => onConfirm(null)}>Toute la fenêtre</Button>
-        <Button onClick={onCancel}>Annuler</Button>
+        <Button onPress={onCancel}>Annuler</Button>
+        <Button variant="primary" onPress={() => onConfirm(null)}>
+          Toute la fenêtre
+        </Button>
       </div>
     </div>
   );

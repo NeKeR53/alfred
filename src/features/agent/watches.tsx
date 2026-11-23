@@ -4,9 +4,9 @@
  * (`src-tauri/src/agents/watches.rs`) ; la coquille dépose le message dans la conversation, une seule fois, puis le
  * marque livré. Une ligne au-dessus de la saisie montre ce que la conversation attend, avec sa croix.
  */
-import { IconButton } from "@alfred/ui";
 import { BellRing, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { IconButton } from "socle-ui";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { useAgents } from "./store";
 
@@ -96,11 +96,10 @@ export function WatchLines({ conversationId }: { conversationId: string }) {
             Relance à la fin de {watch.label} · au plus tard {time(watch.deadline)}
           </span>
           <IconButton
+            icon={<X size={13} />}
             label="Annuler la relance"
-            onClick={() => void invoke("agents.watches.cancel", { id: watch.id }).catch(() => undefined)}
-          >
-            <X size={13} aria-hidden="true" />
-          </IconButton>
+            onPress={() => void invoke("agents.watches.cancel", { id: watch.id }).catch(() => undefined)}
+          />
         </li>
       ))}
     </ul>

@@ -3,11 +3,12 @@
  * s’affiche à la place de la page Agent, et Réglages → Agent dit quoi installer sans lister d’agent absent.
  */
 import "./support/dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
 import { useHarnesses } from "../src/features/agent/harness";
+import { render } from "../src/features/agent/socle.test-helper";
 import { useShell } from "../src/shell/store";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";

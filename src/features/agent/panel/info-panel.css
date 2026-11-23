@@ -7,8 +7,8 @@
   padding: 4px;
   overflow-y: auto;
   border-left: 1px solid var(--line);
-  background: var(--color-bg);
-  font-size: var(--font-size-secondary);
+  background: var(--surface);
+  font-size: var(--fs-sm);
 }
 /* Sections à plat séparées par un filet, comme dans tous les panneaux de droite. */
 .info-panel__card {
@@ -18,10 +18,10 @@
   opacity: 0.45;
 }
 .info-panel__card.is-drop-before {
-  box-shadow: 0 -2px 0 var(--color-primary);
+  box-shadow: 0 -2px 0 var(--accent);
 }
 .info-panel__card.is-drop-after {
-  box-shadow: 0 2px 0 var(--color-primary);
+  box-shadow: 0 2px 0 var(--accent);
 }
 .info-panel__header {
   height: 32px;
@@ -37,9 +37,9 @@
   flex: none;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-muted);
+  color: var(--fg-2);
   cursor: grab;
   opacity: 0;
   touch-action: none;
@@ -58,9 +58,9 @@
   gap: 6px;
   padding: 0 4px;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-ink);
+  color: var(--fg);
   font: inherit;
   text-align: left;
 }
@@ -69,7 +69,7 @@
 }
 .info-panel__chevron {
   flex: none;
-  color: var(--color-muted);
+  color: var(--fg-2);
   transition: transform 120ms ease-out;
 }
 .info-panel__chevron.is-folded {
@@ -78,26 +78,26 @@
 .info-panel__summary {
   margin-left: auto;
   overflow: hidden;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .info-panel__summary--success {
-  color: var(--color-success-ink);
+  color: var(--success);
 }
 .info-panel__summary--warning {
-  color: var(--color-warning-ink);
+  color: var(--warning);
 }
 .info-panel__summary--danger {
-  color: var(--color-danger-ink);
+  color: var(--danger);
 }
 /* Le contenu commence sous le texte du titre (poignée 16 px, écart 2 px, marge du bouton 4 px). */
 .info-panel__body {
   --info-panel-indent: 22px;
   min-width: 0;
   padding: 0 8px 6px var(--info-panel-indent);
-  color: var(--color-ink);
+  color: var(--fg);
   overflow-wrap: anywhere;
 }
 .info-panel__body[hidden] {
@@ -105,13 +105,13 @@
 }
 .info-panel__handle:focus-visible,
 .info-panel__toggle:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 .info-panel__note {
   margin: 0;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
 }
 @media (prefers-reduced-motion: reduce) {
   .info-panel__handle,
@@ -144,15 +144,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-ink);
-  font-size: var(--font-size-secondary);
+  color: var(--fg);
+  font-size: var(--fs-sm);
 }
 .info-panel-rows__glyph {
   flex: none;
   width: 14px;
   display: inline-grid;
   place-items: center;
-  color: var(--color-muted);
+  color: var(--fg-2);
 }
 /* Ligne cliquable : même alignement que la ligne simple, survol et sélection sur toute la largeur. */
 .info-panel-rows li:has(> .info-panel-rows__button) {
@@ -167,7 +167,7 @@
   gap: 8px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-md);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -175,10 +175,10 @@
   cursor: default;
 }
 .info-panel-rows__button:hover {
-  background: var(--color-surface);
+  background: var(--surface-side);
 }
 .info-panel-rows__button:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .info-panel-rows__text {
@@ -207,21 +207,21 @@
 }
 .info-panel-rows__meta {
   flex: none;
-  color: var(--color-muted);
-  font-size: var(--font-size-secondary);
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 .info-panel-rows__glyph--success,
 .info-panel-rows__meta--success {
-  color: var(--color-success-ink);
+  color: var(--success);
 }
 .info-panel-rows__glyph--warning,
 .info-panel-rows__meta--warning {
-  color: var(--color-warning-ink);
+  color: var(--warning);
 }
 .info-panel-rows__glyph--danger,
 .info-panel-rows__meta--danger {
-  color: var(--color-danger-ink);
+  color: var(--danger);
 }
 /* Variante détaillée, reprise de OneApp : texte et précision sur deux lignes, état et heure de part et d’autre. */
 .info-panel-rows--detailed li {
@@ -233,18 +233,18 @@
   display: flex;
   flex-direction: column;
   padding-block: 3px;
-  font-size: var(--font-size-body);
+  font-size: var(--fs-md);
   line-height: 1.3;
 }
 .info-panel-rows__description {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--color-muted);
+  color: var(--fg-2);
   font-size: 11px;
 }
 .info-panel-rows--detailed .info-panel-rows__button.is-selected {
-  background: var(--color-surface-strong);
+  background: var(--selected);
 }
 .info-panel-rows--detailed .info-panel-rows__button.is-selected .info-panel-rows__text {
   font-weight: inherit;
@@ -266,9 +266,7 @@
 }
 
 /* Échec d’enregistrement des conversations, au-dessus de la saisie tant qu’il dure. */
-.agents-page__save-error {
-  margin-bottom: 8px;
-}
+
 /* Pastille Git sous la saisie, alignée sur son bord gauche. */
 .agents-page__footer > .agents-page__git-summary {
   margin-top: 4px;

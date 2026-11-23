@@ -4,13 +4,13 @@
  * le résultat structuré que l’agent a rendu.
  */
 
-import { IconButton } from "@alfred/ui";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { useEffect } from "react";
+import { IconButton } from "socle-ui";
+import { Row, Text } from "../../kit";
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
 import { declaredReference, type FrameIdentity, frameServices } from "../../shell/frameBridge";
-import { PanelBar } from "../../shell/ResizablePanel";
 import { useShell } from "../../shell/store";
 import { Composer } from "./Composer";
 import type { Autonomy, Provider } from "./harness";
@@ -202,22 +202,24 @@ export function AgentPanel({ conversationId, onClose }: { conversationId: string
   if (!conversation) return null;
   return (
     <div className="agent-panel">
-      <PanelBar
-        title={conversation.title}
-        closeLabel="Fermer la conversation"
-        onClose={onClose}
-        actions={
-          <IconButton
-            label="Ouvrir dans la page Agent"
-            onClick={() => {
-              void open(conversationId);
-              setView({ kind: "agent" });
-            }}
-          >
-            <ExternalLink size={15} aria-hidden="true" />
-          </IconButton>
-        }
-      />
+      <div className="agent-panel__head">
+        <Row gap="xs" justify="between">
+          <Text as="span" weight="strong">
+            {conversation.title}
+          </Text>
+          <Row gap="xs">
+            <IconButton
+              icon={<ExternalLink size={15} />}
+              label="Ouvrir dans la page Agent"
+              onPress={() => {
+                void open(conversationId);
+                setView({ kind: "agent" });
+              }}
+            />
+            <IconButton icon={<X size={15} />} label="Fermer la conversation" onPress={onClose} />
+          </Row>
+        </Row>
+      </div>
       <Transcript conversation={conversation} runtime={runtime} />
       <div className="agents-page__footer">
         <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />

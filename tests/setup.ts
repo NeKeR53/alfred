@@ -1,6 +1,23 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { createElement, type ReactNode } from "react";
+import { createNotifications, SocleProvider } from "socle-ui";
+import { afterEach, expect, vi } from "vitest";
+
+// Les parcours de `tests/` rendent l’application entière : comme `src/main.tsx`, ils passent dans un `SocleProvider`
+// (confirmations, actions, mémoire des choix). Un test qui donne son propre `wrapper` le garde.
+vi.mock("@testing-library/react", async (original) => {
+  const library = await original<typeof import("@testing-library/react")>();
+  const render = ((ui: Parameters<typeof library.render>[0], options?: object) => {
+    if (!/[\\/]tests[\\/][^\\/]+\.test\.tsx?$/.test(expect.getState().testPath ?? ""))
+      return library.render(ui, options);
+    const notifications = createNotifications();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(SocleProvider, { density: "desktop", notifications, children });
+    return library.render(ui, { wrapper, ...options });
+  }) as typeof library.render;
+  return { ...library, render };
+});
 
 // jsdom n’a ni `ResizeObserver` ni `matchMedia` : les composants de socle-ui (AppShell, Table, SettingsPage…) les
 // lisent pour leur mise en page. Ces versions vides suffisent aux tests, qui ne mesurent rien.

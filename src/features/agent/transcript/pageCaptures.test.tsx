@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installDialogPolyfill } from "../../../ui/dialog.test-helper";
+import { render } from "../socle.test-helper";
 
 const native = vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -20,8 +20,6 @@ vi.mock("../../../lib/native", async (importOriginal) => ({
 import { captureGroups, pageCaptures } from "../lib/pageCaptures";
 import type { Conversation, ConversationRuntime, Turn, TurnItem } from "../model";
 import { Transcript } from "../Transcript";
-
-installDialogPolyfill();
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
@@ -123,10 +121,9 @@ describe("captures prises par l’agent", () => {
         runtime={idle}
       />,
     );
-    const summary = screen.getByText(/A travaillé pendant/);
-    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("button", { name: /A travaillé pendant/ })).toHaveAttribute("aria-expanded", "false");
     const row = screen.getByRole("region", { name: "Captures de l’agent" });
-    expect(row.closest("details")).toBeNull();
+    expect(row.closest('[role="group"]')).toBeNull();
     expect(within(row).getByText("Tâches · page entière")).toBeInTheDocument();
     const thumbnail = await within(row).findByRole("button", { name: "Agrandir l’image : Tâches · page entière" });
     expect(native.invoke).toHaveBeenCalledWith("files.readImage", {
@@ -134,15 +131,14 @@ describe("captures prises par l’agent", () => {
       base: "/espace",
     });
     fireEvent.click(thumbnail);
-    const viewer = screen.getByRole("dialog", { name: "Tâches · page entière" });
-    expect(viewer).toHaveAttribute("open");
+    const viewer = await screen.findByRole("dialog", { name: "Tâches · page entière" });
     expect(within(viewer).getByRole("img", { name: "Tâches · page entière" })).toHaveAttribute(
       "src",
       `data:image/png;base64,${btoa("/echanges/c1/captures/a.png")}`,
     );
     expect(within(viewer).queryByRole("button", { name: "Image suivante" })).not.toBeInTheDocument();
-    fireEvent.click(within(viewer).getByRole("button", { name: "Fermer l’image" }));
-    expect(viewer).not.toHaveAttribute("open");
+    fireEvent.click(within(viewer).getByRole("button", { name: "Fermer" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it("montre aussi la capture pendant que l’agent travaille", async () => {
@@ -175,12 +171,11 @@ describe("captures prises par l’agent", () => {
     render(<Transcript conversation={conversation([turn([...shots, notes])])} runtime={idle} />);
     const row = screen.getByRole("region", { name: "Captures de l’agent" });
     await waitFor(() => expect(within(row).getAllByRole("button", { name: /^Agrandir l’image/ })).toHaveLength(4));
-    const more = within(row).getByRole("button", { name: "Voir 7 autres captures de Tâches" });
+    const more = within(row).getByRole("button", { name: "+ 7 : voir 7 autres captures de Tâches" });
     expect(more).toHaveTextContent("+ 7");
     fireEvent.click(more);
     // La vue agrandie s’ouvre sur la plus récente des captures cachées, et parcourt toutes celles de la page.
     const viewer = await screen.findByRole("dialog", { name: "Tâches" });
-    expect(viewer).toHaveAttribute("open");
     expect(within(viewer).getByText("Tâches · 7 / 10")).toBeInTheDocument();
     expect(await within(viewer).findByRole("img")).toHaveAttribute(
       "src",

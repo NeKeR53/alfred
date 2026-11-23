@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import { render } from "../socle.test-helper";
 
 vi.mock("../harness", async (original) => ({
   ...(await original<typeof import("../harness")>()),
@@ -35,6 +36,8 @@ it("ne propose que les modèles affichés, plus le modèle déjà choisi", async
   });
   render(<ModelPicker value={{ provider: "claude", model: "haiku" }} cwd="/tmp" onChange={() => {}} />);
   await userEvent.click(await screen.findByRole("button", { name: /Modèle de l’agent : Haiku/ }));
+  // Le champ « Modèle » du volet montre le modèle choisi ; il ouvre la liste.
+  await userEvent.click(await screen.findByRole("button", { name: /Haiku/ }));
   const options = screen.getAllByRole("option").map((option) => option.textContent);
   expect(options).toEqual(["Modèle par défaut", "Opus", "Haiku"]);
 });

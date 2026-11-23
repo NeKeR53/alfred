@@ -1,12 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
-import { NotificationToasts } from "../../shell/NotificationCenter";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { ArchivedConversations } from "../agentSettings/ArchivedConversations";
 import { AgentPage } from "./AgentPage";
 import type { Conversation } from "./model";
+import { chooseConversationAction, findConversationTitle, render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -23,10 +23,6 @@ vi.mock("../../lib/native", async (importOriginal) => ({
   invoke: native.invoke,
   onNativeEvent: vi.fn(() => () => undefined),
 }));
-
-HTMLDialogElement.prototype.showModal = function showModal() {
-  this.open = true;
-};
 
 function stored(id: string, title: string, updatedAt: number): Conversation {
   return {
@@ -81,35 +77,29 @@ beforeEach(() => {
 
 describe("conversations d’agent", () => {
   it("renomme, marque comme non lue, archive (avec annulation) puis retrouve et restaure", async () => {
-    render(
-      <>
-        <AgentPage />
-        <NotificationToasts />
-      </>,
-    );
-    await screen.findByRole("heading", { name: "Factures" });
-
+    render(<AgentPage />);
+    await screen.findByText("Factures");
     // Renommer depuis le menu de la conversation.
-    fireEvent.click(screen.getByRole("button", { name: "Autres actions sur la conversation" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Renommer" }));
+    await chooseConversationAction("Renommer");
     const input = await screen.findByRole("textbox", { name: "Nom de la conversation" });
     fireEvent.change(input, { target: { value: "Factures de novembre" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(database.c1.title).toBe("Factures de novembre"));
-    await screen.findByRole("heading", { name: "Factures de novembre" });
+    await findConversationTitle("Factures de novembre");
 
     // Marquer comme non lue : la page passe à l’autre conversation, la première reste « à consulter ».
-    fireEvent.click(screen.getByRole("button", { name: "Autres actions sur la conversation" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Marquer comme non lue" }));
-    await screen.findByRole("heading", { name: "Notes" });
+    await chooseConversationAction("Marquer comme non lue");
+    await findConversationTitle("Notes");
     expect(database.c1.unread).toBe(true);
     expect(useAgents.getState().headers.find((header) => header.id === "c1")?.unread).toBe(true);
 
     // Archiver, puis annuler depuis la notification.
     fireEvent.click(screen.getAllByRole("button", { name: "Archiver Notes" })[0]);
     await waitFor(() => expect(database.c2.archived).toBe(true));
-    const toast = (await screen.findByText("Conversation archivée")).closest("[data-sonner-toast]") as HTMLElement;
-    fireEvent.click(within(toast).getByRole("button", { name: "Annuler" }));
+    // La notification porte « Annuler » ; la coquille la montre en toast.
+    const archived = useNotifications.getState().items.find((item) => item.title === "Conversation archivée");
+    expect(archived?.action?.label).toBe("Annuler");
+    act(() => archived?.action?.run());
     await waitFor(() => expect(database.c2.archived).toBe(false));
 
     // Archiver depuis sa ligne de la liste, puis la retrouver dans les Réglages et la restaurer.

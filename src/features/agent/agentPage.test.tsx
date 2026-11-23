@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
@@ -7,6 +7,7 @@ import { AgentPage } from "./AgentPage";
 import { compareConversations, type GitSummary } from "./ConversationList";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
+import { findConversationTitle, render } from "./socle.test-helper";
 import { useAgents } from "./store";
 
 const native = vi.hoisted(() => {
@@ -92,14 +93,14 @@ beforeEach(() => {
 describe("page Agent", () => {
   it("F2 met le titre de la conversation ouverte en édition", async () => {
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     fireEvent.keyDown(window, { key: "F2" });
     expect(await screen.findByRole("textbox", { name: "Nom de la conversation" })).toHaveValue("Factures");
   });
 
   it("ouvre le dossier de travail dans l’explorateur, et dans l’éditeur une fois choisi", async () => {
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     const editor = screen.getByRole("button", { name: "Ouvrir le dossier dans l’éditeur" });
     // Sans éditeur dans les réglages, le bouton reste visible mais grisé.
     expect(editor).toBeDisabled();
@@ -133,7 +134,7 @@ describe("page Agent", () => {
       truncated: false,
     };
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     const pill = await screen.findByRole("status");
     expect(pill).toHaveTextContent("2 fichiers modifiés");
     expect(pill).toHaveTextContent("+1 200");
@@ -256,7 +257,7 @@ describe("page Agent", () => {
       truncated: false,
     };
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
     expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
     const pill = await screen.findByRole("status");
@@ -325,7 +326,7 @@ describe("page Agent", () => {
 
   it("archiver notifie aussitôt, avec « Annuler »", async () => {
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     fireEvent.click(screen.getAllByRole("button", { name: "Archiver Factures" })[0]);
     const item = useNotifications.getState().items[0];
     expect(item?.title).toBe("Conversation archivée");
@@ -335,7 +336,7 @@ describe("page Agent", () => {
   it("affiche le bandeau d’échec de chargement avec « Réessayer » quand le magasin l’expose", async () => {
     const load = vi.fn(async () => undefined);
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     act(() => useAgents.setState({ loadError: "Base illisible.", load } as never));
     expect(await screen.findByText("L’historique des agents n’a pas pu être chargé.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
@@ -346,7 +347,7 @@ describe("page Agent", () => {
   it("affiche l’échec d’enregistrement près de la saisie avec « Réessayer la sauvegarde »", async () => {
     const retrySave = vi.fn(async () => undefined);
     render(<AgentPage />);
-    await screen.findByRole("heading", { name: "Factures" });
+    await findConversationTitle("Factures");
     act(() =>
       useAgents.setState({
         saveError: "Les conversations n’ont pas pu être enregistrées : disque plein",

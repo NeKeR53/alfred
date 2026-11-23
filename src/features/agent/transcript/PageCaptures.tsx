@@ -88,15 +88,15 @@ function HiddenCaptures({ group, gallery }: { group: CaptureGroup; gallery: read
         {`+ ${count}`}
       </Button>
       {open ? (
-      <ImageViewer
-        images={gallery}
-        index={index}
-        open={open}
-        onIndex={setIndex}
-        onClose={() => setOpen(false)}
-        load={loadImage}
-        onSave={files ? (shown) => files.save(group.captures[shown]?.image ?? "") : undefined}
-      />
+        <ImageViewer
+          images={gallery}
+          index={index}
+          open={open}
+          onIndex={setIndex}
+          onClose={() => setOpen(false)}
+          load={loadImage}
+          onSave={files ? (shown) => files.save(group.captures[shown]?.image ?? "") : undefined}
+        />
       ) : null}
     </>
   );
