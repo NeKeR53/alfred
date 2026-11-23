@@ -1,0 +1,3 @@
+/* Feuille principale d’Alfred : Tailwind avec les seuls tokens de socle-ui (couleurs, tailles, rayons, ombres). */
+@import "tailwindcss";
+@import "socle-ui/theme.css";

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@12.3.4",
   "type": "module",
   "scripts": {
-    "check": "biome check .",
+    "check": "biome check . && socle-check-css \"src/{shell,features,runtime,sdk}/**/*.css\" \"src/*.css\"",
     "check:fix": "biome check --write .",
     "test": "vitest run",
     "dev": "vite",

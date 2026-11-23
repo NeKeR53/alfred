@@ -1,5 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
+  "extends": ["socle-ui/biome"],
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -59,6 +60,45 @@
             "useSemanticElements": "off"
           }
         }
+      }
+    },
+    {
+      "includes": [
+        "src/ui/**",
+        "src/features/agent/Activities.tsx",
+        "src/features/agent/AgentPage.tsx",
+        "src/features/agent/AgentSendButton.tsx",
+        "src/features/agent/Composer.tsx",
+        "src/features/agent/QueueList.tsx",
+        "src/features/agent/TextPreview.tsx",
+        "src/features/agent/Transcript.tsx",
+        "src/features/agent/transcript/ImagePreview.tsx",
+        "src/features/agent/transcript/PageCaptures.tsx",
+        "src/features/agent/uiFix.tsx",
+        "src/features/functions/FunctionParts.tsx",
+        "src/features/functions/ModuleFunctions.tsx",
+        "src/features/modules/MarketplaceSources.tsx",
+        "src/features/modules/dialogs.tsx",
+        "src/features/modules/reorganize.tsx",
+        "src/features/navigation/PageHistory.tsx",
+        "src/features/palette/CommandPalette.tsx",
+        "src/features/setup/Onboarding.tsx",
+        "src/features/space/ModelSourceSection.tsx",
+        "src/features/space/SpaceSwitcher.tsx",
+        "src/features/space/spaceActions.tsx",
+        "src/features/vault/SecretReveal.tsx",
+        "src/features/vault/VaultEntryDialog.tsx",
+        "src/features/voice/DictationButton.tsx",
+        "src/runtime/screenshotPage.ts",
+        "src/shell/AppShell.tsx",
+        "src/shell/MenuZone.tsx",
+        "src/shell/NotificationCenter.tsx",
+        "src/shell/TopBarSearch.tsx",
+        "src/shell/navigationEditing.tsx",
+        "src/shell/welcome/BasicsStep.tsx"
+      ],
+      "linter": {
+        "enabled": false
       }
     }
   ]

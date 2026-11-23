@@ -23,9 +23,8 @@
 
 /* Micro ouvert : un anneau dont l’épaisseur suit le niveau du micro. */
 .voice-dictation--listening {
-  color: var(--color-danger, #c2410c);
-  box-shadow: 0 0 0 calc(1px + var(--voice-level, 0) * 4px)
-    color-mix(in oklch, var(--color-danger, #c2410c) 35%, transparent);
+  color: var(--danger);
+  box-shadow: 0 0 0 calc(1px + var(--voice-level, 0) * 4px) color-mix(in oklch, var(--danger) 35%, transparent);
   border-radius: 50%;
   transition: box-shadow 80ms linear;
 }

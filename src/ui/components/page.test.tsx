@@ -104,7 +104,7 @@ describe("Surface en creux", () => {
 });
 
 describe("Pied de Page", () => {
-  it("se range à droite avec footerAlign=\"end\", à gauche par défaut", () => {
+  it('se range à droite avec footerAlign="end", à gauche par défaut', () => {
     const { container, rerender } = render(
       <Page footer={<span>Appliquer…</span>}>
         <p>Contenu</p>

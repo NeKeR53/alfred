@@ -25,7 +25,7 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: oklch(0 0 0 / 0.12);
+  background: var(--scrim);
   pointer-events: none;
 }
 .ui-fix:has(.ui-fix__rect)::after {
@@ -34,8 +34,8 @@
 .ui-fix__rect {
   position: absolute;
   border: 2px solid var(--color-danger);
-  border-radius: 2px;
-  box-shadow: 0 0 0 9999px oklch(0 0 0 / 0.28);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 9999px var(--scrim);
   pointer-events: none;
 }
 /* En bas : le haut de la page (barre d’outils) est souvent ce que l’utilisateur veut encadrer. */

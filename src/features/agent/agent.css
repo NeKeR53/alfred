@@ -189,24 +189,10 @@
   white-space: nowrap;
 }
 .agent-changes__added {
-  color: #147d3f;
+  color: var(--success);
 }
 .agent-changes__removed {
-  color: #c52238;
-}
-:root[data-theme="dark"] .agent-changes__added {
-  color: #31d879;
-}
-:root[data-theme="dark"] .agent-changes__removed {
-  color: #ff4659;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .agent-changes__added {
-    color: #31d879;
-  }
-  :root:not([data-theme]) .agent-changes__removed {
-    color: #ff4659;
-  }
+  color: var(--danger);
 }
 
 /* Relevé (agent-chat.css de OneApp) */
@@ -629,24 +615,10 @@ button.agent-chat__change-file:hover {
   cursor: pointer;
 }
 .agent-chat__change-added {
-  color: #187b41;
+  color: var(--success);
 }
 .agent-chat__change-removed {
-  color: #bf2636;
-}
-:root[data-theme="dark"] .agent-chat__change-added {
-  color: #31d879;
-}
-:root[data-theme="dark"] .agent-chat__change-removed {
-  color: #ff4659;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .agent-chat__change-added {
-    color: #31d879;
-  }
-  :root:not([data-theme]) .agent-chat__change-removed {
-    color: #ff4659;
-  }
+  color: var(--danger);
 }
 
 /* Propre à Alfred */

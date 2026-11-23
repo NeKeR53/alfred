@@ -11,8 +11,8 @@ export { Button, type ButtonProps, type ButtonVariant, IconButton, type IconButt
 export { ChoiceButton, type ChoiceButtonProps, ChoiceGroup } from "./components/ChoiceButton";
 export { Combobox, MultiSelectCombobox, SearchCombobox } from "./components/Combobox";
 export { ConfirmDialog, type ConfirmOptions, useConfirm } from "./components/ConfirmDialog";
-export { copyText } from "./components/clipboard";
 export { Code, Divider, Image } from "./components/Content";
+export { copyText } from "./components/clipboard";
 export {
   DataTable,
   type DataTableCellMenu,

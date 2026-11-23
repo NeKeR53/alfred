@@ -46,8 +46,8 @@
 }
 .pdf-preview__page {
   flex: none;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  background: var(--paper);
+  box-shadow: var(--shadow-sm);
 }
 @media (forced-colors: active) {
   .pdf-preview,

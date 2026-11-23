@@ -120,7 +120,9 @@ export function Page({
           {topBar}
           <div className={bodyClass}>{children}</div>
           {footer ? (
-            <footer className={footerAlign === "end" ? "al-page__footer al-page__footer--end" : "al-page__footer"}>{footer}</footer>
+            <footer className={footerAlign === "end" ? "al-page__footer al-page__footer--end" : "al-page__footer"}>
+              {footer}
+            </footer>
           ) : null}
         </div>
         {covered ? <SubpageLayer entry={subpage} /> : null}
