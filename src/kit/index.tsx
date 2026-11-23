@@ -1,5 +1,5 @@
 /**
- * Composants locaux d’Alfred, là où socle-ui 0.3.0 ne prévoit rien (voir docs/socle-propositions.md, « Manques vus
+ * Composants locaux d’Alfred, là où socle-ui ne prévoyait rien en 0.3.0 (voir docs/socle-propositions.md, « Manques vus
  * pendant la migration »). Ils ne remplacent aucun composant Socle : ils posent seulement l’écart entre des
  * composants Socle (`Stack`, `Row`), un texte courant hors gabarit (`Text`) et un encart dans une zone (`Notice`,
  * D-159 : « un message local reste un encart dans la zone concernée »). Uniquement des tokens Socle, aucune couleur
@@ -47,7 +47,7 @@ const toneClass: Record<TextTone, string> = {
 
 /** Texte courant hors gabarit : une phrase d’aide, une valeur, une méta (`size="meta"`). */
 export function Text({
-  as: Tag = "p",
+  as: Element = "p",
   tone = "default",
   size = "default",
   weight = "normal",
@@ -61,7 +61,7 @@ export function Text({
 }) {
   const sizeClass = size === "meta" ? "text-sm" : "text-md";
   const weightClass = weight === "strong" ? "font-semibold" : weight === "medium" ? "font-medium" : "font-normal";
-  return <Tag className={`m-0 min-w-0 ${toneClass[tone]} ${sizeClass} ${weightClass}`}>{children}</Tag>;
+  return <Element className={`m-0 min-w-0 ${toneClass[tone]} ${sizeClass} ${weightClass}`}>{children}</Element>;
 }
 
 export type NoticeTone = "info" | "success" | "warning" | "danger";

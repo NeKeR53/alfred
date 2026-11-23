@@ -115,7 +115,7 @@ beforeEach(() => {
 async function undoInDialog(dialog: HTMLElement, message: string) {
   const user = userEvent.setup();
   await within(dialog).findByText(message);
-  await user.click(within(dialog).getByRole("button", { name: `Annuler « ${message} »` }));
+  await user.click(within(dialog).getByRole("button", { name: `Annuler ${message}` }));
   await user.click(await screen.findByRole("button", { name: "Annuler la modification" }));
   await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("space.undo", { commit: "c2" }));
   await waitFor(() => expect(document.body.textContent).toContain(`Annulation de « ${message} »`));

@@ -115,7 +115,7 @@ export function PageHistoryDialog({ page, onClose }: { page: ResolvedPage; onClo
           rowActions={(commit) => [
             {
               icon: <Undo2 size={16} aria-hidden="true" />,
-              label: `Annuler « ${commit.message} »`,
+              label: "Annuler",
               onPress: () => void undo(commit),
             },
           ]}

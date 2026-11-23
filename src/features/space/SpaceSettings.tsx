@@ -577,7 +577,7 @@ function useGrantsSection(snapshot: Snapshot | null): SettingsSection {
         rowActions={(grant) => [
           {
             icon: icon(X),
-            label: `Retirer l’accès de ${grant.who} à ${grant.what}`,
+            label: "Retirer l’accès",
             onPress: () => void revoke(grant),
           },
         ]}

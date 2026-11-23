@@ -281,7 +281,7 @@ it("annule une modification de l’historique et retire un accès accordé", asy
   expect(within(access).getByText("Client « Jira de l’équipe »")).toBeInTheDocument();
   await user.click(
     within(access).getByRole("button", {
-      name: "Retirer l’accès de Page « Tableau des ventes » (module Ventes) à Client « Jira de l’équipe »",
+      name: "Retirer l’accès Page « Tableau des ventes » (module Ventes)",
     }),
   );
   dialog = await screen.findByRole("alertdialog");

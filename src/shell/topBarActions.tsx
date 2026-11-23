@@ -4,7 +4,6 @@
  * exécute l’action (confirmation comprise). La coquille les dessine avec `ActionBar` zone `topbar` (`frameActions`).
  */
 import { icons } from "lucide-react";
-import { useSyncExternalStore } from "react";
 import { create } from "zustand";
 
 export interface TopBarActionDescriptor {
