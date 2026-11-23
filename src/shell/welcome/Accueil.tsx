@@ -3,20 +3,20 @@
  * marketplace, quelques réglages, puis le résumé. Il se relance depuis Réglages › Général (« Revoir l’accueil »).
  * Quand le dernier espace est fermé, `ShortWelcome` n’en garde que le choix de l’espace.
  */
-import { Button, IconButton } from "@alfred/ui";
 import { X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { Button, Code, IconButton, PropertyRow } from "socle-ui";
 import { useHarnesses } from "../../features/agent/harness/installed";
 import { PROVIDER_LABEL } from "../../features/agent/harness/types";
 import { openOnboarding } from "../../features/setup/Onboarding";
 import { ACCENT_LABEL } from "../../features/space/SpaceSettings";
+import { Notice, Row, Stack, Text } from "../../kit";
 import { SETTINGS_SECTION } from "../navigationLayout";
 import { useShell } from "../store";
 import { BasicsStep, harnessSummary } from "./BasicsStep";
 import { ModulesStep } from "./ModulesStep";
 import { SpaceChoice } from "./SpaceChoice";
 import { closeWelcome, goToStep, useWelcome, WELCOME_STEPS, type WelcomeStep } from "./store";
-import "./welcome.css";
 
 const STEP_NUMBER: Partial<Record<WelcomeStep, number>> = { space: 1, modules: 2, basics: 3 };
 
@@ -35,20 +35,25 @@ function Frame({
 }) {
   const number = step ? STEP_NUMBER[step] : undefined;
   return (
-    <main className="welcome">
-      <section className="welcome__window" aria-labelledby="welcome-title">
+    <main className="grid min-h-screen place-items-center overflow-y-auto bg-surface-side px-4 py-8 text-fg">
+      <section
+        className="flex w-full max-w-[600px] flex-col gap-4 rounded-lg border border-line bg-surface p-6 shadow-md"
+        aria-labelledby="welcome-title"
+      >
         {number || onClose ? (
-          <header className="welcome__header">
-            <p className="welcome__step">{number ? `Étape ${number} sur 3` : null}</p>
+          <Row justify="between">
+            <Text size="meta" tone="muted">
+              {number ? `Étape ${number} sur 3` : ""}
+            </Text>
             {onClose ? (
-              <IconButton label="Fermer l’accueil" size="small" onClick={onClose}>
-                <X size={14} aria-hidden="true" />
-              </IconButton>
+              <IconButton icon={<X size={16} aria-hidden="true" />} label="Fermer l’accueil" onPress={onClose} />
             ) : null}
-          </header>
+          </Row>
         ) : null}
-        <h1 id="welcome-title">{title}</h1>
-        {intro ? <p className="welcome__intro">{intro}</p> : null}
+        <h1 id="welcome-title" className="m-0 font-semibold text-2xl">
+          {title}
+        </h1>
+        {intro ? <Text tone="muted">{intro}</Text> : null}
         {children}
       </section>
     </main>
@@ -58,10 +63,12 @@ function Frame({
 /** Pied d’un écran : les boutons secondaires à gauche, le seul bouton principal à droite. */
 function Footer({ secondary, primary }: { secondary?: ReactNode; primary: ReactNode }) {
   return (
-    <footer className="welcome__footer">
-      <div className="welcome__secondary">{secondary}</div>
-      {primary}
-    </footer>
+    <div className="pt-2">
+      <Row justify="between">
+        <Row gap="xs">{secondary}</Row>
+        {primary}
+      </Row>
+    </div>
   );
 }
 
@@ -70,7 +77,7 @@ const previous = (step: WelcomeStep) => WELCOME_STEPS[WELCOME_STEPS.indexOf(step
 
 function BackButton({ step }: { step: WelcomeStep }) {
   return (
-    <Button variant="subtle" onClick={() => goToStep(previous(step))}>
+    <Button variant="subtle" onPress={() => goToStep(previous(step))}>
       Retour
     </Button>
   );
@@ -78,7 +85,7 @@ function BackButton({ step }: { step: WelcomeStep }) {
 
 function LaterButton({ step }: { step: WelcomeStep }) {
   return (
-    <Button variant="subtle" onClick={() => goToStep(next(step))}>
+    <Button variant="subtle" onPress={() => goToStep(next(step))}>
       Plus tard
     </Button>
   );
@@ -112,56 +119,54 @@ function ReadyStep() {
 
   return (
     <Frame title="C’est prêt" intro="Voici ce que nous avons mis en place. Tout se change ensuite dans les Réglages.">
-      <dl className="welcome-summary">
-        <div>
-          <dt>Espace</dt>
-          <dd>
-            {snapshot ? (
-              <>
-                « {snapshot.name} »<span className="welcome-summary__path">{snapshot.path}</span>
-              </>
+      <div className="rounded-md border border-line px-3">
+        <PropertyRow
+          label="Espace"
+          value={
+            snapshot ? (
+              <Stack gap="xs">
+                <span>« {snapshot.name} »</span>
+                <Code>{snapshot.path}</Code>
+              </Stack>
             ) : (
               "Aucun"
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>Modules</dt>
-          <dd>
-            {names.length === 0
+            )
+          }
+        />
+        <PropertyRow
+          label="Modules"
+          value={
+            names.length === 0
               ? "Aucun pour l’instant. Vous en trouverez dans Réglages › Marketplace."
-              : `${listNames(names)} ${names.length > 1 ? "sont importés" : "est importé"}.`}
-          </dd>
-        </div>
-        <div>
-          <dt>Apparence</dt>
-          <dd>
-            Thème {themeLabel}
-            {accent ? `, accent ${accent.toLocaleLowerCase("fr")}` : ""}.
-          </dd>
-        </div>
-        <div>
-          <dt>Agent</dt>
-          <dd>
-            {agents.connected.length > 0
+              : `${listNames(names)} ${names.length > 1 ? "sont importés" : "est importé"}.`
+          }
+        />
+        <PropertyRow
+          label="Apparence"
+          value={`Thème ${themeLabel}${accent ? `, accent ${accent.toLocaleLowerCase("fr")}` : ""}.`}
+        />
+        <PropertyRow
+          label="Agent"
+          value={
+            agents.connected.length > 0
               ? `${listNames(agents.connected.map((provider) => PROVIDER_LABEL[provider]))}, ${agents.connected.length > 1 ? "prêts" : "prêt"} à travailler.`
               : agents.installed.length > 0
                 ? `${listNames(agents.installed.map((provider) => PROVIDER_LABEL[provider]))}, à connecter dans un terminal.`
-                : "Aucun pour l’instant. Je le détecterai dès qu’il sera installé."}
-          </dd>
-        </div>
-      </dl>
+                : "Aucun pour l’instant. Je le détecterai dès qu’il sera installé."
+          }
+        />
+      </div>
       {names.length > 0 ? (
-        <p className="welcome__intro">
+        <Text tone="muted">
           {names.length > 1
             ? `En ouvrant Alfred, je vous guide pour configurer ${names[0]}. ${listNames(names.slice(1))} ${names.length > 2 ? "attendent" : "attend"} dans Réglages › Modules.`
             : `En ouvrant Alfred, je vous guide pour configurer ${names[0]}.`}
-        </p>
+        </Text>
       ) : null}
       <Footer
         secondary={<BackButton step="ready" />}
         primary={
-          <Button variant="primary" onClick={finish} autoFocus>
+          <Button variant="primary" onPress={finish} autoFocus>
             Ouvrir Alfred
           </Button>
         }
@@ -198,14 +203,10 @@ export function Accueil() {
         intro="Je vous aide à assembler votre propre application : des pages, des outils et des réglages, rangés dans un dossier à vous. Nous allons la préparer ensemble en trois étapes."
         onClose={onClose}
       >
-        {startupError ? (
-          <p className="welcome-meta welcome-meta--danger" role="alert">
-            {startupError}
-          </p>
-        ) : null}
+        {startupError ? <Notice tone="danger">{startupError}</Notice> : null}
         <Footer
           primary={
-            <Button variant="primary" onClick={() => goToStep("space")} autoFocus>
+            <Button variant="primary" onPress={() => goToStep("space")} autoFocus>
               Commencer
             </Button>
           }
@@ -286,7 +287,7 @@ export function Accueil() {
                 </>
               }
               primary={
-                <Button variant="primary" onClick={() => goToStep("ready")}>
+                <Button variant="primary" onPress={() => goToStep("ready")}>
                   Continuer
                 </Button>
               }
@@ -310,11 +311,7 @@ export function ShortWelcome() {
       title="Quel espace ouvrir ?"
       intro="Aucun espace de travail n’est ouvert. Reprenez l’un des vôtres, ou créez-en un."
     >
-      {startupError ? (
-        <p className="welcome-meta welcome-meta--danger" role="alert">
-          {startupError}
-        </p>
-      ) : null}
+      {startupError ? <Notice tone="danger">{startupError}</Notice> : null}
       <RecentList spaces={recent.slice(0, 5)} open={(path) => openSpace(path, undefined, { existing: true })} />
       <SpaceChoice footer={(primary) => <Footer primary={primary} />} />
     </Frame>
@@ -330,7 +327,10 @@ function RecentList({
 }) {
   if (spaces.length === 0) return null;
   return (
-    <ul className="welcome-recents" aria-label="Vos espaces récents">
+    <ul
+      className="m-0 list-none divide-y divide-line rounded-md border border-line p-0"
+      aria-label="Vos espaces récents"
+    >
       {spaces.map((space) => (
         <RecentRow key={space.path} space={space} open={open} />
       ))}
@@ -341,22 +341,22 @@ function RecentList({
 function RecentRow({ space, open }: { space: { path: string; name: string }; open: (path: string) => Promise<void> }) {
   const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   return (
-    <li>
-      <div className="welcome-recents__text">
-        <span className="welcome-recents__name">{space.name}</span>
-        <span className="welcome-recents__path" title={space.path}>
+    <li className="flex items-center gap-2 px-3 py-2">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Text weight="medium">{space.name}</Text>
+        <Text size="meta" tone="muted">
           {space.path}
-        </span>
+        </Text>
         {state.error ? (
-          <span className="welcome-meta--danger" role="alert">
+          <Text size="meta" tone="danger">
             {state.error}
-          </span>
+          </Text>
         ) : null}
       </div>
       <Button
         aria-label={`Ouvrir l’espace ${space.name}`}
-        loading={state.busy}
-        onClick={async () => {
+        isPending={state.busy}
+        onPress={async () => {
           setState({ busy: true, error: null });
           try {
             await open(space.path);

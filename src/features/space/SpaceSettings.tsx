@@ -3,7 +3,17 @@
  * espaces de travail, les sauvegardes, les modèles locaux, les accès accordés et l’historique ; le mode clair ou
  * sombre, la densité et la couleur d’accent.
  */
-import { ArrowRightLeft, FolderOpen, FolderSearch, History, Pencil, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
+import {
+  ArrowRightLeft,
+  FolderOpen,
+  FolderSearch,
+  History,
+  Pencil,
+  RefreshCw,
+  RotateCcw,
+  Undo2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
   type ColorScheme,
@@ -320,7 +330,9 @@ export function useAppearance() {
     const accent = next === "default" ? null : next;
     await invoke("space.updateLayout", {
       accent,
-      message: accent ? `Couleur d’accent : ${ACCENT_LABEL[accent as SectionColor] ?? accent}` : "Couleur d’accent par défaut",
+      message: accent
+        ? `Couleur d’accent : ${ACCENT_LABEL[accent as SectionColor] ?? accent}`
+        : "Couleur d’accent par défaut",
     });
     await useShell.getState().refresh();
   };
@@ -406,12 +418,7 @@ const HISTORY_COLUMNS: TableColumn[] = [
 ];
 
 function useHistorySection(snapshot: Snapshot | null): SettingsSection {
-  const history = useList<Commit>(
-    "space.history",
-    { limit: 50 },
-    ["space:changed"],
-    snapshot?.path,
-  );
+  const history = useList<Commit>("space.history", { limit: 50 }, ["space:changed"], snapshot?.path);
   const confirm = useConfirm();
   const [all, setAll] = useState(false);
   const items = history.items ?? [];
@@ -568,7 +575,11 @@ function useGrantsSection(snapshot: Snapshot | null): SettingsSection {
         density="compact"
         isLoading={grants.loading}
         rowActions={(grant) => [
-          { icon: icon(X), label: `Retirer l’accès de ${grant.who} à ${grant.what}`, onPress: () => void revoke(grant) },
+          {
+            icon: icon(X),
+            label: `Retirer l’accès de ${grant.who} à ${grant.what}`,
+            onPress: () => void revoke(grant),
+          },
         ]}
       />
     ),

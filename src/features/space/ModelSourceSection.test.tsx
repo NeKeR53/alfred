@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -21,7 +21,8 @@ vi.hoisted(() => {
 });
 
 import { invoke } from "../../lib/native";
-import { type ModelSource, ModelSourceSection } from "./ModelSourceSection";
+import { type ModelSource, useModelSourceSection } from "./ModelSourceSection";
+import { renderSections } from "./sections.test-helper";
 
 const ARTIFACTORY = "https://jfrog.exemple.fr/artifactory/api/huggingfaceml/hf-remote";
 let source: ModelSource;
@@ -60,26 +61,28 @@ beforeEach(() => {
 });
 
 it("dit la source utilisée et où sont rangés les modèles", async () => {
-  render(<ModelSourceSection />);
+  renderSections(() => [useModelSourceSection()]);
   expect(await screen.findByText(/Hugging Face \(huggingface\.co\)\. Les modèles sont rangés/)).toBeInTheDocument();
   expect(screen.getByText(/\/Users\/moi\/\.cache\/huggingface\/hub/)).toBeInTheDocument();
 });
 
 it("nomme la variable HF_ENDPOINT quand elle décide", async () => {
   source = { ...source, origin: "env", host: "miroir.exemple.fr", envEndpoint: true };
-  render(<ModelSourceSection />);
+  renderSections(() => [useModelSourceSection()]);
   expect(await screen.findByText(/miroir\.exemple\.fr, d’après la variable HF_ENDPOINT/)).toBeInTheDocument();
 });
 
 it("enregistre l’adresse d’un Artifactory et son jeton", async () => {
   const user = userEvent.setup();
-  render(<ModelSourceSection />);
+  renderSections(() => [useModelSourceSection()]);
   await user.click(await screen.findByRole("button", { name: "Modifier…" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "custom");
-  await user.type(screen.getByRole("textbox", { name: "Adresse" }), ARTIFACTORY);
-  await user.type(screen.getByLabelText("Jeton (facultatif)"), "jeton-secret");
-  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  expect(saved).toEqual({ endpoint: ARTIFACTORY, token: "jeton-secret" });
+  const form = within(await screen.findByRole("dialog", { name: "Source des modèles" }));
+  await user.click(form.getByRole("button", { name: /^(Hugging Face \(huggingface\.co\)|Miroir de l’entreprise)/ }));
+  await user.click(await screen.findByRole("option", { name: /Miroir de l’entreprise/ }));
+  await user.type(form.getByRole("textbox", { name: /Adresse du miroir/ }), ARTIFACTORY);
+  await user.type(form.getByLabelText(/^Jeton/), "jeton-secret");
+  await user.click(form.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(saved).toEqual({ endpoint: ARTIFACTORY, token: "jeton-secret" }));
   await waitFor(() =>
     expect(screen.getByText(/jfrog\.exemple\.fr, l’adresse réglée ici, avec son jeton\./)).toBeInTheDocument(),
   );
@@ -96,25 +99,30 @@ it("garde le jeton tant que l’adresse ne change pas, et revient à Hugging Fac
     hasToken: true,
   };
   const user = userEvent.setup();
-  render(<ModelSourceSection />);
+  renderSections(() => [useModelSourceSection()]);
   await user.click(await screen.findByRole("button", { name: "Modifier…" }));
-  expect(screen.getByText("Laisser vide pour conserver le jeton enregistré.")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  expect(saved).toEqual({ endpoint: ARTIFACTORY });
+  const form = within(await screen.findByRole("dialog", { name: "Source des modèles" }));
+  expect(form.getByText(/Laisser vide pour conserver le jeton enregistré/)).toBeInTheDocument();
+  await user.click(form.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(saved).toEqual({ endpoint: ARTIFACTORY }));
 
   await user.click(await screen.findByRole("button", { name: "Modifier…" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "huggingface");
-  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  expect(saved).toEqual({ endpoint: null, token: null });
+  const again = within(await screen.findByRole("dialog", { name: "Source des modèles" }));
+  await user.click(again.getByRole("button", { name: /^(Hugging Face \(huggingface\.co\)|Miroir de l’entreprise)/ }));
+  await user.click(await screen.findByRole("option", { name: /Hugging Face/ }));
+  await user.click(again.getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(saved).toEqual({ endpoint: null, token: null }));
 });
 
 it("refuse une adresse qui n’en est pas une", async () => {
   const user = userEvent.setup();
-  render(<ModelSourceSection />);
+  renderSections(() => [useModelSourceSection()]);
   await user.click(await screen.findByRole("button", { name: "Modifier…" }));
-  await user.selectOptions(screen.getByRole("combobox", { name: "Source" }), "custom");
-  await user.type(screen.getByRole("textbox", { name: "Adresse" }), "jfrog.exemple.fr");
-  await user.click(screen.getByRole("button", { name: "Enregistrer" }));
-  expect(screen.getByText(/Saisissez l’adresse du miroir/)).toBeInTheDocument();
+  const form = within(await screen.findByRole("dialog", { name: "Source des modèles" }));
+  await user.click(form.getByRole("button", { name: /^(Hugging Face \(huggingface\.co\)|Miroir de l’entreprise)/ }));
+  await user.click(await screen.findByRole("option", { name: /Miroir de l’entreprise/ }));
+  await user.type(form.getByRole("textbox", { name: /Adresse du miroir/ }), "jfrog.exemple.fr");
+  await user.click(form.getByRole("button", { name: "Enregistrer" }));
+  expect(await screen.findByText(/Saisissez l’adresse du miroir/)).toBeInTheDocument();
   expect(saved).toBeUndefined();
 });

@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import { renderWithSocle as render } from "../space/sections.test-helper";
 
 const native = vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -75,8 +76,8 @@ beforeEach(() => {
 });
 
 const titles = () =>
-  within(screen.getByRole("list", { name: "Conversations archivées" }))
-    .getAllByRole("listitem")
+  within(screen.getByRole("grid", { name: "Conversations archivées" }))
+    .getAllByRole("row")
     .map((item) => item.textContent ?? "");
 
 const lastNotification = () => useNotifications.getState().items[0];
@@ -110,12 +111,17 @@ it("restaure avec une notification, et supprime définitivement après confirmat
   await waitFor(() => expect(clear).toHaveBeenCalledWith("a"));
   expect(lastNotification()).toMatchObject({ title: "Conversation supprimée", description: "Factures" });
   // Une seule conversation archivée : plus de « Tout supprimer ».
-  expect(screen.queryByRole("button", { name: "Tout supprimer" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Tout supprimer" })).toBeNull();
 });
 
 it("« Tout supprimer » efface toutes les conversations archivées après confirmation", async () => {
   render(<ArchivedConversations />);
-  fireEvent.click(await screen.findByRole("button", { name: "Tout supprimer" }));
+  // Action destructrice : dans le menu « … » de la section (D-115).
+  const section = (await screen.findByRole("heading", { name: "Conversations archivées · 3" })).parentElement
+    ?.parentElement as HTMLElement;
+  const buttons = within(section).getAllByRole("button");
+  fireEvent.click(buttons[buttons.length - 1]);
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Tout supprimer" }));
   const dialog = await screen.findByRole("alertdialog", { name: "Supprimer les 3 conversations archivées ?" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Tout supprimer" }));
   await waitFor(() => expect(Object.keys(database)).toEqual([]));
@@ -123,5 +129,5 @@ it("« Tout supprimer » efface toutes les conversations archivées après confi
     title: "Conversations supprimées",
     description: "3 conversations effacées.",
   });
-  expect(await screen.findByText("Aucune conversation archivée")).toBeInTheDocument();
+  expect(await screen.findByText(/^Aucune conversation archivée/)).toBeInTheDocument();
 });

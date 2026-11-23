@@ -1,16 +1,3 @@
-/* Champ de chemin des Réglages › Voix : saisie et bouton « Choisir… » côte à côte. */
-.voice-settings__path {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  width: min(360px, 100%);
-}
-.voice-settings__path > input {
-  flex: 1;
-  min-width: 0;
-}
-
 /* Lecture en cours : le haut-parleur bat doucement. */
 .voice-toggle--speaking {
   animation: voice-pulse 1.2s ease-in-out infinite;
@@ -21,26 +8,18 @@
   }
 }
 
-/* Micro ouvert : un anneau dont l’épaisseur suit le niveau du micro. */
+/* Micro ouvert : un anneau dont l’épaisseur suit le niveau du micro, autour du bouton. */
 .voice-dictation--listening {
+  display: inline-flex;
   color: var(--danger);
+  border-radius: 999px;
   box-shadow: 0 0 0 calc(1px + var(--voice-level, 0) * 4px) color-mix(in oklch, var(--danger) 35%, transparent);
-  border-radius: 50%;
   transition: box-shadow 80ms linear;
-}
-.voice-dictation__spin {
-  animation: voice-spin 0.9s linear infinite;
-}
-@keyframes voice-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-dictation--listening {
     transition: none;
   }
-  .voice-dictation__spin,
   .voice-toggle--speaking {
     animation: none;
   }

@@ -4,9 +4,10 @@
  * ou une chaîne vide pour l’icône par défaut. Sert à « Changer l’icône… » (menu de gauche, fiche d’un module) et à
  * « Ajouter une page ».
  */
-import { SearchField, Text } from "@alfred/ui";
 import { icons } from "lucide-react";
 import { useId, useMemo, useState } from "react";
+import { SearchField } from "socle-ui";
+import { Text } from "../kit";
 import { NamedIcon, SectionIcon } from "./icons";
 import "./iconPicker.css";
 
@@ -120,22 +121,13 @@ export function IconPicker({
   return (
     <div className="icon-picker">
       <SearchField
-        label={`Rechercher une ${label.toLowerCase()}`}
-        placeholder="Rechercher une icône (en anglais : chart, mail, rocket…)"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onClear={() => setQuery("")}
+        label={`les icônes (en anglais : chart, mail, rocket…)`}
+        onChange={(criteria) => setQuery(criteria.text)}
       />
       <fieldset className="icon-picker__grid">
-        <legend className="visually-hidden">{label}</legend>
+        <legend className="sr-only">{label}</legend>
         <label className="icon-picker__tile icon-picker__tile--default" title="Par défaut">
-          <input
-            type="radio"
-            className="visually-hidden"
-            name={group}
-            checked={value === ""}
-            onChange={() => onChange("")}
-          />
+          <input type="radio" className="sr-only" name={group} checked={value === ""} onChange={() => onChange("")} />
           <span className="icon-picker__glyph" aria-hidden="true">
             {fallback?.iconUrl ? (
               <SectionIcon section={fallback} size={18} />
@@ -149,7 +141,7 @@ export function IconPicker({
           <label key={name} className="icon-picker__tile" title={name}>
             <input
               type="radio"
-              className="visually-hidden"
+              className="sr-only"
               name={group}
               aria-label={name}
               checked={value === name}

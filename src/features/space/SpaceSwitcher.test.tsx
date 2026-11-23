@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -19,6 +19,7 @@ import { useShell } from "../../shell/store";
 import type { ConversationHeader } from "../agent/model";
 import { useAgents } from "../agent/store";
 import { SpaceSwitcher } from "./SpaceSwitcher";
+import { renderWithSocle as render } from "./sections.test-helper";
 import { switchConfirmation } from "./switchGuard";
 
 // jsdom n’implémente pas les modales natives.

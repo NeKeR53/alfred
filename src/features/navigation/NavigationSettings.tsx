@@ -3,8 +3,8 @@
  * les réordonner. Décrit par données pour `SettingsPage` de Socle : une ligne par section, puis les onglets de chaque
  * section qui en a plusieurs, puis les pages placées dans les Réglages.
  */
-import { ArrowDown, ArrowUp, Eye, EyeOff, History, Pencil } from "lucide-react";
-import { useState } from "react";
+import { ArrowDown, ArrowUp, Eye, EyeOff, GripVertical, History, Pencil } from "lucide-react";
+import { type PointerEvent, useState } from "react";
 import { type Action, type ItemSetting, type SettingsSection, type SettingTag, useOpenForm } from "socle-ui";
 import type { ModuleSummary, ResolvedPage, Snapshot } from "../../lib/types";
 import { applyLayoutChange } from "../../shell/navigationEditing";
@@ -23,6 +23,29 @@ import {
 } from "../../shell/navigationLayout";
 import { useShell } from "../../shell/store";
 import { PageHistoryDialog } from "./PageHistory";
+
+/**
+ * Poignée de glissement d’une ligne (fiche d’un module, « Pages ») : un appui la fait glisser ; Alt+Flèche ou les
+ * flèches font de même au clavier.
+ */
+export function DragHandle({
+  subject,
+  onPointerDown,
+}: {
+  subject: string;
+  onPointerDown: (event: PointerEvent<HTMLElement>) => void;
+}) {
+  return (
+    <span
+      className="inline-flex cursor-grab touch-none text-fg-3"
+      title={`Glisser pour déplacer ${subject}`}
+      onPointerDown={onPointerDown}
+      aria-hidden="true"
+    >
+      <GripVertical size={14} />
+    </span>
+  );
+}
 
 const icon = (Icon: typeof Eye) => <Icon size={16} aria-hidden="true" />;
 
@@ -77,7 +100,9 @@ function rowActions({
     { id: "up", label: `Monter ${subject}`, icon: icon(ArrowUp), isDisabled: first, onPress: () => onMove(-1) },
     { id: "down", label: `Descendre ${subject}`, icon: icon(ArrowDown), isDisabled: last, onPress: () => onMove(1) },
     { id: "rename", label: `Renommer ${subject}`, icon: icon(Pencil), onPress: onRename },
-    ...(onHistory ? [{ id: "history", label: `Historique de ${subject}`, icon: icon(History), onPress: onHistory }] : []),
+    ...(onHistory
+      ? [{ id: "history", label: `Historique de ${subject}`, icon: icon(History), onPress: onHistory }]
+      : []),
   ];
 }
 
@@ -178,7 +203,8 @@ export function useNavigationSections(): SettingsSection[] {
           }
           void applyLayoutChange((current) => setSectionHidden(current, section.id, !hidden));
           // Réafficher la ligne réaffiche aussi la page seule, si elle avait été masquée à part.
-          if (hidden && only?.hidden) void applyLayoutChange((current) => setPageHidden(current, only.reference, false));
+          if (hidden && only?.hidden)
+            void applyLayoutChange((current) => setPageHidden(current, only.reference, false));
         },
       }),
     };

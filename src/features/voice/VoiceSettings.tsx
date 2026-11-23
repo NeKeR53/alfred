@@ -1,19 +1,8 @@
-import {
-  Button,
-  ChoiceButton,
-  ChoiceGroup,
-  FeedbackBanner,
-  LoadingSkeleton,
-  Page,
-  Section,
-  SelectControl,
-  SettingRow,
-  SettingRows,
-  SwitchControl,
-  TextInput,
-} from "@alfred/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { type Setting, type SettingsSection, useOpenForm } from "socle-ui";
+import { Notice } from "../../kit";
 import { notify } from "../../shell/notifications";
+import { LoadingRows } from "../space/SpaceSettings";
 import {
   getVoiceSettings,
   importArgosVoice,
@@ -24,59 +13,50 @@ import {
   type VoiceConfig,
   type VoiceStatus,
 } from "./api";
-import { PathField } from "./PathField";
+import { pathSetting } from "./PathField";
 import { useVoice } from "./store";
-import { WhisperLevelRows } from "./WhisperLevelRows";
-import "./voice.css";
+import { useWhisperLevelRows } from "./WhisperLevelRows";
 
 const LANGUAGES = [
-  { value: "fr", label: "Français" },
-  { value: "en", label: "Anglais" },
-  { value: "auto", label: "Détection automatique" },
+  { id: "fr", label: "Français" },
+  { id: "en", label: "Anglais" },
+  { id: "auto", label: "Détection automatique" },
 ];
 
 const SAMPLE = "Bonjour. Je suis Alfred, à votre service.";
 
 /** Durées proposées pour l’envoi après un silence ; 0 : la dictée se termine au clic. */
 const PAUSES = [
-  { value: 0, label: "Jamais" },
-  { value: 1000, label: "1 seconde" },
-  { value: 1500, label: "1,5 seconde" },
-  { value: 2000, label: "2 secondes" },
-  { value: 3000, label: "3 secondes" },
+  { id: "0", label: "Jamais" },
+  { id: "1000", label: "1 seconde" },
+  { id: "1500", label: "1,5 seconde" },
+  { id: "2000", label: "2 secondes" },
+  { id: "3000", label: "3 secondes" },
 ];
+
+const BACKENDS = [
+  { id: "qwen", label: "Alfred" },
+  { id: "system", label: "Système" },
+  { id: "kokoro", label: "Kokoro" },
+];
+
+/** Valeur de la liste pour la voix par défaut du système : un `Select` de Socle n’a pas d’option vide. */
+const SYSTEM_DEFAULT = "__system";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Texte de l’enregistrement à cloner, enregistré en quittant le champ. */
-function ReferenceText({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  return (
-    <TextInput
-      aria-label="Texte de l’enregistrement"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        if (draft.trim() && draft.trim() !== value) onCommit(draft.trim());
-      }}
-    />
-  );
-}
-
-/** Réglages › Voix : la dictée (Whisper local) et la lecture à voix haute. */
-export function VoiceSettings() {
+/** Rubrique « Voix » des Réglages : la dictée (Whisper local) et la lecture à voix haute. */
+export function useVoiceSections(): SettingsSection[] {
   const [config, setConfig] = useState<VoiceConfig>();
   const [status, setStatus] = useState<VoiceStatus>();
   const [voices, setVoices] = useState<SystemVoice[]>([]);
   const [loadError, setLoadError] = useState<string>();
-  const [trying, setTrying] = useState(false);
-  const [installing, setInstalling] = useState(false);
   const read = useVoice((state) => state.read);
   const stopReading = useVoice((state) => state.stopReading);
   const speaking = useVoice((state) => state.speaking);
+  const openForm = useOpenForm();
 
   useEffect(() => {
     getVoiceSettings()
@@ -94,6 +74,7 @@ export function VoiceSettings() {
     void useVoice.getState().refresh().then(setStatus);
   }, []);
 
+  /** Un échec rejette : la ligne reprend l’ancienne valeur et le signale (D-204). */
   const save = async (next: VoiceConfig) => {
     const previous = config;
     setConfig(next);
@@ -103,16 +84,56 @@ export function VoiceSettings() {
       useVoice.setState({ status: saved });
     } catch (error) {
       setConfig(previous);
+      throw error;
+    }
+  };
+
+  /** Pour une action : l’échec est signalé ici. */
+  const saveOrReport = (next: VoiceConfig) =>
+    save(next).catch((error) =>
       notify({
         title: "Le réglage de la voix n’a pas été enregistré",
         description: errorMessage(error),
         tone: "error",
-      });
-    }
-  };
+      }),
+    );
+
+  const whisperRows = useWhisperLevelRows({
+    onChanged: reloadAfterWhisper,
+    onCustom: async (whisperModel) => {
+      if (config) await saveOrReport({ ...config, whisperLevel: null, whisperModel });
+    },
+    openForm,
+  });
+
+  // Les voix de la langue de la dictée d’abord ; la voix choisie reste proposée même absente de la liste.
+  const voiceOptions = useMemo(() => {
+    const language = config?.language && config.language !== "auto" ? config.language : "fr";
+    const sorted = [...voices].sort(
+      (a, b) =>
+        Number(!a.language.startsWith(language)) - Number(!b.language.startsWith(language)) ||
+        a.label.localeCompare(b.label),
+    );
+    if (config?.voice && !sorted.some((voice) => voice.id === config.voice))
+      sorted.unshift({ id: config.voice, label: config.voice, language: "" });
+    return sorted;
+  }, [voices, config?.voice, config?.language]);
+
+  if (loadError) {
+    return [
+      {
+        id: "error",
+        content: (
+          <Notice tone="danger" title="Réglages de la voix indisponibles">
+            {loadError}
+          </Notice>
+        ),
+      },
+    ];
+  }
+  if (!config) return [{ id: "loading", content: <LoadingRows label="Chargement des réglages de la voix" rows={4} /> }];
 
   const takeOverArgos = async () => {
-    if (!config) return;
     try {
       const argos = await importArgosVoice();
       // La voix reste celle d’Alfred : seuls la dictée et les fichiers de Kokoro sont repris.
@@ -135,24 +156,7 @@ export function VoiceSettings() {
     }
   };
 
-  // Les voix de la langue de la dictée d’abord ; la voix choisie reste proposée même absente de la liste.
-  const voiceOptions = useMemo(() => {
-    const language = config?.language && config.language !== "auto" ? config.language : "fr";
-    const sorted = [...voices].sort(
-      (a, b) =>
-        Number(!a.language.startsWith(language)) - Number(!b.language.startsWith(language)) ||
-        a.label.localeCompare(b.label),
-    );
-    if (config?.voice && !sorted.some((voice) => voice.id === config.voice))
-      sorted.unshift({ id: config.voice, label: config.voice, language: "" });
-    return sorted;
-  }, [voices, config?.voice, config?.language]);
-
-  if (loadError) return <FeedbackBanner>{`Réglages de la voix indisponibles : ${loadError}`}</FeedbackBanner>;
-  if (!config) return <LoadingSkeleton rows={4} label="Chargement des réglages de la voix" />;
-
   const install = async () => {
-    setInstalling(true);
     try {
       const installed = await installAlfredVoice();
       setStatus(installed);
@@ -164,8 +168,6 @@ export function VoiceSettings() {
       });
     } catch (error) {
       notify({ title: "Voix d’Alfred non installée", description: errorMessage(error), tone: "error" });
-    } finally {
-      setInstalling(false);
     }
   };
 
@@ -181,295 +183,242 @@ export function VoiceSettings() {
     setConfig((current) => (current ? { ...current, ...preferences } : current));
   };
 
-  const tryVoice = async () => {
-    setTrying(true);
-    try {
-      await read(SAMPLE);
-    } finally {
-      setTrying(false);
-    }
-  };
+  const dictation = status?.dictation ?? config.dictation;
+  const path = (
+    id: string,
+    label: string,
+    description: string,
+    value: string,
+    onCommit: (v: string) => unknown,
+    placeholder?: string,
+  ) => pathSetting({ id, label, description, value, placeholder, openForm, onCommit });
 
-  return (
-    <Page width="text">
-      <Section
-        title="Voix"
-        description="Dictée dans la page Agent, lecture des réponses, et voix offerte aux pages de l’espace de travail."
-      >
-        <SettingRows>
-          <SettingRow
-            title="Activer la voix"
-            description="Activée, la voix d’Alfred se charge au démarrage (≈ 4 Go de mémoire) pour répondre sans attendre. Coupée, rien ne tourne."
-          >
-            <SwitchControl
-              label=""
-              aria-label="Activer la voix"
-              checked={status?.enabled ?? config.enabled}
-              onChange={async (event) => {
-                await useVoice.getState().setEnabled(event.target.checked);
-                const next = useVoice.getState().status;
-                if (next) setStatus(next);
-                setConfig((current) => (current ? { ...current, enabled: event.target.checked } : current));
-              }}
-            />
-          </SettingRow>
-        </SettingRows>
-      </Section>
+  const backendRows: Setting[] =
+    config.ttsBackend === "qwen"
+      ? [
+          {
+            id: "install",
+            type: "action",
+            label: "Installation",
+            description: status?.qwenInstalled
+              ? "Installée. Le modèle (≈ 4 Go) se charge à la première lecture, puis reste en mémoire."
+              : "Environnement Python de Qwen3-TTS, installé par uv ; le modèle (≈ 4 Go) se télécharge à la première lecture.",
+            action: { id: "install", label: status?.qwenInstalled ? "Réinstaller" : "Installer", onPress: install },
+          },
+          path(
+            "reference",
+            "Voix à cloner",
+            "Un enregistrement de quelques secondes.",
+            config.qwenReference ?? "",
+            (value) => saveOrReport({ ...config, qwenReference: value || null }),
+            "la voix du majordome",
+          ),
+          ...(config.qwenReference
+            ? [
+                {
+                  id: "reference-text",
+                  type: "text" as const,
+                  label: "Texte de l’enregistrement",
+                  description: "Ce qui est dit, mot pour mot.",
+                  value: config.qwenReferenceText,
+                  width: "lg" as const,
+                  isRequired: true,
+                  onChange: (qwenReferenceText: string) =>
+                    save({ ...config, qwenReferenceText: qwenReferenceText.trim() }),
+                },
+              ]
+            : []),
+        ]
+      : config.ttsBackend === "system"
+        ? [
+            {
+              id: "voice",
+              type: "select",
+              label: "Voix du système",
+              description: "Par défaut, une voix d’homme grave et âgée.",
+              value: config.voice || SYSTEM_DEFAULT,
+              width: "lg",
+              options: [
+                { id: SYSTEM_DEFAULT, label: "Voix par défaut du système" },
+                ...voiceOptions.map((voice) => ({
+                  id: voice.id,
+                  label: voice.language ? `${voice.label} · ${voice.language}` : voice.label,
+                })),
+              ],
+              onChange: (voice) => save({ ...config, voice: voice === SYSTEM_DEFAULT ? "" : voice }),
+            },
+            {
+              id: "rate",
+              type: "select",
+              label: "Débit de la voix",
+              description: "En mots par minute ; une diction posée vers 160.",
+              value: String(config.rate),
+              options: [
+                { id: "0", label: "Celui de la voix" },
+                ...[140, 150, 165, 180, 200, 220].map((rate) => ({
+                  id: String(rate),
+                  label: `${rate} mots par minute`,
+                })),
+              ],
+              onChange: (rate) => save({ ...config, rate: Number(rate) }),
+            },
+          ]
+        : [
+            path(
+              "kokoro-python",
+              "Python de Kokoro",
+              "L’interpréteur où kokoro-onnx est installé.",
+              config.kokoroPython ?? "",
+              (value) => saveOrReport({ ...config, kokoroPython: value || null }),
+            ),
+            path("kokoro-model", "Modèle Kokoro", "Fichier kokoro-v1.0.onnx.", config.kokoroModel ?? "", (value) =>
+              saveOrReport({ ...config, kokoroModel: value || null }),
+            ),
+            path("kokoro-voices", "Voix Kokoro", "Fichier voices-v1.0.bin.", config.kokoroVoices ?? "", (value) =>
+              saveOrReport({ ...config, kokoroVoices: value || null }),
+            ),
+          ];
 
-      <Section
-        title="Dictée"
-        description="Sur cet ordinateur, avec whisper.cpp : rien ne part sur le réseau. Plus gros, plus précis et plus lent."
-        actions={
-          <Button variant="secondary" onClick={() => void takeOverArgos()}>
-            Reprendre les réglages d’Argos
-          </Button>
-        }
-      >
-        <SettingRows>
-          <SettingRow
-            title="Autoriser la dictée"
-            description="Bloquée, le micro ne s’ouvre plus nulle part. La lecture à voix haute continue."
-          >
-            <SwitchControl
-              label=""
-              aria-label="Autoriser la dictée"
-              checked={status?.dictation ?? config.dictation}
-              onChange={(event) => void setPreference({ dictation: event.target.checked })}
-            />
-          </SettingRow>
-        </SettingRows>
-        {(status?.dictation ?? config.dictation) === false ? (
-          <FeedbackBanner tone="info">La dictée est bloquée : aucun micro ne s’ouvre.</FeedbackBanner>
+  return [
+    {
+      id: "voice",
+      title: "Voix",
+      description: "Dictée dans la page Agent, lecture des réponses, et voix offerte aux pages de l’espace de travail.",
+      settings: [
+        {
+          id: "enabled",
+          type: "switch",
+          label: "Activer la voix",
+          description:
+            "Activée, la voix d’Alfred se charge au démarrage (≈ 4 Go de mémoire) pour répondre sans attendre. Coupée, rien ne tourne.",
+          value: status?.enabled ?? config.enabled,
+          onChange: async (enabled) => {
+            await useVoice.getState().setEnabled(enabled);
+            const next = useVoice.getState().status;
+            if (next) setStatus(next);
+            setConfig((current) => (current ? { ...current, enabled } : current));
+          },
+        },
+      ],
+    },
+    {
+      id: "dictation",
+      title: "Dictée",
+      description:
+        "Sur cet ordinateur, avec whisper.cpp : rien ne part sur le réseau. Plus gros, plus précis et plus lent.",
+      actions: [{ id: "argos", label: "Reprendre les réglages d’Argos", onPress: takeOverArgos }],
+      settings: [
+        {
+          id: "allow",
+          type: "switch",
+          label: "Autoriser la dictée",
+          description: "Bloquée, le micro ne s’ouvre plus nulle part. La lecture à voix haute continue.",
+          value: dictation,
+          onChange: (value) => setPreference({ dictation: value }),
+        },
+        ...whisperRows,
+        path(
+          "server",
+          "Serveur whisper.cpp",
+          "Le programme whisper-server (sur Mac : brew install whisper-cpp ; sous Windows : whisper-bin-x64.zip de github.com/ggml-org/whisper.cpp).",
+          config.whisperServer,
+          (whisperServer) => saveOrReport({ ...config, whisperServer: whisperServer || "whisper-server" }),
+          "whisper-server",
+        ),
+        {
+          id: "language",
+          type: "select",
+          label: "Langue de la dictée",
+          description: "La langue dans laquelle vous dictez.",
+          value: config.language,
+          options: LANGUAGES,
+          onChange: (language) => save({ ...config, language }),
+        },
+      ],
+      content:
+        dictation === false ? (
+          <Notice tone="info">La dictée est bloquée : aucun micro ne s’ouvre.</Notice>
         ) : status?.listenError ? (
-          <FeedbackBanner tone="warning">{status.listenError}</FeedbackBanner>
+          <Notice tone="warning">{status.listenError}</Notice>
         ) : status ? (
-          <FeedbackBanner tone="info">La dictée est prête : bouton micro dans la page Agent.</FeedbackBanner>
-        ) : null}
-        <SettingRows label="Niveau de Whisper">
-          <WhisperLevelRows
-            onChanged={reloadAfterWhisper}
-            onCustom={(whisperModel) => save({ ...config, whisperLevel: null, whisperModel })}
-          />
-        </SettingRows>
-        <SettingRows>
-          <SettingRow
-            title="Serveur whisper.cpp"
-            description="Le programme whisper-server (sur Mac : brew install whisper-cpp ; sous Windows : whisper-bin-x64.zip de github.com/ggml-org/whisper.cpp)."
-          >
-            <PathField
-              label="Serveur whisper.cpp"
-              value={config.whisperServer}
-              placeholder="whisper-server"
-              onCommit={(whisperServer) => void save({ ...config, whisperServer: whisperServer || "whisper-server" })}
-            />
-          </SettingRow>
-          <SettingRow title="Langue" description="La langue dans laquelle vous dictez.">
-            <SelectControl
-              aria-label="Langue de la dictée"
-              value={config.language}
-              onChange={(event) => void save({ ...config, language: event.target.value })}
-            >
-              {LANGUAGES.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
-                </option>
-              ))}
-            </SelectControl>
-          </SettingRow>
-        </SettingRows>
-      </Section>
-
-      <Section
-        title="Lecture à voix haute"
-        description="La voix d’Alfred est un majordome âgé à la voix grave, générée sur cet ordinateur par Qwen3-TTS."
-      >
-        {status?.speakError ? (
-          <FeedbackBanner tone="warning">
-            {config.ttsBackend === "qwen" && !status.qwenInstalled
-              ? "La voix d’Alfred n’est pas installée : en attendant, la voix du système parle."
-              : status.speakError}
-          </FeedbackBanner>
-        ) : null}
-        <SettingRows>
-          <SettingRow
-            title="Synthèse"
-            description="Alfred : sa voix, sur Mac Apple Silicon ou carte NVIDIA. Kokoro n’a qu’une voix française, féminine."
-          >
-            <ChoiceGroup label="Synthèse" appearance="segmented">
-              {(
-                [
-                  ["qwen", "Alfred"],
-                  ["system", "Système"],
-                  ["kokoro", "Kokoro"],
-                ] as const
-              ).map(([value, label]) => (
-                <ChoiceButton
-                  key={value}
-                  variant="label"
-                  selectionMode="radio"
-                  label={label}
-                  selected={config.ttsBackend === value}
-                  onClick={() => void save({ ...config, ttsBackend: value })}
-                >
-                  {label}
-                </ChoiceButton>
-              ))}
-            </ChoiceGroup>
-          </SettingRow>
-          {config.ttsBackend === "qwen" ? (
-            <>
-              <SettingRow
-                title="Installation"
-                description={
-                  status?.qwenInstalled
-                    ? "Installée. Le modèle (≈ 4 Go) se charge à la première lecture, puis reste en mémoire."
-                    : "Environnement Python de Qwen3-TTS, installé par uv ; le modèle (≈ 4 Go) se télécharge à la première lecture."
-                }
-              >
-                <Button variant="secondary" disabled={installing} onClick={() => void install()}>
-                  {installing ? "Installation…" : status?.qwenInstalled ? "Réinstaller" : "Installer"}
-                </Button>
-              </SettingRow>
-              <SettingRow
-                title="Voix à cloner"
-                description="Un enregistrement de quelques secondes ; vide, la voix du majordome."
-              >
-                <PathField
-                  label="Voix à cloner"
-                  value={config.qwenReference ?? ""}
-                  placeholder="Voix d’Alfred (majordome)"
-                  onCommit={(value) => void save({ ...config, qwenReference: value || null })}
-                />
-              </SettingRow>
-              {config.qwenReference ? (
-                <SettingRow title="Texte de l’enregistrement" description="Ce qui est dit, mot pour mot.">
-                  <ReferenceText
-                    value={config.qwenReferenceText}
-                    onCommit={(qwenReferenceText) => void save({ ...config, qwenReferenceText })}
-                  />
-                </SettingRow>
-              ) : null}
-            </>
-          ) : config.ttsBackend === "system" ? (
-            <>
-              <SettingRow title="Voix" description="Par défaut, une voix d’homme grave et âgée.">
-                <SelectControl
-                  aria-label="Voix du système"
-                  value={config.voice}
-                  onChange={(event) => void save({ ...config, voice: event.target.value })}
-                >
-                  <option value="">Voix par défaut du système</option>
-                  {voiceOptions.map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.language ? `${voice.label} · ${voice.language}` : voice.label}
-                    </option>
-                  ))}
-                </SelectControl>
-              </SettingRow>
-              <SettingRow title="Débit" description="En mots par minute ; une diction posée vers 160.">
-                <SelectControl
-                  aria-label="Débit de la voix"
-                  value={String(config.rate)}
-                  onChange={(event) => void save({ ...config, rate: Number(event.target.value) })}
-                >
-                  <option value="0">Celui de la voix</option>
-                  {[140, 150, 165, 180, 200, 220].map((rate) => (
-                    <option key={rate} value={rate}>
-                      {rate} mots par minute
-                    </option>
-                  ))}
-                </SelectControl>
-              </SettingRow>
-            </>
-          ) : (
-            <>
-              <SettingRow title="Python de Kokoro" description="L’interpréteur où kokoro-onnx est installé.">
-                <PathField
-                  label="Python de Kokoro"
-                  value={config.kokoroPython ?? ""}
-                  onCommit={(value) => void save({ ...config, kokoroPython: value || null })}
-                />
-              </SettingRow>
-              <SettingRow title="Modèle Kokoro" description="Fichier kokoro-v1.0.onnx.">
-                <PathField
-                  label="Modèle Kokoro"
-                  value={config.kokoroModel ?? ""}
-                  onCommit={(value) => void save({ ...config, kokoroModel: value || null })}
-                />
-              </SettingRow>
-              <SettingRow title="Voix Kokoro" description="Fichier voices-v1.0.bin.">
-                <PathField
-                  label="Voix Kokoro"
-                  value={config.kokoroVoices ?? ""}
-                  onCommit={(value) => void save({ ...config, kokoroVoices: value || null })}
-                />
-              </SettingRow>
-            </>
-          )}
-          <SettingRow title="Essai" description={`« ${SAMPLE} »`}>
-            {speaking ? (
-              <Button variant="secondary" onClick={() => void stopReading()}>
-                Arrêter
-              </Button>
-            ) : (
-              <Button variant="secondary" disabled={trying} onClick={() => void tryVoice()}>
-                Écouter un essai
-              </Button>
-            )}
-          </SettingRow>
-        </SettingRows>
-      </Section>
-
-      <Section
-        title="Notifications"
-        description="Les notifications envoyées par les pages et les fonctions de l’espace de travail."
-      >
-        <SettingRows>
-          <SettingRow
-            title="Lire les notifications à voix haute"
-            description="Le titre et le texte de chaque notification sont lus, sauf pendant une dictée ou une autre lecture."
-          >
-            <SwitchControl
-              label=""
-              aria-label="Lire les notifications à voix haute"
-              checked={status?.readNotifications ?? config.readNotifications}
-              onChange={(event) => void setPreference({ readNotifications: event.target.checked })}
-            />
-          </SettingRow>
-        </SettingRows>
-      </Section>
-
-      <Section title="Agent" description="La voix dans la page Agent.">
-        <SettingRows>
-          <SettingRow
-            title="Lire les réponses aux demandes dictées"
-            description="Alfred commence à parler dès sa première phrase, pendant qu’il écrit la suite. Une demande tapée n’est jamais lue. Rouvrir le micro coupe la lecture."
-          >
-            <SwitchControl
-              label=""
-              aria-label="Lire les réponses aux demandes dictées"
-              checked={config.readReplies}
-              onChange={(event) => void save({ ...config, readReplies: event.target.checked })}
-            />
-          </SettingRow>
-          <SettingRow
-            title="Envoyer après un silence"
-            description="Pendant une dictée, une pause de cette durée après avoir parlé envoie le message, sans cliquer."
-          >
-            <SelectControl
-              aria-label="Envoyer après un silence"
-              value={String(status?.pauseSendMs ?? config.pauseSendMs)}
-              onChange={(event) => void setPreference({ pauseSendMs: Number(event.target.value) })}
-            >
-              {PAUSES.map((pause) => (
-                <option key={pause.value} value={pause.value}>
-                  {pause.label}
-                </option>
-              ))}
-            </SelectControl>
-          </SettingRow>
-        </SettingRows>
-      </Section>
-    </Page>
-  );
+          <Notice tone="info">La dictée est prête : bouton micro dans la page Agent.</Notice>
+        ) : undefined,
+    },
+    {
+      id: "reading",
+      title: "Lecture à voix haute",
+      description: "La voix d’Alfred est un majordome âgé à la voix grave, générée sur cet ordinateur par Qwen3-TTS.",
+      settings: [
+        {
+          id: "backend",
+          type: "select",
+          label: "Synthèse",
+          description:
+            "Alfred : sa voix, sur Mac Apple Silicon ou carte NVIDIA. Kokoro n’a qu’une voix française, féminine.",
+          value: config.ttsBackend,
+          options: BACKENDS,
+          onChange: (ttsBackend) => save({ ...config, ttsBackend: ttsBackend as VoiceConfig["ttsBackend"] }),
+        },
+        ...backendRows,
+        {
+          id: "try",
+          type: "action",
+          label: "Essai",
+          description: `« ${SAMPLE} »`,
+          action: speaking
+            ? { id: "stop", label: "Arrêter", onPress: () => stopReading() }
+            : { id: "try", label: "Écouter un essai", onPress: () => read(SAMPLE) },
+        },
+      ],
+      content: status?.speakError ? (
+        <Notice tone="warning">
+          {config.ttsBackend === "qwen" && !status.qwenInstalled
+            ? "La voix d’Alfred n’est pas installée : en attendant, la voix du système parle."
+            : status.speakError}
+        </Notice>
+      ) : undefined,
+    },
+    {
+      id: "notifications",
+      title: "Notifications",
+      description: "Les notifications envoyées par les pages et les fonctions de l’espace de travail.",
+      settings: [
+        {
+          id: "read-notifications",
+          type: "switch",
+          label: "Lire les notifications à voix haute",
+          description:
+            "Le titre et le texte de chaque notification sont lus, sauf pendant une dictée ou une autre lecture.",
+          value: status?.readNotifications ?? config.readNotifications,
+          onChange: (value) => setPreference({ readNotifications: value }),
+        },
+      ],
+    },
+    {
+      id: "agent",
+      title: "Agent",
+      description: "La voix dans la page Agent.",
+      settings: [
+        {
+          id: "read-replies",
+          type: "switch",
+          label: "Lire les réponses aux demandes dictées",
+          description:
+            "Alfred commence à parler dès sa première phrase, pendant qu’il écrit la suite. Une demande tapée n’est jamais lue. Rouvrir le micro coupe la lecture.",
+          value: config.readReplies,
+          onChange: (readReplies) => save({ ...config, readReplies }),
+        },
+        {
+          id: "pause",
+          type: "select",
+          label: "Envoyer après un silence",
+          description:
+            "Pendant une dictée, une pause de cette durée après avoir parlé envoie le message, sans cliquer.",
+          value: String(status?.pauseSendMs ?? config.pauseSendMs),
+          options: PAUSES,
+          onChange: (value) => setPreference({ pauseSendMs: Number(value) }),
+        },
+      ],
+    },
+  ];
 }

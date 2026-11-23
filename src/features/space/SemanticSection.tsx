@@ -87,7 +87,13 @@ export function useLocalModelSection({
 
   const row: Setting =
     model?.status === "ready"
-      ? { id: "model", type: "item", label: rowLabel, description: describe(model), tags: [{ label: "Installé", tone: "success" }] }
+      ? {
+          id: "model",
+          type: "item",
+          label: rowLabel,
+          description: describe(model),
+          tags: [{ label: "Installé", tone: "success" }],
+        }
       : {
           id: "model",
           type: "action",
@@ -108,7 +114,10 @@ export function useLocalModelSection({
     settings: [row],
     content:
       error || model?.error ? (
-        <Notice tone="danger" title={model?.error ? "Le téléchargement a échoué" : "L’état du modèle n’a pas pu être lu"}>
+        <Notice
+          tone="danger"
+          title={model?.error ? "Le téléchargement a échoué" : "L’état du modèle n’a pas pu être lu"}
+        >
           {model?.error ?? error}
         </Notice>
       ) : undefined,

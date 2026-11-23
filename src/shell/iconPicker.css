@@ -1,3 +1,4 @@
+/* Choix d’une icône : une grille de cases radio, faite des tokens Socle (aucun composant Socle ne la couvre). */
 .icon-picker {
   display: flex;
   flex-direction: column;
@@ -19,21 +20,20 @@
   display: inline-grid;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--color-ink);
+  border-radius: var(--radius-md);
+  color: var(--fg);
   cursor: default;
 }
 .icon-picker__tile:hover {
-  background: var(--color-surface-strong);
+  background: var(--hover);
 }
 .icon-picker__tile:has(input:focus-visible) {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 .icon-picker__tile:has(input:checked) {
-  border-color: var(--color-primary);
-  background: var(--color-surface-strong);
+  border-color: var(--accent);
+  background: var(--selected);
 }
 .icon-picker__tile--default {
   grid-column: span 3;
@@ -47,13 +47,7 @@
   place-items: center;
 }
 .icon-picker__name {
-  font-size: var(--font-size-secondary);
-  color: var(--color-muted);
+  font-size: var(--fs-sm);
+  color: var(--fg-2);
   white-space: nowrap;
-}
-/* La recherche prend la largeur du sélecteur, dans une petite boîte comme dans une modale. */
-.icon-picker .page-toolbar-search {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
 }

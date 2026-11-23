@@ -80,22 +80,16 @@
         "src/features/modules/MarketplaceSources.tsx",
         "src/features/modules/dialogs.tsx",
         "src/features/modules/reorganize.tsx",
-        "src/features/navigation/PageHistory.tsx",
-        "src/features/palette/CommandPalette.tsx",
         "src/features/setup/Onboarding.tsx",
-        "src/features/space/ModelSourceSection.tsx",
         "src/features/space/SpaceSwitcher.tsx",
-        "src/features/space/spaceActions.tsx",
         "src/features/vault/SecretReveal.tsx",
         "src/features/vault/VaultEntryDialog.tsx",
-        "src/features/voice/DictationButton.tsx",
         "src/runtime/screenshotPage.ts",
         "src/shell/AppShell.tsx",
         "src/shell/MenuZone.tsx",
         "src/shell/NotificationCenter.tsx",
         "src/shell/TopBarSearch.tsx",
-        "src/shell/navigationEditing.tsx",
-        "src/shell/welcome/BasicsStep.tsx"
+        "src/shell/navigationEditing.tsx"
       ],
       "linter": {
         "enabled": false

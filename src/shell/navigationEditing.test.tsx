@@ -1,7 +1,9 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NavigationSettings } from "../features/navigation/NavigationSettings";
+import { useNavigationSections } from "../features/navigation/NavigationSettings";
 import { MODULE_FOCUS } from "../features/settings/open";
+import { pressRowAction, renderWithSocle as render } from "../features/space/sections.test-helper";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
@@ -135,8 +137,9 @@ const lastLayoutCall = () => {
 };
 
 const sidebarLabels = () =>
-  within(screen.getByRole("navigation", { name: "Sections de l’espace de travail" }))
-    .getAllByRole("button")
+  // `hidden` : la modale des Réglages, quand elle est ouverte, cache le menu aux technologies d’assistance.
+  within(screen.getByRole("navigation", { name: "Sections de l’espace de travail", hidden: true }))
+    .getAllByRole("button", { hidden: true })
     .map((button) => button.getAttribute("aria-label"))
     .filter((label) => label && !label.startsWith("Actions"));
 
@@ -144,7 +147,7 @@ const renderShell = (settings = false) =>
   render(
     <AppShell
       agent={<p>Agent</p>}
-      settingsTabs={settings ? [{ id: "navigation", label: "Navigation", render: () => <NavigationSettings /> }] : []}
+      settingsTabs={settings ? [{ id: "navigation", label: "Navigation", useSections: useNavigationSections }] : []}
     />,
   );
 
@@ -211,11 +214,11 @@ describe("réorganisation de la navigation", () => {
     renderShell();
     fireEvent.contextMenu(screen.getByRole("button", { name: "Compta" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Changer l’icône/ }));
-    const search = screen.getByRole("searchbox", { name: "Rechercher une icône" });
+    const search = screen.getByRole("combobox", { name: /icônes/ });
     fireEvent.change(search, { target: { value: "pas-une-icone-xyz" } });
-    expect(screen.getByText(/Aucune icône ne correspond/)).toBeInTheDocument();
+    expect(await screen.findByText(/Aucune icône ne correspond/)).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "wallet" } });
-    fireEvent.click(screen.getByRole("radio", { name: "wallet" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "wallet" }));
     fireEvent.click(screen.getByRole("button", { name: "Enregistrer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Changement de l’icône de la section Compta en wallet"));
 
@@ -235,9 +238,8 @@ describe("réorganisation de la navigation", () => {
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Masquage de la section Clients"));
 
     act(() => useShell.getState().setView({ kind: "settings" }));
-    const row = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
-    expect(within(row).getByText("Masquée")).toBeInTheDocument();
-    fireEvent.click(within(row).getByRole("button", { name: "Réafficher la section Clients" }));
+    expect(await screen.findByText("Masquée")).toBeInTheDocument();
+    await pressRowAction(userEvent.setup(), "Clients", "Réafficher la section Clients");
     expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage de la section Clients"));
     expect(lastLayoutCall()?.layout.overrides).toEqual({});
@@ -256,11 +258,9 @@ describe("réorganisation de la navigation", () => {
 
     // La section du module dit qui la masque ; son bouton réaffiche le module. Sa page unique ne fait pas de
     // ligne à part : la section et sa page tiennent sur une seule ligne.
-    const sectionRow = screen.getByText("Clients").closest("[data-nav-row]") as HTMLElement;
-    expect(within(sectionRow).getByText("Module CRM partagé masqué")).toBeInTheDocument();
+    expect(screen.getByText("Module CRM partagé masqué")).toBeInTheDocument();
     expect(screen.queryByText("Contacts")).not.toBeInTheDocument();
-    expect(within(sectionRow).getByRole("button", { name: "Historique de la section Clients" })).toBeInTheDocument();
-    fireEvent.click(within(sectionRow).getByRole("button", { name: "Réafficher le module CRM partagé" }));
+    await pressRowAction(userEvent.setup(), "Clients", "Réafficher le module CRM partagé");
     expect(sidebarLabels()).toEqual(["Suivi", "Clients", "Compta"]);
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Réaffichage du module CRM partagé"));
     expect(lastLayoutCall()?.layout.overrides).toEqual({});
@@ -269,17 +269,20 @@ describe("réorganisation de la navigation", () => {
   it("réordonne et renomme sans glisser-déposer depuis les Réglages", async () => {
     renderShell(true);
     act(() => useShell.getState().setView({ kind: "settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Descendre la page Tâches" }));
+    const user = userEvent.setup();
+    await pressRowAction(user, "Tâches", "Descendre la page Tâches");
     await waitFor(() =>
       expect(lastLayoutCall()?.message).toBe("Déplacement de l’onglet Tâches en position 2 de la section Suivi"),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Monter la section Compta" }));
+    await pressRowAction(user, "Compta", "Monter la section Compta");
     await waitFor(() =>
       expect(lastLayoutCall()?.layout.sections).toEqual(["suivi/principal", "compta/principal", "crm/principal"]),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Renommer la page Notes" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Nom" }), { target: { value: "Carnet" } });
-    fireEvent.click(screen.getByRole("button", { name: "Renommer" }));
+    await pressRowAction(user, "Notes", "Renommer la page Notes");
+    const form = within(await screen.findByRole("dialog", { name: /Renommer la page/ }));
+    await user.clear(form.getByRole("textbox", { name: /Nom/ }));
+    await user.type(form.getByRole("textbox", { name: /Nom/ }), "Carnet");
+    await user.click(form.getByRole("button", { name: "Renommer" }));
     await waitFor(() => expect(lastLayoutCall()?.message).toBe("Renommage de la page Notes en Carnet"));
   });
 

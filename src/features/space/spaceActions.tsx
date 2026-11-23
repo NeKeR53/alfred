@@ -325,7 +325,9 @@ export function SpaceDialog({
               autoComplete="off"
               autoFocus
               error={nameError}
-              description={mode === "rename" ? "Le nom affiché dans le menu de gauche. Le dossier ne change pas." : undefined}
+              description={
+                mode === "rename" ? "Le nom affiché dans le menu de gauche. Le dossier ne change pas." : undefined
+              }
               onChange={(value) => {
                 setName(value);
                 setNameError(undefined);

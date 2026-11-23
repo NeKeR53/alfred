@@ -1,13 +1,13 @@
 import { Bot, Boxes, FolderOpen, KeyRound, ListOrdered, Mic, Palette, ScrollText, Store } from "lucide-react";
 import type { BuiltInTab } from "../../shell/types";
-import { AgentSettings } from "../agentSettings/AgentSettings";
+import { useAgentSections } from "../agentSettings/AgentSettings";
 import { JournalSettings } from "../journal/JournalSettings";
 import { MarketplaceSettings } from "../modules/MarketplaceSettings";
 import { ModulesSettings } from "../modules/ModulesSettings";
 import { useNavigationSections } from "../navigation/NavigationSettings";
 import { useAppearanceSections, useSpaceSections } from "../space/SpaceSettings";
 import { VaultSettings } from "../vault/VaultSettings";
-import { VoiceSettings } from "../voice/VoiceSettings";
+import { useVoiceSections } from "../voice/VoiceSettings";
 
 const icon = (Icon: typeof Bot) => <Icon size={15} aria-hidden="true" />;
 
@@ -64,9 +64,9 @@ export const settingsTabs: BuiltInTab[] = [
     group: "alfred",
     groupTitle: "Alfred",
     icon: icon(Bot),
-    render: () => <AgentSettings />,
+    useSections: useAgentSections,
   },
-  { id: "voice", label: "Voix", group: "alfred", icon: icon(Mic), render: () => <VoiceSettings /> },
+  { id: "voice", label: "Voix", group: "alfred", icon: icon(Mic), useSections: useVoiceSections },
   {
     id: "vault",
     label: "Mots de passe et clés",

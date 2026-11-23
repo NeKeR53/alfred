@@ -4,9 +4,9 @@
  * les restaurer ou les supprimer définitivement, avec leur brouillon.
  */
 
-import { Button, EmptyState, IconButton, List, ListItem, Row, Section, useConfirm } from "@alfred/ui";
-import { ArchiveRestore, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { List, SettingsPage, type SettingsSection, useConfirm } from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { useComposerDrafts } from "../agent/drafts";
 import { PROVIDER_LABEL } from "../agent/harness";
@@ -41,14 +41,14 @@ const report = (error: unknown) =>
     tone: "error",
   });
 
-export function ArchivedConversations() {
+/** Section « Conversations archivées » de la rubrique Agent : les restaurer, ou les supprimer définitivement. */
+export function useArchivedSection(): SettingsSection {
   const headers = useAgents((state) => state.headers);
   const ready = useAgents((state) => state.ready);
   const load = useAgents((state) => state.load);
   const unarchive = useAgents((state) => state.unarchive);
   const remove = useAgents((state) => state.remove);
-  const { confirm, confirmDialog } = useConfirm();
-  const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (!ready) void load().catch(() => undefined);
@@ -84,28 +84,16 @@ export function ArchivedConversations() {
       tone: "danger",
     });
     if (!accepted) return;
-    setBusy(true);
     try {
       await removeWithDraft(remove, header.id);
       notify({ title: "Conversation supprimée", description: header.title, tone: "success" });
     } catch (error) {
       report(error);
-    } finally {
-      setBusy(false);
     }
   };
 
   const removeAll = async () => {
     const targets = [...archived];
-    const accepted = await confirm({
-      title: `Supprimer les ${targets.length} conversations archivées ?`,
-      message:
-        "Leurs relevés et leurs fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que les agents ont créé dans l’espace de travail reste en place.",
-      confirmLabel: "Tout supprimer",
-      tone: "danger",
-    });
-    if (!accepted) return;
-    setBusy(true);
     try {
       for (const header of targets) await removeWithDraft(remove, header.id);
       notify({
@@ -115,61 +103,81 @@ export function ArchivedConversations() {
       });
     } catch (error) {
       report(error);
-    } finally {
-      setBusy(false);
     }
   };
 
+  const byId = new Map(archived.map((header) => [header.id, header]));
+
+  return {
+    id: "archived",
+    title: archived.length ? `Conversations archivées · ${archived.length}` : "Conversations archivées",
+    description: "Masquées de la page Agent, sans rien effacer. Les restaurer les remet dans la liste.",
+    actions: [
+      {
+        id: "remove-all",
+        label: "Tout supprimer",
+        danger: true,
+        isHidden: archived.length < 2,
+        isDisabled: !ready,
+        confirm: {
+          title: `Supprimer les ${archived.length} conversations archivées ?`,
+          message:
+            "Leurs relevés et leurs fichiers d’échange sont effacés et ne pourront pas être restaurés. Ce que les agents ont créé dans l’espace de travail reste en place.",
+          confirmLabel: "Tout supprimer",
+        },
+        onPress: removeAll,
+      },
+    ],
+    emptyMessage: archived.length
+      ? undefined
+      : "Aucune conversation archivée. Archivez une conversation depuis la page Agent.",
+    content: archived.length ? (
+      <List
+        label="Conversations archivées"
+        items={archived.map((header) => ({
+          id: header.id,
+          title: header.title,
+          subtitle: `${PROVIDER_LABEL[header.provider]} · archivée le ${dateTime.format(archivedAt(header))}`,
+        }))}
+        itemActions={(item) => {
+          const header = byId.get(item.id);
+          if (!header) return [];
+          return [
+            {
+              icon: <ArchiveRestore size={16} aria-hidden="true" />,
+              label: `Restaurer ${header.title}`,
+              onPress: () => void restore(header),
+            },
+            {
+              icon: <Trash2 size={16} aria-hidden="true" />,
+              label: `Supprimer définitivement ${header.title}`,
+              onPress: () => void removeOne(header),
+            },
+          ];
+        }}
+      />
+    ) : undefined,
+  };
+}
+
+/** La section seule, dans un gabarit de réglages : pour un hôte qui ne passe pas par la rubrique Agent. */
+export function ArchivedConversations() {
+  const section = useArchivedSection();
   return (
-    <Section
-      title={archived.length ? `Conversations archivées · ${archived.length}` : "Conversations archivées"}
-      description="Masquées de la page Agent, sans rien effacer. Les restaurer les remet dans la liste."
-      actions={
-        archived.length > 1 ? (
-          <Button variant="danger" disabled={!ready || busy} onClick={() => void removeAll()}>
-            Tout supprimer
-          </Button>
-        ) : undefined
-      }
-    >
-      {archived.length === 0 ? (
-        <EmptyState
-          size="compact"
-          title="Aucune conversation archivée"
-          description="Archivez une conversation depuis la page Agent."
-        />
-      ) : (
-        <List label="Conversations archivées">
-          {archived.map((header) => (
-            <ListItem
-              key={header.id}
-              title={header.title}
-              description={`${PROVIDER_LABEL[header.provider]} · archivée le ${dateTime.format(archivedAt(header))}`}
-              trailing={
-                <Row gap="xs">
-                  <IconButton
-                    label={`Restaurer ${header.title}`}
-                    tooltip="Restaurer"
-                    disabled={!ready}
-                    onClick={() => void restore(header)}
-                  >
-                    <ArchiveRestore size={15} aria-hidden="true" />
-                  </IconButton>
-                  <IconButton
-                    label={`Supprimer définitivement ${header.title}`}
-                    tooltip="Supprimer définitivement"
-                    disabled={!ready}
-                    onClick={() => void removeOne(header)}
-                  >
-                    <Trash2 size={15} aria-hidden="true" />
-                  </IconButton>
-                </Row>
-              }
-            />
-          ))}
-        </List>
-      )}
-      {confirmDialog}
-    </Section>
+    <SettingsPage
+      groups={[
+        {
+          id: "agent",
+          categories: [
+            {
+              id: "archived",
+              label: "Conversations archivées",
+              icon: <Archive size={16} aria-hidden="true" />,
+              sections: [section],
+            },
+          ],
+        },
+      ]}
+    />
   );
 }

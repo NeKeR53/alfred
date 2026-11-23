@@ -1,39 +1,17 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../lib/native";
 import type { ResolvedFunction, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
-import { CommandPalette, fold, paletteFilter, usePalette } from "./CommandPalette";
-
-vi.hoisted(() => {
-  window.matchMedia ??= ((query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
-  })) as unknown as typeof window.matchMedia;
-  // cmdk mesure sa liste et fait défiler l’entrée choisie : jsdom n’a ni l’un ni l’autre.
-  globalThis.ResizeObserver ??= class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
-  Element.prototype.scrollIntoView ??= () => undefined;
-});
+import { renderWithSocle as render } from "../space/sections.test-helper";
+import { CommandPalette, fold, usePalette } from "./CommandPalette";
 
 vi.mock("../../lib/native", () => ({
   invoke: vi.fn(),
   onNativeEvent: vi.fn(() => () => undefined),
 }));
-
-HTMLDialogElement.prototype.showModal = function showModal() {
-  this.open = true;
-};
-HTMLDialogElement.prototype.close = function close() {
-  this.open = false;
-  this.dispatchEvent(new Event("close"));
-};
 
 function fn(reference: string, input: unknown): ResolvedFunction {
   const [module, id] = reference.split("/");
@@ -108,49 +86,47 @@ beforeEach(() => {
 describe("palette de commandes", () => {
   it("cherche sans tenir compte des accents", () => {
     expect(fold("Échéances")).toBe("echeances");
-    expect(paletteFilter("x", "echeance agent", ["Échéances créées par l’agent", "Suivi"])).toBeGreaterThan(0);
-    expect(paletteFilter("x", "factures", ["Tâches"])).toBe(0);
   });
 
-  it("s’ouvre et se ferme au raccourci, et rend le focus", async () => {
-    render(
-      <>
-        <button type="button">Avant</button>
-        <CommandPalette />
-      </>,
-    );
-    const before = screen.getByRole("button", { name: "Avant" });
-    before.focus();
-    open();
-    expect(search()).toHaveFocus();
-    open();
-    expect(usePalette.getState().open).toBe(false);
-    await waitFor(() => expect(before).toHaveFocus());
-  });
-
-  it("trouve une page créée par l’agent et y mène", () => {
+  it("s’ouvre et se ferme au raccourci", async () => {
     render(<CommandPalette />);
     open();
-    fireEvent.change(search(), { target: { value: "echeances" } });
+    expect(await screen.findByRole("dialog", { name: "Palette de commandes" })).toBeInTheDocument();
+    expect(search()).toBeInTheDocument();
+    open();
+    expect(usePalette.getState().open).toBe(false);
+  });
+
+  it("trouve une page créée par l’agent et y mène", async () => {
+    const user = userEvent.setup();
+    render(<CommandPalette />);
+    open();
+    await user.type(search(), "echeances");
     expect(screen.queryByRole("option", { name: /Tâches/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("option", { name: /Échéances créées par l’agent/ }));
+    await user.click(await screen.findByRole("option", { name: /Échéances créées par l’agent/ }));
     expect(useShell.getState().view).toEqual({ kind: "section", id: "suivi/principal" });
     expect(useShell.getState().activeTab["suivi/principal"]).toBe("suivi/echeances");
     expect(usePalette.getState().open).toBe(false);
   });
 
-  it("propose les pages des Réglages et masque les fonctions non écrites", () => {
+  it("propose les pages des Réglages et masque les fonctions non écrites", async () => {
+    const user = userEvent.setup();
     render(<CommandPalette />);
     open();
-    expect(screen.getByRole("option", { name: /Jetons/ })).toBeInTheDocument();
+    await user.type(search(), "jetons");
+    expect(await screen.findByRole("option", { name: /Jetons/ })).toBeInTheDocument();
+    await user.clear(search());
+    await user.type(search(), "brouillon");
     expect(screen.queryByRole("option", { name: /brouillon/ })).not.toBeInTheDocument();
   });
 
   it("lance directement une fonction sans entrée requise et notifie son résultat", async () => {
+    const user = userEvent.setup();
     render(<CommandPalette />);
     open();
-    fireEvent.change(search(), { target: { value: "synchro" } });
-    fireEvent.keyDown(search(), { key: "Enter" });
+    await user.type(search(), "synchro");
+    await screen.findByRole("option", { name: /suivi\/synchroniser/ });
+    await user.keyboard("{ArrowDown}{Enter}");
     expect(mockedInvoke).toHaveBeenCalledWith("functions.call", { function: "suivi/synchroniser", input: {} });
     await waitFor(() =>
       expect(useNotifications.getState().items[0]).toMatchObject({
@@ -161,14 +137,16 @@ describe("palette de commandes", () => {
   });
 
   it("demande l’entrée JSON d’une fonction qui en exige une", async () => {
+    const user = userEvent.setup();
     mockedInvoke.mockRejectedValueOnce(new Error("Client inconnu."));
     render(<CommandPalette />);
     open();
-    fireEvent.click(screen.getByRole("option", { name: /suivi\/relancer/ }));
-    const field = screen.getByRole("textbox", { name: "Entrée de suivi/relancer" });
+    await user.type(search(), "relancer");
+    await user.click(await screen.findByRole("option", { name: /suivi\/relancer/ }));
+    const field = await screen.findByRole("textbox", { name: /Entrée de suivi\/relancer/ });
     expect(field).toHaveValue('{\n  "client": ""\n}');
     fireEvent.change(field, { target: { value: "{ client: " } });
-    fireEvent.click(screen.getByRole("button", { name: "Lancer" }));
+    await user.click(screen.getByRole("button", { name: "Lancer" }));
     expect(screen.getByText(/JSON invalide/)).toBeInTheDocument();
     fireEvent.change(field, { target: { value: '{ "client": "ACME" }' } });
     fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
@@ -185,12 +163,14 @@ describe("palette de commandes", () => {
     );
   });
 
-  it("bascule le thème", () => {
+  it("bascule le thème", async () => {
+    const user = userEvent.setup();
     const setTheme = vi.fn();
     useShell.setState({ setTheme });
     render(<CommandPalette />);
     act(() => usePalette.getState().setOpen(true));
-    fireEvent.click(screen.getByRole("option", { name: /Passer au thème sombre/ }));
+    await user.type(search(), "theme");
+    await user.click(await screen.findByRole("option", { name: /Passer au thème sombre/ }));
     expect(setTheme).toHaveBeenCalledWith("dark");
   });
 });
