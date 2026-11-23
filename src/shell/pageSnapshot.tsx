@@ -340,7 +340,11 @@ export function SnapshotFrames() {
   }, []);
   if (pages.length === 0) return null;
   return (
-    <div className="page-snapshot-host" aria-hidden="true" inert>
+    <div
+      className="pointer-events-none fixed top-0 left-[-20000px] h-[800px] w-[1280px] opacity-0"
+      aria-hidden="true"
+      inert
+    >
       {pages.map((item) => (
         <PageFrame
           key={item.token}

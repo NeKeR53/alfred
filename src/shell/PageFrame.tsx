@@ -234,7 +234,7 @@ export function PageFrame({
   return (
     <iframe
       ref={frame}
-      className="page-frame"
+      className="page-frame block h-full min-h-0 w-full flex-1 border-0 bg-surface"
       title={page.title}
       src={source}
       sandbox="allow-scripts allow-forms"
