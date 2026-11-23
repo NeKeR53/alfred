@@ -136,6 +136,14 @@ fn open(
         if let Some(color) = main.background_color {
             builder = builder.background_color(color);
         }
+        // Sous macOS, la barre de titre est intégrée à la barre du haut de l’AppShell, comme dans la fenêtre principale.
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder.title_bar_style(main.title_bar_style).hidden_title(main.hidden_title);
+            if let Some(position) = &main.traffic_light_position {
+                builder = builder.traffic_light_position(tauri::LogicalPosition::new(position.x, position.y));
+            }
+        }
     }
     let window = builder.build().map_err(|error| AppError::new(format!("La fenêtre n’a pas pu s’ouvrir : {error}")))?;
     crate::webview::harden(&window);
