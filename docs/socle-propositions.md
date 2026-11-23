@@ -1,6 +1,6 @@
 # Propositions à socle-ui pour passer Alfred tout en Socle — 2026-11-23
 
-> **État au 2026-11-23 : les lots 1 à 5 sont faits.** Les 21 PR sont fusionnées dans `main` de NeKeR53/app-design. Le lot 1 est sorti en socle-ui 0.2.0 (tag `v0.2.0`, 196 tests), les lots 2 à 5 en 0.3.0 (tag `v0.3.0`, 389 tests). La 0.3.0 est installée dans Alfred par yalc. Le détail des nouveautés et des changements : page « Nouveautés de Socle » (https://claude.ai/artifact/Gqe6DRsnaBzF3MeMvW7Hpc). Reste la section « Après les propositions » : la migration d'Alfred, qui n'est pas commencée.
+> **État au 2026-11-23 : les lots 1 à 5 sont faits.** Les 21 PR sont fusionnées dans `main` de NeKeR53/app-design. Le lot 1 est sorti en socle-ui 0.2.0 (tag `v0.2.0`, 196 tests), les lots 2 à 5 en 0.3.0 (tag `v0.3.0`, 389 tests). La 0.3.0 est installée dans Alfred par yalc. Le détail des nouveautés et des changements : page « Nouveautés de Socle » (https://claude.ai/artifact/Gqe6DRsnaBzF3MeMvW7Hpc). La section « Après les propositions » est faite aussi : Alfred est entièrement sur socle-ui 0.3.0 (`main`, `eae37fa..5db847b`), `src/ui/` est supprimé, 476 tests passent. Les manques vus pendant la migration sont listés plus bas.
 
 Source : [design-audit.md](design-audit.md). Base : socle-ui 0.1.0.
 
