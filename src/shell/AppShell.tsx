@@ -41,29 +41,11 @@ import { useShell, type View } from "./store";
 import { TopBarSearch } from "./TopBarSearch";
 import { TopBarActions } from "./topBarActions";
 import { TopBarSummary } from "./topBarSummary";
+import type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
 import { useDragReorder } from "./useDragReorder";
 import "./shell.css";
 
-/** Affiche une conversation d’agent dans le panneau de droite ; `close` rend la place au panneau de la page. */
-export type AgentPanelRenderer = (conversation: string, close: () => void) => ReactNode;
-
-/**
- * Outils de la barre du haut pour la page affichée (« Corriger un élément ») ; `container` est la zone de la page,
- * où l’outil peut poser un calque.
- */
-export type PageToolsRenderer = (page: ResolvedPage, container: RefObject<HTMLDivElement | null>) => ReactNode;
-
-export interface BuiltInTab {
-  id: string;
-  label: string;
-  render: () => ReactNode;
-  /** Réglages : icône de l’entrée dans la barre latérale. */
-  icon?: ReactNode;
-  /** Réglages : groupe de l’entrée ; un trait sépare deux groupes. */
-  group?: string;
-  /** Réglages : titre affiché au-dessus du groupe, porté par sa première entrée (« Espace de travail », « Alfred »). */
-  groupTitle?: string;
-}
+export type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
 
 /** Contenu d’une page de l’espace : son cadre, ou l’état qui explique pourquoi il n’y a encore rien à afficher. */
 function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "panel"; host?: string }) {
@@ -281,7 +263,7 @@ export function SectionView({
         </PageTopBar>
         <div ref={main} className="shell-body__main">
           {builtInTab ? (
-            builtInTab.render()
+            builtInTab.render?.()
           ) : waiting ? (
             <EmptyState title="En attente d’un compte" description={waiting}>
               <Button
@@ -395,14 +377,6 @@ function countLabel(count: number) {
   return `${count} nouveauté${count > 1 ? "s" : ""}`;
 }
 
-/** État résumé des conversations de l’agent, affiché en pastille sur l’entrée Agent du menu. */
-export interface AgentSummary {
-  state: "attention" | "working" | "done";
-  count: number;
-  /** Réponses attendues, conversations au travail et à consulter : le libellé de l’entrée les cite toutes. */
-  counts?: { attention: number; working: number; unread: number };
-}
-
 /** Pastille de l’entrée Agent, reprise de celle des agents de OneApp. */
 function AgentsBadge({ summary, collapsed }: { summary: AgentSummary; collapsed: boolean }) {
   return (
@@ -470,15 +444,6 @@ function announceEdge(edge: "premier" | "dernier") {
 
 const sameView = (left: View, right: View) =>
   left.kind === right.kind && (left.kind !== "section" || (right.kind === "section" && left.id === right.id));
-
-/** Zone de la page Agent dans le menu : ses conversations non archivées, sous l’entrée Agent. */
-export interface AgentZone {
-  rows: ZoneRow[];
-  activeId?: string;
-  visible?: number;
-  onOpen: (id: string) => void;
-  onAction: (id: string, action: string, value?: string) => void;
-}
 
 export function AppShell({
   agent,
@@ -715,7 +680,6 @@ export function AppShell({
         <SettingsModal
           tabs={settingsTabs}
           pages={snapshot.settingsPages}
-          onPageMenu={editor.openPageMenu}
           onClose={() => useShell.getState().closeSettings()}
         />
       ) : null}

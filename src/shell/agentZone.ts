@@ -8,7 +8,7 @@ import { PROVIDER_LABEL } from "../features/agent/harness/types";
 import type { ConversationHeader } from "../features/agent/model";
 import { useAgents } from "../features/agent/store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "../features/agent/summary";
-import type { AgentZone } from "./AppShell";
+import type { AgentZone } from "./types";
 import type { ZoneRow } from "./MenuZone";
 import type { MenuEntryStatus } from "./menuZones";
 import { notify } from "./notifications";

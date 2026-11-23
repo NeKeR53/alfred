@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { AgentSummary } from "../../shell/AppShell";
+import type { AgentSummary } from "../../shell/types";
 import type { ConversationHeader, ConversationRuntime } from "./model";
 import { useAgents } from "./store";
 

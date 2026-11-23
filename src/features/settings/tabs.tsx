@@ -1,5 +1,5 @@
 import { Bot, Boxes, FolderOpen, KeyRound, ListOrdered, Mic, Palette, ScrollText, Store } from "lucide-react";
-import type { BuiltInTab } from "../../shell/AppShell";
+import type { BuiltInTab } from "../../shell/types";
 import { AgentSettings } from "../agentSettings/AgentSettings";
 import { JournalSettings } from "../journal/JournalSettings";
 import { MarketplaceSettings } from "../modules/MarketplaceSettings";
