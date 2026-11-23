@@ -13,8 +13,20 @@ use oxc::transformer::{TransformOptions, Transformer};
 use serde::Serialize;
 
 /// Paquets qu’une page ou une fonction a le droit d’importer : la carte d’imports du cadre ne connaît qu’eux.
-pub const ALLOWED_IMPORTS: [&str; 6] =
-    ["react", "react-dom", "react/jsx-runtime", "lucide-react", "@alfred/ui", "@alfred/sdk"];
+pub const ALLOWED_IMPORTS: [&str; 9] = [
+    "react",
+    "react-dom",
+    "react/jsx-runtime",
+    "lucide-react",
+    "socle-ui",
+    "socle-ui/markdown",
+    "socle-ui/markdown-editor",
+    "@alfred/sdk",
+    "@alfred/kit",
+];
+
+/// Ancienne bibliothèque des pages, remplacée par `socle-ui` : son import est refusé avec la marche à suivre.
+pub const RETIRED_UI: &str = "@alfred/ui";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +121,10 @@ pub fn transpile_in(
             import_errors.push(Diagnostic {
                 message: if outside {
                     format!("Import interdit : « {specifier} » sort du module. Un module n’importe que ses propres fichiers.")
+                } else if specifier == RETIRED_UI {
+                    "Import interdit : « @alfred/ui » n’existe plus. Les composants et les gabarits viennent de `socle-ui` (`ListPage`, `DetailPanel`, `FormPage`, `useOpenForm`, `Page`, `DetailPage`…), l’écart et le texte de `@alfred/kit` (`Stack`, `Row`, `Text`, `Notice`), `usePageState` de `@alfred/sdk` (DESIGN.md, section 15 : correspondance).".to_string()
+                } else if specifier.starts_with("socle-ui/") {
+                    format!("Import interdit : « {specifier} » est un chemin interne de socle-ui. Importer depuis `socle-ui`, `socle-ui/markdown` ou `socle-ui/markdown-editor`.")
                 } else {
                     format!(
                         "Import interdit : « {specifier} ». Seuls {}, les fichiers du module (./…) et ses librairies sont disponibles ; une autre librairie npm s’ajoute au module avec `set_libraries`.",
@@ -157,12 +173,13 @@ mod tests {
     fn transpiles_a_page_and_reports_what_the_agent_must_fix() {
         let page = r#"
 import { useState } from "react";
-import { Button } from "@alfred/ui";
+import { Button } from "socle-ui";
+import { Stack } from "@alfred/kit";
 import { Row } from "./parts/Row";
 type Props = { label: string };
 export default function Page({ label }: Props) {
   const [count, setCount] = useState<number>(0);
-  return <Button onClick={() => setCount(count + 1)}>{label} {count}<Row /></Button>;
+  return <Stack><Button onPress={() => setCount(count + 1)}>{label}</Button><Row /></Stack>;
 }
 "#;
         let code = transpile(page, "page.tsx").expect("la page est valide");
@@ -178,6 +195,11 @@ export default function Page({ label }: Props) {
         let escaping = transpile_at(page_file, "page.tsx", 1).unwrap_err();
         assert_eq!(escaping.len(), 1, "seul l’import qui sort du module est refusé");
         assert!(escaping[0].message.contains("sort du module"));
+
+        let retired = transpile("import { Page } from \"@alfred/ui\";\nexport default 1;", "page.tsx").unwrap_err();
+        assert!(retired[0].message.contains("n’existe plus") && retired[0].message.contains("`socle-ui`"), "{retired:?}");
+        let internal = transpile("import { Button } from \"socle-ui/dist/index.js\";\nexport default 1;", "page.tsx").unwrap_err();
+        assert!(internal[0].message.contains("chemin interne"), "{internal:?}");
 
         let broken = transpile("export default function Page() {\n  return <div>;\n}", "page.tsx").unwrap_err();
         assert!(broken[0].line.is_some_and(|line| line >= 2), "l’erreur de syntaxe est localisée");

@@ -1,0 +1,32 @@
+/*
+ * Feuille du cadre d’une page : socle-ui (composants, tokens, clair et sombre), puis Tailwind limité au kit d’Alfred
+ * (`@alfred/kit`) et à l’hôte du cadre, avec les seuls tokens Socle. Une page n’ajoute aucun style.
+ */
+@import "socle-ui/styles.css";
+@import "tailwindcss" source(none);
+@import "socle-ui/theme.css";
+@source "../kit";
+@source "./pageHost.tsx";
+
+/* Le cadre occupe toute sa place ; #root défile, la page y pose son gabarit. */
+html:has(> body.alfred-frame),
+body.alfred-frame,
+body.alfred-frame > #root {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+body.alfred-frame {
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--fg);
+}
+body.alfred-frame > #root {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+body.alfred-frame > #root > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}

@@ -4,7 +4,7 @@
  *
  * La référence d’usage est `docs/alfred/SDK.md` dans l’espace.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ALFRED_MESSAGE, type FrameEvent, type FrameRequest, isFrameMessage } from "./protocol";
 import { matchesSearch, searchTerms } from "./textSearch";
 
@@ -935,6 +935,70 @@ export function useChannel(channel: string | null | undefined, options: { keep?:
 
 // --- Fonctions -------------------------------------------------------------------------------------------------
 
+/** Branchement de `<Terminal>` de `socle-ui` sur un canal (`useTerminalConnection`). */
+export interface TerminalLink {
+  /** À passer à `<Terminal connection>`. */
+  connection: {
+    send(data: string): unknown;
+    subscribe(write: (data: string | Uint8Array) => void): () => void;
+  };
+  /** À passer à `<Terminal state>`. */
+  state: "connecting" | "open" | "closed" | "error";
+  /** À passer à `<Terminal reason>`. */
+  reason: string | undefined;
+}
+
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/**
+ * Relie `<Terminal engine={loadTerminal} {...useTerminalConnection(id)} />` de `socle-ui` au WebSocket ouvert par une
+ * fonction du connecteur (`client(id).socket`) : ce que le programme écrit s’affiche, ce que l’utilisateur tape
+ * part par `channels.write`. `id` nul : en attente d’ouverture.
+ */
+export function useTerminalConnection(channel: string | null | undefined): TerminalLink {
+  const read = useChannel(channel);
+  const writers = useRef(new Set<(data: string | Uint8Array) => void>());
+  const backlog = useRef<{ channel: string | null | undefined; seq: number; chunks: (string | Uint8Array)[] }>({
+    channel,
+    seq: 0,
+    chunks: [],
+  });
+  if (backlog.current.channel !== channel) backlog.current = { channel, seq: 0, chunks: [] };
+  useEffect(() => {
+    const kept = backlog.current;
+    for (const event of read.events) {
+      if (event.seq <= kept.seq || event.type !== "data" || event.data === undefined) continue;
+      kept.seq = event.seq;
+      const chunk = event.base64 ? decodeBase64(event.data) : event.data;
+      kept.chunks.push(chunk);
+      if (kept.chunks.length > 2000) kept.chunks.shift();
+      for (const write of writers.current) write(chunk);
+    }
+  }, [read.events]);
+  const connection = useMemo(
+    () => ({
+      send: (data: string) => {
+        if (channel) void channels.write(channel, data).catch(() => undefined);
+      },
+      subscribe: (write: (data: string | Uint8Array) => void) => {
+        for (const chunk of backlog.current.chunks) write(chunk);
+        writers.current.add(write);
+        return () => {
+          writers.current.delete(write);
+        };
+      },
+    }),
+    [channel],
+  );
+  const state = !channel ? "connecting" : read.error ? "error" : read.closed ? "closed" : "open";
+  return { connection, state, reason: read.reason ?? read.error?.message ?? undefined };
+}
+
 export const functions = {
   /** Appelle une fonction de l’espace : « fonction » pour le module courant, « module/fonction » sinon. */
   call<Output = unknown>(reference: string, input: unknown = {}): Promise<Output> {
@@ -1391,26 +1455,48 @@ export interface TopBarActionDescriptor {
   selected?: boolean;
 }
 
-/** Une action de la barre du haut telle que la page l’écrit (la forme d’une `Action` de `@alfred/ui`). */
+/**
+ * Une action de la barre du haut telle que la page l’écrit : une `Action` de `socle-ui` (`{ id, label, icon, onPress,
+ * primary, danger, confirm, isDisabled, isHidden }`). Les anciens noms (`onClick`, `disabled`, `hidden`) restent lus.
+ */
 export interface TopBarAction {
+  id?: string;
   label: string;
-  /** Composant d’icône Lucide (`Download`), dont la coquille dessine l’icône de même nom. */
-  icon?: { displayName?: string; name?: string };
+  /** Icône Lucide : l’élément (`<Download size={16} />`) ou le composant (`Download`), dont la coquille dessine l’icône de même nom. */
+  icon?: unknown;
   primary?: boolean;
   danger?: boolean;
-  disabled?: boolean;
-  hidden?: boolean;
+  isDisabled?: boolean;
+  isHidden?: boolean;
   /** Bascule de vue : même `group` pour ses boutons, `selected` pour la vue affichée. */
   group?: string;
   selected?: boolean;
-  confirm?: string;
-  confirmMessage?: string;
+  /** Question posée avant d’agir ; une action `danger` est toujours confirmée. */
+  confirm?: string | { title: string; message?: string; confirmLabel?: string };
+  /** Notification après réussite : « Export terminé ». */
   success?: string;
-  onClick: () => unknown;
+  onPress?: () => unknown;
+  /** @deprecated Ancien nom de `onPress`. */
+  onClick?: () => unknown;
+  /** @deprecated Ancien nom de `isDisabled`. */
+  disabled?: boolean;
+  /** @deprecated Ancien nom de `isHidden`. */
+  hidden?: boolean;
+  /** @deprecated Ancienne conséquence de `confirm` : passer `confirm: { title, message }`. */
+  confirmMessage?: string;
 }
 
-const iconName = (icon: TopBarAction["icon"]) =>
-  icon?.displayName ?? (icon?.name && icon.name !== "Object" ? icon.name : undefined);
+const isHidden = (action: TopBarAction) => Boolean(action.isHidden ?? action.hidden);
+const isDisabled = (action: TopBarAction) => Boolean(action.isDisabled ?? action.disabled);
+
+/** Nom de l’icône Lucide : celui du composant, ou du composant d’un élément (`<Download />`). */
+function iconName(icon: unknown): string | undefined {
+  if (!icon || (typeof icon !== "object" && typeof icon !== "function")) return undefined;
+  const element = icon as { type?: unknown; $$typeof?: unknown };
+  const component = (element.$$typeof && element.type ? element.type : icon) as { displayName?: string; name?: string };
+  if (typeof component !== "object" && typeof component !== "function") return undefined;
+  return component.displayName ?? (component.name && component.name !== "Object" ? component.name : undefined);
+}
 
 /** Description sans fonction d’actions de page, avec un identifiant stable par position et libellé. */
 export function describeTopBarActions(
@@ -1418,28 +1504,84 @@ export function describeTopBarActions(
   running?: string | null,
 ): TopBarActionDescriptor[] {
   return actions
-    .filter((action) => !action.hidden)
+    .filter((action) => !isHidden(action))
     .map((action, index) => {
       const id = `${index}:${action.label}`;
+      const icon = iconName(action.icon);
       return {
         id,
         label: action.label,
-        ...(iconName(action.icon) ? { icon: iconName(action.icon) } : {}),
+        ...(icon ? { icon } : {}),
         ...(action.primary ? { primary: true } : {}),
         ...(action.danger ? { danger: true } : {}),
-        ...(action.disabled ? { disabled: true } : {}),
+        ...(isDisabled(action) ? { disabled: true } : {}),
         ...(running === id ? { running: true } : {}),
         ...(action.group ? { group: action.group, selected: action.selected === true } : {}),
       };
     });
 }
 
+/** Confirmation que l’hôte du cadre branche sur `useConfirm` de `socle-ui` (une modale dans le cadre). */
+export interface FrameConfirmOptions {
+  title: string;
+  message?: string;
+  confirmLabel: string;
+  tone?: "danger" | "default";
+}
+let frameConfirm: ((options: FrameConfirmOptions) => Promise<boolean>) | null = null;
+
+/** Réservé à l’hôte du cadre : la confirmation des actions de la barre du haut. */
+export function setFrameConfirm(confirm: ((options: FrameConfirmOptions) => Promise<boolean>) | null) {
+  frameConfirm = confirm;
+}
+
+function errorText(error: unknown): string | undefined {
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error : undefined;
+}
+
+/**
+ * Notification d’échec d’une action, à passer aux gabarits de `socle-ui` : `onActionError={notifyActionError}`. Le
+ * gabarit rend l’erreur ; Alfred l’affiche (toast et cloche) : « « Supprimer » n’a pas abouti ».
+ */
+export function notifyActionError(action: { label: string }, error?: unknown) {
+  const description = errorText(error);
+  void shell
+    .notify({ title: `« ${action.label} » n’a pas abouti`, ...(description ? { description } : {}), tone: "error" })
+    .catch(() => undefined);
+}
+
+/** Exécute une action comme une `ActionBar` : confirmation (`danger`, `confirm`), puis `success` ou l’échec notifié. */
+export async function runTopBarAction(action: TopBarAction): Promise<void> {
+  if (action.danger || action.confirm) {
+    const asked =
+      typeof action.confirm === "object"
+        ? action.confirm
+        : { title: action.confirm ?? `${action.label} ?`, message: action.confirmMessage };
+    const ok = frameConfirm
+      ? await frameConfirm({
+          title: asked.title,
+          ...(asked.message ? { message: asked.message } : {}),
+          confirmLabel: ("confirmLabel" in asked && asked.confirmLabel) || action.label,
+          tone: action.danger ? "danger" : "default",
+        })
+      : true;
+    if (!ok) return;
+  }
+  try {
+    await (action.onPress ?? action.onClick)?.();
+    if (action.success) void shell.notify({ title: action.success, tone: "success" }).catch(() => undefined);
+  } catch (error) {
+    notifyActionError(action, error);
+  }
+}
+
 let listeningActions = false;
 let activateTopBarAction: ((id: string) => void) | null = null;
 
 /**
- * Bas niveau de `useTopBarActions` (gabarits) : montre des actions dans la barre du haut d’Alfred et rappelle
- * `onActivate(id)` quand l’utilisateur en choisit une. Une seule série par page : la dernière déclarée.
+ * Bas niveau de `useTopBarActions` : montre des actions dans la barre du haut d’Alfred et rappelle `onActivate(id)`
+ * quand l’utilisateur en choisit une. Une seule série par page : la dernière déclarée.
  */
 export function declareTopBarActions(
   descriptors: ReadonlyArray<TopBarActionDescriptor>,
@@ -1469,11 +1611,11 @@ export function declareTopBarActions(
 }
 
 /**
- * Actions de la page dans la barre du haut d’Alfred, à droite de la recherche, comme la barre d’une page de OneApp :
- * icônes avec infobulle, menu « ⋯ » (actions sans icône, destructrices, ou fenêtre étroite) et action principale.
- * La coquille ne reçoit que leur description ; un clic revient à la page, qui exécute l’action par `run` (celui de
- * `@alfred/ui` confirme une action `danger` ou `confirm`, montre l’attente et notifie) ou, à défaut, `onClick`.
- * Réservé à une page : un panneau garde ses actions.
+ * Actions de la page dans la barre du haut d’Alfred (zone `topbar` de Socle) : icônes avec infobulle, menu « … »
+ * (actions sans icône, destructrices, ou fenêtre étroite) et action principale. La coquille ne reçoit que leur
+ * description ; un clic revient à la page, qui exécute l’action comme une `ActionBar` : confirmation d’une action
+ * `danger` ou `confirm` (modale de `socle-ui` dans le cadre), attente sur le bouton, notification de `success` ou de
+ * l’échec. `options.run` remplace cette exécution. Réservé à une page : un panneau garde ses actions.
  */
 export function useTopBarActions(
   actions: ReadonlyArray<TopBarAction>,
@@ -1488,12 +1630,12 @@ export function useTopBarActions(
   // biome-ignore lint/correctness/useExhaustiveDependencies: la déclaration vit avec la page ; `key` passe ensuite par `update`.
   useEffect(() => {
     const declared = declareTopBarActions(JSON.parse(key), async (id) => {
-      const visible = latest.current.actions.filter((action) => !action.hidden);
+      const visible = latest.current.actions.filter((action) => !isHidden(action));
       const action = visible.find((item, index) => `${index}:${item.label}` === id);
-      if (!action || action.disabled) return;
+      if (!action || isDisabled(action)) return;
       setRunning(id);
       try {
-        await (latest.current.run ? latest.current.run(action) : action.onClick());
+        await (latest.current.run ? latest.current.run(action) : runTopBarAction(action));
       } finally {
         setRunning((current) => (current === id ? null : current));
       }
@@ -1767,5 +1909,67 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
   const reload = useCallback(() => setTick((value) => value + 1), []);
   // Données du module changées ailleurs (reçues de l’équipe) : le chargement se relance de lui-même.
   useEffect(() => onShellEvent("dataChanged", reload), [reload]);
+  // L’autre cadre de la page a écrit (`announceChange`) : la liste ou le détail se relit.
+  useEffect(() => onShellEvent("peer", (message) => isChangeMessage(message) && reload()), [reload]);
   return { data: state.data, error: state.error, loading: state.loading, reload };
 }
+
+// --- Entre la page et son panneau ------------------------------------------------------------------------------
+
+const CHANGED = { alfred: "changed" } as const;
+
+function isChangeMessage(message: unknown) {
+  return typeof message === "object" && message !== null && (message as { alfred?: unknown }).alfred === "changed";
+}
+
+/**
+ * Prévient l’autre cadre de la page qu’une donnée a changé (après une écriture dans le panneau, ou dans la liste) :
+ * chaque `useAsync` de l’autre cadre se relance de lui-même.
+ */
+export function announceChange() {
+  return shell.send(CHANGED).catch(() => undefined);
+}
+
+/**
+ * Sélection publiée par la page (`shell.publish`), pour son panneau de droite : l’objet choisi dans la liste,
+ * `undefined` tant que rien n’est reçu, `null` quand la page ne sélectionne rien.
+ */
+export function useSelection<T = unknown>(): T | null | undefined {
+  const context = usePageContext();
+  return context ? ((context.selection ?? null) as T | null) : undefined;
+}
+
+// --- État retenu de la page ------------------------------------------------------------------------------------
+
+let keptState: Record<string, unknown> | null = null;
+
+/** Réservé à l’hôte du cadre : l’état retenu par Alfred pour la page, reçu avant son premier affichage. */
+export function initPageState(initial: Record<string, unknown>) {
+  keptState = initial;
+}
+
+/**
+ * Comme `useState`, mais Alfred retient la valeur quand on quitte la page et la rend quand on y revient (vue, onglet,
+ * ligne ouverte, période choisie). La clé est propre à la page ; la valeur tient en JSON et reste petite. Hors d’un
+ * cadre de page (tests), c’est un `useState`.
+ */
+export function usePageState<T>(key: string, initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    if (keptState && key in keptState) return keptState[key] as T;
+    return typeof initial === "function" ? (initial as () => T)() : initial;
+  });
+  const first = useRef(true);
+  useEffect(() => {
+    // La valeur de départ est déjà connue d’Alfred (ou c’est la valeur par défaut) : rien à envoyer.
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (!keptState) return;
+    keptState[key] = value;
+    void request("shell.state.set", { key, value }).catch(() => undefined);
+  }, [key, value]);
+  return [value, setValue];
+}
+
+export { loadPdf, loadTerminal } from "./engines";

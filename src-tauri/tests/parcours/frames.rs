@@ -16,7 +16,7 @@ async fn documents_hotes_modules_transpiles_et_chemins_refuses() {
     }
     desk.write(
         "modules/notes/pages/liste.tsx",
-        "import { Page } from \"@alfred/ui\";\nimport { titre } from \"../lib/titre\";\n\nconst taille: number = 2;\n\nexport default function Liste() {\n  return <Page title={titre(taille)} />;\n}\n",
+        "import { Page, PageSection } from \"socle-ui\";\nimport { titre } from \"../lib/titre\";\n\nconst taille: number = 2;\n\nexport default function Liste() {\n  return <Page><PageSection title={titre(taille)} /></Page>;\n}\n",
     );
     desk.write("modules/notes/lib/titre.ts", "export function titre(n: number): string {\n  return `Notes (${n})`;\n}\n");
     desk.write("modules/notes/pages/interdit.tsx", "import _ from \"lodash\";\nexport default function Vue() { return null; }\n");
@@ -33,9 +33,10 @@ async fn documents_hotes_modules_transpiles_et_chemins_refuses() {
         for directive in ["default-src 'none'", "connect-src 'none'", "script-src alfred-page:", "form-action 'none'", "frame-src 'none'", "worker-src 'none'"] {
             assert!(csp.contains(directive), "{directive} absent de {csp}");
         }
-        for package in ["\"react\"", "\"@alfred/ui\"", "\"@alfred/sdk\"", "\"lucide-react\""] {
+        for package in ["\"react\"", "\"socle-ui\"", "\"socle-ui/markdown\"", "\"@alfred/sdk\"", "\"@alfred/kit\"", "\"lucide-react\""] {
             assert!(host.body.contains(package), "{package} absent de la carte d’imports");
         }
+        assert!(!host.body.contains("@alfred/ui"), "l’ancienne bibliothèque n’est plus servie : {}", host.body);
     }
     // L’environnement d’exécution est généré (`pnpm build:runtime`) : vérifié seulement s’il est construit.
     if std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime/sdk.js").is_file() {

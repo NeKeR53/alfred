@@ -423,7 +423,7 @@ pub fn assert_no_leak(what: &str, text: &str, secrets: &[&str]) {
     }
 }
 
-pub const PAGE: &str = "import { Page } from \"@alfred/ui\";\n\nexport default function Vue() {\n  return <Page title=\"Vue\" />;\n}\n";
+pub const PAGE: &str = "import { Page, PageSection } from \"socle-ui\";\n\nexport default function Vue() {\n  return <Page><PageSection title=\"Vue\" /></Page>;\n}\n";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Service distant
