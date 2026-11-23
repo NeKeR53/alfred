@@ -29,3 +29,8 @@ service de `@alfred/ui` pour les cadres.
 | `transition-02-atom-projet-clair.png` | Atom, Projet, avec son panneau |
 | `transition-03-atom-secrets-panneau-clair.png` | Atom, Secrets : résumé de la barre du haut, tableau, panneau de détail |
 | `transition-04-atlassian-bitbucket-clair.png`, `transition-05-atlassian-bitbucket-sombre.png` | Atlassian, Bitbucket, en clair puis en sombre |
+
+## Pages des espaces passées à socle-ui (fin de la transition)
+
+Prises dans l'app de dev lancée après le retrait de `@alfred/ui` (lecture seule) : `socle-11-jenkins-clair.png`,
+`socle-12-atom-usine-clair.png`, `socle-13-atlassian-confluence-clair.png`.
