@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useNavigationSections } from "../features/navigation/NavigationSettings";
-import { pressRowAction } from "../features/space/sections.test-helper";
 import { MODULE_FOCUS } from "../features/settings/open";
+import { pressRowAction } from "../features/space/sections.test-helper";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
@@ -28,7 +28,6 @@ vi.mock("../lib/native", () => ({
   inTauri: true,
   openPageWindow: vi.fn(async () => undefined),
 }));
-
 
 function page(module: string, id: string, title: string, extra: Partial<ResolvedPage> = {}): ResolvedPage {
   return {
@@ -503,7 +502,10 @@ describe("logo d’un service comme icône d’une entrée du menu", () => {
   };
   const entryIcon = (label: string) => {
     const entry = sidebarRow(label);
-    return { image: entry.querySelector("img.section-icon-image"), lucide: entry.querySelector("svg.lucide:not(.lucide-ellipsis)") };
+    return {
+      image: entry.querySelector("img.section-icon-image"),
+      lucide: entry.querySelector("svg.lucide:not(.lucide-ellipsis)"),
+    };
   };
 
   it("affiche le logo dans le menu, et revient à une icône Lucide depuis « Changer l’icône… »", async () => {

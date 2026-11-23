@@ -20,4 +20,3 @@ export const STATUS_LABEL: Record<MenuEntryStatus, string> = {
   running: "Au travail",
   waiting: "Réponse attendue",
 };
-

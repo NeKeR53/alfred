@@ -123,12 +123,12 @@ async function undoInDialog(dialog: HTMLElement, message: string) {
 
 describe("historique d’une page", () => {
   it("depuis le menu de l’onglet : liste les modifications de la page et en annule une", async () => {
+    const user = userEvent.setup();
     render(<AppShell agent={<p>Agent</p>} settingsTabs={[]} />);
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Tâches" }), { key: "F10", shiftKey: true });
-    const menu = screen.getByRole("menu", { name: "Actions de l’onglet Tâches" });
-    fireEvent.click(within(menu).getByRole("menuitem", { name: /Historique/ }));
+    await user.click(screen.getByRole("button", { name: "Plus d'actions" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /Historique/ }));
 
-    const dialog = screen.getByRole("dialog", { name: "Historique de « Tâches »" });
+    const dialog = await screen.findByRole("dialog", { name: "Historique de « Tâches »" });
     expect(mockedInvoke).toHaveBeenCalledWith("space.history", { path: "modules/suivi/pages/taches.tsx", limit: 100 });
     await undoInDialog(dialog, "Tour d’agent : colonne échéance");
     expect(useNotifications.getState().items[0]?.title).toBe("Modification annulée");

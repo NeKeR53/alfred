@@ -54,4 +54,3 @@ export function runZoneAction(zonePage: string, entry: MenuEntry, actionId: stri
   // Renommer se fait dans la ligne : la page reçoit le nouveau libellé sans être ouverte.
   if (actionId !== "rename") openZoneEntry(zonePage, entry);
 }
-

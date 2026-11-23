@@ -15,6 +15,7 @@ import { useShell } from "../src/shell/store";
 import { SUGGESTED_MARKETPLACE } from "../src/shell/welcome/ModulesStep";
 import { closeWelcome } from "../src/shell/welcome/store";
 import { FakeBackend } from "./support/fakeBackend";
+import { findNavigation, getNavigation } from "./support/shell";
 
 beforeEach(() => {
   closeWelcome();
@@ -49,7 +50,7 @@ it("premier démarrage sans espace : la bienvenue, puis le choix de l’espace, 
   expect(await screen.findByRole("heading", { name: "Bonjour, je suis Alfred" })).toBeVisible();
   // Un seul bouton à la bienvenue, et rien de la coquille.
   expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Commencer"]);
-  expect(screen.queryByRole("complementary", { name: "Navigation principale" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("treegrid", { name: "Navigation principale" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Commencer" }));
 
   expect(screen.getByRole("heading", { name: "Votre espace de travail" })).toBeVisible();
@@ -81,7 +82,7 @@ it("crée un espace dans ~/Alfred/<nom>, et l’accueil continue une fois l’es
   expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Alfred/Travail", name: "Travail" });
   // L’espace est ouvert, mais la coquille attend la fin de l’accueil.
   expect(useShell.getState().snapshot?.name).toBe("Travail");
-  expect(screen.queryByRole("complementary", { name: "Navigation principale" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("treegrid", { name: "Navigation principale" })).not.toBeInTheDocument();
 });
 
 it("ouvre un espace existant, et dit simplement quand le dossier n’en est pas un", async () => {
@@ -198,7 +199,7 @@ it("le dernier espace fermé : la version courte, créer ou ouvrir, avec les esp
   const user = userEvent.setup();
   render(<App />);
   // Un espace connu : jamais l’accueil d’office.
-  expect(await screen.findByRole("complementary", { name: "Navigation principale" })).toBeVisible();
+  expect(await findNavigation()).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Bonjour, je suis Alfred" })).not.toBeInTheDocument();
 
   await act(() => useShell.getState().closeSpace());
@@ -209,7 +210,7 @@ it("le dernier espace fermé : la version courte, créer ou ouvrir, avec les esp
   expect(screen.getByRole("radio", { name: /Créer un nouvel espace/ })).toBeVisible();
 
   await user.click(within(recents).getByRole("button", { name: "Ouvrir l’espace Maison" }));
-  expect(await screen.findByRole("complementary", { name: "Navigation principale" })).toBeVisible();
+  expect(await findNavigation()).toBeInTheDocument();
   expect(backend.lastCall("space.open")).toEqual({ path: "/Users/lea/Maison", existing: true });
 });
 
@@ -217,7 +218,7 @@ it("relancé depuis Réglages › Général : garder l’espace ouvert, puis rev
   const backend = new FakeBackend().withSpace("/Users/lea/Maison", "Maison", []).install();
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByRole("complementary", { name: "Navigation principale" });
+  await findNavigation();
   await user.click(screen.getByRole("button", { name: "Réglages" }));
   const settings = await screen.findByRole("dialog", { name: "Réglages" });
   await user.click(await within(settings).findByRole("button", { name: "Revoir l’accueil" }));
@@ -230,7 +231,7 @@ it("relancé depuis Réglages › Général : garder l’espace ouvert, puis rev
   await user.click(screen.getByRole("button", { name: "Fermer l’accueil" }));
   // Retour à Alfred : la coquille revient (les Réglages, d’où l’accueil a été relancé, restent ouverts par-dessus).
   await waitFor(() =>
-    expect(screen.getByRole("complementary", { name: "Navigation principale", hidden: true })).toBeInTheDocument(),
+    expect(screen.getAllByRole("treegrid", { name: "Navigation principale", hidden: true })[0]).toBeInTheDocument(),
   );
   expect(backend.commandsCalled().filter((command) => command === "space.open")).toEqual([]);
 });

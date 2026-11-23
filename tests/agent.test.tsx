@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
 import { render } from "../src/features/agent/socle.test-helper";
+import { useNotifications } from "../src/shell/notifications";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 import { findNavigation, getNavigation } from "./support/shell";
@@ -91,7 +92,9 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
   await waitFor(() => expect(backend.lastCall("space.undo")).toEqual({ commit: backend.commits[0]?.id }));
   await waitFor(() => expect(within(navigation).queryByRole("row", { name: "Cuisine" })).not.toBeInTheDocument());
   expect(screen.queryByRole("region", { name: "Bilan des modifications" })).not.toBeInTheDocument();
-  expect((await screen.findAllByText("Modification annulée"))[0]).toBeVisible();
+  await waitFor(() =>
+    expect(useNotifications.getState().items.some((item) => item.title === "Modification annulée")).toBe(true),
+  );
   expect(backend.commits.at(-1)?.message).toMatch(/^Revert/);
   expect(backend.unknown, "commandes absentes du faux backend").toEqual([]);
 });

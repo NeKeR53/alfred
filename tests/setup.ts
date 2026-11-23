@@ -31,12 +31,16 @@ vi.mock("@testing-library/react", async (importOriginal) => {
   const { createElement } = await import("react");
   const { SocleProvider } = await import("socle-ui");
   const { notifications } = await import("../src/shell/socle");
+  // Toasts et centre de notifications seulement pour la coquille et les parcours : ailleurs, un toast (rôle
+  // `alertdialog`) se confondrait avec la confirmation que le test cherche.
+  const { expect } = await import("vitest");
+  const withNotifications = () => /[\\/](tests|src[\\/]shell)[\\/]/.test(expect.getState().testPath ?? "");
   const Wrapper = ({ children }: { children: import("react").ReactNode }) =>
     createElement(SocleProvider, {
       density: "desktop",
       platform: "macos",
       storageKey: "test",
-      notifications,
+      notifications: withNotifications() ? notifications : undefined,
       children,
     });
   return {

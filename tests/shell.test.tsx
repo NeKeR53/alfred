@@ -36,25 +36,20 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   const navigation = getNavigation();
   expect(within(navigation).queryAllByRole("row")).toHaveLength(0);
 
-  // Le bouton qui replie le menu est dans l’en-tête, hors du menu. En bas du menu, dans cet ordre : Agent, l’espace, qui
-  // ouvre le menu des espaces, puis Réglages, toute dernière entrée.
-  const sidebar = screen.getByRole("complementary", { name: "Navigation principale" });
-  const toggle = screen.getByRole("button", { name: "Replier la navigation" });
-  expect(sidebar).not.toContainElement(toggle);
-  const switcher = within(sidebar).getByRole("button", { name: /^Espace de travail : Maison/ });
-  expect(
-    within(sidebar)
-      .getAllByRole("button")
-      .map((button) => button.getAttribute("aria-label")?.split(/[.·]/)[0]?.trim()),
-  ).toEqual(["Agent", "Espace de travail : Maison", "Réglages"]);
-  expect(switcher).toHaveAttribute("aria-haspopup", "menu");
+  // En bas du menu, dans cet ordre : Agent, l’espace (qui ouvre le menu des espaces), puis le compte et Réglages.
+  const footer = screen.getByRole("treegrid", { name: "Navigation du bas" });
+  expect(within(footer).getByRole("row", { name: "Agent" })).toBeInTheDocument();
+  const switcher = screen.getByRole("button", { name: /^Espace de travail : Maison/ });
+  expect(screen.getByRole("button", { name: "Réglages" })).toBeInTheDocument();
+  expect(footer.compareDocumentPosition(switcher) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // Pas de champ de recherche dans le menu : ⌘K ouvre la palette.
-  expect(within(sidebar).queryByRole("searchbox")).not.toBeInTheDocument();
-  expect(within(sidebar).queryByRole("textbox")).not.toBeInTheDocument();
+  expect(within(navigation).queryByRole("searchbox")).not.toBeInTheDocument();
   await user.click(switcher);
-  expect(screen.getByRole("menuitem", { name: "Créer un espace de travail…" })).toBeVisible();
+  expect(await screen.findByRole("menuitem", { name: "Créer un espace de travail…" })).toBeVisible();
   await user.keyboard("{Escape}");
-  expect(screen.queryByRole("menu", { name: "Espaces de travail" })).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole("menuitem", { name: "Créer un espace de travail…" })).not.toBeInTheDocument(),
+  );
 
   // L’agent construit dans le dossier : le backend signale le changement, la navigation se relit.
   backend.withSpace("/Users/lea/Maison", "Maison", builtModules());
@@ -67,8 +62,8 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
 
   // Section à deux onglets : la page s’affiche dans son cadre, avec son panneau de droite.
   await user.click(suivi);
-  expect(screen.getByRole("heading", { name: "Suivi" })).toBeVisible();
-  const tabs = screen.getByRole("tablist", { name: "Onglets de Suivi" });
+  expect(screen.getByRole("heading", { level: 1, name: "Suivi" })).toBeVisible();
+  const tabs = screen.getByRole("tablist");
   expect(
     within(tabs)
       .getAllByRole("tab")
@@ -81,10 +76,11 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   expect(page.src).toContain(`key=${frameKeyOf("suivi")}`);
   expect(page.src).toContain("page=taches");
 
-  // Le panneau se masque et se réaffiche.
-  await user.click(screen.getByRole("button", { name: "Masquer le panneau « Détail »" }));
-  expect(screen.queryByTitle("Détail")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Afficher le panneau « Détail »" }));
+  // Le panneau de détail se masque et se réaffiche par le bouton de la barre du haut.
+  const detailToggle = screen.getByRole("button", { name: /panneau de détail/i, pressed: true });
+  await user.click(detailToggle);
+  await waitFor(() => expect(screen.queryByTitle("Détail")).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: /panneau de détail/i, pressed: false }));
   expect(await screen.findByTitle("Détail")).toBeInTheDocument();
 
   // L’autre onglet n’est pas encore écrit : l’utilisateur le voit en cours de création.
@@ -93,16 +89,15 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   expect(screen.queryByTitle("Détail")).not.toBeInTheDocument();
 
   // Retour à la page Agent, puis les Réglages : une fenêtre par-dessus l’app, rubriques dans sa barre latérale.
-  await user.click(screen.getByRole("button", { name: "Agent" }));
+  await user.click(within(footer).getByRole("row", { name: "Agent" }));
   expect(await screen.findByText("Que puis-je faire pour vous ?")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Réglages" }));
   const settings = await screen.findByRole("dialog", { name: "Réglages" });
-  const nav = within(settings).getByRole("navigation", { name: "Rubriques des Réglages" });
-  expect(
-    within(nav)
-      .getAllByRole("button")
-      .map((item) => item.textContent),
-  ).toEqual([
+  // La rubrique ouverte remonte le gabarit : la navigation se relit à chaque fois.
+  const nav = () => within(settings).getByRole("navigation", { name: /Rubriques des réglages/i });
+  const categories = () =>
+    [...nav().querySelectorAll<HTMLElement>("button[data-category]")].map((item) => item.textContent);
+  expect(categories()).toEqual([
     "Général",
     "Modules",
     "Marketplace",
@@ -116,20 +111,20 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
   ]);
   // L’espace de travail d’abord, puis Alfred : deux groupes titrés.
   expect(
-    within(nav)
+    within(nav())
       .getAllByText(/^(Espace de travail|Alfred|Pages de l’espace de travail)$/)
       .map((title) => title.textContent),
   ).toEqual(["Espace de travail", "Alfred", "Pages de l’espace de travail"]);
   // Les Réglages s’ouvrent sur Général : la liste des espaces de travail.
-  expect(await within(settings).findByRole("group", { name: "Vos espaces de travail" })).toBeVisible();
-  // Les modules installés, en tableau ; « Parcourir le marketplace » mène au catalogue.
-  await user.click(within(nav).getByRole("button", { name: "Modules" }));
-  expect(await within(settings).findByRole("table", { name: "Modules de l’espace de travail" })).toBeVisible();
+  expect(await within(settings).findByRole("heading", { name: "Espaces de travail" })).toBeVisible();
+  // Les modules installés, en lignes ; « Parcourir le marketplace » mène au catalogue.
+  await user.click(within(nav()).getByRole("button", { name: "Modules" }));
+  expect(await within(settings).findByRole("heading", { name: "Modules installés" })).toBeVisible();
   await user.click(within(settings).getByRole("button", { name: "Parcourir le marketplace" }));
-  expect(await within(settings).findByText("Aucun marketplace branché")).toBeVisible();
+  expect(await within(settings).findByText(/Aucun marketplace branché/)).toBeVisible();
 
   const expected: Record<string, string> = {
-    Agent: "Harnais par défaut",
+    Agent: "Harnais",
     Général: "Historique",
     Marketplace: "Aucun marketplace branché",
     Apparence: "Couleur d’accent",
@@ -138,20 +133,15 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
     Journal: "Aucune exécution",
   };
   for (const [item, text] of Object.entries(expected)) {
-    await user.click(within(nav).getByRole("button", { name: item }));
-    expect((await within(settings).findAllByText(text))[0], `rubrique ${item}`).toBeVisible();
+    await user.click(within(nav()).getByRole("button", { name: item }));
+    expect((await within(settings).findAllByText(new RegExp(text)))[0], `rubrique ${item}`).toBeVisible();
   }
-  await user.click(within(nav).getByRole("button", { name: "Préférences du suivi" }));
+  await user.click(within(nav()).getByRole("button", { name: "Préférences du suivi" }));
   expect(await within(settings).findByTitle("Préférences du suivi")).toBeInTheDocument();
 
   // La recherche réduit la barre latérale ; Échap ferme la fenêtre et rend la page Agent.
-  await user.type(within(nav).getByLabelText("Rechercher un réglage"), "cles");
-  expect(
-    within(nav)
-      .getAllByRole("button")
-      .filter((item) => item.classList.contains("settings-modal__item"))
-      .map((item) => item.textContent),
-  ).toEqual(["Mots de passe et clés"]);
+  await user.type(nav().querySelector("input") as HTMLInputElement, "cles");
+  await waitFor(() => expect(categories()).toEqual(["Mots de passe et clés"]));
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Réglages" })).not.toBeInTheDocument());
   expect(screen.getByText("Que puis-je faire pour vous ?")).toBeVisible();

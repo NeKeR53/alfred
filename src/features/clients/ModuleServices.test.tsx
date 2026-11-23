@@ -1028,7 +1028,7 @@ it("montre chaque page du module avec ses onglets et le compte de chacun, et les
   // Renommer, ranger et retirer un onglet ; retirer la page.
   await user.click(await menuItem(user, "l’onglet Recette", "Renommer…"));
   const rename = await screen.findByRole("dialog", { name: "Renommer l’onglet « Recette »" });
-  const field = within(rename).getByLabelText("Nom");
+  const field = within(rename).getByLabelText(/^Nom/);
   await user.clear(field);
   await user.type(field, "Rec");
   await user.click(within(rename).getByRole("button", { name: "Renommer" }));
