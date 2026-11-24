@@ -17,9 +17,11 @@ vi.mock("../../../lib/native", async (importOriginal) => ({
   onNativeEvent: vi.fn(() => () => undefined),
 }));
 
+import { MentionText } from "socle-ui";
 import { Markdown } from "socle-ui/markdown";
 import { Activities, activityStatusLabel } from "../Activities";
 import { referencedLocalImages } from "../lib/chatImages";
+import { mentionReferences } from "../lib/composerReferences";
 import type { Conversation, ConversationRuntime, Turn } from "../model";
 import { useAgents } from "../store";
 import {
@@ -40,7 +42,6 @@ import {
 } from "../Transcript";
 import { agentQuestion, withoutAgentQuestion } from "./agentQuestions";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { ReferencePills } from "./ReferencePills";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
 
@@ -71,6 +72,16 @@ function conversation(turns: Turn[], patch: Partial<Conversation> = {}): Convers
     turns,
     ...patch,
   };
+}
+
+/** Le relevé, puis la carte de question posée au-dessus de la saisie, comme dans la page Agent. */
+function TranscriptAndQuestion(props: { conversation: Conversation; runtime: ConversationRuntime }) {
+  return (
+    <>
+      <Transcript {...props} />
+      <ConversationQuestion {...props} onOther={() => undefined} />
+    </>
+  );
 }
 
 const question = (json: string, fence = "alfred-question") => `Je dois savoir.\n\n\`\`\`${fence}\n${json}\n\`\`\``;
@@ -192,19 +203,18 @@ describe("présentation d’un tour", () => {
   });
 
   it("place les références en pastilles à leur position, comme OneApp", () => {
-    render(
-      <ReferencePills
-        text=" puis  à relire"
-        references={[
-          { id: "r2", name: "src/page.tsx", path: "/e/src/page.tsx", kind: "file", offset: 6 },
-          { id: "r1", name: "publier", path: "/c/publier.md", kind: "command", offset: 0 },
-          { name: "ancienne", path: "/c/ancienne.md", kind: "command" },
-        ]}
-      />,
-    );
-    const pills = [...document.querySelectorAll(".agent-chat__reference-pill")].map((pill) => pill.textContent);
-    expect(pills).toEqual(["publier", "page.tsx"]);
-    expect(document.querySelector(".reference-text")?.textContent).toBe("publier puis page.tsx à relire");
+    const references = mentionReferences([
+      { id: "r2", name: "src/page.tsx", path: "/e/src/page.tsx", kind: "file", offset: 6 },
+      { id: "r1", name: "publier", path: "/c/publier.md", kind: "command", offset: 0 },
+      { name: "ancienne", path: "/c/ancienne.md", kind: "command" },
+    ]);
+    // Une référence sans position (message ancien) n’a pas de pastille ; le nom affiché est celui du fichier.
+    expect(references.map(({ trigger, label, offset }) => ({ trigger, label, offset }))).toEqual([
+      { trigger: "@", label: "page.tsx", offset: 6 },
+      { trigger: "/", label: "publier", offset: 0 },
+    ]);
+    const { container } = render(<MentionText text=" puis  à relire" references={references} />);
+    expect(container.textContent).toBe("/publier puis @page.tsx à relire");
   });
 });
 
@@ -248,9 +258,11 @@ describe("relevé", () => {
     );
     const header = screen.getByText(/^Depuis Notes · /);
     expect(header).toHaveAttribute("title", "gpt-5");
-    expect(screen.getByRole("button", { name: /^Voir Texte · 2.500 caractères$/ })).toBeInTheDocument();
-    expect(screen.getByText("publier")).toHaveClass("agent-chat__reference-pill");
-    expect(screen.getAllByText("Envoyé")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /^Voir Message · 2.500 caractères$/ })).toBeInTheDocument();
+    const second = screen.getAllByRole("article", { name: "Vous" })[1];
+    expect(second).toHaveTextContent("/publier maintenant");
+    for (const message of screen.getAllByRole("article", { name: "Vous" }))
+      expect(message).toHaveTextContent(/Envoyé · /);
   });
 
   it("ne redessine pas la bulle d’un message relancé, comme OneApp", () => {
@@ -292,7 +304,7 @@ describe("relevé", () => {
     render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
     fireEvent.click(screen.getByRole("button", { name: "Relancer le message" }));
     expect(resend).toHaveBeenCalledWith("c1", "t1");
-    const [fromUser, fromReply] = screen.getAllByRole("button", { name: "Repartir d’ici" });
+    const [fromUser, fromReply] = screen.getAllByRole("button", { name: "Repartir d'ici" });
     fireEvent.click(fromUser);
     expect(fork).toHaveBeenLastCalledWith("c1", "t1", "user");
     fireEvent.click(fromReply);
@@ -323,7 +335,7 @@ describe("relevé", () => {
   it("pose la question au-dessus de la saisie, répond au chiffre et se replie", () => {
     const content = question('{"question":"Quel format ?","options":["PDF","Word"]}');
     render(
-      <Transcript
+      <TranscriptAndQuestion
         conversation={conversation([turn("t1", { items: [{ kind: "message", id: "m", content }] })])}
         runtime={idle}
       />,
@@ -339,7 +351,7 @@ describe("relevé", () => {
 
   it("présente l’autorisation dans la même carte, options numérotées", () => {
     render(
-      <Transcript
+      <TranscriptAndQuestion
         conversation={conversation([turn("t1", { status: "running", endedAt: undefined, items: [] })])}
         runtime={{
           ...idle,
@@ -505,7 +517,7 @@ describe("relevé", () => {
       />,
     );
     const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
-    expect(summaries.map((summary) => within(summary).getByRole("strong").textContent)).toEqual([
+    expect(summaries.map((summary) => within(summary).getByRole("heading").textContent)).toEqual([
       "1 fichier de l’espace de travail modifié",
       "2 fichiers de l’espace de travail modifiés",
     ]);
@@ -648,30 +660,35 @@ describe("parité avec OneApp", () => {
     expect(screen.getByText("Session perdue")).toBeInTheDocument();
   });
 
-  it("nomme la conversation comme OneApp et suit le bas à chaque changement, puis à l’ouverture d’une autre", () => {
-    const running = turn("t1", { status: "running", items: [activity("a1", { status: "running" })] });
-    const { rerender } = render(
-      <Transcript conversation={conversation([running])} runtime={{ ...idle, status: "responding" }} />,
-    );
+  it("nomme la conversation comme OneApp, la ramène en bas à chaque envoi et à l’ouverture d’une autre", () => {
+    const { rerender } = render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
     const scroller = screen.getByRole("region", { name: "Conversation de Factures" });
     Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1000 });
     Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 100 });
-    // Une activité qui change sans s’ajouter fait suivre le relevé resté en bas.
-    rerender(
-      <Transcript
-        conversation={conversation([{ ...running, items: [activity("a1", { status: "running", content: "sortie" })] }])}
-        runtime={{ ...idle, status: "responding" }}
-      />,
-    );
-    expect(scroller.scrollTop).toBe(1000);
-    // Remonté, l’utilisateur n’est pas ramené en bas…
+    // Remonté, l’utilisateur n’est pas ramené en bas par la suite de la réponse…
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
-    rerender(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
+    rerender(<Transcript conversation={conversation([turn("t1", { endedAt: 6_000 })])} runtime={idle} />);
     expect(scroller.scrollTop).toBe(0);
-    // … jusqu’à l’ouverture d’une autre conversation, qui part du bas.
+    // … mais un envoi de sa part l’y ramène (`followKey` de `ChatTranscript`)…
+    act(() => useAgents.setState({ follow: { c1: 1 } } as never));
+    expect(scroller.scrollTop).toBe(1000);
+    // … comme l’ouverture d’une autre conversation, qui part du bas.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
     rerender(<Transcript conversation={conversation([turn("t1")], { id: "c2" })} runtime={idle} />);
     expect(scroller.scrollTop).toBe(1000);
+    act(() => useAgents.setState({ follow: undefined } as never));
+  });
+
+  it("annonce la fin de la réponse, une fois la conversation au repos", () => {
+    const running = turn("t1", { status: "running", endedAt: undefined });
+    const { rerender } = render(
+      <Transcript conversation={conversation([running])} runtime={{ ...idle, status: "responding" }} />,
+    );
+    expect(screen.queryByText("Réponse terminée")).not.toBeInTheDocument();
+    rerender(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
+    expect(screen.getByText("Réponse terminée")).toBeInTheDocument();
   });
 
   it("laisse la page poser la question dans son pied, au-dessus de la saisie", () => {
@@ -680,11 +697,16 @@ describe("parité avec OneApp", () => {
     const onOther = vi.fn();
     render(
       <>
-        <Transcript conversation={value} runtime={idle} dockQuestion={false} />
+        <Transcript conversation={value} runtime={idle} />
         <ConversationQuestion conversation={value} runtime={idle} onOther={onOther} />
       </>,
     );
-    expect(document.querySelector(".agent-chat__question-dock")).toBeNull();
+    // Le relevé ne pose pas la question : une seule carte, celle du pied.
+    expect(
+      within(screen.getByRole("region", { name: "Conversation de Factures" })).queryByRole("region", {
+        name: "Question de l’agent",
+      }),
+    ).toBeNull();
     const card = screen.getByRole("region", { name: "Question de l’agent" });
     fireEvent.click(within(card).getByRole("button", { name: "Autre réponse…" }));
     expect(onOther).toHaveBeenCalledOnce();

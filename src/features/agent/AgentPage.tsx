@@ -1,5 +1,5 @@
 import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type Action,
   Button,
@@ -22,7 +22,7 @@ import { PROVIDER_LABEL } from "./harness";
 import { type ConversationHeader, type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
 import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
-import { ConversationQuestion, Transcript } from "./Transcript";
+import { ConversationQuestion, focusComposer, Transcript } from "./Transcript";
 import "./agent.css";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
@@ -104,6 +104,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const retrySave = useAgents((state) => (state as Persistence).retrySave);
   const [renaming, setRenaming] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const footer = useRef<HTMLDivElement>(null);
   const git = useWorkspaceGit(conversation);
   const { textEditor } = usePreferences();
 
@@ -299,7 +300,6 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                     <Transcript
                       conversation={conversation}
                       runtime={runtime}
-                      dockQuestion={false}
                       header={
                         <p
                           className="agents-page__context"
@@ -314,7 +314,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                       }
                     />
                   )}
-                  <div className="agents-page__footer">
+                  <div ref={footer} className="agents-page__footer">
                     {saveError ? (
                       <Notice
                         tone="danger"
@@ -334,13 +334,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                       <ConversationQuestion
                         conversation={conversation}
                         runtime={runtime}
-                        onOther={() =>
-                          document
-                            .querySelector<HTMLElement>(
-                              '.agents-page__footer textarea, .agents-page__footer [contenteditable="true"]',
-                            )
-                            ?.focus()
-                        }
+                        onOther={() => focusComposer(footer.current)}
                       />
                     </div>
                     <Composer

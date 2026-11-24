@@ -1,16 +1,20 @@
-import { ChevronDown, ChevronUp, FileDiff, LoaderCircle, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronUp, LoaderCircle, Undo2 } from "lucide-react";
+import { memo, type ReactNode, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  memo,
-  type ReactNode,
-  startTransition,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { Button, Disclosure, useConfirm } from "socle-ui";
+  Alert,
+  AttachmentChip,
+  AttachmentList,
+  Button,
+  Card,
+  ChatMessage,
+  ChatTranscript,
+  DiffStat,
+  Disclosure,
+  Link,
+  MentionText,
+  MessageActions,
+  useConfirm,
+} from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { Activities, type Activity, hasActivityOutput } from "./Activities";
@@ -19,12 +23,13 @@ import { effortLabel } from "./effort";
 import { followLink } from "./files";
 import type { ApprovalRequest } from "./harness";
 import { activityImageOutput, loadConversationImage, referencedLocalImages } from "./lib/chatImages";
+import { mentionReferences } from "./lib/composerReferences";
 import { referencedLocalFiles } from "./lib/conversationFileKinds";
+import { type Delivery, deliveryLabel, formatDateTimeShort } from "./lib/delivery";
 import { pageCaptures } from "./lib/pageCaptures";
 import type { AgentQuestion, Conversation, ConversationRuntime, Turn, TurnItem, UserMessage } from "./model";
 import { PlacementCard } from "./PlacementCard";
 import { useAgents } from "./store";
-import { TextPreview } from "./TextPreview";
 import { AgentMarkdown } from "./transcript/AgentMarkdown";
 import { AgentQuestionCard } from "./transcript/AgentQuestionCard";
 import { agentQuestion, withoutAgentQuestion } from "./transcript/agentQuestions";
@@ -33,9 +38,7 @@ import { ConversationFiles } from "./transcript/ConversationFiles";
 import { ConversationImages } from "./transcript/ConversationImages";
 import { ErrorBoundary } from "./transcript/ErrorBoundary";
 import { conversationFileActions } from "./transcript/fileActions";
-import { type Delivery, formatDateTimeShort, MessageActions } from "./transcript/MessageActions";
 import { PageCaptures } from "./transcript/PageCaptures";
-import { ReferencePills } from "./transcript/ReferencePills";
 import { type ConversationResources, ConversationResourcesContext } from "./transcript/resources";
 import "./transcript/transcript.css";
 
@@ -168,6 +171,11 @@ export function TranscriptHeader({ conversation }: { conversation: Conversation 
   );
 }
 
+/** Horodatage court d’un message, au bout de sa rangée d’actions. */
+function Time({ value }: { value: number }) {
+  return <time dateTime={new Date(value).toISOString()}>{formatDateTimeShort(value)}</time>;
+}
+
 const AssistantEntry = memo(function AssistantEntry({
   content,
   cwd,
@@ -185,16 +193,18 @@ const AssistantEntry = memo(function AssistantEntry({
   const citedImages = useMemo(() => referencedLocalImages(shown), [shown]);
   const citedFiles = useMemo(() => referencedLocalFiles(shown), [shown]);
   return (
-    <li className="agent-chat__entry agent-chat__entry--assistant">
-      <strong className="sr-only">Alfred</strong>
-      <MessageActions content={shown} timestamp={timestamp} onQuote={onQuote} onFork={onFork}>
-        <div className="agent-chat__message">
-          <AgentMarkdown text={shown} cwd={cwd} />
-          <ConversationImages images={citedImages} label="Images citées" />
-          <ConversationFiles files={citedFiles} label="Fichiers cités" />
-        </div>
-      </MessageActions>
-    </li>
+    <ChatMessage
+      role="assistant"
+      author="Alfred"
+      actions={<MessageActions content={shown} onQuote={onQuote} onFork={onFork} />}
+      meta={
+        timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime()) ? <Time value={timestamp} /> : null
+      }
+    >
+      <AgentMarkdown text={shown} cwd={cwd} />
+      <ConversationImages images={citedImages} label="Images citées" />
+      <ConversationFiles files={citedFiles} label="Fichiers cités" />
+    </ChatMessage>
   );
 });
 
@@ -230,9 +240,7 @@ const Entries = memo(function Entries({
         onFork={onFork}
       />
     ) : (
-      <li key={block.key} className="agent-chat__entry agent-chat__entry--activity">
-        <Activities activities={block.activities ?? []} onOpenFile={onOpenFile} />
-      </li>
+      <Activities key={block.key} activities={block.activities ?? []} onOpenFile={onOpenFile} />
     ),
   );
 });
@@ -371,92 +379,72 @@ function ChangeSummary({ conversationId, turns }: { conversationId: string; turn
   const removed = files.reduce((sum, file) => sum + (file.removed ?? 0), 0);
   // Les chemins du commit sont relatifs à l’espace.
   const openFile = (path: string) => void followLink(path, spacePath ?? "");
+  const undo = async () => {
+    const accepted = await confirm({
+      title: "Annuler cette modification ?",
+      message: `L’espace de travail revient à son état d’avant ${turns.length > 1 ? "ces messages" : "ce tour"}. L’annulation est elle-même enregistrée et peut être défaite.`,
+      confirmLabel: "Annuler la modification",
+    });
+    if (!accepted) return;
+    try {
+      await undoTurns(
+        conversationId,
+        turns.map((turn) => turn.id),
+      );
+    } catch (error) {
+      notify({
+        title: "Annulation impossible",
+        description: error instanceof Error ? error.message : String(error),
+        tone: "error",
+      });
+    }
+  };
   return (
-    <section className="agent-chat__change-summary" aria-label="Bilan des modifications">
-      <div className="agent-chat__change-header">
-        <span className="agent-chat__change-icon">
-          <FileDiff size={18} aria-hidden="true" />
-        </span>
-        <div className="agent-chat__change-title">
-          <strong>
-            {files.length
-              ? `${files.length} fichier${files.length > 1 ? "s" : ""} de l’espace de travail modifié${files.length > 1 ? "s" : ""}`
-              : "L’espace de travail a été modifié"}
-          </strong>
-          {complete ? (
-            <div className="agent-chat__change-totals">
-              <span className="agent-chat__change-added">+{added}</span>{" "}
-              <span className="agent-chat__change-removed">−{removed}</span>
-            </div>
-          ) : null}
-        </div>
-        <Button
-          size="sm"
-          icon={<Undo2 size={14} />}
-          onPress={async () => {
-            const accepted = await confirm({
-              title: "Annuler cette modification ?",
-              message: `L’espace de travail revient à son état d’avant ${turns.length > 1 ? "ces messages" : "ce tour"}. L’annulation est elle-même enregistrée et peut être défaite.`,
-              confirmLabel: "Annuler la modification",
-            });
-            if (!accepted) return;
-            try {
-              await undoTurns(
-                conversationId,
-                turns.map((turn) => turn.id),
-              );
-            } catch (error) {
-              notify({
-                title: "Annulation impossible",
-                description: error instanceof Error ? error.message : String(error),
-                tone: "error",
-              });
-            }
-          }}
-        >
-          Annuler cette modification
-        </Button>
-      </div>
-      {files.length ? (
-        <ul className="agent-chat__change-files">
-          {visible.map(({ path, added: fileAdded, removed: fileRemoved }) => {
-            const slash = path.lastIndexOf("/");
-            return (
-              <li key={path}>
-                <div className="agent-chat__change-row">
-                  <button type="button" className="agent-chat__change-file" onClick={() => openFile(path)}>
-                    <span>{path.slice(0, slash + 1)}</span>
-                    {path.slice(slash + 1)}
-                  </button>
-                  <span className="agent-chat__change-counts">
-                    {fileAdded === null || fileRemoved === null ? (
-                      "—"
-                    ) : (
-                      <>
-                        <span className="agent-chat__change-added">+{fileAdded}</span>{" "}
-                        <span className="agent-chat__change-removed">−{fileRemoved}</span>
-                      </>
-                    )}
-                  </span>
-                </div>
+    <section aria-label="Bilan des modifications">
+      <Card
+        title={
+          files.length
+            ? `${files.length} fichier${files.length > 1 ? "s" : ""} de l’espace de travail modifié${files.length > 1 ? "s" : ""}`
+            : "L’espace de travail a été modifié"
+        }
+        actions={[
+          {
+            id: "undo",
+            label: "Annuler cette modification",
+            icon: <Undo2 size={14} />,
+            onPress: () => void undo(),
+          },
+        ]}
+      >
+        {complete ? <DiffStat added={added} removed={removed} /> : null}
+        {files.length ? (
+          // Hors design : liste de fichiers avec leurs compteurs (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
+          <ul className="agent-chat__change-files">
+            {visible.map(({ path, added: fileAdded, removed: fileRemoved }) => (
+              <li key={path} className="agent-chat__change-row">
+                <Link onPress={() => openFile(path)}>{path}</Link>
+                {fileAdded === null || fileRemoved === null ? (
+                  "—"
+                ) : (
+                  <DiffStat added={fileAdded} removed={fileRemoved} />
+                )}
               </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {files.length > 3 ? (
-        <button
-          type="button"
-          className="agent-chat__change-expand"
-          onClick={() => setExpanded(!expanded)}
-          aria-expanded={expanded}
-        >
-          {expanded
-            ? "Afficher moins"
-            : `Afficher ${files.length - 3} fichier${files.length - 3 > 1 ? "s" : ""} de plus`}
-          {expanded ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
-        </button>
-      ) : null}
+            ))}
+          </ul>
+        ) : null}
+        {files.length > 3 ? (
+          <Button
+            size="sm"
+            variant="subtle"
+            icon={expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            onPress={() => setExpanded(!expanded)}
+          >
+            {expanded
+              ? "Afficher moins"
+              : `Afficher ${files.length - 3} fichier${files.length - 3 > 1 ? "s" : ""} de plus`}
+          </Button>
+        ) : null}
+      </Card>
     </section>
   );
 }
@@ -473,31 +461,40 @@ const UserEntry = memo(function UserEntry({
   onFork?: () => void;
 }) {
   const { attachments, contexts, text, references } = turn.user;
-  return (
-    <li className="agent-chat__entry agent-chat__entry--user">
-      <strong className="sr-only">Vous</strong>
-      <MessageActions content={text} delivery={turnDelivery(turn)} onResend={onResend} onFork={onFork}>
+  const delivery = turnDelivery(turn);
+  const mentions = useMemo(() => mentionReferences(references ?? []), [references]);
+  const pieces =
+    attachments.length || contexts.length ? (
+      <>
         {attachments.length ? <ChatAttachments attachments={attachments} /> : null}
-        {contexts.length ? (
-          <div className="agent-chat__message-pastes">
-            {contexts.map((context) => (
-              <TextPreview key={context.id} text={context.text} label={context.title} />
-            ))}
-          </div>
-        ) : null}
-        {text ? (
-          <div className="agent-chat__message">
-            {references?.length ? (
-              <ReferencePills text={text} references={references} />
-            ) : isLongChatText(text) ? (
-              <TextPreview text={text} />
-            ) : (
-              <AgentMarkdown text={text} cwd={cwd} />
-            )}
-          </div>
-        ) : null}
-      </MessageActions>
-    </li>
+        <AttachmentList>
+          {contexts.map((context) => (
+            <AttachmentChip key={context.id} kind="text" name={context.title} text={context.text} />
+          ))}
+        </AttachmentList>
+      </>
+    ) : null;
+  const body = !text ? null : mentions.length ? (
+    <MentionText text={text} references={mentions} />
+  ) : isLongChatText(text) ? (
+    <AttachmentChip kind="text" name="Message" text={text} />
+  ) : (
+    <AgentMarkdown text={text} cwd={cwd} />
+  );
+  return (
+    <ChatMessage
+      role="user"
+      // Sans texte, les pièces jointes forment le message : pas de bulle vide sous elles.
+      attachments={body ? pieces : null}
+      actions={<MessageActions content={text} onRetry={onResend} onFork={onFork} />}
+      meta={
+        <>
+          {deliveryLabel(delivery.status)} · <Time value={delivery.startedAt} />
+        </>
+      }
+    >
+      {body ?? pieces}
+    </ChatMessage>
   );
 });
 
@@ -569,51 +566,40 @@ const TurnView = memo(function TurnView({
     <>
       {/* Comme OneApp : une relance reprend le même message, sa bulle n’est pas redessinée. */}
       {turn.retryOf ? null : <UserEntry turn={turn} cwd={cwd} onResend={onResend} onFork={onForkUser} />}
-      <li className="agent-chat__work">
-        {!completed ? (
-          <>
-            <ol className="agent-chat__work-entries">
+      {!completed ? (
+        <>
+          <Entries blocks={blocks} {...entryProps} />
+          <PageCaptures captures={captures} />
+          {working && turn.status === "running" && turn.endedAt === undefined ? (
+            <RunningWork startedAt={turn.startedAt} label={working} />
+          ) : null}
+        </>
+      ) : (
+        <>
+          {blocks.length ? (
+            <Disclosure title={turnSummary(turn)}>
               <Entries blocks={blocks} {...entryProps} />
-            </ol>
-            <PageCaptures captures={captures} />
-            {working && turn.status === "running" && turn.endedAt === undefined ? (
-              <RunningWork startedAt={turn.startedAt} label={working} />
-            ) : null}
-          </>
-        ) : (
-          <>
-            {blocks.length ? (
-              <Disclosure title={turnSummary(turn)}>
-                <ol className="agent-chat__work-entries">
-                  <Entries blocks={blocks} {...entryProps} />
-                </ol>
-              </Disclosure>
-            ) : (
-              <div className="agent-chat__work-summary">{turnSummary(turn)}</div>
-            )}
-            <PageCaptures captures={captures} />
-            {final ? (
-              <ol className="agent-chat__work-entries">
-                <Entries blocks={finalBlocks} timestamp={turn.endedAt} {...entryProps} />
-              </ol>
-            ) : null}
-            <ConversationImages images={images} label="Images du tour" />
-            <ConversationFiles files={files} label="Fichiers du tour" />
-          </>
-        )}
-        {/* Comme OneApp : l’arrêt et l’erreur ne se lisent qu’en bas de la conversation, tant qu’elle en reste là. */}
-        {last && turn.status === "cancelled" ? (
-          <p className="agent-chat__work-summary" role="status">
-            Exécution arrêtée · Travail non terminé
-          </p>
-        ) : last && turn.error ? (
-          <div className="agent-chat__recovery">
-            <p>{turn.error}</p>
-            <Button onPress={onRetry}>Réessayer le message</Button>
-          </div>
-        ) : null}
-        {changes ? <ChangeSummary conversationId={conversationId} turns={changes} /> : null}
-      </li>
+            </Disclosure>
+          ) : (
+            <div className="agent-chat__work-summary">{turnSummary(turn)}</div>
+          )}
+          <PageCaptures captures={captures} />
+          {final ? <Entries blocks={finalBlocks} timestamp={turn.endedAt} {...entryProps} /> : null}
+          <ConversationImages images={images} label="Images du tour" />
+          <ConversationFiles files={files} label="Fichiers du tour" />
+        </>
+      )}
+      {/* Comme OneApp : l’arrêt et l’erreur ne se lisent qu’en bas de la conversation, tant qu’elle en reste là. */}
+      {last && turn.status === "cancelled" ? (
+        <Alert tone="warning" announce>
+          Exécution arrêtée · Travail non terminé
+        </Alert>
+      ) : last && turn.error ? (
+        <Alert tone="danger" action={{ label: "Réessayer le message", onPress: onRetry }}>
+          {turn.error}
+        </Alert>
+      ) : null}
+      {changes ? <ChangeSummary conversationId={conversationId} turns={changes} /> : null}
     </>
   );
 });
@@ -636,12 +622,9 @@ function QuestionCard({ conversation, question }: { conversation: string; questi
   );
 }
 
-/** Champ de saisie de la conversation, sous le relevé : « Autre réponse… » y renvoie. */
-function focusComposer(from: HTMLElement | null) {
-  const field = from?.parentElement?.querySelector<HTMLElement>(
-    '.agents-page__footer textarea, .agents-page__footer [contenteditable="true"]',
-  );
-  field?.focus();
+/** Donne le focus au champ de saisie posé dans `footer` (« Autre réponse… » y renvoie). */
+export function focusComposer(footer: HTMLElement | null) {
+  footer?.querySelector<HTMLElement>('[role="textbox"], textarea, [contenteditable="true"]')?.focus();
 }
 
 /**
@@ -679,28 +662,24 @@ export function ConversationQuestion({
   );
 }
 
-/** Relevé d’une conversation : chaque tour, puis les cartes qui attendent une réponse de l’utilisateur. */
+/**
+ * Relevé d’une conversation (`ChatTranscript` de Socle) : chaque tour, puis les cartes de placement. Il suit le bas
+ * tant que l’utilisateur y reste, et s’y recolle à l’ouverture et à chaque envoi. La question de l’agent se pose hors
+ * du relevé, au-dessus de la saisie (`ConversationQuestion`).
+ */
 export function Transcript({
   conversation,
   runtime,
   header,
-  dockQuestion = true,
 }: {
   conversation: Conversation;
   runtime: ConversationRuntime;
-  /**
-   * Carte de question collée en bas du relevé. `false` quand la page pose `ConversationQuestion` dans son pied, au-dessus
-   * de la saisie, comme OneApp.
-   */
-  dockQuestion?: boolean;
   /**
    * Ligne au-dessus du relevé, dans la colonne défilante. Quand elle est demandée, c’est l’en-tête de OneApp
    * (« Depuis {origine} · {date} », modèle en infobulle) qui s’affiche, quel que soit le contenu passé.
    */
   header?: ReactNode;
 }) {
-  const scroller = useRef<HTMLElement>(null);
-  const pinned = useRef(true);
   const retry = useAgents((state) => state.retry);
   const resend = useAgents((state) => (state as unknown as TurnActions).resend);
   const fork = useAgents((state) => (state as unknown as TurnActions).fork);
@@ -719,25 +698,6 @@ export function Transcript({
   const visibleTurns = complete ? turns : turns.slice(-RECENT_TURNS);
 
   const lastTurn = turns.at(-1);
-  const question = agentQuestion(conversation, runtime);
-  const permission = runtime.approvals[0];
-
-  // Comme OneApp : une conversation ouverte part du bas, et un envoi de l’utilisateur l’y recolle, même s’il était
-  // remonté.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: la conversation ouverte et l’envoi déclenchent le recollage.
-  useLayoutEffect(() => {
-    pinned.current = true;
-    const element = scroller.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [conversationId, sent]);
-
-  // Le relevé suit chaque changement de la conversation (fragment, activité, fin du tour) tant que l’utilisateur est
-  // resté en bas ; s’il remonte, on ne le ramène pas.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ces valeurs sont ce qui change la hauteur du relevé.
-  useLayoutEffect(() => {
-    const element = scroller.current;
-    if (element && pinned.current) element.scrollTop = element.scrollHeight;
-  }, [turns, complete, runtime.approvals, runtime.questions, runtime.status, question]);
 
   const onQuote = useCallback(
     (text: string) => window.dispatchEvent(new CustomEvent(QUOTE_EVENT, { detail: { conversationId, text } })),
@@ -764,59 +724,41 @@ export function Transcript({
   const summaries = useStableSummaries(useMemo(() => changeSummaries(turns, settled), [turns, settled]));
 
   return (
-    <section
-      ref={scroller}
-      className="agents-page__transcript"
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: la conversation défilante doit rester accessible au clavier.
-      tabIndex={0}
-      aria-label={`Conversation de ${conversation.title}`}
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
-      }}
+    <ChatTranscript
+      label={`Conversation de ${conversation.title}`}
+      // Une conversation ouverte part du bas ; un envoi de l’utilisateur l’y recolle, même s’il était remonté.
+      followKey={`${conversationId}:${sent}`}
+      announce={settled && lastTurn?.status === "done" ? "Réponse terminée" : ""}
     >
       <ErrorBoundary resetKey={conversationId}>
         <ConversationResourcesContext.Provider value={resources}>
-          <div className="agents-page__column">
-            {header !== undefined && header !== null && header !== false ? (
-              <TranscriptHeader conversation={conversation} />
-            ) : null}
-            <ol className="agent-chat__entries">
-              {visibleTurns.map((turn, index) => {
-                const last = index === visibleTurns.length - 1;
-                return (
-                  <TurnView
-                    key={turn.id}
-                    conversationId={conversationId}
-                    cwd={cwd}
-                    turn={turn}
-                    last={last}
-                    working={last ? working : undefined}
-                    onQuote={onQuote}
-                    onOpenFile={onOpenFile}
-                    onRetry={onRetry}
-                    resend={resend}
-                    fork={fork}
-                    changes={summaries.get(turn.id)}
-                  />
-                );
-              })}
-            </ol>
-            {runtime.questions.map((placement) => (
-              <QuestionCard key={placement.requestId} conversation={conversationId} question={placement} />
-            ))}
-            {dockQuestion && (question || permission) ? (
-              <div className="agent-chat__question-dock">
-                <ConversationQuestion
-                  conversation={conversation}
-                  runtime={runtime}
-                  onOther={() => focusComposer(scroller.current)}
-                />
-              </div>
-            ) : null}
-          </div>
+          {header !== undefined && header !== null && header !== false ? (
+            <TranscriptHeader conversation={conversation} />
+          ) : null}
+          {visibleTurns.map((turn, index) => {
+            const last = index === visibleTurns.length - 1;
+            return (
+              <TurnView
+                key={turn.id}
+                conversationId={conversationId}
+                cwd={cwd}
+                turn={turn}
+                last={last}
+                working={last ? working : undefined}
+                onQuote={onQuote}
+                onOpenFile={onOpenFile}
+                onRetry={onRetry}
+                resend={resend}
+                fork={fork}
+                changes={summaries.get(turn.id)}
+              />
+            );
+          })}
+          {runtime.questions.map((placement) => (
+            <QuestionCard key={placement.requestId} conversation={conversationId} question={placement} />
+          ))}
         </ConversationResourcesContext.Provider>
       </ErrorBoundary>
-    </section>
+    </ChatTranscript>
   );
 }

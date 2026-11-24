@@ -140,15 +140,6 @@
   color: var(--fg-2);
   font-size: var(--fs-sm);
 }
-
-/* Carte de question ou d’autorisation, collée en bas du relevé, juste au-dessus de la saisie. */
-.agent-chat__question-dock {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  padding: 8px 0 0;
-  background: linear-gradient(transparent, var(--surface) 8px);
-}
 .agent-question {
   display: flex;
   flex-direction: column;
@@ -258,15 +249,6 @@
     color: HighlightText;
   }
 }
-
-.agent-chat__message-delivery {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-}
 .agent-chat__activity-file {
   padding: 0;
   border: 0;
@@ -277,35 +259,21 @@
   text-underline-offset: 3px;
   cursor: pointer;
 }
-.agent-chat__entry--user .image-preview--message {
+/* Images jointes à un message envoyé : vignettes carrées de 160 px. */
+.agent-chat__message-attachments .image-preview--message {
   width: 160px;
 }
-.agent-chat__entry--user .image-preview .image-preview__thumbnail {
+.agent-chat__message-attachments .image-preview .image-preview__thumbnail {
   aspect-ratio: 1;
   border-radius: 12px;
 }
-.agent-chat__entry--user .image-preview__thumbnail img {
+.agent-chat__message-attachments .image-preview__thumbnail img {
   object-fit: cover;
 }
 
 /* Références citées dans un message envoyé : pastilles, comme dans la saisie de OneApp. */
 .reference-text {
   white-space: pre-wrap;
-}
-.agent-chat__reference-pill {
-  display: inline-flex;
-  align-items: center;
-  max-width: min(100%, 32ch);
-  min-height: 22px;
-  margin: 0 2px;
-  padding: 1px 7px;
-  vertical-align: baseline;
-  border-radius: 999px;
-  background: var(--selected);
-  color: var(--fg);
-  font-size: var(--fs-sm);
-  line-height: 20px;
-  white-space: nowrap;
 }
 
 /* Image de la vue agrandie, dans le corps du `Dialog` de Socle. */

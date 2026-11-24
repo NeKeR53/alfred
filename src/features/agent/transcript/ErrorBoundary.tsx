@@ -1,6 +1,5 @@
 import { Component, type ReactNode } from "react";
-import { Button } from "socle-ui";
-import { Notice } from "../../../kit";
+import { Alert } from "socle-ui";
 
 type Props = { children: ReactNode; resetKey?: string };
 type State = { failed: boolean; resetKey?: string };
@@ -24,13 +23,13 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (!this.state.failed) return this.props.children;
     return (
-      <Notice
+      <Alert
         tone="danger"
         title="Cette vue ne peut pas être affichée."
-        action={<Button onPress={() => this.setState({ failed: false })}>Réessayer</Button>}
+        action={{ label: "Réessayer", onPress: () => this.setState({ failed: false }) }}
       >
         Réessayez pour afficher de nouveau son contenu.
-      </Notice>
+      </Alert>
     );
   }
 }

@@ -90,6 +90,14 @@ beforeEach(() => {
   });
 });
 
+/**
+ * Pastille Git de la saisie : une région `status` qui a du texte. Le relevé de Socle a aussi sa région d’annonce, vide
+ * tant qu’aucune réponse ne se termine.
+ */
+const gitPill = () =>
+  screen.queryAllByRole("status").find((status) => status.title || status.textContent?.includes("modifié"));
+const findGitPill = () => waitFor(() => gitPill() ?? Promise.reject(new Error("Pas de pastille Git")));
+
 describe("page Agent", () => {
   it("F2 met le titre de la conversation ouverte en édition", async () => {
     render(<AgentPageWithTracking />);
@@ -135,7 +143,7 @@ describe("page Agent", () => {
     };
     render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
-    const pill = await screen.findByRole("status");
+    const pill = await findGitPill();
     expect(pill).toHaveTextContent("2 fichiers modifiés");
     expect(pill).toHaveTextContent("+1 200");
     expect(pill).toHaveTextContent("−3");
@@ -190,7 +198,7 @@ describe("page Agent", () => {
     render(<AgentPageWithTracking />);
     await screen.findByText("Réponse t3");
     const summaries = screen.getAllByRole("region", { name: "Bilan des modifications" });
-    expect(summaries.map((summary) => within(summary).getByRole("strong").textContent)).toEqual([
+    expect(summaries.map((summary) => within(summary).getByRole("heading").textContent)).toEqual([
       "2 fichiers de l’espace de travail modifiés",
       "1 fichier de l’espace de travail modifié",
     ]);
@@ -258,7 +266,7 @@ describe("page Agent", () => {
     git = new Error("Ce dossier n’est pas un dépôt Git.");
     render(<AgentPageWithTracking />);
     expect(await screen.findByText("1 dépôt indisponible.")).toBeInTheDocument();
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(gitPill()).toBeUndefined();
   });
 
   it("comme OneApp : pas de suppression dans la barre, origine et date au-dessus du relevé, pastille Git sur la ligne du modèle", async () => {
@@ -276,7 +284,7 @@ describe("page Agent", () => {
     await findConversationTitle("Factures");
     expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
     expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
-    const pill = await screen.findByRole("status");
+    const pill = await findGitPill();
     expect(pill.closest(".agent-composer__options")).not.toBeNull();
   });
 

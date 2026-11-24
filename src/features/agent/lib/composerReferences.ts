@@ -5,6 +5,7 @@
  * exact part avec le message, en consigne pour l’agent, l’interface n’affichant que le nom.
  */
 
+import type { MentionReference } from "socle-ui";
 import { invoke } from "../../../lib/native";
 import type { Provider } from "../harness";
 
@@ -228,4 +229,29 @@ export async function loadComposerReferences(
 /** Pour les tests : oublie les catalogues gardés. */
 export function clearReferenceCatalogs() {
   catalogs.clear();
+}
+
+/** Caractère qui cite chaque sorte de référence, comme dans la saisie : `@` un fichier, `$` un skill, `/` une commande. */
+export const REFERENCE_TRIGGER: Record<ReferenceKind, string> = { file: "@", skill: "$", command: "/" };
+
+/**
+ * Pastilles d’un texte pour `MentionText` et `MessageQueue` de Socle : seules les références placées (`offset`) en ont
+ * une ; une référence sans position, d’un message plus ancien, reste hors du texte.
+ */
+export function mentionReferences(
+  references: readonly (ComposerReference | ComposerReferenceMention)[],
+): MentionReference[] {
+  return references.flatMap((reference, index) =>
+    typeof (reference as Partial<ComposerReferenceMention>).offset === "number"
+      ? [
+          {
+            key: `${(reference as ComposerReferenceMention).id}:${index}`,
+            trigger: REFERENCE_TRIGGER[reference.kind],
+            id: reference.path,
+            label: referenceDisplayName(reference),
+            offset: (reference as ComposerReferenceMention).offset,
+          },
+        ]
+      : [],
+  );
 }

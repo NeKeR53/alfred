@@ -5,7 +5,7 @@
  */
 
 import { ExternalLink, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Drawer } from "socle-ui";
 import { extractJson, validateSchema } from "../../lib/jsonSchema";
 import { AlfredError, invoke } from "../../lib/native";
@@ -17,7 +17,7 @@ import { type ConversationRuntime, lastAssistantText } from "./model";
 import { oneShot } from "./oneShot";
 import { modelSummary, resolvePageModel } from "./pageModel";
 import { bindAgentQuestions, useAgents, waitForTurn } from "./store";
-import { Transcript } from "./Transcript";
+import { ConversationQuestion, focusComposer, Transcript } from "./Transcript";
 import "./agent.css";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
@@ -188,6 +188,7 @@ export function bindPageAi() {
 
 /** Conversation d’agent dans le panneau de droite d’une page. */
 export function AgentPanel({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const footer = useRef<HTMLDivElement>(null);
   const conversation = useAgents((state) => state.loaded[conversationId]);
   const runtime = useAgents((state) => state.runtime[conversationId]) ?? idle;
   const ensureLoaded = useAgents((state) => state.ensureLoaded);
@@ -230,7 +231,12 @@ export function AgentPanel({ conversationId, onClose }: { conversationId: string
                 content: (
                   <>
                     <Transcript conversation={conversation} runtime={runtime} />
-                    <div className="agents-page__footer">
+                    <div ref={footer} className="agents-page__footer">
+                      <ConversationQuestion
+                        conversation={conversation}
+                        runtime={runtime}
+                        onOther={() => focusComposer(footer.current)}
+                      />
                       <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />
                     </div>
                   </>
