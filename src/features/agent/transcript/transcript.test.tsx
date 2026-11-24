@@ -592,6 +592,32 @@ describe("outils groupés", () => {
   });
 });
 
+describe("outil seul", () => {
+  it("un outil isolé entre deux messages est une ligne repliée : sa commande ne se voit qu’une fois dépliée", () => {
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t1", {
+            status: "running",
+            endedAt: undefined,
+            items: [
+              { kind: "message", id: "m1", content: "Je lance les tests." },
+              { kind: "activity", id: "a1", activityKind: "command", title: "Exécuté npm test", status: "running" },
+              { kind: "message", id: "m2", content: "Ils tournent." },
+            ],
+          }),
+        ])}
+        runtime={{ ...idle, status: "responding" }}
+      />,
+    );
+    const line = screen.getByRole("button", { name: "1 outil · 1 en cours" });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("npm test")).toBeNull();
+    fireEvent.click(line);
+    expect(screen.getByText("npm test")).toBeInTheDocument();
+  });
+});
+
 describe("pièces d’un outil", () => {
   it("montre les images produites dans la sortie de l’outil, sous son texte", async () => {
     render(
@@ -609,7 +635,9 @@ describe("pièces d’un outil", () => {
         ]}
       />,
     );
-    // La ligne s’ouvre (AgentActivity, option attachments) sur le texte puis la galerie de l’outil.
+    // Un outil seul est aussi une ligne repliée (D-391) ; dépliée, sa ligne s’ouvre (option attachments) sur le texte
+    // puis la galerie de l’outil.
+    fireEvent.click(screen.getByRole("button", { name: "1 outil exécuté" }));
     fireEvent.click(screen.getByRole("button", { name: /Génération d’image/ }));
     expect(await screen.findByText("Image prête.")).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Images de Génération d’image" })).toBeInTheDocument();
