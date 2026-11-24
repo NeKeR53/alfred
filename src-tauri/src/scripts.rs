@@ -46,7 +46,7 @@ impl Runtime {
     }
 
     /// Nom de l’interpréteur et façon de l’installer, pour le message d’un interpréteur introuvable.
-    fn missing_message(self) -> String {
+    pub(crate) fn missing_message(self) -> String {
         match self {
             Runtime::Ts => String::new(),
             Runtime::Bash => if cfg!(windows) {
@@ -155,6 +155,8 @@ pub struct ScriptCall {
     pub env: Vec<(String, String)>,
     pub input: Value,
     pub timeout: Duration,
+    /// Interpréteur déjà choisi (celui de l’environnement Python du module) ; `None` : celui du PATH.
+    pub interpreter: Option<Interpreter>,
 }
 
 pub(crate) struct Slot;
@@ -378,7 +380,10 @@ pub fn execute(process: &Process) -> AppResult<ProcessOutput> {
 }
 
 fn run_blocking(call: &ScriptCall) -> AppResult<Value> {
-    let interpreter = interpreter(call.runtime).ok_or_else(|| AppError::new(call.runtime.missing_message()))?;
+    let interpreter = match &call.interpreter {
+        Some(chosen) => chosen.clone(),
+        None => interpreter(call.runtime).ok_or_else(|| AppError::new(call.runtime.missing_message()))?,
+    };
     if !call.file.is_file() {
         return Err(AppError::new("La fonction n’est pas encore écrite."));
     }
@@ -436,6 +441,7 @@ mod tests {
             env: vec![("ALFRED_MODULE".to_string(), "essai".to_string())],
             input,
             timeout: Duration::from_secs(20),
+            interpreter: None,
         }
     }
 

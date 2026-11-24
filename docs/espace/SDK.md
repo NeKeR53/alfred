@@ -44,7 +44,7 @@ Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichi
 - **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
 - **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER`, `ALFRED_SPACE`, et le pont du SDK (`ALFRED_SDK_URL`, `ALFRED_SDK_TOKEN`, ci-dessous). Jamais de secret : un service passe par `clients.request`. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
 - **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `channels.open` (`name`), `channels.publish` (`channel`, `text` ou `data`), `channels.close`, `notify` (`title`, `description`, `tone`), `log` (`level`, `message`, `data`), `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
-- **Interpréteur** : cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
+- **Interpréteur** : pour `python`, celui de l’environnement du module s’il déclare des paquets (ci-dessous) ; sinon, cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
 
 ```bash
 # functions/saluer.sh
@@ -74,6 +74,39 @@ Une fonction Python passe par le SDK Python (`import alfred`, ci-dessous) plutô
 alfred() { curl -s -X POST "$ALFRED_SDK_URL/$1" -H "Authorization: Bearer $ALFRED_SDK_TOKEN" -H 'Content-Type: application/json' -d "$2"; }
 alfred db.query '{"sql":"SELECT count(*) AS n FROM compta_lignes"}'
 ```
+
+#### Paquets Python d’un module
+
+Un module déclare ses paquets dans `module.json` ; Alfred les installe avec [uv](https://docs.astral.sh/uv/) dans un environnement propre au module ; toutes ses fonctions `python` et son noyau (§ 19) tournent avec lui.
+
+```json
+{
+  "id": "analyse",
+  "name": "Analyse",
+  "version": "0.1.0",
+  "python": { "requirements": ["pandas>=2.2"], "version": "3.12" },
+  "functions": [{ "id": "resumer", "description": "Total et moyenne par catégorie.", "runtime": "python" }]
+}
+```
+
+```python
+# functions/resumer.py : total et moyenne par catégorie, avec pandas.
+import json, sys
+import pandas as pd
+
+entree = json.load(sys.stdin)  # {"lignes": [{"categorie": "Énergie", "montant": 120.5}, …]}
+tableau = pd.DataFrame(entree["lignes"])
+resume = tableau.groupby("categorie")["montant"].agg(["sum", "mean"]).reset_index()
+print(resume.rename(columns={"sum": "total", "mean": "moyenne"}).to_json(orient="records", force_ascii=False))
+```
+
+- **`python.requirements`** : une spécification pip par ligne (`"pandas"`, `"pandas>=2.2"`, `"requests[socks]"`, `"numpy; python_version>='3.10'"`, `"paquet @ https://…"`). Pas d’option pip (`-e`, `-r`, `--index-url`), pas de chemin local, au plus 100 paquets.
+- **`python.version`** (facultatif) : `"3.12"` ou `"3.12.4"`. uv la prend sur le poste, ou la télécharge. Sans version, l’environnement part du `python3` du PATH.
+- **Où et quand** : `.alfred/python/<module>/` de l’espace (ignoré par git, jamais publié). Créé au premier appel d’une fonction Python du module ; refait quand `requirements` ou `version` changent ; deux appels en même temps attendent la même installation. Le premier appel peut prendre une minute ; ensuite, il est immédiat et marche hors ligne.
+- **Noyau** : « Réinstaller » arrête le noyau du module, qui repart avec les nouveaux paquets ; ses objets sont perdus. Après un changement de `requirements`, un noyau déjà lancé garde les anciens paquets jusqu’à son prochain démarrage (`python.restart`, ou un fichier `.py` modifié).
+- **Échecs** : uv absent, pas de réseau, certificat refusé, paquet introuvable ou incompatible : l’appel échoue avec un message qui dit quoi faire, et le journal va dans Réglages → Modules → le module → « Environnement Python », avec « Réinstaller ». `check` signale une déclaration invalide, un champ inconnu dans `python` et l’absence de uv.
+- **Réseau d’entreprise** : uv lit sa configuration (`~/.config/uv/uv.toml`, variables `UV_*`). Alfred lui donne en plus les certificats du système, le proxy, et l’index de pip (`PIP_INDEX_URL`) quand uv n’en a pas.
+- Un module sans `python` garde le `python3` du PATH : bibliothèque standard et `import alfred` seulement. `import alfred` marche aussi dans un environnement à paquets.
 
 Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
 

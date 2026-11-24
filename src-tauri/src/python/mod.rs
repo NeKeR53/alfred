@@ -2,5 +2,6 @@
 //! (`kernel`) et les objets que les pages y créent (`objects`).
 
 pub mod bridge;
+pub mod env;
 pub mod kernel;
 pub mod objects;

@@ -375,6 +375,32 @@ def main(entree):
         crate::dispatch::dispatch(state.clone(), command, args).await
     }
 
+    /// Brique 4 : le noyau d’un module qui déclare des paquets tourne dans son environnement (uv), et les importe.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn le_noyau_d_un_module_a_paquets_les_importe() {
+        if crate::python::env::uv().is_none() {
+            eprintln!("uv absent : test sauté");
+            return;
+        }
+        let (state, _dir, _module) = setup();
+        let space = state.space().unwrap();
+        let module = space.module_dir("paquets");
+        std::fs::create_dir_all(module.join("python")).unwrap();
+        std::fs::write(module.join("python/outil.py"), "import six, sys\n\ndef version():\n    return {'six': six.__version__, 'python': sys.executable}\n").unwrap();
+        let manifest = json!({ "id": "paquets", "name": "Paquets", "version": "0.1.0", "python": { "requirements": ["six==1.16.0"] } });
+        std::fs::write(module.join("module.json"), manifest.to_string()).unwrap();
+        let found = match invoke(&state, "frame.python.run", json!({ "subject": page("paquets"), "function": "outil.version" })).await {
+            Ok(found) => found,
+            Err(error) if error.message.contains("sans réseau") => {
+                eprintln!("hors ligne : test sauté ({})", error.message);
+                return;
+            }
+            Err(error) => panic!("{}", error.message),
+        };
+        assert_eq!(found["six"], json!("1.16.0"));
+        assert!(found["python"].as_str().unwrap().contains(".alfred/python/paquets"), "{found}");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn une_page_cree_appelle_et_libere_ses_objets() {
         if scripts::interpreter(Runtime::Python).is_none() {

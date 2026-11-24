@@ -24,6 +24,7 @@ import { type ServiceEditing, ServiceEditor } from "../clients/ServiceEditor";
 import { useClients } from "../clients/useClients";
 import { useFoldersSection } from "../folders/ModuleFolders";
 import { useJobsSection } from "../jobs/ModuleJobs";
+import { usePythonEnvSection } from "../pythonEnv/PythonEnv";
 import { MODULE_FOCUS } from "../settings/open";
 import { remainingSummary, type SetupStep } from "../setup/api";
 import { openOnboarding, useOnboarding } from "../setup/Onboarding";
@@ -283,6 +284,7 @@ export function useModulesSections(): SettingsSection[] {
   const automationsSection = useAutomationsSection(fiche?.id);
   const jobsSection = useJobsSection(fiche?.id);
   const teamSection = useTeamSyncSection(fiche);
+  const pythonSection = usePythonEnvSection(fiche?.id);
 
   if (editingService) {
     const { client, instance } = editingService;
@@ -656,6 +658,7 @@ export function useModulesSections(): SettingsSection[] {
       ...(foldersSection ? [foldersSection] : []),
       ...(teamSection ? [teamSection] : []),
       ...(automationsSection ? [automationsSection] : []),
+      ...(pythonSection ? [pythonSection] : []),
       ...(jobsSection ? [jobsSection] : []),
       ...(dependencies ? [dependencies] : []),
     ];

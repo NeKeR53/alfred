@@ -383,6 +383,7 @@ Les gabarits rendent chaque état. Une `Page` composée les rend par `state` et 
 | Résultat d’une action qui ne se voit pas | `shell.notify({ title, tone: "success" })` |
 | Échec d’une action | `onActionError={notifyActionError}` |
 | Calcul long (fonction, noyau Python) | `ProgressBar` dans le bloc concerné, avec le message de l’avancement (`usePythonChannel`, SDK.md § 19) ; sans fraction connue, barre indéterminée |
+| Première fonction Python d’un module à paquets | Elle peut attendre une minute (installation) : `isPending` sur l’action, ou une tâche de fond ; l’échec arrive avec `notifyActionError` |
 
 - Une notification de la page part à Alfred (toast et cloche). `useNotify()` de `socle-ui` et `shell.notify` de `@alfred/sdk` y vont tous deux ; `shell.notify` seul sait porter des actions (`navigate`, `window`, `function`). Tons de `shell.notify` : `info`, `success`, `warning`, `error`.
 - **Aucun bandeau en tête de page.** Un état qui dure se dit dans le bloc qu’il concerne. Un réglage appliqué réussit en silence.

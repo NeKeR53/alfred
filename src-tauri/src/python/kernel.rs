@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
 use crate::error::{AppError, AppResult};
-use crate::scripts::{self, Interpreter, Runtime};
+use crate::scripts::{self, Interpreter};
 
 /// Sans appel pendant ce temps, le noyau s’arrête.
 pub const IDLE: Duration = Duration::from_secs(10 * 60);
@@ -50,18 +50,11 @@ pub const RESTARTED: &str =
 
 // --- Points d’entrée ---------------------------------------------------------------------------------------------
 
-/// Interpréteur du noyau d’un module. Point d’entrée unique : aujourd’hui le Python du PATH de connexion (celui des
-/// fonctions en script). L’environnement isolé du module (`python.requirements`, géré par `uv`, brique « py-deps »)
-/// le remplacera ici : `crate::python::env::interpreter(Some(state), space, &space.module(module)?)`. Bloquant :
-/// appelé hors de la boucle asynchrone ; l’erreur dit à l’utilisateur quoi installer.
-pub fn interpreter(
-    _state: &crate::state::AppState,
-    _space: &crate::space::Space,
-    _module: &str,
-) -> AppResult<Interpreter> {
-    scripts::interpreter(Runtime::Python).ok_or_else(|| {
-        AppError::new(scripts::availability(Runtime::Python).unwrap_or_else(|| "Interpréteur Python introuvable.".into()))
-    })
+/// Interpréteur du noyau d’un module. Point d’entrée unique : celui de son environnement isolé s’il déclare
+/// `python.requirements` ou `python.version` (`python::env`, installé avec uv au premier usage), sinon le Python du
+/// PATH de connexion. Bloquant : appelé hors de la boucle asynchrone ; l’erreur dit à l’utilisateur quoi faire.
+pub fn interpreter(state: &crate::state::AppState, space: &crate::space::Space, module: &str) -> AppResult<Interpreter> {
+    crate::python::env::interpreter(Some(state), space, &space.module(module)?)
 }
 
 /// Variables d’environnement du noyau d’un module, ajoutées à l’environnement réduit des scripts
@@ -571,6 +564,7 @@ pub fn kernels() -> &'static Arc<Kernels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scripts::Runtime;
 
     fn python() -> Option<Interpreter> {
         let found = scripts::interpreter(Runtime::Python);

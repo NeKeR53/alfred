@@ -130,6 +130,34 @@ pub struct ModuleManifest {
     /// Tables partagées entre les membres d’une équipe par un dépôt git (`team_sync`).
     #[serde(skip_serializing_if = "SyncDecl::is_empty")]
     pub sync: SyncDecl,
+    /// Paquets Python du module et version de Python : Alfred leur crée un environnement isolé (`python::env`).
+    #[serde(skip_serializing_if = "PythonDecl::is_empty")]
+    pub python: PythonDecl,
+}
+
+/// Dépendances Python d’un module : `requirements` (spécifications pip, « pandas>=2.2 ») et `version` facultative
+/// (« 3.12 »). Validées par `python::env::problems`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PythonDecl {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Champs inconnus (une faute de frappe, « requirement ») : signalés par `check` au lieu d’être ignorés.
+    #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub unknown: serde_json::Map<String, Value>,
+}
+
+impl PythonDecl {
+    pub fn is_empty(&self) -> bool {
+        self.requirements.is_empty() && self.version.is_none() && self.unknown.is_empty()
+    }
+
+    /// Le module a-t-il besoin de son propre environnement ?
+    pub fn needs_env(&self) -> bool {
+        !self.requirements.is_empty() || self.version.is_some()
+    }
 }
 
 /// Partage des données du module en équipe : les tables dont chaque ligne va dans le dépôt de l’équipe.
@@ -1406,6 +1434,11 @@ impl Space {
         }
 
         problems.extend(dependency_problems(&modules));
+        for module in &modules {
+            for message in crate::python::env::problems(module) {
+                problems.push(Problem { module: module.id.clone(), message });
+            }
+        }
         // Partage en équipe : une table partagée doit exister et avoir une clé texte, sinon deux membres s’écrasent.
         for module in modules.iter().filter(|module| !module.sync.tables.is_empty()) {
             for message in crate::team_sync::problems(self, module) {

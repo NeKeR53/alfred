@@ -94,15 +94,32 @@ async fn call_script(
         ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
     ];
     env.extend(bridge.env.iter().cloned());
-    let result = scripts::run(ScriptCall {
-        runtime: declared.runtime,
-        file: space.function_path(&manifest.id, declared),
-        dir: space.module_dir(&manifest.id),
-        env,
-        input,
-        timeout: scripts::TIMEOUT,
-    })
-    .await;
+    // Python : l’interpréteur de l’environnement du module, installé au premier appel s’il déclare des paquets.
+    let interpreter = if declared.runtime == crate::space::Runtime::Python {
+        let (state, space, manifest) = (state.clone(), space.clone(), manifest.clone());
+        match tokio::task::spawn_blocking(move || crate::python::env::interpreter(Some(&state), &space, &manifest)).await {
+            Ok(Ok(interpreter)) => Ok(Some(interpreter)),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(AppError::new("La préparation de l’environnement Python a été interrompue.")),
+        }
+    } else {
+        Ok(None)
+    };
+    let result = match interpreter {
+        Err(error) => Err(error),
+        Ok(interpreter) => {
+            scripts::run(ScriptCall {
+                runtime: declared.runtime,
+                file: space.function_path(&manifest.id, declared),
+                dir: space.module_dir(&manifest.id),
+                env,
+                input,
+                timeout: scripts::TIMEOUT,
+                interpreter,
+            })
+            .await
+        }
+    };
     // Ce que le script a écrit sur stderr part au journal : sans son jeton.
     let result = result.map_err(|error| crate::python::bridge::redact_error(error, bridge.token()));
     drop(bridge);
