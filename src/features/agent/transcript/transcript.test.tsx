@@ -575,14 +575,18 @@ describe("outils groupés", () => {
       ({ kind: "activity", id, activityKind: "command", title: `Exécuté commande ${id}`, status }) as never;
     const { rerender } = render(<Activities activities={[tool("a", "completed"), tool("b", "running")]} />);
     const line = screen.getByRole("button", { name: "2 outils · 1 en cours" });
-    // Repliée même pendant le travail : les lignes ne s’affichent pas.
+    // Repliée même pendant le travail : les lignes ne s’affichent pas ; pas de roue, le texte dit ce qui tourne (D-391).
     expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(line.querySelector("[data-spinner]")).toBeNull();
     expect(screen.queryByText("commande a")).toBeNull();
     rerender(<Activities activities={[tool("a", "completed"), tool("b", "running"), tool("c", "running")]} />);
     expect(screen.getByRole("button", { name: "3 outils · 2 en cours" })).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(screen.getByRole("button", { name: "3 outils · 2 en cours" }));
     expect(screen.getByText("commande a")).toBeInTheDocument();
     expect(screen.getByText("commande c")).toBeInTheDocument();
+    // Dépliée : un outil en cours garde son icône, sans roue ; « En cours » est lu.
+    expect(document.querySelector("[data-spinner]")).toBeNull();
+    expect(screen.getAllByText("En cours")).toHaveLength(2);
     rerender(<Activities activities={[tool("a", "completed"), tool("b", "completed"), tool("c", "completed")]} />);
     expect(screen.getByRole("button", { name: "3 outils exécutés" })).toBeInTheDocument();
   });
