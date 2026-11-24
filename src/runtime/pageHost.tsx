@@ -267,10 +267,11 @@ onShellEvent("inspect", (payload) => {
 
 // Capture en image pour l’agent (outil `page_screenshot`) : le cadre se dessine lui-même.
 onShellEvent("screenshot", (payload) => {
-  const request = (payload ?? {}) as { id?: unknown; fullPage?: unknown };
+  const request = (payload ?? {}) as { id?: unknown; fullPage?: unknown; scale?: unknown };
   const id = request.id;
   if (typeof id !== "string") return;
-  screenshotPage({ fullPage: request.fullPage === true }).then(
+  const scale = typeof request.scale === "number" ? request.scale : 1;
+  screenshotPage({ fullPage: request.fullPage === true, scale }).then(
     (image) => emitToShell("description", { id, image }),
     (error: unknown) =>
       emitToShell("description", { id, error: error instanceof Error ? error.message : String(error) }),

@@ -261,10 +261,10 @@ function targetOf(frame: HTMLIFrameElement): Target | undefined {
 }
 
 /** Image de la partie visible d’un cadre affiché, désigné par son `<iframe>` (capture de toute la fenêtre). */
-export async function screenshotFrameElement(frame: HTMLIFrameElement, timeout = 8_000) {
+export async function screenshotFrameElement(frame: HTMLIFrameElement, timeout = 8_000, scale = 1) {
   const target = targetOf(frame);
   if (!target) throw new Error("Ce cadre n’est pas une page d’Alfred.");
-  const answer = (await request(target, "screenshot", { fullPage: false }, timeout)) ?? {};
+  const answer = (await request(target, "screenshot", { fullPage: false, scale }, timeout)) ?? {};
   return { reference: target.reference, ...frameImage(answer as Record<string, unknown>) };
 }
 

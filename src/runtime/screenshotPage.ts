@@ -20,6 +20,11 @@ export interface PageScreenshot {
 export interface ScreenshotOptions {
   /** Toute la hauteur du document, et non la seule partie visible. */
   fullPage?: boolean;
+  /**
+   * Pixels de l’image par pixel CSS (1 par défaut). « Corriger un élément » passe la densité de l’écran : à 1, l’image
+   * d’un écran Retina est floue une fois affichée en plein écran.
+   */
+  scale?: number;
 }
 
 const MAX_HEIGHT = 6000;
@@ -210,6 +215,9 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   const wanted = options.fullPage ? fullHeight : window.innerHeight;
   const height = Math.max(1, Math.min(Math.round(wanted), MAX_HEIGHT));
   const offsetY = options.fullPage ? 0 : window.scrollY;
+  const scale = Math.min(3, Math.max(1, options.scale ?? 1));
+  const pixelWidth = Math.round(width * scale);
+  const pixelHeight = Math.round(height * scale);
 
   const state: CloneState = { pseudoRules: [], sequence: 0 };
   const body = document.body ? cloneTree(document.body, getComputedStyle(root), state) : null;
@@ -227,12 +235,13 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   }
   const markup = xmlSafe(new XMLSerializer().serializeToString(page));
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+    // Taille de l’image en pixels, contenu en pixels CSS (viewBox) : le navigateur dessine le texte à la bonne densité.
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}" viewBox="0 0 ${width} ${height}">` +
     `<foreignObject x="0" y="0" width="100%" height="100%">${markup}</foreignObject></svg>`;
   const image = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = pixelWidth;
+  canvas.height = pixelHeight;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canevas indisponible : capture impossible.");
   const background = getComputedStyle(document.body ?? root).backgroundColor;
@@ -242,14 +251,14 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   const white = "#fff";
   context.fillStyle =
     background && background !== transparent ? background : getComputedStyle(root).backgroundColor || white;
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0);
+  context.fillRect(0, 0, pixelWidth, pixelHeight);
+  context.drawImage(image, 0, 0, pixelWidth, pixelHeight);
   const url = canvas.toDataURL("image/png");
   return {
     data: url.slice(url.indexOf(",") + 1),
     mimeType: "image/png",
-    width,
-    height,
+    width: pixelWidth,
+    height: pixelHeight,
     clipped: options.fullPage === true && fullHeight > MAX_HEIGHT,
   };
 }

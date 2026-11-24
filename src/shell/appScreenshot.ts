@@ -7,10 +7,13 @@ import { screenshotPage as drawDocument } from "../runtime/screenshotPage";
 import { inspectFrameElement, type PageRegion, screenshotFrameElement } from "./pageSnapshot";
 
 export interface AppScreenshot {
-  /** PNG en base64. */
+  /** PNG en base64, de `width × scale` sur `height × scale` pixels. */
   data: string;
+  /** Taille de la fenêtre en pixels CSS : les coordonnées d’un cadre tracé sur la capture s’y rapportent. */
   width: number;
   height: number;
+  /** Pixels de l’image par pixel CSS : la densité de l’écran (2 sur un Retina), 2 au plus. */
+  scale: number;
 }
 
 export interface AppRegion extends PageRegion {
@@ -45,6 +48,8 @@ function visibleFrames(): { frame: HTMLIFrameElement; box: DOMRect }[] {
 /** Image de toute la fenêtre, en pixels CSS : la coquille, et chaque page affichée à sa place. */
 export async function screenshotApp(): Promise<AppScreenshot> {
   const frames = visibleFrames();
+  // À la densité de l’écran : une capture à 1 pixel par pixel CSS est floue sur un Retina.
+  const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
   // L’infobulle du bouton qui lance la capture n’a rien à faire sur l’image.
   const hide = document.createElement("style");
   hide.textContent = '[role="tooltip"] { display: none !important; }';
@@ -53,8 +58,8 @@ export async function screenshotApp(): Promise<AppScreenshot> {
   let pages: (Awaited<ReturnType<typeof screenshotFrameElement>> | null)[];
   try {
     [shell, ...pages] = await Promise.all([
-      drawDocument(),
-      ...frames.map(({ frame }) => screenshotFrameElement(frame).catch(() => null)),
+      drawDocument({ scale }),
+      ...frames.map(({ frame }) => screenshotFrameElement(frame, undefined, scale).catch(() => null)),
     ]);
   } finally {
     hide.remove();
@@ -69,10 +74,15 @@ export async function screenshotApp(): Promise<AppScreenshot> {
     if (!shot) continue;
     const { box } = frames[index];
     const image = await loadImage(`data:image/png;base64,${shot.data}`).catch(() => null);
-    if (image) context.drawImage(image, box.left, box.top, box.width, box.height);
+    if (image) context.drawImage(image, box.left * scale, box.top * scale, box.width * scale, box.height * scale);
   }
   const url = canvas.toDataURL("image/png");
-  return { data: url.slice(url.indexOf(",") + 1), width: canvas.width, height: canvas.height };
+  return {
+    data: url.slice(url.indexOf(",") + 1),
+    width: Math.round(canvas.width / scale),
+    height: Math.round(canvas.height / scale),
+    scale,
+  };
 }
 
 /** Nom lisible d’un élément de la coquille : son rôle ou sa balise, et son libellé. */

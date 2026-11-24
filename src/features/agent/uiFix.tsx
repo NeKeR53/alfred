@@ -45,7 +45,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /** La capture avec la zone choisie cerclée de rouge et le reste assombri. */
-async function annotate(url: string, rect: Rect | null): Promise<Blob> {
+async function annotate(url: string, rect: Rect | null, scale = 1): Promise<Blob> {
   const image = await loadImage(url);
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
@@ -59,11 +59,13 @@ async function annotate(url: string, rect: Rect | null): Promise<Blob> {
     context.fillStyle = tokens.getPropertyValue("--scrim").trim() || "black";
     context.beginPath();
     context.rect(0, 0, canvas.width, canvas.height);
-    context.rect(rect.x, rect.y, rect.width, rect.height);
+    // Le cadre est en pixels CSS ; l’image est à la densité de l’écran.
+    const [x, y, w, h] = [rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale];
+    context.rect(x, y, w, h);
     context.fill("evenodd");
     context.strokeStyle = tokens.getPropertyValue("--danger").trim() || "red";
-    context.lineWidth = 3;
-    context.strokeRect(rect.x - 1.5, rect.y - 1.5, rect.width + 3, rect.height + 3);
+    context.lineWidth = 3 * scale;
+    context.strokeRect(x - 1.5 * scale, y - 1.5 * scale, w + 3 * scale, h + 3 * scale);
   }
   return new Promise((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Capture non encodée."))), "image/png"),
@@ -113,7 +115,7 @@ export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<H
     setPhase({ kind: "preparing" });
     try {
       const region = rect ? await inspectApp(rect, document.querySelector(".ui-fix")).catch(() => null) : null;
-      const blob = await annotate(keep, rect);
+      const blob = await annotate(keep, rect, shot.scale);
       const agents = useAgents.getState();
       if (!agents.ready) await agents.load();
       const conversation = useAgents.getState().create({
