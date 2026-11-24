@@ -60,8 +60,8 @@ function useArchiveConversation() {
 }
 
 /**
- * Suivi des conversations de la page Agent, dans le panneau de détail de l’AppShell (bouton de la barre du haut,
- * Mod+.) : la coquille le passe à `detail` quand la page Agent est ouverte.
+ * Suivi des conversations, seulement dans la fenêtre Agent détachée (sans AppShell ni sidebar). Dans la fenêtre
+ * principale, les conversations sont dans la sidebar : la page Agent n'a pas de panneau de détail.
  */
 export function ConversationTracking() {
   const headers = useAgents((state) => state.headers);
@@ -83,7 +83,7 @@ export function ConversationTracking() {
 
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
-/** Page Agent : la conversation ouverte ; le suivi des conversations va dans le panneau de détail (`ConversationTracking`). */
+/** Page Agent : la conversation ouverte ; le suivi des conversations ne s’affiche que dans la fenêtre détachée. */
 /** `detached` : la page Agent seule, dans sa fenêtre (`agentsWindow.ts`). */
 export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const spacePath = useShell((state) => state.snapshot?.path);

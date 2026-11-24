@@ -16,10 +16,7 @@ export function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper"
   return renderBase(ui, { ...options, wrapper });
 }
 
-/**
- * La page Agent et son suivi des conversations, que l’enveloppe pose dans le panneau de détail de l’AppShell
- * (repère « Détail » de Socle, ici nommé par le suivi).
- */
+/** La page Agent et son suivi des conversations, comme dans la fenêtre Agent détachée. */
 export function AgentPageWithTracking() {
   return (
     <>
