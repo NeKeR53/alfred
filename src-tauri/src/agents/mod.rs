@@ -66,10 +66,8 @@ pub(crate) fn search_path() -> &'static str {
         #[cfg(unix)]
         {
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-            if let Ok(output) =
-                Command::new(shell).args(["-l", "-c", "printf %s \"$PATH\""]).stdin(Stdio::null()).output()
-            {
-                for entry in String::from_utf8_lossy(&output.stdout).split(':') {
+            if let Some(path) = login_shell_path(&shell, LOGIN_SHELL_WAIT) {
+                for entry in path.split(':') {
                     push(entry.trim());
                 }
             }
@@ -95,6 +93,46 @@ pub(crate) fn search_path() -> &'static str {
         }
         entries.join(&separator.to_string())
     })
+}
+
+/// Attente du PATH du shell de connexion : au-delà, les chemins connus suffisent.
+#[cfg(unix)]
+const LOGIN_SHELL_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Le PATH vu par un shell de connexion (`$SHELL -l`), ou `None` s'il ne répond pas à temps.
+///
+/// `Command::output()` attend la fin de la sortie, pas celle du shell : si le profil laisse un processus qui garde
+/// la sortie ouverte, ou si un autre processus lancé au même instant en hérite, la lecture ne finit jamais. Comme
+/// `search_path` tient alors son `OnceLock`, toutes les commandes qui en dépendent (`app.info` compris) restaient
+/// bloquées, et la fenêtre d'Alfred restait blanche. La lecture se fait donc dans un fil à part, avec un délai ; au
+/// délai, le shell est arrêté et la lecture abandonnée.
+#[cfg(unix)]
+pub(crate) fn login_shell_path(shell: &str, wait: std::time::Duration) -> Option<String> {
+    use std::io::Read;
+    let mut child = Command::new(shell)
+        .args(["-l", "-c", "printf %s \"$PATH\""])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        let _ = sender.send(text);
+    });
+    let path = receiver.recv_timeout(wait).ok();
+    if path.is_none() {
+        log::warn!("le shell de connexion n'a pas donné son PATH en {} s : chemins connus seulement", wait.as_secs());
+        let _ = child.kill();
+    }
+    // Le shell est récolté dans un fil : il ne reste pas zombie, sans retenir l'appelant.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    path
 }
 
 /// Remplace les `%VARIABLE%` d’une valeur du registre, comme `ExpandEnvironmentStringsW` : une variable inconnue
@@ -282,6 +320,33 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn login_shell_path_reads_the_path() {
+        let path = login_shell_path("/bin/sh", std::time::Duration::from_secs(5)).expect("PATH du shell");
+        assert!(!path.is_empty());
+    }
+
+    /// Un shell dont la sortie reste ouverte (ici, un processus en arrière-plan qui en hérite) ne bloque plus.
+    #[cfg(unix)]
+    #[test]
+    fn login_shell_path_gives_up_when_the_output_never_closes() {
+        let dir = std::env::temp_dir().join(format!("alfred-shell-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shell = dir.join("shell-bloque");
+        std::fs::write(&shell, "#!/bin/sh\nsleep 30 &\nprintf %s /usr/bin\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let path = login_shell_path(shell.to_str().unwrap(), std::time::Duration::from_millis(500));
+        assert!(path.is_none());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn claude_auth_status_gives_login_state() {
