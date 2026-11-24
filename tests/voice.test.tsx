@@ -12,8 +12,9 @@ import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 
 async function finishTurn(user: ReturnType<typeof userEvent.setup>) {
-  const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
-  await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
+  // ChoicePrompt : la carte est nommée par l’action à autoriser, sous l’en-tête « Autorisation demandée ».
+  const approval = (await screen.findByText("Autorisation demandée")).closest<HTMLElement>("section") as HTMLElement;
+  await user.click(within(approval).getByRole("option", { name: /Autoriser/ }));
   const card = await screen.findByRole("form", { name: "Emplacement de la nouvelle page" });
   await user.click(within(card).getByRole("radio", { name: "Nouvelle entrée du menu de gauche" }));
   await user.click(within(card).getByRole("button", { name: "Placer la page" }));

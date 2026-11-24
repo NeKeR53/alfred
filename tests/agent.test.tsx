@@ -45,16 +45,17 @@ it("message, activités, accord, carte de placement, fin de tour enregistrée, p
 
   // Le message et les activités défilent ; une commande attend l’accord de l’utilisateur.
   expect(await screen.findByText("Je regarde ce que contient l’espace.")).toBeVisible();
-  const approval = await screen.findByRole("region", { name: "Autorisation demandée" });
+  // ChoicePrompt : la carte est nommée par l’action à autoriser, sous l’en-tête « Autorisation demandée ».
+  const approval = (await screen.findByText("Autorisation demandée")).closest<HTMLElement>("section") as HTMLElement;
   expect(within(approval).getByText("ls modules")).toBeVisible();
   expect(screen.getByText("Autorisation requise")).toBeVisible();
-  await user.click(within(approval).getByRole("button", { name: "Autoriser" }));
+  await user.click(within(approval).getByRole("option", { name: /Autoriser/ }));
   await waitFor(() => expect(backend.agent.approvalAnswer).toBe("allow"));
   const response = backend.agent.written.find((message) => message.type === "control_response") as {
     response: { request_id: string; response: { behavior: string } };
   };
   expect(response.response).toMatchObject({ request_id: "controle-1", response: { behavior: "allow" } });
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Autorisation demandée" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText("Autorisation demandée")).not.toBeInTheDocument());
 
   // `place_page` sans emplacement : la carte demande où mettre la page. L’utilisateur choisit le menu.
   const card = await screen.findByRole("form", { name: "Emplacement de la nouvelle page" });
