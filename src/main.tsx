@@ -5,6 +5,7 @@ import "socle-ui/styles.css";
 import "./styles.css";
 import { App } from "./App";
 import { accentColor } from "./runtime/accent";
+import { bindDevtoolsShortcut } from "./shell/devtools";
 import { notifications, soclePlatform, socleStorageKey, useWindowFullscreen } from "./shell/socle";
 import { useShell } from "./shell/store";
 
@@ -25,6 +26,8 @@ function Root() {
     </SocleProvider>
   );
 }
+
+bindDevtoolsShortcut();
 
 const root = document.getElementById("root");
 if (root) {

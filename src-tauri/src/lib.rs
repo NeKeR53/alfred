@@ -108,6 +108,24 @@ fn on_core_event(state: &AppState, event: &events::AppEvent) {
     }
 }
 
+/// Ouvre l’inspecteur web de la fenêtre qui appelle (Cmd+Option+I, ou Ctrl+Maj+I, dans l’interface). Seulement dans
+/// un binaire de développement : une version installée n’embarque pas l’inspecteur (Tauri ne compile
+/// `open_devtools` qu’avec `debug_assertions`, et la fonctionnalité `devtools` n’est pas activée), et la commande y
+/// répond par une erreur.
+#[tauri::command]
+fn alfred_open_devtools(window: tauri::WebviewWindow) -> Result<(), AppError> {
+    #[cfg(debug_assertions)]
+    {
+        window.open_devtools();
+        Ok(())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = window;
+        Err(AppError::new("L’inspecteur n’existe que dans un Alfred de développement."))
+    }
+}
+
 /// Commandes de la fenêtre ; le banc de vérification ajoute la sienne, absente des versions normales.
 #[cfg(not(feature = "verify"))]
 fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
@@ -116,7 +134,8 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         alfred_agent_spawn,
         page_windows::alfred_open_window,
         agents::window::alfred_open_agents_window,
-        system_notifications::alfred_notify_system
+        system_notifications::alfred_notify_system,
+        alfred_open_devtools
     ]
 }
 
@@ -128,6 +147,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         page_windows::alfred_open_window,
         agents::window::alfred_open_agents_window,
         system_notifications::alfred_notify_system,
+        alfred_open_devtools,
         verify::verify_result
     ]
 }
