@@ -190,6 +190,17 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Retire les caractères interdits en XML 1.0 (caractères de contrôle sauf tabulation et retours, U+FFFE, U+FFFF).
+ * `XMLSerializer` les laisse passer ; une seule occurrence rend l’image SVG invalide, et le navigateur refuse de la
+ * dessiner. Alfred en met dans des attributs : le séparateur U+0000 des identifiants d’entrées du menu et d’onglets
+ * ouverts sur un élément (`data-key`).
+ */
+export function xmlSafe(markup: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ce sont justement les caractères à retirer.
+  return markup.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "");
+}
+
 /** Dessine le document du cadre et renvoie un PNG : la partie visible, ou toute la hauteur avec `fullPage`. */
 export async function screenshotPage(options: ScreenshotOptions = {}): Promise<PageScreenshot> {
   await document.fonts?.ready;
@@ -214,7 +225,7 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
     style.textContent = state.pseudoRules.join("\n");
     page.insertBefore(style, page.firstChild);
   }
-  const markup = new XMLSerializer().serializeToString(page);
+  const markup = xmlSafe(new XMLSerializer().serializeToString(page));
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
     `<foreignObject x="0" y="0" width="100%" height="100%">${markup}</foreignObject></svg>`;
