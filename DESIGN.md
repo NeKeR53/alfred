@@ -292,7 +292,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou 
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.15.0
+### Catalogue de socle-ui 1.16.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 

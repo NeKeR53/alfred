@@ -658,6 +658,8 @@ export function Transcript({
       contextDetail={context?.modelLabel}
       // Une conversation ouverte part du bas ; un envoi de l’utilisateur l’y recolle, même s’il était remonté.
       followKey={`${conversationId}:${sent}`}
+      // Position de lecture gardée par conversation : en revenant d’une page, au même endroit, ou en bas (D-397).
+      scrollKey={conversationId}
       announce={settled && lastTurn?.status === "done" ? "Réponse terminée" : ""}
     >
       <ErrorBoundary resetKey={conversationId}>

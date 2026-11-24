@@ -770,7 +770,11 @@ describe("parité avec OneApp", () => {
     const scroller = screen.getByRole("region", { name: "Conversation de Factures" });
     Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1000 });
     Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 100 });
-    // Remonté, l’utilisateur n’est pas ramené en bas par la suite de la réponse…
+    // Remonté (molette, puis défilement : seul un geste décroche le suivi, D-397), l’utilisateur n’est pas ramené en
+    // bas par la suite de la réponse… (la vue part du bas, comme dans un navigateur)
+    scroller.scrollTop = 1000;
+    fireEvent.scroll(scroller);
+    fireEvent.wheel(scroller, { deltaY: -100 });
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
     rerender(<Transcript conversation={conversation([turn("t1", { endedAt: 6_000 })])} runtime={idle} />);
@@ -779,6 +783,9 @@ describe("parité avec OneApp", () => {
     act(() => useAgents.setState({ follow: { c1: 1 } } as never));
     expect(scroller.scrollTop).toBe(1000);
     // … comme l’ouverture d’une autre conversation, qui part du bas.
+    scroller.scrollTop = 1000;
+    fireEvent.scroll(scroller);
+    fireEvent.wheel(scroller, { deltaY: -100 });
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
     rerender(<Transcript conversation={conversation([turn("t1")], { id: "c2" })} runtime={idle} />);

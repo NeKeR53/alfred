@@ -157,6 +157,9 @@ export interface SectionFrame {
   onViewClose?: (id: string) => void;
   actions: ReactNode;
   detail?: ReactNode;
+  /** Ouverture du panneau demandée par la page (`shell.setPanelVisible`) ou par l’utilisateur ; absent : l’état mémorisé. */
+  isDetailOpen?: boolean;
+  onDetailOpenChange?: (isOpen: boolean) => void;
   main: ReactNode;
 }
 
@@ -232,6 +235,10 @@ export function useSectionFrame({
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.
   const agentConversation = useShell((state) => (page ? state.agentPanel[page.reference] : undefined));
   const closeAgentPanel = useShell((state) => state.closeAgentPanel);
+  // Ouverture du panneau pilotée (D-398 de Socle) : une page l’ouvre ou le ferme (`shell.setPanelVisible`, agent lancé
+  // par la page) ; tant qu’elle n’a rien demandé, l’AppShell garde son état mémorisé.
+  const panelHidden = useShell((state) => (page ? state.panelHidden[page.reference] : undefined));
+  const setPanelVisible = useShell((state) => state.setPanelVisible);
   const described = useTopBarActionStore((state) => (page ? state.actions[page.reference] : undefined));
   const main = useRef<HTMLDivElement>(null);
   const live = Boolean(page && !builtInTab && !waiting);
@@ -322,6 +329,8 @@ export function useSectionFrame({
       </>
     ),
     detail,
+    isDetailOpen: page && panelHidden !== undefined ? !panelHidden : undefined,
+    onDetailOpenChange: page ? (isOpen: boolean) => setPanelVisible(page.reference, isOpen) : undefined,
     main: (
       <div ref={main} className="flex h-full min-h-0 min-w-0 flex-col">
         {live && page ? (
@@ -753,6 +762,8 @@ export function AppShell({
         onViewClose={onAgent ? undefined : frame.onViewClose}
         actions={onAgent ? <NotificationCenter /> : frame.actions}
         detail={onAgent ? (agentAvailable ? agentDetail : undefined) : frame.detail}
+        isDetailOpen={onAgent ? undefined : frame.isDetailOpen}
+        onDetailOpenChange={onAgent ? undefined : frame.onDetailOpenChange}
         detailExpandable
         history={false}
       >

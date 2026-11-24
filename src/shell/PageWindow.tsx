@@ -73,6 +73,8 @@ export function PageWindow({
       onViewClose={found ? frame.onViewClose : undefined}
       actions={frame.actions}
       detail={found ? frame.detail : undefined}
+      isDetailOpen={found ? frame.isDetailOpen : undefined}
+      onDetailOpenChange={found ? frame.onDetailOpenChange : undefined}
       detailExpandable
       history={false}
     >
