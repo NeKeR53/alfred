@@ -13,32 +13,10 @@ import { AppShell } from "./shell/AppShell";
 import { useAgentZone } from "./shell/agentZone";
 import { PageWindow, pageWindowReference } from "./shell/PageWindow";
 import { ShellServices } from "./shell/services";
+import { startScreen } from "./shell/startScreen";
 import { useShell } from "./shell/store";
 import { Accueil, ShortWelcome } from "./shell/welcome/Accueil";
 import { useWelcome } from "./shell/welcome/store";
-
-/**
- * Écran de départ de la fenêtre principale. Tant que le démarrage n’est pas fini, rien : sinon l’accueil complet
- * s’afficherait (aucun espace récent encore lu), se marquerait actif et resterait affiché par-dessus l’espace
- * rouvert.
- */
-export function startScreen({
-  started,
-  welcoming,
-  snapshotOpen,
-  firstRun,
-}: {
-  started: boolean;
-  welcoming: boolean;
-  snapshotOpen: boolean;
-  firstRun: boolean;
-}): "loading" | "welcome" | "short-welcome" | "shell" {
-  if (welcoming) return "welcome";
-  if (!started) return "loading";
-  if (!snapshotOpen && firstRun) return "welcome";
-  if (!snapshotOpen) return "short-welcome";
-  return "shell";
-}
 
 export function App() {
   const snapshot = useShell((state) => state.snapshot);

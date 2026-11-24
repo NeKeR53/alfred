@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { startScreen } from "./App";
+import { startScreen } from "./startScreen";
 
 describe("écran de départ", () => {
   it("n’affiche rien tant que le démarrage n’est pas fini, même sans espace récent lu", () => {
