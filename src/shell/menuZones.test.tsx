@@ -218,11 +218,11 @@ describe("zone dans le menu de gauche", () => {
       />,
     );
     const row = async (name: RegExp) => screen.findByRole("row", { name });
-    expect((await row(/^Au travail/)).querySelector(".bg-success")).not.toBeNull();
+    expect((await row(/^Au travail/)).querySelector("[data-activity]")).not.toBeNull();
     expect(within(await row(/^Question/)).getByRole("img", { name: "À traiter" })).toBeTruthy();
     expect(within(await row(/^Finie/)).getByRole("img", { name: "Non lu" })).toBeTruthy();
     const idle = await row(/^En veille/);
-    expect(idle.querySelector(".bg-success")).toBeNull();
+    expect(idle.querySelector("[data-activity]")).toBeNull();
     expect(within(idle).queryByRole("img")).toBeNull();
   });
 
