@@ -60,10 +60,11 @@ function useArchiveConversation() {
 }
 
 /**
- * Suivi des conversations, seulement dans la fenêtre Agent détachée (sans AppShell ni sidebar). Dans la fenêtre
- * principale, les conversations sont dans la sidebar : la page Agent n'a pas de panneau de détail.
+ * Panneau de détail de la page Agent. Fenêtre principale (`withList={false}`) : les détails de la conversation
+ * ouverte (modifications), car la sidebar montre déjà les conversations. Fenêtre Agent détachée, sans sidebar :
+ * la liste des conversations en plus.
  */
-export function ConversationTracking() {
+export function ConversationTracking({ withList = true }: { withList?: boolean } = {}) {
   const headers = useAgents((state) => state.headers);
   const activeId = useAgents((state) => state.activeId);
   const conversation = useAgents((state) => (state.activeId ? state.loaded[state.activeId] : undefined));
@@ -77,13 +78,14 @@ export function ConversationTracking() {
       active={conversation}
       git={git}
       onArchive={(header) => archiveConversation(header.id, header.title)}
+      withList={withList}
     />
   );
 }
 
 const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
-/** Page Agent : la conversation ouverte ; le suivi des conversations ne s’affiche que dans la fenêtre détachée. */
+/** Page Agent : la conversation ouverte ; ses détails vont dans le panneau de détail (`ConversationTracking`). */
 /** `detached` : la page Agent seule, dans sa fenêtre (`agentsWindow.ts`). */
 export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const spacePath = useShell((state) => state.snapshot?.path);

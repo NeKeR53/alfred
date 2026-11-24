@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { AgentPage } from "./features/agent/AgentPage";
+import { AgentPage, ConversationTracking } from "./features/agent/AgentPage";
 import { isAgentsWindow } from "./features/agent/agentsWindow";
 import { checkHarnesses, useInstalledProviders } from "./features/agent/harness";
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
@@ -76,6 +76,7 @@ export function App() {
     <>
       <AppShell
         agent={<AgentPage />}
+        agentDetail={<ConversationTracking withList={false} />}
         agentSummary={agentSummary}
         agentZone={agentZone}
         agentAvailable={agentAvailable}

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { AgentPage, ConversationTracking } from "./AgentPage";
 import { compareConversations, type GitSummary } from "./ConversationList";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
@@ -146,6 +147,22 @@ describe("page Agent", () => {
       "/espace",
     );
     expect(native.invoke).toHaveBeenCalledWith("agentWorkspace.gitSummary", { path: "/espace" });
+  });
+
+  it("fenêtre principale : le panneau de détail garde les modifications, sans la liste des conversations", async () => {
+    render(
+      <>
+        <AgentPage />
+        <aside aria-label="Détail">
+          <ConversationTracking withList={false} />
+        </aside>
+      </>,
+    );
+    await findConversationTitle("Factures");
+    const panel = screen.getByLabelText("Détail");
+    expect(within(panel).getByText("Détails de la conversation")).toBeInTheDocument();
+    expect(await within(panel).findByRole("region", { name: "Modifications" })).toBeInTheDocument();
+    expect(within(panel).queryByRole("region", { name: "Conversations" })).toBeNull();
   });
 
   it("une conversation rouverte montre le bilan à la fin de chaque suite de messages, jamais entre deux", async () => {

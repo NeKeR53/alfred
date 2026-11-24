@@ -272,6 +272,7 @@ export function ConversationList({
   active,
   git = emptyGit,
   onArchive,
+  withList = true,
 }: {
   conversations: readonly ConversationHeader[];
   activeId: string | null;
@@ -280,6 +281,11 @@ export function ConversationList({
   git?: GitChanges;
   /** Chaque conversation s’archive depuis sa ligne, même au travail, comme les agents de OneApp. */
   onArchive?: (header: ConversationHeader) => void;
+  /**
+   * Faux dans la fenêtre principale : la sidebar montre déjà les conversations, le panneau ne garde que les détails
+   * de la conversation ouverte. Vrai dans la fenêtre Agent détachée, qui n'a pas de sidebar.
+   */
+  withList?: boolean;
 }) {
   const open = useAgents((state) => state.open);
   const runtime = useAgents((state) => state.runtime);
@@ -320,7 +326,7 @@ export function ConversationList({
         : undefined,
     };
   });
-  const sections: DetailSection[] = [
+  const listSection: DetailSection[] = [
     {
       // Une seule liste : la pastille donne l’état, le résumé ce qui demande l’utilisateur, sinon ce qui travaille.
       id: "agent-conversations",
@@ -332,17 +338,29 @@ export function ConversationList({
           : undefined,
       content: <InfoPanelRows variant="detailed" empty="Aucune conversation." rows={rows} />,
     },
+  ];
+  const detailSections: DetailSection[] = [
     {
       id: "agent-changes",
       title: "Modifications",
       content: <ChangedFiles conversation={active} git={git} />,
     },
   ];
+  if (!withList) {
+    // Fenêtre principale : seulement les détails de la conversation ouverte.
+    return (
+      <Drawer
+        header={{ title: "Détails de la conversation" }}
+        sections={active ? detailSections : []}
+        emptyMessage="Aucune conversation ouverte."
+      />
+    );
+  }
   // Sans conversation, la liste n’afficherait qu’une phrase « Aucune… » : le suivi n’a pas de section.
   return (
     <Drawer
       header={{ title: "Suivi des conversations" }}
-      sections={conversations.length ? sections : []}
+      sections={conversations.length ? [...listSection, ...detailSections] : []}
       emptyMessage="Aucune conversation."
     />
   );
