@@ -52,6 +52,7 @@ mod section_icons;
 mod server;
 mod sessions;
 mod setup;
+mod socle_ui;
 mod space;
 mod space_db;
 mod spaces;

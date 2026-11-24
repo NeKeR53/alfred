@@ -1,6 +1,6 @@
 # Référence du pont `@alfred/sdk`
 
-Une page, un panneau ou une fonction n’a ni réseau ni disque. Tout ce qui sort du cadre passe par `@alfred/sdk` : la base du module, ses fichiers, les clients, les fonctions, l’IA et la coquille. L’apparence relève de `DESIGN.md`, la marche à suivre de `AGENTS.md`.
+Une page, un panneau ou une fonction n’a ni réseau ni disque. Tout ce qui sort du cadre passe par `@alfred/sdk` : la base du module, ses fichiers, les clients, les fonctions, l’IA et la coquille. La place de chaque chose (menu, onglets, panneau, fenêtres, messages) relève de `PLACEMENT.md`, l’apparence de `DESIGN.md`, la marche à suivre de `AGENTS.md`. Ce document dit seulement comment appeler le pont.
 
 Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkError` (`message` en français, `detail` facultatif) : montre `error.message` à l’utilisateur.
 
@@ -11,7 +11,7 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `fetch`, `XMLHttpRequest`, `WebSocket` | aucune connexion sortante | une fonction du connecteur (`functions.call`) ; `client(id)` dans les fonctions seulement |
 | `localStorage`, `sessionStorage`, `indexedDB` | le cadre n’a pas d’origine : l’accès lève une erreur | une table du module |
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
-| `alert`, `confirm`, `prompt` | bloqués | Une `Action` `danger` ou `confirm`, `useConfirm()` (une confirmation), `useOpenForm()` (une saisie), `Dialog` (un contenu) de `socle-ui` |
+| `alert`, `confirm`, `prompt` | bloqués | Une `Action` `danger` ou `confirm`, `useConfirm()` (une confirmation), `useOpenForm()` (une saisie), `Modal` (un contenu) de `socle-ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
 | `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `socle-ui` (DESIGN.md, section 8) |
@@ -162,7 +162,7 @@ Une erreur non rattrapée (`AlfredError` comprise) termine le script avec un cod
 
 ## 3. Charger des données : `useAsync` et les gabarits
 
-Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `DetailPanel`, `Page`), qui affiche chargement, erreur et absence :
+Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `Drawer`, `Page`), qui affiche chargement, erreur et absence :
 
 ```tsx
 import { Pencil, Plus } from "lucide-react";
@@ -730,8 +730,8 @@ Le micro est unique et réservé aux pages et panneaux. La première fois, l’u
 
 ```tsx
 import { voice } from "@alfred/sdk";
-import { Notice, Text } from "@alfred/kit";
-import { Page, PageSection } from "socle-ui";
+import { Text } from "@alfred/kit";
+import { Alert, Page, PageSection } from "socle-ui";
 import { useState } from "react";
 
 export default function Dicter() {
@@ -771,7 +771,7 @@ export default function Dicter() {
           onPress: basculer,
         }]}
       >
-        {erreur ? <Notice tone="danger">{erreur}</Notice> : <Text>{texte}</Text>}
+        {erreur ? <Alert tone="danger">{erreur}</Alert> : <Text>{texte}</Text>}
       </PageSection>
     </Page>
   );
@@ -815,7 +815,7 @@ interface PageContext {
 }
 ```
 
-Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, charge l’objet avec `useAsync` et le décrit dans un `DetailPanel`. Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections de `DetailPanel` mémorisent leur repli par leur `id`.
+Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, charge l’objet avec `useAsync` et le décrit dans un `Drawer`. Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections du `Drawer` mémorisent leur repli par leur `id`.
 
 `usePageState(clé, initial)` retient une petite valeur JSON (vue, onglet, élément ouvert) quand on quitte la page, et la rend au retour, tant qu’Alfred est ouvert.
 
@@ -823,7 +823,7 @@ Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou un
 
 ### Recherche : celle de `ListPage`, ou `matchesSearch`
 
-La barre du haut n’a pas de recherche. Une collection cherche avec `search` de `ListPage` (sans casse ni accents, chaque mot exigé). Une `Page` composée qui filtre elle-même pose un `SearchField` dans sa `toolbar` et filtre avec la même règle :
+La barre du haut n’a pas de recherche. Une collection cherche avec `search` de `ListPage` (sans casse ni accents, chaque mot exigé). Une `Page` composée qui filtre elle-même pose un `SearchInput` dans sa `toolbar` et filtre avec la même règle :
 
 ```ts
 searchTerms(query: string): string[];
@@ -833,30 +833,18 @@ matchesSearch(search: string | string[], fields: unknown[]): boolean;
 ```tsx
 const [texte, setTexte] = useState("");
 const visibles = (tickets.data ?? []).filter((ticket) => matchesSearch(texte, [ticket.titre, ticket.client, ticket.numero]));
-<Page toolbar={<SearchField label="les tickets" onChange={({ text }) => setTexte(text)} />}>…</Page>
+<Page toolbar={<SearchInput label="les tickets" onChange={({ text }) => setTexte(text)} />}>…</Page>
 ```
 
 Pour chercher dans toute une table (milliers de lignes, texte long), passer le texte à `search.query` (section 12) dans un `useAsync`, ou `remote` de `ListPage`.
 
 ### Actions de la barre du haut : `useTopBarActions`
 
-`useTopBarActions(actions)` place des `Action` de `socle-ui` (`{ id, label, icon: <Download size={16} />, onPress, primary, danger, confirm }`) dans la barre du haut d’Alfred. La coquille les dessine (icônes, « … », action principale) ; un clic revient à la page, qui confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. Une seule série par page ; réservé à une page. À préférer seulement pour une `Page` composée : `ListPage` et `DetailPage` gardent leurs actions dans leur en-tête. Des vues ne sont pas des actions : prendre des `Tabs`.
+`useTopBarActions(actions)` place des `Action` de `socle-ui` (`{ id, label, icon: <Download size={16} />, onPress, primary, danger, confirm }`) dans la barre du haut d’Alfred. La coquille les dessine (icônes, « … », action principale) ; un clic revient à la page, qui confirme une action `danger` ou `confirm`, montre l’attente et notifie l’échec. Une seule série par page ; réservé à une page. À préférer seulement pour une `Page` composée : `ListPage` et `DetailPage` gardent leurs actions dans leur en-tête. Des vues ne sont pas des actions : ce sont des onglets fixes de la section (PLACEMENT.md, section 5).
 
 ### Résumé de la barre du haut : `useTopBarSummary` (retiré)
 
 La barre du haut n’a plus de résumé (socle-ui 0.4.0, D-253). `useTopBarSummary` reste exporté pour les pages anciennes et ne fait rien. Un chiffre clé va dans l’en-tête du gabarit, dans le libellé d’un onglet (« En retard (3) ») ou dans le contenu de la page.
-
-### Actions de la barre du haut : `useTopBarActions`
-
-Les `actions` d’une `Page` racine vont d’elles-mêmes dans la barre du haut d’Alfred, à droite : jusqu’à quatre icônes, l’action `primary` en bouton, le reste et les actions `danger` dans « ⋯ » ; sous 1100 px de large, toutes passent dans « ⋯ ». Les clés (Tab, Entrée, flèches dans le menu) et les confirmations (`confirm`) restent celles d’une `Action`. Une page sans `bar` ni recherche propre n’a alors plus de seconde barre. Un panneau garde les siennes dans son en-tête.
-
-Deux à quatre actions qui partagent un `group` (avec une icône) forment une bascule de vue à boutons accolés, avant les autres icônes ; `selected` marque la vue affichée : `{ label: "Arborescence", icon: ListTree, group: "Vue", selected: vue === "arbre", onClick: () => setVue("arbre") }`.
-
-`useTopBarActions(actions, { run? })` fait la même chose pour une page qui ne passe pas par `Page`. La coquille ne reçoit que des descriptions (libellé, nom d’icône lucide, `primary`, `danger`, `disabled`, état en cours) et renvoie l’identifiant de l’action choisie : aucune fonction ne quitte le cadre.
-
-```tsx
-<Page actions={[{ label: "Actualiser", icon: RefreshCw, onClick: recharger }]}>…</Page>
-```
 
 ### Entrées du menu de gauche : `menu`, `useMenuEntryAction`
 
@@ -879,6 +867,8 @@ interface MenuEntry {
   actions?: Array<{ id: string; label: string; icon: string; function?: string }>; // 3 au plus, au survol
 }
 ```
+
+Quand choisir des entrées, une section du menu ou un onglet : PLACEMENT.md, section 4.
 
 Une page peut, en plus de ses onglets, faire apparaître des **entrées** dans le menu de gauche : une par produit, par client, par tableau suivi. Elles forment **sa zone**, sous l’entrée de sa section, après un petit séparateur, avec un titre facultatif (« Produits ») qui la replie. Un clic sur une entrée ouvre la page (ou la page `page` du module) **avec cette entrée** : la page la lit dans `usePageContext()?.entry` et montre l’objet choisi ; son panneau reçoit la même entrée. L’entrée de la section, elle, ouvre la page sans entrée (`entry` vaut `null`) : la page montre alors sa vue d’ensemble.
 
@@ -1226,14 +1216,14 @@ search.query(index: string, text: string, options?: { limit?: number; offset?: n
 
 ```tsx
 import { search, useAsync } from "@alfred/sdk";
-import { List, Page, SearchField } from "socle-ui";
+import { List, Page, SearchInput } from "socle-ui";
 import { useState } from "react";
 
 export default function Recherche() {
   const [texte, setTexte] = useState("");
   const trouves = useAsync(() => search.query<number>("notes", texte, { limit: 20 }), [texte]);
   return (
-    <Page toolbar={<SearchField label="les notes" onChange={({ text }) => setTexte(text)} />}>
+    <Page toolbar={<SearchInput label="les notes" onChange={({ text }) => setTexte(text)} />}>
       <List
         selectionMode="none"
         searchTerms={texte ? texte.split(/\s+/) : undefined}

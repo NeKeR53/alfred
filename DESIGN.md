@@ -2,6 +2,8 @@
 
 Ce document s’adresse à l’agent qui écrit une page, un panneau de droite ou une page des Réglages. Il est recopié en lecture seule dans chaque espace.
 
+**Où mettre chaque chose** (entrée du menu, onglet, panneau, fenêtre, action, message, réglage) : lire d’abord `docs/alfred/PLACEMENT.md`, avant `place_page`. Ce document-ci dit comment écrire la page une fois sa place choisie. La doc de socle-ui à la version installée est dans `docs/alfred/socle/` : `AI.md` (liste et options), `specs/<Composant>.md` (une spec par composant), `docs/layout-rules.md` (règles de placement), `docs/decisions.md` (décisions D-xxx). Sa partie « Mise en place » (styles, `SocleProvider`, Tailwind, Biome) concerne Alfred, pas une page.
+
 **Vous ne dessinez pas : vous décrivez.** Les pages d’Alfred utilisent **socle-ui**, le design system partagé de l’utilisateur. Une page dit quelles données elle montre, de quel type elles sont et quelles actions l’utilisateur peut faire. Un gabarit de `socle-ui` décide du reste : la barre d’outils, la forme de chaque bouton (texte, icône ou menu « … »), le tableau, le format des dates et des montants, les champs d’un formulaire, les états de chargement, d’absence et d’erreur, les confirmations. Deux agents qui décrivent la même chose obtiennent la même page.
 
 Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Ce qu’Alfred n’est pas : un tableau de bord décoratif, un mur de cartes identiques, des métriques sans action, des dégradés, des icônes d’ornement.
@@ -11,14 +13,15 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 ## 1. Règles non négociables
 
 1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`. `Page` et `PageSection` seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (section 2).
-2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Dialog` et à l’action d’un `EmptyState`.
+2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover` ; `check` avertit ailleurs.
 3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
 5. **Aucun style propre.** Ni `style`, ni `className`, ni `<style>`, ni balise HTML (`<div>`, `<span>`, `<button>`…), ni couleur en dur (`#3366ff`, `rgb(…)`). Une page règle les options des composants (`variant`, `size`, `tone`, `width`, `density`). L’écart entre deux composants vient de `Stack` et `Row` de `@alfred/kit`.
 6. **Aucun doublon de la coquille.** Le nom de la page, les onglets, la cloche, le bouton du panneau et la navigation sont dessinés par Alfred. Une page ne rend ni `AppShell`, ni `Sidebar`, ni `NotificationCenter`, ni `SettingsPage`.
 7. **Le sens passe par le type et le texte.** Un état est une valeur `status` avec son libellé et son ton (`StatusTone`), jamais une couleur.
 8. **Français.** Les textes affichés sont en français, avec la typographie française (section 13).
-9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique, un calendrier, un éditeur riche) passe par une librairie npm (section 8).
+9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique, une carte, un calendrier, un éditeur riche) passe par une librairie npm (section 8). Pour tout autre manque, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).
+10. **Les noms actuels.** Écrire le nom actuel de chaque composant (catalogue, section 8). Un ancien nom (`Switch`, `TextField`, `Dialog`…) marche encore, mais `check` avertit avec le nouveau nom. Un nom qui n’existe pas dans socle-ui est une erreur de `check`.
 
 La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’accent ; les composants les suivent. Une couleur écrite dans une page est illisible dans l’un des thèmes.
 
@@ -37,15 +40,13 @@ La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’a
 └───────────┴──────────────────────────────────────┴──────────────────┘
 ```
 
-- Une entrée du menu de gauche ouvre une **section**. Ses pages sont les **onglets** de la barre du haut, après le titre de la section.
-- La barre du haut appartient à la coquille. Une page peut y mettre des actions (`useTopBarActions`) : voir section 4. Elle n’y met **ni résumé ni état** (D-253) : un chiffre clé va dans l’en-tête du gabarit ou dans le contenu, un état durable dans un encart en haut de la page. Elle n’y met **pas de recherche** : la recherche d’une collection est celle de `ListPage`.
+Le placement se décide avant d’écrire la page : `docs/alfred/PLACEMENT.md` dit, pour chaque demande, si elle devient une entrée du menu, un onglet fixe, un onglet ouvert sur un élément, des sous-entrées, une section du menu, le panneau de droite, une fenêtre ou une page des Réglages. Ce qui compte pour écrire la page :
+
+- La barre du haut appartient à la coquille. Une `Page` composée peut y mettre des actions (`useTopBarActions`, section 4). Elle n’y met **ni résumé ni état** (D-253) : un chiffre clé va dans l’en-tête du gabarit ou dans le contenu, un état durable dans un `Alert` en tête du contenu. Elle n’y met **pas de recherche** : la recherche d’une collection est celle de `ListPage`.
 - Chaque page peut déclarer **un** panneau de droite. L’utilisateur l’affiche, le masque et choisit sa largeur.
-- Une page peut s’ajouter aux **Réglages** (section 7).
-- Une page peut ajouter sa **zone** au menu de gauche : des entrées sous l’entrée de sa section, une par objet suivi (`menu.setEntries`, SDK.md, section 8).
-- Des entrées ajoutées au menu pour une notion de l’utilisateur (un projet, un client suivi) vont dans une **section** : un titre repliable, les entrées dessous (`menu.addSection({ id, title, page })`, puis `menu.setEntries([...], { section: id })` ; SDK.md, section 8, « Sections du menu »). Chaque entrée a une icône et un libellé ; jamais des réglages ni du contenu de travail (layout-rules, « sidebar → sections »).
-- **Ouvrir un élément ajoute un onglet fermable** (D-021) : `views.open({ id, label, params })` met un onglet après les onglets fixes de la section, l’active, et rouvre la page sur l’élément (`usePageContext().view`). Le même `id` ne crée pas de doublon ; dix onglets au plus par section ; ils sont mémorisés d’un lancement à l’autre (SDK.md, section 8, « Onglet sur un élément »).
-- Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
-- L’état d’une page (données d’exemple, service à configurer) se signale dans sa barre du haut, par la coquille. Jamais par un bandeau pleine largeur.
+- **Ouvrir un élément ajoute un onglet fermable** (D-021) : `views.open({ id, label, params })` ; la page lit `usePageContext().view` et rend l’élément (SDK.md, section 8, « Onglet sur un élément »).
+- Des entrées du menu sous l’entrée de la page (`menu.setEntries`) ou dans une section créée par l’usage (`menu.addSection`) : SDK.md, section 8.
+- Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (`place_page`).
 - Une page est affichée dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Une modale, un menu ou une infobulle restent dans son cadre. `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas.
 
 Choisir le gabarit d’après ce que la page montre :
@@ -58,14 +59,14 @@ Choisir le gabarit d’après ce que la page montre :
 | Une saisie courte (créer, renommer, inviter : six champs au plus) | `useOpenForm()` (section 9), appelé par une `Action` | Modale |
 | Une saisie longue (une fiche riche, une demande) | `FormPage` (section 9) | Vue de la page |
 | Une confirmation avant d’agir | `Action` `danger` ou `confirm` (section 4), ou `useConfirm()` | Modale |
-| Un contenu à voir sans quitter la page (aperçu, choix) | `Dialog` (section 9) | Modale |
+| Un contenu à voir sans quitter la page (aperçu, choix) | `Modal` (section 9) | Modale |
 | Un élément à lire ou traiter en entier depuis une liste | `DetailPage` avec `back` (section 10) | Onglet fermable ouvert sur l’élément (`views.open`) |
 | Une autre page de l’espace | `shell.navigate("module/page")` ; `shell.openWindow` pour une fenêtre à part | L’onglet de cette page |
 | Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page` et `PageSection` (section 10) | Onglet |
 
 Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `Drawer` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
 
-Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus »), ni des boutons accolés.
+Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus » ; `check` avertit), ni des boutons accolés.
 
 ## 3. Imports et structure d’une page
 
@@ -75,17 +76,17 @@ import { db, shell, useAsync, notifyActionError } from "@alfred/sdk"; // donnée
 import { ListPage, useOpenForm } from "socle-ui";            // composants et gabarits
 import { Markdown } from "socle-ui/markdown";                 // rendu Markdown
 import { MarkdownEditor } from "socle-ui/markdown-editor";    // éditeur Markdown
-import { Notice, Row, Stack, Text } from "@alfred/kit";       // écart et texte hors gabarit
+import { Row, Stack, Text } from "@alfred/kit";               // écart et texte hors gabarit
 ```
 
 - **`socle-ui`** : tous les composants et gabarits. Avant d’employer un composant, relire ses options dans ce document ; un nom ou une option absente n’existe pas.
 - **`@alfred/sdk`** : base, fonctions, fichiers, coquille, état retenu (`usePageState`), chargement (`useAsync`) et moteurs (`loadTerminal`, `loadPdf`). Référence : SDK.md.
 - **Code Python du module** (`import alfred`) : il ne dessine rien. Une page qui lance un travail Python long montre sa progression en lisant le canal que le code publie (`alfred.channels.open("nom")` → `useChannel("<module>:nom")`), par exemple dans une `ProgressBar` ; la fin se dit par une notification (`alfred.notify`). Référence : SDK.md, section 2, « SDK Python ».
-- **`@alfred/kit`** : quatre petits composants d’Alfred, là où socle-ui n’a rien :
+- **`@alfred/kit`** : de petits composants d’Alfred, là où socle-ui n’a rien :
   - `Stack` (`gap` : `none`, `xs`, `sm`, `md`, `lg`) empile des blocs ;
   - `Row` (`gap`, `wrap`, `justify` : `start`, `between`, `end`) aligne sur une ligne ;
   - `Text` (`as` : `p` ou `span` ; `tone` : `default`, `muted`, `danger`, `warning`, `success` ; `size` : `default` ou `meta` ; `weight` : `normal`, `medium`, `strong`) écrit une phrase ;
-  - `Notice` (`tone` : `info`, `success`, `warning`, `danger` ; `title`, `children`, `action`) pose un encart dans une zone.
+  - `Notice` est l’ancien encart : écrire `Alert` de `socle-ui` (`tone`, `title`, `children`, `action`), qui le remplace.
 - L’hôte du cadre enveloppe déjà la page dans `SocleProvider` (thème de l’utilisateur, densité desktop). Ne pas en ajouter un.
 
 ## 4. Les actions
@@ -199,7 +200,7 @@ return (
 - `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`). Un texte devient un paragraphe. Ce qui n’est pas une propriété (une liste, un relevé) va dans le `content` d’une section, pas à côté du `Drawer`.
 - L’ordre des sections est fixe : l’utilisateur les replie, il ne les déplace pas (D-185).
 - Après une écriture dans le panneau, `announceChange()` de `@alfred/sdk` prévient la page : ses `useAsync` se relancent. Dans l’autre sens, la page fait de même.
-- **Pas de champ de saisie dans une ligne ni dans une section.** Ni `Select`, `ComboBox`, `TextField`/`TextInput`, `TextArea`, `NumberField`, `DatePicker`, `Checkbox`, `RadioGroup`, `SegmentedControl`, `Slider`… dans `value` d’un champ, dans `PropertyRow`, dans `Drawer.Section` ou dans `content`, écrits là ou rendus par un composant du module. `check` le refuse, en suivant les composants et les fonctions du module importés par `./…`. La valeur se lit en texte (valeur brute et son `type`) ; on la modifie par **l’action de la ligne** : un menu de choix (`action: { type: "icon", icon, label, menu }`, avec un `DropdownMenu.Section` `selectionMode`), un interrupteur (`type: "switch"`), ou un bouton qui ouvre `useOpenForm` pour une saisie (texte, date, personne). `InlineEdit` (texte modifiable sur place) n’existe que dans `PropertyRow`, la forme à composants, sans en-tête : dans `fields`, un texte se modifie par la fenêtre. Une modification s’enregistre tout de suite ; un échec garde l’ancienne valeur et notifie.
+- **Pas de champ de saisie dans une ligne ni dans une section.** Ni `Select`, `ComboBox`, `TextInput`, `TextArea`, `NumberField`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `SegmentedControl`, `Slider`… (anciens noms compris) dans `value` d’un champ, dans `PropertyRow`, dans `Drawer.Section` ou dans `content`, écrits là ou rendus par un composant du module. `check` le refuse, en suivant les composants et les fonctions du module importés par `./…`. La valeur se lit en texte (valeur brute et son `type`) ; on la modifie par **l’action de la ligne** : un menu de choix (`action: { type: "icon", icon, label, menu }`, avec un `DropdownMenu.Section` `selectionMode`), un interrupteur (`type: "switch"`), ou un bouton qui ouvre `useOpenForm` pour une saisie (texte, date, personne). `InlineEdit` (texte modifiable sur place) n’existe que dans `PropertyRow`, la forme à composants, sans en-tête : dans `fields`, un texte se modifie par la fenêtre. Une modification s’enregistre tout de suite ; un échec garde l’ancienne valeur et notifie.
 
 ```tsx
 import { ChevronDown, Pencil } from "lucide-react";
@@ -234,11 +235,11 @@ Une page placée dans les Réglages (`{ "kind": "settings" }`) est une rubrique 
 <Page state={reglages.loading && !reglages.data ? "loading" : reglages.error ? "error" : "ready"} onRetry={reglages.reload}>
   <PageSection title="Lecture" description="Comment les messages s’affichent.">
     <Stack gap="md">
-      <Switch isSelected={valeurs.apercu} onChange={(v) => enregistrer("apercu", v)} description="Une ligne du message sous l’objet.">
+      <Toggle isSelected={valeurs.apercu} onChange={(v) => enregistrer("apercu", v)} description="Une ligne du message sous l’objet.">
         Aperçu des messages
-      </Switch>
+      </Toggle>
       <Select label="Tri" width="md" options={TRIS} value={valeurs.tri} onChange={(v) => enregistrer("tri", v)} />
-      <TextField label="Signature" width="lg" defaultValue={valeurs.signature} onBlur={…} />
+      <TextInput label="Signature" width="lg" defaultValue={valeurs.signature} onBlur={…} />
     </Stack>
   </PageSection>
 </Page>
@@ -250,37 +251,138 @@ Une page placée dans les Réglages (`{ "kind": "settings" }`) est une rubrique 
 
 ## 8. Composants de socle-ui et librairies
 
-Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou le `content` d’une section. Chaque composant marqué ★ demande un nom accessible.
+Chaque élément d’une page se prend dans socle-ui. Cette section a deux parts : **quand utiliser quoi**, écrite à la main, puis le **catalogue** de la version installée, généré depuis la doc de socle-ui (`AI.md`). Un composant absent du catalogue n’existe pas : ne pas l’inventer, demander (PLACEMENT.md, section 9).
 
-| Besoin | Composant | Options utiles |
+### Quand utiliser quoi
+
+Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou le `content` d’une section. Chaque composant marqué ★ demande un nom accessible ; options exactes dans sa spec (`docs/alfred/socle/specs/`).
+
+| Besoin | Composant | À retenir |
 |---|---|---|
-| Tableau dans un bloc | `Table` | `columns: [{ id, label, align?, width?, sortable? }]`, `rows`, `selectionMode`, `onAction`, `rowActions`, `density="compact"`, `groupBy`, `rowDescription` |
-| Liste qui se lit élément par élément | `List` | `items: [{ id, title, subtitle, meta, status, unread }]`, `onAction`, `itemActions`, `groups` |
-| Hiérarchie (dossiers, chemins, catégories) | `TreeView` ★ `aria-label` | `nodes: [{ id, label, icon, meta, children, hasChildren }]`, `loadChildren(node, signal)`, `selectionMode`, `onAction`, `actions(node)`, `onMove` |
-| Journal horodaté (build, conteneur) | `LogViewer` ★ `label` | `lines` (texte ANSI ou `{ text, time, level }`), `live`, `levels`, `fill`, `actions(view)`, `ref` (`append`, `clear`) |
-| Console interactive | `Terminal` ★ `label` | `engine={loadTerminal}`, `{...useTerminalConnection(canal)}`, `onResize`, `readOnly`, `fill` |
-| Différences entre deux textes | `DiffView` ★ `label` | `before` et `after`, ou `patch` (le `text` de `git.diff`), `fileName`, `truncated`, `fill` |
-| Aperçu d’un PDF ou d’une image | `DocumentViewer` ★ `label` | `data` (octets de `files.read`) ou `src`, `name`, `type`, `loadPdf={loadPdf}`, `onDownload`, `actions`, `height` |
-| HTML reçu (courriel) | `HtmlContent` ★ `label` | `html`, `onLink`, `resolveImage`, `surface` |
-| Texte Markdown | `Markdown` (de `socle-ui/markdown`) | `children` (le texte), `headingLevel`, `onLinkPress`, `renderImage` |
-| Écrire du Markdown | `MarkdownEditor` ★ `label` (de `socle-ui/markdown-editor`) | `value`, `onChange`, `preview="toggle"`, `fill`, `onPasteImage` |
-| État d’un élément | `StatusBadge` (`tone`, libellé en enfant), `StatusDot` (`label`, `tone`) | Tons : `neutral`, `pending`, `info`, `success`, `warning`, `danger` |
-| Valeur typée hors gabarit | `FormattedValue` | `value`, `type`, `statuses`, `currency` |
-| Avancement, quota | `ProgressBar` | `label`, `value`, `max`, `tone` |
-| Étapes d’un parcours | `StepList` | `label`, `steps`, `current`, `onSelect` |
-| Bloc repliable | `Disclosure` | `title`, `defaultExpanded` |
-| Propriété avec action | `PropertyRow` | `label`, `value`, `action` |
-| Texte modifiable sur place | `InlineEdit` | `value`, `label`, `onSave` |
-| Vues d’une page | `Tabs` | `items: [{ id, label }]`, `selectedId`, `onSelectionChange` |
-| Volet sans voile | `Popover` | `trigger`, `title`, `children` |
-| Menu d’un bouton, menu contextuel | `Menu`, `useContextMenu()` | `trigger`, `items={<Menu.Item label onAction />}` |
-| Champ de recherche d’une `Page` | `SearchField` | `label`, `onChange({ text, tags })`, `tagMode` |
-| Champs | `TextField`, `TextArea`, `Select`, `ComboBox`, `Checkbox`, `RadioGroup`, `Switch`, `Fieldset` | `label`, `description`, `error`, `isRequired`, `width` (`xs` à `lg`) |
-| Identifiant, commande | `Code` | `block` pour un extrait |
-| Personne | `Avatar` | `name`, `src`, `size` |
-| Lien | `Link` | `href` externe, ou `onPress` |
-| Squelette d’attente | `Skeleton` | `shape`, `width` |
-| Bloc vide | `EmptyState` | `title`, `description`, `icon`, `action={<Button variant="primary">…</Button>}` |
+| Une collection entière | `ListPage` (section 5) | Pas une `Table` seule dans une `Page`. |
+| Un tableau dans un bloc | `Table` | `density="compact"`, `groupBy`, `rowActions`. |
+| Une liste qui se lit élément par élément | `List` | `items: [{ id, title, subtitle, meta, status, unread }]`. |
+| Une hiérarchie (dossiers, chemins, catégories) | `TreeView` ★ `aria-label` | `loadChildren` pour un niveau à l’ouverture. Jamais des `List` imbriquées. |
+| Un journal horodaté | `LogViewer` ★ `label` | `lines`, `live`, `fill`. |
+| Une console interactive | `Terminal` ★ `label` | `engine={loadTerminal}`, `{...useTerminalConnection(canal)}`. |
+| Ce qui a changé entre deux textes | `DiffView` ★ `label` | `before` et `after`, ou `patch`. |
+| Un PDF ou une image à lire | `DocumentViewer` ★ `label` | `data`, `loadPdf={loadPdf}`. Une image seule, en vignette : `ImageThumbnail`. |
+| Un HTML reçu (courriel) | `HtmlContent` ★ `label` | Nettoie le HTML. |
+| Du Markdown à lire, à écrire | `Markdown` (`socle-ui/markdown`), `MarkdownEditor` ★ `label` (`socle-ui/markdown-editor`) | Jamais une `TextArea` pour du Markdown. |
+| L’état d’un élément | `Badge` (libellé), `BadgeDot` (point nommé) | Tons `StatusTone` ; dans un gabarit, le `type: "status"` d’une colonne ou d’un champ. |
+| Une valeur typée hors gabarit | `FormattedValue` | `value`, `type`. La page ne formate rien. |
+| Un chiffre clé qui mène quelque part | `Card` `variant="metric"`, avec `onPress` | Pas de chiffre sans action, pas de mur de cartes (D-361). |
+| Un encart de message dans le contenu | `Alert` | Au-dessus de ce qu’il concerne ; une action au plus (D-355). |
+| Un avancement, un quota | `ProgressBar` ; `UsageRing` pour une jauge compacte | `label`, `value`, `max`. |
+| Les étapes d’un parcours | `ProgressIndicator` | `label`, `steps`, `current`. |
+| Un bloc secondaire repliable | `Accordion` | « Options avancées », détails d’une erreur. |
+| Une propriété avec son action, hors `fields` | `PropertyRow`, `InlineEdit` | Forme à composants du `Drawer`. |
+| Un mode d’affichage, une période, appliqués tout de suite | `SegmentedControl` | Dans la `toolbar` d’une `Page` ; jamais pour des vues (onglets fixes). |
+| Un volet sans voile | `Popover` | Filtrer, partager, aperçu rapide. |
+| Un menu d’actions, un menu contextuel | `DropdownMenu`, `useContextMenu()` | Dans un gabarit, une `Action` sans icône va d’elle-même dans « … ». |
+| La recherche d’une `Page` composée | `SearchInput` | `ListPage` a la sienne. |
+| Des étiquettes à retirer ou à choisir | `TagGroup` et `Tag` | |
+| Un champ de saisie | `TextInput`, `TextArea`, `NumberField`, `Select`, `ComboBox`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `Toggle`, `Slider`, `FileUpload`, `Fieldset` | Hors formulaire de `useOpenForm` : seulement dans une page des Réglages ou une `Page` composée. Un réglage immédiat : `Toggle` ; une case d’un formulaire qu’on envoie : `Checkbox` (D-137). |
+| Une couleur à choisir dans un nuancier | `ColorPicker` | |
+| Un identifiant, une commande | `Code` | `block` pour un extrait. |
+| Une personne | `Avatar` | `name`, `src`. |
+| Un lien | `Link` | `href` externe, ou `onPress`. |
+| Une attente locale | `Skeleton` ; `Spinner` pour une attente courte | Les gabarits ont déjà leurs états. |
+| Un bloc vide | `EmptyState` ; dans un gabarit, `empty` | `action={<Button variant="primary">…</Button>}`. |
+
+<!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
+
+### Catalogue de socle-ui 1.13.1
+
+Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
+
+| Composant | Type | Rôle | Spec à lire |
+|---|---|---|---|
+| `Accordion` | Composant | Bloc secondaire repliable, avec un titre toujours visible : « Options avancées » d'un formulaire, détails d'une erreur, éléments repliés d'un panneau (D-321). | `docs/alfred/socle/specs/Accordion.md` |
+| `AgentActivity` | Composant | `AgentActivity` montre un outil appelé par l'agent sur une ligne ; `ActivityGroup` montre une suite d'outils et la groupe derrière un résumé au-delà de 3, ou du seuil choisi par l'app (D-376, D-390). | `docs/alfred/socle/specs/AgentActivity.md` |
+| `Alert` | Composant | `Alert` est un encart de message dans le contenu, au-dessus de ce qu'il concerne : un stock bas sur une fiche, une synchronisation impossible au-dessus d'une liste, une adresse vérifiée sous un formulaire. Il dit aussi un état durable de la page ou de l'app (lecture seule, hors ligne, données d'exemple), en tête du contenu : la barre du haut n'en affiche plus (D-253). | `docs/alfred/socle/specs/Alert.md` |
+| `AttachmentChip` | Composant | Pièce jointe d'un message, avant l'envoi : une image, un fichier, ou un long texte collé. On la voit, on l'ouvre (texte), on la retire. | `docs/alfred/socle/specs/AttachmentChip.md` |
+| `Avatar` | Composant | Représenter une personne (ou un compte) par son image ou ses initiales, à côté de son nom. | `docs/alfred/socle/specs/Avatar.md` |
+| `Badge` | Composant | Montrer l'état d'un élément : « Terminé », « En retard », « À venir ». `Badge` montre un point et un libellé ; `BadgeDot` montre le point seul, nommé, quand le libellé ne tient pas. | `docs/alfred/socle/specs/Badge.md` |
+| `Button` | Composant | Bouton avec un libellé, et une icône facultative. Il déclenche une action : envoyer un formulaire, confirmer, annuler, réessayer, exporter. | `docs/alfred/socle/specs/Button.md` |
+| `Card` | Composant | `Card` regroupe un contenu court qui forme un tout : un résumé, un chiffre clé, un élément d'une grille. Elle peut être entièrement cliquable quand elle a une seule action principale. | `docs/alfred/socle/specs/Card.md` |
+| `ChatComposer` | Composant | Zone de saisie d'un chat avec un agent : écrire un message, citer des ressources (`@fichier`, `/commande`), joindre des fichiers, mettre un message en file pendant une réponse, arrêter l'agent. | `docs/alfred/socle/specs/ChatComposer.md` |
+| `ChatTranscript` | Composant | Zone défilante d'une conversation avec un agent : colonne centrée de 760 px qui reçoit les messages (`ChatMessage`) et le travail de l'agent (`ActivityGroup`, `WorkStatus`, `WorkSummary`). Elle suit la réponse en cours tant que l'utilisateur est en bas (D-375). | `docs/alfred/socle/specs/ChatTranscript.md` |
+| `Checkbox` | Composant | `Checkbox` : une valeur oui/non qui fait partie d'un formulaire qu'on envoie, ou une acceptation (« J'ai lu les conditions »). `CheckboxGroup` : plusieurs choix indépendants dans une liste courte, sous un libellé commun. | `docs/alfred/socle/specs/Checkbox.md` |
+| `ChoicePrompt` | Composant | Carte posée au-dessus de la zone de saisie quand l'agent attend une réponse : une question avec des options numérotées, ou une autorisation (D-377). | `docs/alfred/socle/specs/ChoicePrompt.md` |
+| `Code` | Composant | Texte à chasse fixe : identifiant, chemin, commande, valeur technique (`Code`), ou extrait sur plusieurs lignes (`Code block`). | `docs/alfred/socle/specs/Code.md` |
+| `CodeField` | Composant | `CodeField` saisit un code à usage unique de 4 à 8 caractères : code reçu par SMS ou par e-mail, code d'une application d'authentification. | `docs/alfred/socle/specs/CodeField.md` |
+| `ColorPicker` | Composant | `ColorPicker` choisit une couleur dans un nuancier prédéfini : la couleur d'une étiquette, d'un projet, d'une catégorie d'agenda. | `docs/alfred/socle/specs/ColorPicker.md` |
+| `ComboBox` | Composant | Champ de formulaire qui propose une liste de choix pendant la saisie. On choisit un élément (choix simple) ou plusieurs (choix multiple, en étiquettes), dans une liste connue ou chargée par une API (D-140). La valeur choisie (un id, ou une liste d'ids) est enregistrée avec le formulaire. | `docs/alfred/socle/specs/ComboBox.md` |
+| `DatePicker` | Composant | `DatePicker` saisit une date : une échéance, une date de livraison, une date de naissance. `DateRangePicker` saisit une période : du 3 au 24 novembre. | `docs/alfred/socle/specs/DatePicker.md` |
+| `DiffView` | Composant | Différences entre deux versions d'un texte (code, Markdown, configuration), ou lecture d'un diff unifié (`git diff`, `diff -u`). `DiffStat` montre seul les compteurs « +12 −3 » (D-290). | `docs/alfred/socle/specs/DiffView.md` |
+| `DocumentViewer` | Composant | Montrer l'aperçu d'un document dans une page : PDF (dessiné par pdf.js) ou image (D-310). | `docs/alfred/socle/specs/DocumentViewer.md` |
+| `DropdownMenu` | Composant | Liste d'actions ou de choix qui s'ouvre depuis un bouton : « … » d'un élément, « Plus d'actions », menu du compte, liste « Toutes les vues ». Il s'ouvre aussi au clic droit sur une zone (menu contextuel), au point du clic (D-327). | `docs/alfred/socle/specs/DropdownMenu.md` |
+| `EmptyState` | Composant | Dire qu'une zone est vide et proposer la suite : zone `empty` de ListPage (aucune donnée), panneau sans élément. | `docs/alfred/socle/specs/EmptyState.md` |
+| `Fieldset` | Composant | Regroupe des champs différents qui forment un tout, sous une légende : une adresse (rue, code postal, ville), une période (début, fin). | `docs/alfred/socle/specs/Fieldset.md` |
+| `FileUpload` | Composant | `FileUpload` ajoute des fichiers à un formulaire ou à un élément : par glisser-déposer ou par le bouton. Il vérifie le type et la taille avant de transmettre les fichiers à l'app. Il n'envoie rien : l'app envoie et rend l'état de chaque fichier (D-357). | `docs/alfred/socle/specs/FileUpload.md` |
+| `FormattedValue` | Composant | Afficher une valeur de donnée d'après son **type** : texte, nombre, montant, date, statut, lien… Le type fixe le format de la langue, l'alignement, la largeur de colonne et le tri. L'app ne formate rien elle-même : elle déclare le type. | `docs/alfred/socle/specs/FormattedValue.md` |
+| `HtmlContent` | Composant | Afficher sans risque un HTML reçu de l'extérieur : corps d'un courriel, page enregistrée, description riche d'un service (D-317). | `docs/alfred/socle/specs/HtmlContent.md` |
+| `IconButton` | Composant | Bouton qui ne montre qu'une icône. Il sert aux actions fréquentes et connues : barre supérieure, actions d'une ligne, pied de sidebar, en-tête du panneau de détail. | `docs/alfred/socle/specs/IconButton.md` |
+| `ImageThumbnail` | Composant | Montrer une image qu'on consulte (envoyée, citée, produite, capturée) en vignette ; un clic l'agrandit (D-383). `ImageGallery` range plusieurs vignettes en groupes. | `docs/alfred/socle/specs/ImageThumbnail.md` |
+| `InlineEdit` | Composant | Texte modifiable sur place : le titre d'un élément, une valeur du panneau de détail (layout-rules : « propriétés modifiables sur place »), le nom d'une liste ou d'une vue. | `docs/alfred/socle/specs/InlineEdit.md` |
+| `Link` | Composant | Lien dans un texte, une cellule ou une ligne de détail : aller vers une page, un document, une adresse externe ; ou action secondaire dans une phrase (sans `href`). | `docs/alfred/socle/specs/Link.md` |
+| `List` | Composant | Liste d'éléments qui se lisent un par un : un titre, un sous-titre, une méta. Elle sert dans la zone `list` du gabarit `ListPage` (messages, demandes, tâches, contacts) et remplace le tableau sur mobile (spec de Table). | `docs/alfred/socle/specs/List.md` |
+| `LogViewer` | Composant | Journal en lignes horodatées : build, conteneur, tâche planifiée, service. On le lit, on y cherche, on le filtre par niveau, on le suit en direct et on le copie. Il tient des centaines de milliers de lignes. | `docs/alfred/socle/specs/LogViewer.md` |
+| `MentionInput` | Composant | Champ de texte multiligne où l'on cite des ressources de l'app par un caractère : `@` pour un fichier, `/` pour une commande, `#` pour un ticket. Chaque ressource choisie devient une pastille non éditable, à sa place dans le texte. | `docs/alfred/socle/specs/MentionInput.md` |
+| `MessageQueue` | Composant | Messages écrits pendant une réponse de l'agent, qui partiront à la fin de l'étape en cours. On les réordonne, on les modifie, on les retire, ou on en envoie un tout de suite. | `docs/alfred/socle/specs/MessageQueue.md` |
+| `Modal` | Composant | `Modal` ouvre une fenêtre secondaire, bloquante, posée sur l'app : un formulaire court (créer, renommer), un aperçu à vérifier, un espace à part comme les Réglages (D-015). AppShell y renvoie pour toute fenêtre secondaire. | `docs/alfred/socle/specs/Modal.md` |
+| `NumberField` | Composant | Champ de saisie d'un nombre : une quantité, un prix, un pourcentage, une durée en heures. | `docs/alfred/socle/specs/NumberField.md` |
+| `Pagination` | Composant | `Pagination` permet d'aller d'une page de résultats à une autre : précédent, numéros, suivant. `ListPage` l'utilise en mode `pages` (D-175, D-359). | `docs/alfred/socle/specs/Pagination.md` |
+| `Popover` | Composant | Volet flottant ouvert depuis un bouton, sans voile : un contenu court et riche (texte, quelques champs, liste courte) sans quitter la page. Exemples : partager, filtrer, aperçu rapide, réglages rapides. | `docs/alfred/socle/specs/Popover.md` |
+| `ProgressBar` | Composant | Montrer l'avancement d'une tâche (import, envoi) ou la part utilisée d'un quota. | `docs/alfred/socle/specs/ProgressBar.md` |
+| `ProgressIndicator` | Composant | Étapes numérotées d'un parcours guidé, avec leur état : installation, configuration d'un compte, import en plusieurs temps. | `docs/alfred/socle/specs/ProgressIndicator.md` |
+| `RadioButtonGroup` | Composant | Un seul choix parmi 2 à 5 options qu'on veut toutes voir, chacune avec une description courte si besoin. | `docs/alfred/socle/specs/RadioButtonGroup.md` |
+| `SearchInput` | Composant | Barre de recherche : elle recueille les critères de l'utilisateur (texte en cours, étiquettes) et les transmet à l'app (D-077). L'app s'en sert pour filtrer ou trier un tableau, une liste, souvent par une API. La barre n'affiche ni ne filtre de résultats. | `docs/alfred/socle/specs/SearchInput.md` |
+| `SegmentedControl` | Composant | `SegmentedControl` choisit une option parmi 2 à 4, et l'applique tout de suite : un mode d'affichage (liste, grille), une période (jour, semaine, mois). | `docs/alfred/socle/specs/SegmentedControl.md` |
+| `Select` | Composant | Choix d'une valeur dans une liste fermée et courte (2 à 15 options environ), sans saisie de texte. | `docs/alfred/socle/specs/Select.md` |
+| `Separator` | Composant | Séparer deux groupes d'une même zone par un trait, quand un écart ne suffit pas. | `docs/alfred/socle/specs/Separator.md` |
+| `Skeleton` | Composant | Réserver la place d'un contenu en cours de chargement, avec des formes qui annoncent sa disposition. | `docs/alfred/socle/specs/Skeleton.md` |
+| `Slider` | Composant | `Slider` règle une valeur approximative dans une étendue : un seuil d'alerte, un volume, une opacité, une fourchette de prix. | `docs/alfred/socle/specs/Slider.md` |
+| `Spinner` | Composant | `Spinner` montre une attente courte et locale : une cellule, un panneau, une ligne qui se met à jour. C'est l'indicateur rotatif de `Button` et `SearchInput` (D-081), exposé. | `docs/alfred/socle/specs/Spinner.md` |
+| `SplitButton` | Composant | `SplitButton` lance une action par défaut et propose ses variantes dans un menu : « Enregistrer », puis « Enregistrer sous… » et « Enregistrer et fermer ». | `docs/alfred/socle/specs/SplitButton.md` |
+| `Table` | Composant | Tableau de données : des éléments en lignes, leurs propriétés en colonnes, avec tri et sélection. Il sert dans la zone `list` du gabarit `ListPage` quand on compare plusieurs propriétés d'un élément à l'autre. | `docs/alfred/socle/specs/Table.md` |
+| `Tag` | Composant | `TagGroup` affiche une liste d'étiquettes interactives (`Tag`) : des mots-clés qu'on retire (étiquettes d'un ticket), ou des filtres qu'on choisit (« Urgent », « Client »). | `docs/alfred/socle/specs/Tag.md` |
+| `Terminal` | Composant | Terminal interactif : console d'un conteneur, d'un serveur ou d'un processus local. Il affiche ce que le programme écrit et lui envoie ce que l'utilisateur tape. | `docs/alfred/socle/specs/Terminal.md` |
+| `TextArea` | Composant | Champ de saisie d'un texte libre sur plusieurs lignes : une note, une description, un commentaire. | `docs/alfred/socle/specs/TextArea.md` |
+| `TextInput` | Composant | Champ de saisie d'une ligne de texte libre : un nom, une adresse e-mail, une URL, un numéro de téléphone, un mot de passe. | `docs/alfred/socle/specs/TextInput.md` |
+| `Toggle` | Composant | Interrupteur marche/arrêt pour un réglage qui s'applique tout de suite (D-007, D-137). | `docs/alfred/socle/specs/Toggle.md` |
+| `Tooltip` | Composant | Info-bulle : un court texte qui nomme ou complète un élément au survol ou au focus clavier. Elle sert surtout aux boutons-icônes (`IconButton`) et aux textes tronqués. | `docs/alfred/socle/specs/Tooltip.md` |
+| `TreeView` | Composant | Arbre de nœuds dépliables, dans le contenu d'une page : fichiers et dossiers, chemins, catégories, toute hiérarchie de données. On y explore, on choisit un ou plusieurs nœuds, on agit sur eux. Une ligne par nœud, autant de niveaux que nécessaire. | `docs/alfred/socle/specs/TreeView.md` |
+| `UsageRing` | Composant | `UsageRing` montre une part utilisée (contexte d'une conversation, quota) dans une petite jauge en anneau. Un clic ouvre le volet des limites, dont l'app donne le contenu, le plus souvent des lignes `UsageMeter`. | `docs/alfred/socle/specs/UsageRing.md` |
+| `ActionBar` | Pattern | Une app décrit ses actions par des données (`Action`). `ActionBar` les dessine selon la zone où elle se trouve : bouton à texte, bouton-icône ou entrée du menu « … ». La page ne choisit aucun bouton. Les gabarits (ListPage, DetailPage, Drawer) s'appuient sur ce modèle. | `docs/alfred/socle/specs/ActionBar.md` |
+| `Drawer` | Pattern | Contenu du panneau de détail d'AppShell (D-018) : les propriétés et les réglages de l'élément sélectionné, rangés en sections. Il se place dans le slot `detail` d'AppShell. | `docs/alfred/socle/specs/Drawer.md` |
+| `ChatPage` | Gabarit | Gabarit d'une page de chat avec un agent, dans la zone `main` d'AppShell ou dans une fenêtre à part : barre d'outils, relevé (`ChatTranscript`), puis un pied aligné sur la colonne de 760 px du relevé (alertes, question de l'agent, saisie, options). Il porte la zone de dépôt de fichiers de toute la page (D-382). | `docs/alfred/socle/specs/ChatPage.md` |
+| `DetailPage` | Gabarit | Gabarit de la zone `main` d'AppShell pour un élément ouvert en entier : une demande, une facture, un document. Il montre le contenu principal de l'élément, en sections. | `docs/alfred/socle/specs/DetailPage.md` |
+| `FormPage` | Gabarit | `FormPage` montre un formulaire long, rangé en sections : créer un objet riche, modifier sa fiche, remplir une demande. L'app décrit ses champs par des données ; le gabarit les dessine avec les champs du lot 1 (D-190). | `docs/alfred/socle/specs/FormPage.md` |
+| `ListPage` | Gabarit | Gabarit d'une page qui liste des éléments de même nature : demandes, contacts, factures, fichiers. L'app **décrit** sa page par des données (titre, colonnes typées, filtres, actions) ; le gabarit dessine tout, y compris le chargement, le vide, l'absence de résultat et l'erreur (D-173). Il se place dans la zone `main` d'`AppShell`. | `docs/alfred/socle/specs/ListPage.md` |
+| `Page` | Gabarit | Page composée : gabarit libre de la zone `main` d'AppShell, quand aucun autre gabarit ne convient (tableau de bord, éditeur, graphique, synthèse de quelques blocs). Elle pose les zones standard ; l'app y place des composants du socle, sans HTML stylé (D-217). | `docs/alfred/socle/specs/Page.md` |
+
+Réservés à la coquille d’Alfred ou à l’hôte du cadre, jamais rendus par une page : `SocleProvider`, `useSocle`, `Tabs`, `AppShell`, `NotificationCenter`, `Sidebar`, `LoginPage`, `SettingsPage`.
+
+Anciens noms : ils marchent encore, mais `check` avertit et ils disparaîtront en socle-ui 2.0.0 (D-336). Écrire le nom actuel.
+
+| Ancien nom | Nom actuel |
+|---|---|
+| `Disclosure` | `Accordion` |
+| `Switch` | `Toggle` |
+| `Divider` | `Separator` |
+| `Dialog` | `Modal` |
+| `Menu` | `DropdownMenu` |
+| `TextField` | `TextInput` |
+| `SearchField` | `SearchInput` |
+| `StepList` | `ProgressIndicator` |
+| `StatusBadge` | `Badge` |
+| `StatusDot` | `BadgeDot` |
+| `DetailPanel` | `Drawer` |
+| `RadioGroup` | `RadioButtonGroup` |
+
+<!-- socle-ui:catalogue:fin -->
 
 `Button` et `IconButton` prennent `onPress`, jamais `onClick`.
 
@@ -334,13 +436,13 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 
 **Confirmation : `useConfirm`.** `const confirm = useConfirm(); if (await confirm({ title: "Vider la corbeille ?", message: "Les 12 éléments seront effacés.", confirmLabel: "Vider" })) …`. Une `Action` `danger` le fait déjà.
 
-**Contenu à voir : `Dialog`.** `isOpen`, `onOpenChange`, `title`, `description`, `size` (`sm` à `xl`), `footer` : des `Button`, « Annuler » puis l’action.
+**Contenu à voir : `Modal`.** `isOpen`, `onOpenChange`, `title`, `description`, `size` (`sm` à `xl`), `footer` : des `Button`, « Annuler » puis l’action.
 
 ## 10. Page composée et élément ouvert
 
 **`Page` et `PageSection`** : un tableau de bord, une synthèse, un éditeur.
 
-- `Page` : `toolbar` (contenu libre sur une ligne : `SearchField`, `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full` ou `text`), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`.
+- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full` ou `text`), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`.
 - `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state`, `onRetry`, `empty: { title, description, action }`.
 - Pas de titre de page : il est dans la barre du haut. Pas de cartes décoratives ni de chiffres sans action.
 
@@ -376,7 +478,7 @@ Une colonne de `ListPage`, un champ de `Drawer` et `FormattedValue` prennent la 
 | `date`, `datetime`, `relative` | ISO 8601, ou millisecondes | « 3 févr. 2026 », « il y a 2 h » |
 | `duration` | nombre (`durationUnit` : `ms`, `s`, `min`) | « 1 h 05 » |
 | `boolean` | `true` / `false` | « Oui » / « Non » |
-| `status` | clé | `StatusBadge` d’après `statuses` |
+| `status` | clé | `Badge` d’après `statuses` |
 | `email`, `url` | texte | lien |
 | `code` | texte | chasse fixe |
 | `tags` | liste de textes | étiquettes |
@@ -404,7 +506,7 @@ Les gabarits rendent chaque état. Une `Page` composée les rend par `state` et 
 | Aucun résultat | Posé par `ListPage`, avec « Effacer la recherche » |
 | Échec de chargement | `hasError` et `onRetry` (ou `state="error"`) |
 | Prérequis absent dans un bloc | `empty` de `PageSection`, avec l’action qui le résout |
-| Précision locale | `Notice` de `@alfred/kit`, dans le bloc concerné |
+| Précision locale, état durable de la page | `Alert` de `socle-ui`, en tête du bloc ou du contenu (D-085, D-253) |
 | Résultat d’une action qui ne se voit pas | `shell.notify({ title, tone: "success" })` |
 | Échec d’une action | `onActionError={notifyActionError}` |
 | Calcul long (fonction, noyau Python) | `ProgressBar` dans le bloc concerné, avec le message de l’avancement (`usePythonChannel`, SDK.md § 19) ; sans fraction connue, barre indéterminée |
@@ -595,7 +697,7 @@ export default function Detail() {
 ```tsx
 import { db, notifyActionError, useAsync } from "@alfred/sdk";
 import { Stack } from "@alfred/kit";
-import { Page, PageSection, Select, Switch } from "socle-ui";
+import { Page, PageSection, Select, Toggle } from "socle-ui";
 
 const RAPPELS = [{ id: "jamais", label: "Jamais" }, { id: "veille", label: "La veille" }, { id: "jour", label: "Le jour même" }];
 
@@ -611,10 +713,10 @@ export default function Reglages() {
       <PageSection title="Rappels" description="Quand Alfred vous rappelle une échéance.">
         <Stack gap="md">
           <Select label="Rappel" width="md" options={RAPPELS} value={valeur("rappel") ?? "veille"} onChange={(id) => id && enregistrer("rappel", id)} />
-          <Switch isSelected={valeur("weekend") === "1"} onChange={(v) => enregistrer("weekend", v ? "1" : "0")}
+          <Toggle isSelected={valeur("weekend") === "1"} onChange={(v) => enregistrer("weekend", v ? "1" : "0")}
             description="Les rappels du samedi passent au lundi.">
             Pas de rappel le week-end
-          </Switch>
+          </Toggle>
         </Stack>
       </PageSection>
     </Page>
@@ -627,7 +729,7 @@ export default function Reglages() {
 ```tsx
 import { useAsync } from "@alfred/sdk";
 import { Text } from "@alfred/kit";
-import { List, Page, PageSection, Tabs } from "socle-ui";
+import { List, Page, PageSection, SegmentedControl } from "socle-ui";
 import { useState } from "react";
 import { ETATS, lister } from "../lib/taches";
 
@@ -641,7 +743,7 @@ export default function Semaine() {
 
   return (
     <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} onRetry={taches.reload}
-      toolbar={<Tabs items={[{ id: "retard", label: `En retard (${enRetard.length})` }, { id: "bloquees", label: `Bloquées (${bloquees.length})` }]} selectedId={vue} onSelectionChange={setVue} />}>
+      toolbar={<SegmentedControl label="Tâches à voir" options={[{ value: "retard", label: `En retard (${enRetard.length})` }, { value: "bloquees", label: `Bloquées (${bloquees.length})` }]} value={vue} onChange={setVue} />}>
       <PageSection title={vue === "retard" ? "Tâches en retard" : "Tâches bloquées"}
         empty={montrees.length ? undefined : { title: "Rien à rattraper", description: "Toutes les tâches sont à jour." }}>
         <List selectionMode="none" items={montrees.map((t) => ({ id: t.id, title: t.titre, subtitle: t.responsable ?? undefined,
@@ -665,22 +767,22 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 |---|---|
 | `CollectionPage` | `ListPage` : `columns` en `{ id, label, type }`, `emptyTitle` → `empty.title`, `load` → `rows` + `useAsync` |
 | `DetailPanel` (`load`, `sections`) | `Drawer` déclaratif : `header`, `sections`, `isLoading`, `hasError` ; la page charge avec `useSelection` et `useAsync` |
-| `SettingsPage` | `Page` + `PageSection` + `Switch`, `Select`, `TextField` (section 7) |
+| `SettingsPage` | `Page` + `PageSection` + `Toggle`, `Select`, `TextInput` (section 7) |
 | `openForm` | `useOpenForm()` ; champs `{ name, label, type, isRequired }` (`optional` disparaît : le champ est facultatif sans `isRequired`) |
-| `openModal` | `Dialog` |
+| `openModal` | `Modal` |
 | `openSubpage` | `DetailPage` avec `back`, rendue à la place de la liste |
 | `confirmAction`, `ConfirmDialog` | `useConfirm()`, ou `Action` `danger` |
 | `Action` (`onClick`, `icon: Pencil`, `disabled`, `hidden`) | `Action` (`id`, `onPress`, `icon: <Pencil size={16} />`, `isDisabled`, `isHidden`) ; `success` → `shell.notify` dans `onPress` |
-| `Page` (`search`, `bar`, `actions`, `header`) | `Page` (`toolbar`, `actions`) ; recherche : `ListPage` ou `SearchField` dans `toolbar` |
+| `Page` (`search`, `bar`, `actions`, `header`) | `Page` (`toolbar`, `actions`) ; recherche : `ListPage` ou `SearchInput` dans `toolbar` |
 | `Section`, `Surface`, `Heading`, `Grid` | `PageSection` |
 | `Stack`, `Row`, `Text` | `@alfred/kit` |
-| `FeedbackBanner` | `Notice` de `@alfred/kit`, ou une notification |
+| `FeedbackBanner` | `Alert` de `socle-ui` (encart dans la zone), ou une notification |
 | `DataTable`, `DataGrid` | `Table`, ou `ListPage` |
 | `List`, `ListItem` | `List` (`items`) |
 | `KeyValueList` | `fields` d’un `Drawer` |
-| `TextInput`, `SelectControl`, `CheckboxControl`, `SwitchControl`, `RadioControl`, `FormField` | `TextField`, `Select`, `Checkbox`, `Switch`, `RadioGroup` (libellé porté par le champ) |
+| `TextInput`, `SelectControl`, `CheckboxControl`, `SwitchControl`, `RadioControl`, `FormField` | `TextInput`, `Select`, `Checkbox`, `Toggle`, `RadioButtonGroup` (libellé porté par le champ) |
 | `Combobox`, `MultiSelectCombobox` | `ComboBox` (`selectionMode`) |
-| `ChoiceGroup`, bascule de vue (`group`, `selected`) | `Tabs`, ou `RadioGroup orientation="horizontal"` |
+| `ChoiceGroup`, bascule de vue (`group`, `selected`) | des onglets fixes (PLACEMENT.md), `SegmentedControl` pour un mode d’affichage, ou `RadioButtonGroup orientation="horizontal"` dans un formulaire |
 | `Spinner`, `LoadingSkeleton` | état `loading` du gabarit, `ProgressBar`, `Skeleton` |
 | `Pagination` | `pagination` de `ListPage` |
 | `Terminal channel={useChannel(id)}` | `Terminal engine={loadTerminal} {...useTerminalConnection(id)}` |
@@ -693,7 +795,9 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 
 ## 16. Checklist avant de dire qu’une page est terminée
 
+- [ ] Chaque chose est à sa place selon PLACEMENT.md (entrée du menu, onglet, panneau, fenêtre, action, message) ; un doute a été posé en question à l’utilisateur.
 - [ ] Le gabarit correspond à ce que la page montre (section 2) ; `Page` seulement si aucun ne convient.
+- [ ] Chaque composant vient du catalogue (section 8), sous son nom actuel ; sa spec a été lue.
 - [ ] `check` rend `"ok": true`, sans remarque `design`.
 - [ ] Toutes les actions sont des `Action` avec `id` et `onPress` ; une seule `primary` par zone ; une icône pour chaque action courante ; `danger` avec un `confirm` qui nomme l’objet.
 - [ ] `onActionError={notifyActionError}` sur chaque gabarit qui porte des actions.

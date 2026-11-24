@@ -135,3 +135,75 @@ reel!(opencode_conversation, "opencode", conversation);
 reel!(claude_espace_de_travail, "claude", workspace);
 reel!(codex_espace_de_travail, "codex", workspace);
 reel!(opencode_espace_de_travail, "opencode", workspace);
+
+/// Essai du guide de placement : dans un espace de test neuf (jamais celui de l’utilisateur), l’agent reçoit une
+/// demande de module avec les consignes d’Alfred, propose (plan, maquette, question), puis construit après « oui ».
+/// L’espace reste sur le disque pour la relecture ; son chemin est imprimé.
+/// `cargo test --lib agents::tests_reel::claude_suivi_de_factures -- --ignored --nocapture`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance le vrai Claude Code et son modèle, plusieurs minutes"]
+async fn claude_suivi_de_factures() {
+    let keep = tempfile::Builder::new().prefix("alfred-essai-factures-").tempdir().unwrap().keep();
+    let data = keep.join("alfred");
+    let state = AppState::new(&data).unwrap();
+    let space = crate::space::Space::open_or_create(&keep.join("espace"), Some("Essai")).unwrap();
+    crate::docs::materialize(&space).unwrap();
+    let root = space.root.clone();
+    state.set_space(Some(space));
+    crate::server::start(state.clone()).await.unwrap();
+    println!("espace d’essai : {}", root.display());
+
+    let root_text = root.to_string_lossy().to_string();
+    let instructions = [
+        "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace de travail.".to_string(),
+        "Parle-lui comme un majordome posé et serviable : à la première personne, en le vouvoyant, sans jargon technique, sans parler de toi comme d’une application ou d’un agent. Propose de mettre en place ce dont il a besoin plutôt que d’expliquer l’outil. Tes réponses sont lues à voix haute : des phrases courtes et naturelles à l’oral.".to_string(),
+        format!("Son espace de travail est le dossier {root_text} : pages, panneaux, fonctions et clients y sont rangés par module."),
+        format!("Avant de créer ou de modifier quoi que ce soit dans l’espace de travail, lis {root_text}/AGENTS.md et suis-le."),
+        "Les outils « alfred » servent à placer une page, vérifier qu’elle compile, lire ses erreurs et interroger la base.".to_string(),
+        "Réponds en français.".to_string(),
+        "Réponds en Markdown, sans JSON. Quand une décision de l’utilisateur est indispensable pour continuer, termine ta réponse par un unique bloc de code de langage alfred-question contenant {\"question\":\"question précise\",\"options\":[\"choix court\",\"autre choix\"]} avec zéro à quatre options, puis arrête ton tour. N’utilise ce bloc que pour une vraie question bloquante.".to_string(),
+    ]
+    .join("\n\n");
+    let events = state.events.subscribe();
+    let args = json!({ "provider": "claude", "cwd": root_text, "autonomy": "auto", "conversation": "essai-factures", "instructions": instructions });
+    let opened = session::start(&state, &args, Output::Events).await.unwrap();
+    let mut run = Run { state: state.clone(), events, handle: opened["handle"].as_str().unwrap().to_owned(), _data: tempfile::tempdir().unwrap() };
+
+    let long = |run: &mut Run| {
+        let mut events = std::mem::replace(&mut run.events, run.state.events.subscribe());
+        let handle = run.handle.clone();
+        async move {
+            let mut seen = Vec::new();
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(1500);
+            loop {
+                let event = tokio::time::timeout_at(deadline, events.recv()).await.expect("délai dépassé").unwrap();
+                if event.name != "agent:event" || event.payload["session"] != handle.as_str() {
+                    continue;
+                }
+                if event.payload["type"] == "activity" {
+                    println!("  · {}", event.payload["activity"]["title"].as_str().unwrap_or_default());
+                }
+                let done = idle(&event.payload);
+                seen.push(event.payload);
+                if done {
+                    return (seen, events);
+                }
+            }
+        }
+    };
+
+    run.send("Je voudrais suivre mes factures clients : le numéro, le client, le montant, la date d’échéance, et si elle est payée ou non. J’aimerais aussi voir d’un coup d’œil celles qui sont en retard.").await;
+    let (first, events) = long(&mut run).await;
+    run.events = events;
+    let proposal = answer(&first);
+    println!("\n=== Réponse 1 ===\n{proposal}\n");
+
+    if proposal.contains("alfred-question") {
+        run.send("Oui, construis").await;
+        let (second, events) = long(&mut run).await;
+        run.events = events;
+        println!("\n=== Réponse 2 ===\n{}\n", answer(&second));
+    }
+    run.close().await;
+    println!("espace d’essai : {}", root.display());
+}

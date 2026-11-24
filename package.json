@@ -5,8 +5,9 @@
   "packageManager": "pnpm@12.3.4",
   "type": "module",
   "scripts": {
-    "check": "biome check . && socle-check-css \"src/{shell,features,runtime,sdk}/**/*.css\" \"src/*.css\"",
+    "check": "node scripts/gen-design-components.mjs --check && biome check . && socle-check-css \"src/{shell,features,runtime,sdk}/**/*.css\" \"src/*.css\"",
     "check:fix": "biome check --write .",
+    "design:gen": "node scripts/gen-design-components.mjs",
     "test": "vitest run",
     "dev": "vite",
     "build:runtime": "node scripts/gen-runtime-shims.mjs && vite build --config vite.runtime.config.ts",

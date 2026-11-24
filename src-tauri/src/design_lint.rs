@@ -7,7 +7,7 @@
 
 mod rows;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub use rows::is_warning;
@@ -34,13 +34,13 @@ const SOCLE_ENTRIES: [&str; 3] = ["socle-ui", "socle-ui/markdown", "socle-ui/mar
 const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("CollectionPage", "`ListPage` de `socle-ui` (`title`, `rows`, `columns` typées, `filters`, `actions`, `rowActions`, `empty`)"),
     ("DetailPanel", "`Drawer` de `socle-ui`, forme déclarative (`header`, `sections`, `isLoading`, `hasError`)"),
-    ("SettingsPage", "`Page` et `PageSection` de `socle-ui`, avec des `Switch`, `Select`, `TextField` qui s’appliquent tout de suite"),
+    ("SettingsPage", "`Page` et `PageSection` de `socle-ui`, avec des `Toggle`, `Select`, `TextInput` qui s’appliquent tout de suite"),
     ("openForm", "`useOpenForm()` de `socle-ui` (`await openForm({ title, fields, submitLabel, onSubmit })`)"),
-    ("openModal", "`Dialog` de `socle-ui` (`isOpen`, `onOpenChange`, `title`, `footer`)"),
+    ("openModal", "`Modal` de `socle-ui` (`isOpen`, `onOpenChange`, `title`, `footer`)"),
     ("openSubpage", "`DetailPage` de `socle-ui` avec `back`, rendue à la place de la liste"),
     ("confirmAction", "`useConfirm()` de `socle-ui`, ou une `Action` `danger`"),
     ("ConfirmDialog", "`useConfirm()` de `socle-ui`, ou une `Action` `danger`"),
-    ("Modal", "`Dialog` de `socle-ui`"),
+    ("Modal", "`Modal` de `socle-ui` (options différentes : lire sa spec)"),
     ("usePageState", "`usePageState` de `@alfred/sdk`"),
     ("Page", "`Page` et `PageSection` de `socle-ui` (tableau de bord), ou `DetailPage` (un élément ouvert)"),
     ("Section", "`PageSection` de `socle-ui`"),
@@ -50,7 +50,7 @@ const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("Heading", "le `title` d’une `PageSection`"),
     ("Surface", "une `PageSection` de `socle-ui`"),
     ("Grid", "des `PageSection` de `socle-ui`, ou `Stack`/`Row` de `@alfred/kit`"),
-    ("FeedbackBanner", "`Notice` de `@alfred/kit` (encart dans la zone), ou une notification"),
+    ("FeedbackBanner", "`Alert` de `socle-ui` (encart dans la zone), ou une notification"),
     ("DataTable", "`Table` de `socle-ui`, ou `ListPage` pour une collection"),
     ("DataGrid", "`Table` de `socle-ui` (`density=\"compact\"`, `groupBy`)"),
     ("ListItem", "`List` de `socle-ui` (`items`)"),
@@ -58,16 +58,16 @@ const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("Spinner", "`ProgressBar` sans `value`, ou l’état `loading` du gabarit"),
     ("LoadingSkeleton", "`Skeleton`, ou l’état `loading` du gabarit"),
     ("Pagination", "`pagination` de `ListPage`"),
-    ("TextInput", "`TextField` de `socle-ui`"),
+    ("TextInput", "`TextInput` de `socle-ui`"),
     ("SelectControl", "`Select` de `socle-ui`"),
     ("CheckboxControl", "`Checkbox` de `socle-ui`"),
-    ("SwitchControl", "`Switch` de `socle-ui`"),
-    ("RadioControl", "`RadioGroup` de `socle-ui`"),
-    ("FormField", "le `label` du champ Socle (`TextField label=…`)"),
+    ("SwitchControl", "`Toggle` de `socle-ui`"),
+    ("RadioControl", "`RadioButtonGroup` de `socle-ui`"),
+    ("FormField", "le `label` du champ Socle (`TextInput label=…`)"),
     ("Combobox", "`ComboBox` de `socle-ui`"),
     ("MultiSelectCombobox", "`ComboBox selectionMode=\"multiple\"` de `socle-ui`"),
-    ("ChoiceGroup", "`RadioGroup orientation=\"horizontal\"`, ou `Tabs` pour des vues"),
-    ("MenuButton", "`Menu` de `socle-ui` (`trigger`, `items`)"),
+    ("ChoiceGroup", "`RadioButtonGroup orientation=\"horizontal\"` dans un formulaire, `SegmentedControl` pour un mode d’affichage, des onglets fixes pour des vues"),
+    ("MenuButton", "`DropdownMenu` de `socle-ui` (`trigger`, `items`)"),
     ("OverflowMenu", "une `Action` sans icône : les gabarits la rangent dans « … »"),
     ("RefreshButton", "une `Action` « Actualiser » avec l’icône `RefreshCw`"),
     ("AnchoredPanel", "`Popover` de `socle-ui`"),
@@ -122,7 +122,7 @@ const COVERED_LIBRARIES: [(&str, &str); 44] = [
     ("react-hot-toast", "`useNotify()` de `socle-ui` ou `shell.notify`"),
     ("react-toastify", "`useNotify()` de `socle-ui` ou `shell.notify`"),
     ("react-select", "`<Select>` ou `<ComboBox>` de `socle-ui`"),
-    ("react-modal", "`<Dialog>` de `socle-ui`"),
+    ("react-modal", "`<Modal>` de `socle-ui`"),
     ("@tanstack/react-query", "`useAsync` de `@alfred/sdk`, et les états `loading`/`error` des gabarits"),
 ];
 
@@ -181,8 +181,18 @@ struct Lint<'s> {
     socle: BTreeMap<String, String>,
     /// La page est placée dans les Réglages (`placement: { kind: "settings" }`).
     settings: bool,
+    /// Éléments JSX qui entourent celui qu’on relit (nom Socle quand il vient de socle-ui).
+    stack: Vec<String>,
+    /// Profondeur des attributs où un `Button` est à sa place (pied de `Modal`, action d’`EmptyState`…).
+    button_allowed: u32,
+    /// Composants de socle-ui rendus par la page.
+    rendered: BTreeSet<String>,
     found: Vec<Diagnostic>,
 }
+
+/// Attributs où un `Button` de socle-ui est à sa place : (élément, attribut). Ailleurs, une `Action` passée au
+/// gabarit (DESIGN.md, règle 2 ; spec Button, Modal, EmptyState, Drawer).
+const BUTTON_SLOTS: [(&str, &str); 4] = [("Modal", "footer"), ("Dialog", "footer"), ("EmptyState", "action"), ("Section", "footer")];
 
 fn element_name(name: &JSXElementName) -> Option<(String, bool)> {
     match name {
@@ -276,13 +286,13 @@ impl Lint<'_> {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "le `title` d’une `PageSection` (le nom de la page est dans la barre du haut)",
                 "button" => "une `Action` passée au gabarit, ou `Button` / `IconButton` de `socle-ui`",
                 "a" => "`Link` de `socle-ui`",
-                "input" => "`TextField`, `Checkbox`, `Switch` ou `RadioGroup` de `socle-ui`",
+                "input" => "`TextInput`, `Checkbox`, `Toggle` ou `RadioButtonGroup` de `socle-ui`",
                 "select" => "`Select` de `socle-ui`",
                 "textarea" => "`TextArea` de `socle-ui`",
                 "table" | "thead" | "tbody" | "tr" | "td" | "th" => "`Table` de `socle-ui`, ou `ListPage`",
                 "ul" | "ol" | "li" => "`List` de `socle-ui`",
                 "dl" | "dt" | "dd" => "les `fields` d’un `Drawer`",
-                "hr" => "`Divider` de `socle-ui`",
+                "hr" => "`Separator` de `socle-ui`",
                 "pre" | "code" => "`Code` de `socle-ui` (un journal : `LogViewer` ; une console : `Terminal`)",
                 "img" => "`DocumentViewer` de `socle-ui` (ou `Avatar` pour une personne)",
                 "style" => "les tokens de socle-ui : une page n’a pas de feuille de style",
@@ -332,6 +342,27 @@ impl Lint<'_> {
             );
         }
 
+        if from_socle {
+            self.rendered.insert(name.clone());
+        }
+        if name == "Button"
+            && from_socle
+            && !self.stack.is_empty()
+            && self.button_allowed == 0
+            && !self.stack.iter().any(|around| around == "Popover")
+        {
+            self.report(
+                start,
+                "Avertissement : `<Button>` posé dans la page. Un bouton n’a sa place qu’au pied d’une `Modal`, dans l’action d’un `EmptyState`, au pied d’une section de `Drawer` ou dans un `Popover`. Ailleurs, décrire une `Action` (`{ id, label, icon, onPress, primary }`) et la passer au gabarit de sa zone : `actions` de `ListPage`, `DetailPage`, `Page` ou `PageSection`, `rowActions`, `header.actions` du `Drawer` (PLACEMENT.md, section 6 ; DESIGN.md, règle 2).".to_string(),
+            );
+        }
+        if name == "Tabs" && from_socle {
+            self.report(
+                start,
+                "Avertissement : `<Tabs>` dans une page. Les onglets sont ceux de la barre du haut, dessinés par Alfred (spec Tabs, « Exclus » : pas d’onglets dans le contenu). Une vue de la section est un onglet fixe (`place_page` avec `{ \"kind\": \"tab\" }`), un élément ouvert un onglet fermable (`views.open`) ; un mode d’affichage ou une période, un `SegmentedControl` dans la `toolbar` de `Page` (PLACEMENT.md, section 5).".to_string(),
+            );
+        }
+
         if from_socle && matches!(name.as_str(), "Button" | "IconButton" | "Link") && attribute(opening, "onClick").is_some() {
             self.report(
                 start,
@@ -372,7 +403,7 @@ impl Lint<'_> {
             if name == "FormPage" {
                 self.report(
                     start,
-                    "Pas de `<FormPage>` dans les Réglages : un réglage s’applique tout de suite (`Switch`, `Select`, `TextField` qui enregistre à la sortie du champ) ; une saisie plus longue passe par `useOpenForm()` depuis un bouton (DESIGN.md, section 7).".to_string(),
+                    "Pas de `<FormPage>` dans les Réglages : un réglage s’applique tout de suite (`Toggle`, `Select`, `TextInput` qui enregistre à la sortie du champ) ; une saisie plus longue passe par `useOpenForm()` depuis un bouton (DESIGN.md, section 7).".to_string(),
                 );
             }
         }
@@ -382,7 +413,7 @@ impl Lint<'_> {
         if is_color(text) {
             self.report(
                 offset,
-                "Couleur en dur interdite : le sens passe par un ton (`tone` d’un `StatusBadge`, statut d’une colonne), et une librairie reçoit les tokens Socle (`var(--fg)`, `var(--accent)`, `var(--line)`) (DESIGN.md, règle 5).".to_string(),
+                "Couleur en dur interdite : le sens passe par un ton (`tone` d’un `Badge`, statut d’une colonne), et une librairie reçoit les tokens Socle (`var(--fg)`, `var(--accent)`, `var(--line)`) (DESIGN.md, règle 5).".to_string(),
             );
         }
     }
@@ -391,7 +422,25 @@ impl Lint<'_> {
 impl<'a> Visit<'a> for Lint<'_> {
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
         self.check_element(element);
+        let name = element_name(&element.opening_element.name)
+            .map(|(local, _)| self.socle_name(&local).map(str::to_string).unwrap_or(local))
+            .unwrap_or_default();
+        self.stack.push(name);
         walk::walk_jsx_element(self, element);
+        self.stack.pop();
+    }
+
+    fn visit_jsx_attribute(&mut self, attribute: &JSXAttribute<'a>) {
+        let owner = self.stack.last().map(String::as_str).unwrap_or_default();
+        let slot = attribute_name(attribute)
+            .is_some_and(|name| BUTTON_SLOTS.iter().any(|(element, wanted)| *element == owner && *wanted == name));
+        if slot {
+            self.button_allowed += 1;
+        }
+        walk::walk_jsx_attribute(self, attribute);
+        if slot {
+            self.button_allowed -= 1;
+        }
     }
 
     fn visit_string_literal(&mut self, literal: &StringLiteral<'a>) {
@@ -451,8 +500,12 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
         uses_library,
         socle: BTreeMap::new(),
         settings,
+        stack: Vec::new(),
+        button_allowed: 0,
+        rendered: BTreeSet::new(),
         found: Vec::new(),
     };
+    let mut top_bar_actions = None;
     for statement in &parsed.program.body {
         let oxc::ast::ast::Statement::ImportDeclaration(import) = statement else { continue };
         let source_name = import.source.value.as_str();
@@ -465,7 +518,25 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
             })
         };
         if SOCLE_ENTRIES.contains(&source_name) {
-            for (local, imported, _) in named() {
+            let exported = crate::socle_ui::exports(source_name);
+            for (local, imported, offset) in named() {
+                if let Some(current) = crate::socle_ui::replacement(&imported) {
+                    lint.report(
+                        offset,
+                        format!(
+                            "Avertissement : `{imported}` est l’ancien nom de `{current}` (socle-ui {}) ; il disparaîtra en 2.0.0. Importer et écrire `{current}` (DESIGN.md, section 8 ; D-336).",
+                            crate::socle_ui::VERSION
+                        ),
+                    );
+                } else if !exported.is_empty() && !exported.contains(&imported.as_str()) {
+                    lint.report(
+                        offset,
+                        format!(
+                            "`{imported}` n’existe pas dans `{source_name}` (socle-ui {}) : la page échouerait. Prendre un composant du catalogue (DESIGN.md, section 8, et sa spec dans docs/alfred/socle/specs/) ; si aucun ne convient, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).",
+                            crate::socle_ui::VERSION
+                        ),
+                    );
+                }
                 lint.socle.insert(local, imported);
             }
             continue;
@@ -515,15 +586,26 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
                         .to_string(),
                 );
             }
+            if imported == "useTopBarActions" {
+                top_bar_actions = Some(offset);
+            }
             if imported == "useTopBarSearch" {
                 lint.report(
                     offset,
-                    "La barre du haut n’a plus de recherche : la recherche d’une collection est celle de `ListPage` (`search`), sinon un `SearchField` dans la `toolbar` de `Page` (DESIGN.md, section 4).".to_string(),
+                    "La barre du haut n’a plus de recherche : la recherche d’une collection est celle de `ListPage` (`search`), sinon un `SearchInput` dans la `toolbar` de `Page` (DESIGN.md, section 4).".to_string(),
                 );
             }
         }
     }
     lint.visit_program(&parsed.program);
+    if let Some(offset) = top_bar_actions {
+        if let Some(template) = ["ListPage", "DetailPage"].into_iter().find(|name| lint.rendered.contains(*name)) {
+            lint.report(
+                offset,
+                format!("Avertissement : `useTopBarActions` dans une page qui rend une `{template}`. Ses actions vont dans `actions` du gabarit (zone `header`) : la barre du haut est réservée aux actions d’une `Page` composée, et un écran n’a qu’un bouton plein (PLACEMENT.md, section 6 ; D-220)."),
+            );
+        }
+    }
     for (offset, message) in rows::check(&parsed.program, path, sources, placement == Placement::Panel) {
         lint.report(offset, message);
     }
@@ -805,7 +887,9 @@ function Texte() {
         // Forme déclarative : la valeur est brute ; un élément, même un InlineEdit, s’y affiche « [object Object] ».
         assert!(found.iter().any(|m| m.starts_with("9: Élément React en `value` d’un champ de `fields`")), "{found:?}");
         assert!(!found.iter().any(|m| m.starts_with("10:") || m.starts_with("21:")), "valeur typée, InlineEdit de PropertyRow : {found:?}");
-        assert_eq!(found.len(), 4, "{found:?}");
+        // L’ancien nom `TextField` reçoit en plus son avertissement (ligne 2).
+        assert!(found.iter().any(|m| m.starts_with("2: Avertissement : `TextField` est l’ancien nom de `TextInput`")), "{found:?}");
+        assert_eq!(found.len(), 5, "{found:?}");
     }
 
     #[test]
@@ -1178,7 +1262,8 @@ export default function Fiche() {
   return <Contenu id="a" />;
 }
 "#;
-        assert!(panel_messages(alias).is_empty(), "{:?}", panel_messages(alias));
+        let alias_found = panel_messages(alias);
+        assert!(alias_found.iter().all(|m| is_warning(m.split_once(": ").unwrap().1) && m.contains("ancien nom de `Drawer`")), "{alias_found:?}");
 
         let fleche = r#"
 import { Drawer } from "socle-ui";
@@ -1240,5 +1325,74 @@ export default function Fiche() {
 "#;
         assert!(!panel_messages(local).is_empty());
         assert!(!panel_messages("export const x = 1;").is_empty());
+    }
+
+    #[test]
+    fn un_ancien_nom_de_socle_dit_le_nouveau_et_un_nom_inconnu_est_refuse() {
+        let page = r#"
+import { Switch as Bascule, Dialog, ListPage, Calendrier } from "socle-ui";
+import { Markdown } from "socle-ui/markdown";
+export default function P() { return <ListPage title="T" rows={[]} columns={[]} empty={{ title: "Rien" }} />; }
+"#;
+        let found = lint(page, Placement::Page);
+        let warnings: Vec<_> = found.iter().filter(|f| is_warning(&f.message)).collect();
+        assert!(warnings.iter().any(|f| f.message.contains("`Switch` est l’ancien nom de `Toggle`") && f.line == Some(2)), "{found:?}");
+        assert!(warnings.iter().any(|f| f.message.contains("`Dialog` est l’ancien nom de `Modal`")), "{found:?}");
+        let errors: Vec<_> = found.iter().filter(|f| !is_warning(&f.message)).collect();
+        assert_eq!(errors.len(), 1, "{found:?}");
+        assert!(errors[0].message.starts_with("`Calendrier` n’existe pas dans `socle-ui`") && errors[0].message.contains("PLACEMENT.md, section 9"), "{found:?}");
+        // Les noms actuels, types compris, passent.
+        let current = r#"
+import { Toggle, Modal, type FormField, type StatusMap, useOpenForm } from "socle-ui";
+import { MarkdownEditor } from "socle-ui/markdown-editor";
+"#;
+        assert!(lint(current, Placement::Page).is_empty(), "{:?}", lint(current, Placement::Page));
+    }
+
+    #[test]
+    fn un_bouton_hors_de_sa_place_est_signale() {
+        let page = r#"
+import { Button, EmptyState, Modal, Page, PageSection, Popover, Drawer } from "socle-ui";
+export default function P() {
+  return (
+    <Page>
+      <PageSection title="Bloc">
+        <Button onPress={go}>Exporter</Button>
+        <EmptyState title="Rien" action={<Button variant="primary" onPress={go}>Créer</Button>} />
+        <Modal isOpen title="Aperçu" footer={<><Button onPress={close}>Annuler</Button><Button variant="primary" onPress={go}>Envoyer</Button></>}>
+          <Button onPress={go}>Dans le corps</Button>
+        </Modal>
+        <Popover trigger={x} title="Filtrer"><Button onPress={go}>Appliquer</Button></Popover>
+      </PageSection>
+    </Page>
+  );
+}
+const pied = <Button onPress={go}>Hors JSX</Button>;
+"#;
+        let found = messages(page);
+        let buttons: Vec<_> = found.iter().filter(|m| m.contains("`<Button>` posé dans la page")).collect();
+        assert_eq!(buttons.len(), 2, "{found:?}");
+        assert!(buttons[0].starts_with("7: Avertissement") && buttons[1].starts_with("10: Avertissement"), "{found:?}");
+    }
+
+    #[test]
+    fn des_onglets_dans_la_page_et_la_barre_du_haut_d_une_liste_sont_signales() {
+        let page = r#"
+import { useTopBarActions } from "@alfred/sdk";
+import { ListPage, Tabs } from "socle-ui";
+export default function P() {
+  useTopBarActions([{ id: "n", label: "Nouveau", onPress: go }]);
+  return <><Tabs items={[]} /><ListPage title="T" rows={[]} columns={[]} empty={{ title: "Rien" }} /></>;
+}
+"#;
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("6: Avertissement : `<Tabs>` dans une page") && m.contains("views.open")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("2: Avertissement : `useTopBarActions` dans une page qui rend une `ListPage`")), "{found:?}");
+        let composee = r#"
+import { useTopBarActions } from "@alfred/sdk";
+import { Page } from "socle-ui";
+export default function P() { useTopBarActions([]); return <Page />; }
+"#;
+        assert!(messages(composee).is_empty(), "{:?}", messages(composee));
     }
 }

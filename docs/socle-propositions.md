@@ -170,3 +170,19 @@ Ce qu'il reste dans la conversation : 7 `className` (plus 6 dans `uiFix.tsx`, ho
 | `PropertyRow` : valeur longue en chasse fixe et coupée au milieu (chemin d'un dossier). | Le chemin en texte, qui passe à la ligne. |
 | `socle-ui/biome` : `lint/a11y/useValidAriaRole` refuse `role="user"` et `role="assistant"` de `ChatMessage`. | `biome.json` d'Alfred : `allowInvalidRoles: ["user", "assistant"]`. À mettre dans la configuration de Socle. |
 | Pré-compilation de Vite : une nouvelle version publiée par yalc change la signature, mais un Vite déjà lancé garde l'ancien cache jusqu'à son redémarrage. | Relancer `pnpm tauri dev` après chaque `yalc update`. |
+
+## Règles de placement à proposer (`/design propose`, 2026-11-24)
+
+Le guide de placement de l’agent (`docs/espace/PLACEMENT.md`) a dû trancher ces cas sans règle de Socle. Chacun est à porter dans `layout-rules.md` (ou une décision), pour que toutes les apps placent pareil.
+
+| Manque dans Socle | Ce qu’Alfred a écrit en attendant |
+|---|---|
+| Quand une page devient une entrée de la sidebar, et quand elle n’est qu’une vue d’une page existante. | Un domaine de travail = une entrée ; une autre façon de voir le même domaine = une vue fixe. |
+| Sous-pages d’un élément (`Sidebar.Item` `children`, D-056) ou `Sidebar.Section` : quand prendre l’une ou l’autre. | Sous-pages : quelques objets suivis en permanence. Section : une notion créée et nommée par l’utilisateur, avec ses éléments. |
+| Nombre de vues fixes d’une page. | De une à cinq ; au-delà, proposer deux pages. |
+| Ordre du contenu dans un gabarit (colonnes de `ListPage`, sections de `DetailPage` et du `Drawer`, blocs d’une `Page`). | Nom d’abord, puis ce qui sert à choisir ; ce qui demande une action avant la synthèse ; l’historique à la fin. |
+| Où va une fenêtre secondaire du système (une page seule dans sa fenêtre : journal, console). | Ce qu’on garde à côté pendant le travail ; un élément consulté dans le fil du travail reste une vue fermable. |
+| Les places d’un `Button` : dispersées dans les specs (Modal, EmptyState, Drawer, Popover), absentes de `layout-rules.md`. | Liste reprise dans le guide, et avertissement de `check` ailleurs. |
+| Pas de primitive d’écart ni de grille : une `Page` qui aligne des `Card` `metric` passe par `Row` de `@alfred/kit`. | `Row` et `Stack` d’Alfred. |
+| `SegmentedControl` dans la barre d’outils d’une `Page` : permis pour un mode d’affichage ou une période, mais aucune règle ne le distingue des vues. | Mode ou période = `SegmentedControl` ; vue = vue fixe. |
+| Un état durable de la page posé par l’hôte (données d’exemple d’Alfred) : `Alert` en tête du contenu selon D-253, mais rien ne dit qui le pose quand la page est dans un cadre isolé. | La page le pose elle-même. |

@@ -218,7 +218,7 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
             "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-03-26"),
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "alfred", "title": "Alfred", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace de travail avant de s’en servir.",
+            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace de travail avant de s’en servir, et docs/alfred/PLACEMENT.md avant de placer une page.",
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools(state, conversation) })),
@@ -304,7 +304,7 @@ fn function_tool_name(reference: &str) -> String {
 
 fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let placement = json!({
-        "description": "Emplacement. Une page demandée est une nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut, même si une section existante traite du même sujet. `tab` seulement si l’utilisateur parle d’onglet ou demande d’ajouter quelque chose dans une section existante (« ajoute un onglet à Factures », « dans la page Contacts, ajoute… ») ; `panel` ou `settings` seulement s’il le dit. Omis : nouvelle entrée du menu au nom de la page.",
+        "description": "Emplacement, choisi d’après docs/alfred/PLACEMENT.md (lu avant). Un nouveau domaine de travail est une nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut. `tab` seulement si l’utilisateur parle d’onglet ou demande une autre vue d’une section existante (« ajoute un onglet à Factures », « une synthèse des factures ») ; `panel` pour les propriétés de l’élément sélectionné dans une page ; `settings` pour une préférence du module. Si deux emplacements conviennent, demander à l’utilisateur avec une recommandation, sans inventer. Omis : nouvelle entrée du menu au nom de la page.",
         "oneOf": [
             { "type": "object", "required": ["kind", "label"], "properties": {
                 "kind": { "const": "menu" }, "label": { "type": "string", "description": "Nom de la nouvelle entrée du menu de gauche." },
@@ -326,7 +326,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "place_page",
-            "Enregistre une nouvelle page et renvoie le fichier .tsx à écrire. Appeler AVANT d’écrire le fichier. Quand l’utilisateur dit « page », il parle d’une entrée du menu de gauche : un onglet seulement s’il le demande.",
+            "Enregistre une nouvelle page et renvoie le fichier .tsx à écrire. Appeler AVANT d’écrire le fichier, après avoir choisi la place selon docs/alfred/PLACEMENT.md. Quand l’utilisateur dit « page », il parle d’une entrée du menu de gauche : un onglet seulement s’il le demande ou s’il s’agit d’une autre vue d’une section existante.",
             json!({
                 "title": { "type": "string", "description": "Titre de la page, en français." },
                 "description": { "type": "string", "description": "Ce que fait la page, en une phrase." },
@@ -625,7 +625,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "check",
-            "Vérifie l’espace de travail : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, tests de lecture des fonctions (ceux qui ne sont pas réussis dans l’état actuel de la fonction ; `tests.failed` donne le message et la sortie reçue), données d’exemple (sortie conforme au schéma `output`, fonction de connecteur sans `examples`), et erreurs d’exécution rapportées par les pages affichées. À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
+            "Vérifie l’espace de travail : compilation de chaque page, fonction et fichier .ts/.tsx des modules, migrations SQL en attente, webhooks et planifications (fonction absente, déclaration invalide), fichiers des clients, tests de lecture des fonctions (ceux qui ne sont pas réussis dans l’état actuel de la fonction ; `tests.failed` donne le message et la sortie reçue), données d’exemple (sortie conforme au schéma `output`, fonction de connecteur sans `examples`), erreurs d’exécution rapportées par les pages affichées, et relecture de design de chaque page (`design` à corriger : nom absent de socle-ui, style propre, HTML… ; `designWarnings` : ancien nom de socle-ui, `Button` ou `Tabs` hors de leur place ; voir docs/alfred/PLACEMENT.md et DESIGN.md). À appeler après chaque écriture, jusqu’à obtenir `\"ok\": true`. `userActions` liste ce que seul l’utilisateur peut faire (se connecter chez un service OAuth) : le lui dire, sans boucler dessus.",
             json!({ "module": { "type": "string", "description": "Limiter la vérification à un module." } }),
             &[],
         ),
@@ -1123,7 +1123,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "title": title,
                 "file": placed.file,
                 "moduleDirectory": placed.module_dir,
-                "next": "Écrire le composant React dans `file` (export par défaut), en suivant docs/alfred/DESIGN.md et docs/alfred/SDK.md, puis appeler `check`.",
+                "next": "Écrire le composant React dans `file` (export par défaut), en suivant docs/alfred/PLACEMENT.md, docs/alfred/DESIGN.md et docs/alfred/SDK.md, avec les composants du catalogue de socle-ui (DESIGN.md, section 8 ; spec dans docs/alfred/socle/specs/), puis appeler `check`.",
             }))
         }
         "delete_page" => {
@@ -1639,6 +1639,7 @@ mod tests {
             .to_string();
         assert!(placement.contains("nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut"), "{placement}");
         assert!(placement.contains("`tab` seulement si l’utilisateur parle d’onglet"), "{placement}");
+        assert!(placement.contains("docs/alfred/PLACEMENT.md"), "{placement}");
 
         let factures = call(&state, "place_page", json!({ "title": "Factures" })).await.unwrap();
         let impayees = call(&state, "place_page", json!({ "title": "Factures impayées" })).await.unwrap();
