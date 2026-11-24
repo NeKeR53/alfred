@@ -17,7 +17,9 @@ import {
 } from "../lib/native";
 import { isKnownPage } from "./badges";
 import { takePendingEntryActions, useMenuZones } from "./menuZones";
+import { findPage } from "./navigationLayout";
 import { type NotificationAction, notify } from "./notifications";
+import { cleanView, closeView, type OpenedView, openView, sectionOfPage, useOpenViews, viewKey } from "./openViews";
 import { loadDurablePageMemory, pageMemoryOf, rememberPageValue } from "./pageMemory";
 import { pageWindowParams, pageWindowReference } from "./pageWindowMode";
 import { useShell } from "./store";
@@ -45,6 +47,11 @@ export interface FrameIdentity {
   examples?: boolean;
   /** Cadre invisible chargé pour une capture de l’agent : il lit la recherche de la page sans prendre la barre. */
   capture?: boolean;
+  /**
+   * Onglet ouvert sur un élément (`views.open`) que montre la page (ou la page d’un panneau), avec la section qui le
+   * porte : `usePageContext().view`.
+   */
+  view?: OpenedView & { section: string };
 }
 
 /** Référence déclarée de la page (son modèle), sans le suffixe de sa copie (`module/page@recette`). */
@@ -186,10 +193,53 @@ export function frameContext(identity: FrameIdentity) {
     selection: identity.host ? selectionOf(identity.host) : null,
     entry: entryOf(identity),
     params: paramsOf(identity),
+    view:
+      identity.kind !== "function" && identity.view
+        ? { id: identity.view.id, label: identity.view.label, params: identity.view.params }
+        : null,
   };
 }
 
+/**
+ * Onglet demandé par `views.open` : la page du cadre (celle de son panneau), ou une autre page du module nommée par
+ * `page` (depuis une copie, la copie de même suffixe si elle existe).
+ */
+function viewTarget(identity: FrameIdentity, page: unknown): string {
+  const own = identity.view?.page ?? identity.host ?? identity.reference;
+  if (page === undefined || page === null || page === "") return own;
+  const name = String(page);
+  if (name.includes("/") && name.split("/")[0] !== identity.module)
+    throw new AlfredError({
+      message: 'Un onglet ouvre une page de son propre module : views.open({ page: "ticket" }).',
+    });
+  const named = name.includes("/") ? name : `${identity.module}/${name}`;
+  const suffix = copySuffix(identity);
+  const sibling = suffix && !named.includes("@") ? `${named}@${suffix}` : named;
+  const snapshot = useShell.getState().snapshot;
+  const found = snapshot ? (findPage(snapshot, sibling) ?? findPage(snapshot, named)) : undefined;
+  if (!found) throw new AlfredError({ message: `La page « ${named} » n’existe pas dans l’espace de travail.` });
+  return found.page.reference;
+}
+
+/** Section où le cadre ouvre ses onglets : celle de l’onglet qu’il montre, sinon celle de sa page. */
+function viewSection(identity: FrameIdentity): string {
+  const section = identity.view?.section ?? sectionOfPage(identity.host ?? identity.reference, pageWindowReference());
+  if (!section)
+    throw new AlfredError({
+      message: "Cette page n’est pas dans le menu (Réglages, capture) : elle n’ouvre pas d’onglet.",
+    });
+  return section;
+}
+
 type Params = Record<string, unknown>;
+
+/** Dernier onglet fixe d’une section : celui qui s’affiche quand on ferme le premier onglet d’élément actif. */
+function lastFixedTab(section: string): string | undefined {
+  const snapshot = useShell.getState().snapshot;
+  if (section.startsWith("fenêtre:")) return section.slice("fenêtre:".length);
+  const pages = snapshot?.sections.find((candidate) => candidate.id === section)?.pages ?? [];
+  return pages.filter((page) => !page.hidden).at(-1)?.reference;
+}
 
 /** Champs d’un appel de compte, communs à la requête, au téléchargement et au flux. */
 const CLIENT_CALL = [
@@ -374,6 +424,36 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
         subject,
         page: badgeTarget(identity, params.page, MENU_TARGET),
       });
+    // Onglets ouverts sur un élément (`views.*`, D-021) : une page ou son panneau, jamais une fonction.
+    case "views.open": {
+      if (identity.kind === "function" || identity.capture)
+        throw new AlfredError({ message: "Seule une page affichée ouvre un onglet." });
+      const page = viewTarget(identity, params.page);
+      let view: OpenedView;
+      try {
+        view = cleanView(params, page);
+      } catch (error) {
+        throw new AlfredError({ message: error instanceof Error ? error.message : String(error) });
+      }
+      openView(viewSection(identity), view);
+      return null;
+    }
+    case "views.close": {
+      if (identity.kind === "function" || identity.capture) return false;
+      const section = viewSection(identity);
+      if (params.id === undefined || params.id === null) {
+        // Sans identifiant : l’onglet que montre le cadre.
+        if (!identity.view) return false;
+        return closeView(section, viewKey(identity.view), lastFixedTab(section));
+      }
+      const id = String(params.id);
+      const page = params.page === undefined || params.page === null ? null : viewTarget(identity, params.page);
+      // L’onglet de cet élément ouvert par une page du module, dans cette section.
+      const match = (useOpenViews.getState().views[section] ?? []).find(
+        (view) => view.id === id && (page ? view.page === page : view.page.startsWith(`${identity.module}/`)),
+      );
+      return match ? closeView(section, viewKey(match), lastFixedTab(section)) : false;
+    }
     case "menu.takeActions":
       if (identity.kind !== "page" || identity.capture) return [];
       return takePendingEntryActions(identity.reference);

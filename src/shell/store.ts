@@ -42,6 +42,11 @@ interface ShellState {
   behind: Exclude<View, { kind: "settings" }>;
   /** Onglet affiché par section (`module/section` → `module/page`) ; « réglages » pour les Réglages. */
   activeTab: Record<string, string>;
+  /**
+   * Onglet ouvert sur un élément affiché par section (`openViews.ts`) ; `activeTab` porte alors la page qu’il montre.
+   * Choisir un onglet fixe, ou ouvrir une page de la section, l’efface.
+   */
+  activeView: Record<string, string>;
   panelHidden: Record<string, boolean>;
   /** Conversation d’agent affichée dans le panneau de droite d’une page (`module/page` → conversation). */
   agentPanel: Record<string, string>;
@@ -69,6 +74,9 @@ interface ShellState {
   /** Ferme la fenêtre des Réglages et revient à la vue d’où elle a été ouverte. */
   closeSettings: () => void;
   setActiveTab: (section: string, page: string) => void;
+  /** Affiche l’onglet d’élément `key` d’une section, qui montre la page `page`. */
+  showView: (section: string, key: string, page: string) => void;
+  clearActiveView: (section: string) => void;
   openPage: (reference: string) => void;
   /** Ouvre `page` avec l’entrée du menu `entry` (venue de la zone de la page `zone`). */
   openEntry: (page: string, entry: OpenedEntry) => void;
@@ -81,6 +89,13 @@ interface ShellState {
   toggleSidebar: () => void;
   /** `null` : suivre le thème du système. */
   setTheme: (theme: Theme | null) => void;
+}
+
+/** Copie de `record` sans la clé `key` (la même si elle n’y est pas). */
+function without(record: Record<string, string>, key: string): Record<string, string> {
+  if (!(key in record)) return record;
+  const { [key]: _gone, ...rest } = record;
+  return rest;
 }
 
 function systemTheme(): Theme {
@@ -124,6 +139,7 @@ export const useShell = create<ShellState>((set, get) => ({
   view: { kind: "agent" },
   behind: { kind: "agent" },
   activeTab: {},
+  activeView: {},
   panelHidden: {},
   agentPanel: {},
   activeEntry: {},
@@ -239,7 +255,18 @@ export const useShell = create<ShellState>((set, get) => ({
 
   setView: (view) => set((state) => ({ view, behind: state.view.kind === "settings" ? state.behind : state.view })),
   closeSettings: () => set((state) => (state.view.kind === "settings" ? { view: state.behind } : {})),
-  setActiveTab: (section, page) => set((state) => ({ activeTab: { ...state.activeTab, [section]: page } })),
+  setActiveTab: (section, page) =>
+    set((state) => ({
+      activeTab: { ...state.activeTab, [section]: page },
+      activeView: without(state.activeView, section),
+    })),
+  showView: (section, key, page) =>
+    set((state) => ({
+      activeTab: { ...state.activeTab, [section]: page },
+      activeView: { ...state.activeView, [section]: key },
+    })),
+  clearActiveView: (section) =>
+    set((state) => (state.activeView[section] ? { activeView: without(state.activeView, section) } : {})),
 
   openPage(reference) {
     const snapshot = get().snapshot;
@@ -258,6 +285,7 @@ export const useShell = create<ShellState>((set, get) => ({
       set((state) => ({
         view: { kind: "section", id: section.id },
         activeTab: { ...state.activeTab, [section.id]: target },
+        activeView: without(state.activeView, section.id),
       }));
     } else if (snapshot.settingsPages.some((page) => page.reference === reference)) {
       set((state) => ({

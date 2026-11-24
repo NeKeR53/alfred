@@ -715,13 +715,16 @@ export default function Dicter() {
 }
 ```
 
-## 8. Coquille : `shell`, `usePageContext`, `useSelection`, `usePageState`, `useTopBarActions`, `badge`, `menu`
+## 8. Coquille : `shell`, `views`, `usePageContext`, `useSelection`, `usePageState`, `useTopBarActions`, `badge`, `menu`
 
 ```ts
 shell.notify(options: NotifyOptions): Promise<void>;   // section « Notifications » ci-dessous : actions, persistante
 shell.navigate(reference: string): Promise<void>;       // ouvre la page « module/page » (« module/page@suffixe » pour l’une de ses copies)
 shell.openWindow(reference?: string, options?: { params?: object; key?: string; title?: string }): Promise<void>;
 // ouvre la page (sans argument : celle-ci) seule dans sa fenêtre ; avec `params`, sur un élément précis
+views.open(options: { id: string; label: string; params?: object; page?: string }): Promise<void>;
+// onglet fermable sur un élément, après les onglets de la section (section « Onglet sur un élément » ci-dessous)
+views.close(id?: string, options?: { page?: string }): Promise<boolean>; // sans id : l’onglet que montre la page
 shell.setPanelVisible(visible: boolean): Promise<void>; // panneau de droite de la page
 shell.publish(selection: unknown): Promise<void>;       // sélection transmise au panneau
 shell.send(message: unknown): Promise<void>;            // page vers panneau, ou panneau vers page
@@ -745,6 +748,7 @@ interface PageContext {
   accounts: Record<string, string>; // compte choisi par l’utilisateur pour chaque besoin de la page : { jira: "acme" }
   entry: { id: string; label: string } | null; // entrée du menu ouverte dans la page (`menu`), ou celle de sa page pour un panneau
   params: Record<string, unknown> | null; // paramètres de la fenêtre ouverte sur un élément (`shell.openWindow`), sinon null
+  view: { id: string; label: string; params: Record<string, unknown> | null } | null; // onglet ouvert sur un élément (`views.open`), sinon null
 }
 ```
 
@@ -851,6 +855,51 @@ export default function Produits() {
     produits.reload();
   });
   // entry === null : vue d’ensemble ; sinon le produit choisi dans le menu.
+  …
+}
+```
+
+### Onglet sur un élément : `views.open`, `views.close`
+
+Ouvrir un élément (un ticket, un client, un document) ajoute un **onglet fermable** dans la barre du haut, après les onglets fixes de la section (D-021). L’onglet rouvre la même page, ou une autre page du module (`page`), **sur cet élément** : la page le lit dans `usePageContext()?.view` ; son panneau reçoit le même. Dans un onglet fixe, `view` vaut `null` : la page montre sa vue d’ensemble.
+
+- `id` identifie l’élément : rouvrir le même `id` (sur la même page) active l’onglet déjà ouvert, sans doublon ; son libellé et ses `params` suivent la dernière ouverture.
+- `label` est le nom de l’élément (« PROJ-42 Paiement refusé ») : une ligne, coupée à 120 caractères. `params` : un objet JSON de 16 Kio au plus ; un identifiant suffit, la page recharge le reste.
+- L’onglet ouvert devient l’onglet actif. Sa croix le ferme (clic du milieu, Suppr aussi) ; fermer l’onglet actif affiche celui de gauche. Les onglets fixes n’ont pas de croix.
+- Dix onglets ouverts au plus par section : au-delà, le plus ancien se ferme. Trop d’onglets pour la largeur : la rangée défile et un chevron les liste tous (D-027).
+- Les onglets ouverts et l’onglet actif sont mémorisés par section d’un lancement à l’autre, sur ce poste (pas dans l’espace, pas dans Git).
+- `views.close(id)` ferme l’onglet de cet élément ouvert par le module dans la section ; `views.close()`, celui que montre la page (après une suppression, par exemple). Rend `false` si rien n’était ouvert.
+- Une page ou son panneau seulement : une fonction n’ouvre pas d’onglet, ni une page placée dans les Réglages. « Ouvrir dans une nouvelle fenêtre » emporte l’onglet affiché dans sa fenêtre.
+- Onglet ou fenêtre ? Un élément qu’on consulte dans le fil du travail : un onglet. Un élément qu’on garde à côté (journal, console) : `shell.openWindow`. Une entrée du menu (`menu.setEntries`) : un objet qu’on suit en permanence.
+
+```tsx
+// pages/tickets.tsx (module jira) : la liste ouvre chaque ticket dans un onglet ; l’onglet montre le ticket.
+import { ListPage } from "socle-ui";
+import { functions, useAsync, usePageContext, views } from "@alfred/sdk";
+
+export default function Tickets() {
+  const view = usePageContext()?.view ?? null;
+  if (view) return <Ticket cle={String(view.params?.key ?? view.id)} />;
+  const tickets = useAsync(
+    () => functions.call<{ id: string; key: string; summary: string }[]>("rechercher", { jql: "assignee = currentUser()" }),
+    [],
+  );
+  return (
+    <ListPage
+      title="Mes tickets"
+      rows={tickets.data}
+      columns={[{ id: "key", label: "Clé" }, { id: "summary", label: "Résumé" }]}
+      empty={{ title: "Aucun ticket" }}
+      // Double-clic ou Entrée : un onglet par ticket (ListPage : « l’ouverture ajoute une vue fermable »).
+      onOpen={(ticket) => void views.open({ id: ticket.key, label: `${ticket.key} ${ticket.summary}`, params: { key: ticket.key } })}
+    />
+  );
+}
+
+function Ticket({ cle }: { cle: string }) {
+  const ticket = useAsync(() => functions.call("ticket", { key: cle }), [cle]);
+  // Le ticket supprimé : son onglet se ferme, la liste revient.
+  const supprimer = async () => { await functions.call("supprimer", { key: cle }); await views.close(); };
   …
 }
 ```

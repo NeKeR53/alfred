@@ -4,7 +4,8 @@
  * - Menu de gauche : une entrée par section (icône, compteur, menu « … »), les entrées de zone de ses pages en
  *   sous-pages, puis les conversations de l’agent ; en pied, l’entrée Agent, l’espace de travail ouvert et le compte,
  *   qui ouvre les Réglages.
- * - Barre du haut : nom de la section, onglets de ses pages (vues), actions de la page (`ActionBar` zone `topbar`),
+ * - Barre du haut : nom de la section, onglets de ses pages (vues fixes) puis onglets ouverts sur un élément
+ *   (`views.open`, fermables, D-021), actions de la page (`ActionBar` zone `topbar`),
  *   outils de la coquille et cloche du centre de notifications. Le mode « données d’exemple » se dit par un encart en
  *   haut de la page (D-253).
  * - Panneau de droite : le panneau déclaré par la page, ou la conversation d’agent qu’elle a lancée.
@@ -35,8 +36,9 @@ import { NamedIcon, SectionIcon } from "./icons";
 import type { ZoneRow } from "./MenuZone";
 import { entryTarget, type MenuZone, orderedEntries, startMenuZones, useMenuZones } from "./menuZones";
 import { useNavigationEditor } from "./navigationEditing";
-import { SETTINGS_SECTION } from "./navigationLayout";
+import { findPage, SETTINGS_SECTION } from "./navigationLayout";
 import { notify } from "./notifications";
+import { closeView, type OpenedView, startOpenViews, useSectionViews, viewKey } from "./openViews";
 import { PageFrame } from "./PageFrame";
 import { openZoneEntry, runZoneAction } from "./PageZones";
 import { SettingsModal } from "./SettingsModal";
@@ -47,7 +49,18 @@ import type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageTools
 export type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
 
 /** Contenu d’une page de l’espace : son cadre, ou l’état qui explique pourquoi il n’y a encore rien à afficher. */
-function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "panel"; host?: string }) {
+function SpacePage({
+  page,
+  kind,
+  host,
+  view,
+}: {
+  page: ResolvedPage;
+  kind: "page" | "panel";
+  host?: string;
+  /** Onglet ouvert sur un élément que montre la page (`usePageContext().view`). */
+  view?: (OpenedView & { section: string }) | null;
+}) {
   if (page.missing) {
     return (
       <EmptyState
@@ -60,7 +73,7 @@ function SpacePage({ page, kind, host }: { page: ResolvedPage; kind: "page" | "p
   // Tant qu’un service dont la page a besoin n’est pas prêt, la page d’attente remplace le cadre, qui n’est pas chargé.
   return (
     <SetupGate module={page.module} uses={page.uses} compact={kind === "panel"}>
-      <PageFrame page={page} kind={kind} host={host} />
+      <PageFrame page={page} kind={kind} host={host} view={view} />
     </SetupGate>
   );
 }
@@ -132,6 +145,8 @@ export interface SectionFrame {
   views?: TabItem[];
   activeView?: string;
   onViewChange?: (id: string) => void;
+  /** Fermeture d’un onglet ouvert sur un élément (les onglets fixes n’ont pas de croix). */
+  onViewClose?: (id: string) => void;
   actions: ReactNode;
   detail?: ReactNode;
   main: ReactNode;
@@ -169,23 +184,40 @@ export function useSectionFrame({
   pageActions?: (reference: string) => Action[];
 }): SectionFrame {
   const activeTab = useShell((state) => state.activeTab[sectionId]);
+  const activeViewKey = useShell((state) => state.activeView[sectionId]);
+  const snapshot = useShell((state) => state.snapshot);
   const counts = useBadges((state) => state.counts);
   const setActiveTab = useShell((state) => state.setActiveTab);
   const visible = useMemo(() => pages.filter((page) => !page.hidden), [pages]);
-  const views: TabItem[] = [
+  const fixed: TabItem[] = [
     ...builtIn.map((tab) => ({ id: tab.id, label: tab.label })),
     ...visible.map((page) => ({
       id: page.reference,
       label: counts[page.reference] ? `${page.title} (${badgeText(counts[page.reference])})` : page.title,
     })),
   ];
-  const activeId = views.some((tab) => tab.id === activeTab) ? activeTab : views[0]?.id;
+  // Onglets ouverts sur un élément (`views.open`), après les onglets fixes, fermables (D-021). Un onglet dont la page
+  // a quitté l’espace ne s’affiche plus.
+  const opened = useSectionViews(sectionId).filter((view) =>
+    Boolean(pages.some((page) => page.reference === view.page) || (snapshot && findPage(snapshot, view.page))),
+  );
+  const views: TabItem[] = [
+    ...fixed,
+    ...opened.map((view) => ({ id: viewKey(view), label: view.label, closable: true })),
+  ];
+  const openedView = opened.find((view) => viewKey(view) === activeViewKey);
+  const fixedId = fixed.some((tab) => tab.id === activeTab) ? activeTab : fixed[0]?.id;
+  const activeId = openedView ? viewKey(openedView) : fixedId;
   // L’onglet affiché par défaut est retenu : réordonner ou déplacer les onglets ne change pas la page ouverte.
   useEffect(() => {
-    if (activeId && activeId !== activeTab) setActiveTab(sectionId, activeId);
-  }, [activeId, activeTab, sectionId, setActiveTab]);
-  const builtInTab = builtIn.find((tab) => tab.id === activeId);
-  const page = visible.find((candidate) => candidate.reference === activeId);
+    if (!openedView && fixedId && fixedId !== activeTab) setActiveTab(sectionId, fixedId);
+  }, [openedView, fixedId, activeTab, sectionId, setActiveTab]);
+  const builtInTab = openedView ? undefined : builtIn.find((tab) => tab.id === activeId);
+  const page = openedView
+    ? (pages.find((candidate) => candidate.reference === openedView.page) ??
+      (snapshot ? findPage(snapshot, openedView.page)?.page : undefined))
+    : visible.find((candidate) => candidate.reference === activeId);
+  const frameView = openedView ? { ...openedView, section: sectionId } : null;
   const panel = page?.panel && !page.panel.hidden ? page.panel : null;
   // La page attend un compte (le sien, ou à défaut celui de sa section) : ce qu’il faut faire, à sa place.
   const waiting = page?.waiting ?? (sectionWaiting && page?.perInstance !== null ? sectionWaiting : null);
@@ -197,7 +229,8 @@ export function useSectionFrame({
   const live = Boolean(page && !builtInTab && !waiting);
 
   const actions: Action[] = live && page ? [...frameActions(page.reference, described)] : [];
-  if (live && page && pageActions) actions.push(...pageActions(page.reference));
+  // Renommer, déplacer… visent la page de l’onglet fixe, pas un onglet ouvert sur un élément.
+  if (live && page && pageActions && !openedView) actions.push(...pageActions(page.reference));
 
   const body = builtInTab ? (
     builtInTab.render?.()
@@ -221,7 +254,7 @@ export function useSectionFrame({
       }
     />
   ) : page ? (
-    <SpacePage key={page.reference} page={page} kind="page" />
+    <SpacePage key={activeId ?? page.reference} page={page} kind="page" view={frameView} />
   ) : (
     <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
   );
@@ -230,14 +263,27 @@ export function useSectionFrame({
     waiting || !page ? undefined : agentConversation && renderAgentPanel ? (
       renderAgentPanel(agentConversation, () => closeAgentPanel(page.reference))
     ) : panel ? (
-      <SpacePage key={panel.reference} page={panel} kind="panel" host={page.reference} />
+      <SpacePage
+        key={`${activeId ?? ""}:${panel.reference}`}
+        page={panel}
+        kind="panel"
+        host={page.reference}
+        view={frameView}
+      />
     ) : undefined;
 
   return {
     pageTitle: title,
     views: views.length > 1 ? views : undefined,
     activeView: activeId,
-    onViewChange: (id) => setActiveTab(sectionId, id),
+    onViewChange: (id) => {
+      const view = opened.find((candidate) => viewKey(candidate) === id);
+      if (view) useShell.getState().showView(sectionId, id, view.page);
+      else setActiveTab(sectionId, id);
+    },
+    onViewClose: (id) => {
+      closeView(sectionId, id, fixed.at(-1)?.id);
+    },
     actions: (
       <>
         {actions.length ? <ActionBar actions={actions} zone="topbar" subject={page?.title ?? title} /> : null}
@@ -246,11 +292,19 @@ export function useSectionFrame({
             icon={<AppWindow size={16} aria-hidden="true" />}
             label="Ouvrir dans une nouvelle fenêtre"
             onPress={() => {
-              // Une entrée de zone ouverte suit la page dans sa fenêtre.
+              // Un onglet ouvert sur un élément, ou une entrée de zone ouverte, suit la page dans sa fenêtre.
               const entry = useShell.getState().activeEntry[page.reference];
               void openPageWindow(
                 page.reference,
-                entry ? { params: { entry }, key: `entry:${entry.zone}:${entry.id}`, title: entry.label } : {},
+                openedView
+                  ? {
+                      params: { view: { id: openedView.id, label: openedView.label, params: openedView.params } },
+                      key: `view:${openedView.id}`,
+                      title: openedView.label,
+                    }
+                  : entry
+                    ? { params: { entry }, key: `entry:${entry.zone}:${entry.id}`, title: entry.label }
+                    : {},
               ).catch(windowError);
             }}
           />
@@ -423,6 +477,7 @@ export function AppShell({
   const spaces = useSpaceActions();
   useEffect(() => startBadges(), []);
   useEffect(() => startMenuZones(), []);
+  useEffect(() => startOpenViews(), []);
   const sections = useMemo(() => (snapshot?.sections ?? []).filter((section) => !section.hidden), [snapshot]);
 
   const current = view.kind === "section" ? sections.find((section) => section.id === view.id) : undefined;
@@ -601,6 +656,7 @@ export function AppShell({
         views={onAgent ? undefined : frame.views}
         activeView={onAgent ? undefined : frame.activeView}
         onViewChange={onAgent ? undefined : frame.onViewChange}
+        onViewClose={onAgent ? undefined : frame.onViewClose}
         actions={onAgent ? <NotificationCenter /> : frame.actions}
         detail={onAgent ? (agentAvailable ? agentDetail : undefined) : frame.detail}
         detailExpandable

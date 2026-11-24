@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { EmptyState, Sidebar, AppShell as SocleShell } from "socle-ui";
 import { useSectionFrame } from "./AppShell";
 import { findPage } from "./navigationLayout";
+import { cleanView, openView } from "./openViews";
 import { pageWindowParams } from "./pageWindowMode";
 import { useShell } from "./store";
 import type { AgentPanelRenderer, PageToolsRenderer } from "./types";
@@ -34,6 +35,16 @@ export function PageWindow({
       activeEntry: { ...state.activeEntry, [reference]: { id: entry.id as string, label, zone } },
     }));
   }, [reference]);
+  // Fenêtre ouverte sur un onglet d’élément : l’onglet s’y rouvre, après la page.
+  useEffect(() => {
+    const view = pageWindowParams()?.view as { id?: unknown; label?: unknown; params?: unknown } | undefined;
+    if (!view || typeof view !== "object") return;
+    try {
+      openView(`fenêtre:${reference}`, cleanView(view, reference));
+    } catch {
+      // Des paramètres illisibles : la fenêtre montre la page seule.
+    }
+  }, [reference]);
   const frame = useSectionFrame({
     title: found?.page.title ?? "Page introuvable",
     sectionId: `fenêtre:${reference}`,
@@ -56,6 +67,10 @@ export function PageWindow({
     <SocleShell
       sidebar={sidebar}
       pageTitle={frame.pageTitle}
+      views={found ? frame.views : undefined}
+      activeView={found ? frame.activeView : undefined}
+      onViewChange={found ? frame.onViewChange : undefined}
+      onViewClose={found ? frame.onViewClose : undefined}
       actions={frame.actions}
       detail={found ? frame.detail : undefined}
       detailExpandable

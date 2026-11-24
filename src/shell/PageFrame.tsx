@@ -31,10 +31,13 @@ export function PageFrame({
   host,
   capture = false,
   examples: forced = false,
+  view = null,
 }: {
   page: ResolvedPage;
   kind: "page" | "panel";
   host?: string;
+  /** Onglet ouvert sur un élément que montre la page, avec sa section : `usePageContext().view`. */
+  view?: FrameIdentity["view"] | null;
   /** Cadre invisible chargé pour une capture de l’agent : il ne rejoint pas les pairs de la page affichée. */
   capture?: boolean;
   /** Montrer les données d’exemple même si le module n’est pas réglé ainsi (capture demandée par l’agent). */
@@ -50,6 +53,7 @@ export function PageFrame({
   const examples = useExampleMode(page.module) || forced;
   // Les comptes changent d’identité (pas de valeur) à chaque snapshot : le cadre suit leur valeur, en chaîne.
   const accountsKey = JSON.stringify(page.accounts ?? {});
+  const viewJson = view ? JSON.stringify(view) : "";
   const identity = useMemo<FrameIdentity>(
     () => ({
       kind,
@@ -60,8 +64,9 @@ export function PageFrame({
       ...(accountsKey !== "{}" ? { accounts: JSON.parse(accountsKey) as Record<string, string> } : {}),
       ...(examples ? { examples: true } : {}),
       ...(capture ? { capture: true } : {}),
+      ...(viewJson ? { view: JSON.parse(viewJson) as FrameIdentity["view"] } : {}),
     }),
-    [kind, page.module, page.reference, host, page.instance, accountsKey, examples, capture],
+    [kind, page.module, page.reference, host, page.instance, accountsKey, examples, capture, viewJson],
   );
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
@@ -161,6 +166,8 @@ export function PageFrame({
     window.addEventListener("message", onMessage);
     const pushContext = () =>
       post({ alfred: ALFRED_MESSAGE, kind: "event", name: "context", payload: frameContext(identity) });
+    // L’onglet rouvert avec un autre libellé ou d’autres paramètres : la page reçoit son nouveau contexte.
+    if (identity.view) pushContext();
     const stopSelection = onSelectionChange((changed) => {
       if (changed === identity.host) pushContext();
     });

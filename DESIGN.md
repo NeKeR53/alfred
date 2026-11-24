@@ -42,6 +42,7 @@ La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’a
 - Chaque page peut déclarer **un** panneau de droite. L’utilisateur l’affiche, le masque et choisit sa largeur.
 - Une page peut s’ajouter aux **Réglages** (section 7).
 - Une page peut ajouter sa **zone** au menu de gauche : des entrées sous l’entrée de sa section, une par objet suivi (`menu.setEntries`, SDK.md, section 8).
+- **Ouvrir un élément ajoute un onglet fermable** (D-021) : `views.open({ id, label, params })` met un onglet après les onglets fixes de la section, l’active, et rouvre la page sur l’élément (`usePageContext().view`). Le même `id` ne crée pas de doublon ; dix onglets au plus par section ; ils sont mémorisés d’un lancement à l’autre (SDK.md, section 8, « Onglet sur un élément »).
 - Le placement d’une page, son titre et l’icône de son entrée se déclarent hors du fichier de la page (voir le guide de l’espace).
 - L’état d’une page (données d’exemple, service à configurer) se signale dans sa barre du haut, par la coquille. Jamais par un bandeau pleine largeur.
 - Une page est affichée dans un cadre isolé, sans réseau ni disque : ses données passent par `@alfred/sdk`. Une modale, un menu ou une infobulle restent dans son cadre. `window.alert`, `window.confirm` et `<a href>` ne fonctionnent pas.
@@ -57,13 +58,13 @@ Choisir le gabarit d’après ce que la page montre :
 | Une saisie longue (une fiche riche, une demande) | `FormPage` (section 9) | Vue de la page |
 | Une confirmation avant d’agir | `Action` `danger` ou `confirm` (section 4), ou `useConfirm()` | Modale |
 | Un contenu à voir sans quitter la page (aperçu, choix) | `Dialog` (section 9) | Modale |
-| Un élément à lire ou traiter en entier depuis une liste | `DetailPage` avec `back` (section 10) | Vue de la page, à la place de la liste |
+| Un élément à lire ou traiter en entier depuis une liste | `DetailPage` avec `back` (section 10) | Onglet fermable ouvert sur l’élément (`views.open`) |
 | Une autre page de l’espace | `shell.navigate("module/page")` ; `shell.openWindow` pour une fenêtre à part | L’onglet de cette page |
 | Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page` et `PageSection` (section 10) | Onglet |
 
 Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `Drawer` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
 
-Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des `Tabs` en tête de la page, ou des pages distinctes de la section. Jamais des boutons accolés.
+Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus »), ni des boutons accolés.
 
 ## 3. Imports et structure d’une page
 
@@ -136,7 +137,7 @@ La zone fixe la forme. La page ne choisit rien :
   filters={[{ id: "etat", label: "État", allLabel: "Tous les états", options: ETATS_OPTIONS }]}
   selectedId={choisie}
   onSelect={(row) => choisir(row)}     // sélection : publier pour le panneau
-  onOpen={(row) => ouvrir(row)}        // double-clic ou Entrée : DetailPage
+  onOpen={(row) => void views.open({ id: row.id, label: row.titre })} // double-clic ou Entrée : un onglet par élément
   isLoading={taches.loading}           // rechargement : barre fine
   hasError={Boolean(taches.error)}
   onRetry={taches.reload}
@@ -316,13 +317,14 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 - `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state`, `onRetry`, `empty: { title, description, action }`.
 - Pas de titre de page : il est dans la barre du haut. Pas de cartes décoratives ni de chiffres sans action.
 
-**`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. La page garde l’élément ouvert dans `usePageState("ouvert", null)` et rend la `DetailPage` à la place de la `ListPage` :
+**`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. `onOpen` ouvre l’élément dans un onglet fermable (`views.open({ id, label, params })`) ; dans cet onglet, `usePageContext()?.view` porte l’élément et la page rend la `DetailPage` à la place de la `ListPage`. Le lien de retour ferme l’onglet et revient à la liste :
 
 ```tsx
-if (ouvert) return (
+const view = usePageContext()?.view ?? null;
+if (view) return (
   <DetailPage
     title={facture.numero}
-    back={{ label: "Factures", onPress: () => setOuvert(null) }}
+    back={{ label: "Factures", onPress: () => void views.close() }}
     status={STATUT[facture.etat]}
     meta={[facture.client, formatDate(facture.date)]}
     actions={[...]}

@@ -1264,7 +1264,49 @@ export interface PageContext {
    * et son panneau ; `null` ailleurs.
    */
   params: Record<string, unknown> | null;
+  /**
+   * Onglet ouvert sur un élément (`views.open`) que montre la page : l’élément à afficher. `null` dans un onglet fixe
+   * de la section. Un panneau reçoit celui de sa page.
+   */
+  view: OpenedView | null;
 }
+
+/** Élément porté par un onglet ouvert : ce que la page a passé à `views.open`. */
+export interface OpenedView {
+  id: string;
+  label: string;
+  params: Record<string, unknown> | null;
+}
+
+export interface ViewOptions {
+  /** Identifiant de l’élément (`PROJ-42`) : rouvrir le même identifiant active l’onglet déjà ouvert. */
+  id: string;
+  /** Nom de l’élément, libellé de l’onglet (« PROJ-42 Paiement refusé »). */
+  label: string;
+  /** Objet JSON (16 Kio au plus), lu par la page dans `usePageContext().view.params`. */
+  params?: Record<string, unknown>;
+  /** Autre page du module à afficher dans l’onglet (« ticket ») ; par défaut, la page elle-même. */
+  page?: string;
+}
+
+/**
+ * Onglets ouverts sur un élément, dans la barre du haut (D-021) : après les onglets fixes de la section, fermables,
+ * mémorisés d’un lancement à l’autre (dix par section au plus, le plus ancien se ferme). L’onglet rouvre la page sur
+ * l’élément ; elle le lit dans `usePageContext().view`.
+ */
+export const views = {
+  /** Ouvre un onglet pour un élément et l’affiche ; s’il est déjà ouvert, l’active (libellé et paramètres mis à jour). */
+  open(options: ViewOptions): Promise<void> {
+    return request<void>("views.open", { ...options });
+  },
+  /**
+   * Ferme l’onglet de l’élément `id` ouvert par le module dans la section (sans argument : celui que montre la page).
+   * L’onglet de gauche s’affiche s’il était actif. Rend faux si l’onglet n’était pas ouvert.
+   */
+  close(id?: string, options: { page?: string } = {}): Promise<boolean> {
+    return request<boolean>("views.close", { ...(id !== undefined ? { id } : {}), ...options });
+  },
+};
 
 /** Fenêtre ouverte sur un élément précis : ce que la page y lit, la clé qui ramène la même fenêtre, son titre. */
 export interface WindowOptions {
