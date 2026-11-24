@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, IconButton, Modal } from "socle-ui";
+import { DocumentViewer, IconButton, Modal } from "socle-ui";
 import { Row, Text } from "../../../kit";
 
 /** Image montrée dans la vue agrandie : en ligne (`src`), ou fichier lu à la demande (`reference`). */
@@ -74,31 +74,29 @@ export function ImageViewer({
       title={label}
       size="xl"
       footer={
-        several || onSave ? (
-          <Row gap="sm" justify="between">
-            {several ? (
-              <Row gap="xs">
-                <IconButton icon={<ChevronLeft size={16} />} label="Image précédente" onPress={() => go(-1)} />
-                <Text as="span" tone="muted" size="meta">
-                  {`${label} · ${index + 1} / ${images.length}`}
-                </Text>
-                <IconButton icon={<ChevronRight size={16} />} label="Image suivante" onPress={() => go(1)} />
-              </Row>
-            ) : (
-              <span />
-            )}
-            {onSave ? <Button onPress={() => onSave(index)}>Enregistrer une copie</Button> : null}
+        several ? (
+          <Row gap="xs">
+            <IconButton icon={<ChevronLeft size={16} />} label="Image précédente" onPress={() => go(-1)} />
+            <Text as="span" tone="muted" size="meta">
+              {`${label} · ${index + 1} / ${images.length}`}
+            </Text>
+            <IconButton icon={<ChevronRight size={16} />} label="Image suivante" onPress={() => go(1)} />
           </Row>
         ) : undefined
       }
     >
-      <div className="image-viewer">
-        {src ? (
-          <img className="image-viewer__image" src={src} alt={label} referrerPolicy="no-referrer" />
-        ) : (
-          <Text tone="muted">{failed ? `Image indisponible : ${label}` : "Chargement de l’image…"}</Text>
-        )}
-      </div>
+      {src ? (
+        // DocumentViewer de Socle (D-310) : zoom, et « Télécharger » pour enregistrer une copie.
+        <DocumentViewer
+          key={src}
+          label={label}
+          src={src}
+          name={label}
+          onDownload={onSave ? () => onSave(index) : undefined}
+        />
+      ) : (
+        <Text tone="muted">{failed ? `Image indisponible : ${label}` : "Chargement de l’image…"}</Text>
+      )}
     </Modal>
   );
 }
@@ -118,7 +116,8 @@ export function ImagePreview({
 }: {
   src: string;
   alt: string;
-  size?: "message" | "attachment" | "capture";
+  /** `sent` : image jointe à un message envoyé, en vignette carrée. */
+  size?: "message" | "capture" | "sent";
   /** Enregistre une copie de l’image, proposée dans la vue agrandie. */
   onSave?: (index?: number) => void;
   gallery?: { images: readonly ViewerImage[]; index: number };

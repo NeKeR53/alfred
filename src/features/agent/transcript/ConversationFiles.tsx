@@ -1,49 +1,42 @@
-import { Paperclip } from "lucide-react";
-import { Accordion, Button } from "socle-ui";
+import { Accordion, Button, Card } from "socle-ui";
+import { Row, Stack, Text } from "../../../kit";
 import { conversationFileName, conversationFilePath, isPdfDocument } from "../lib/conversationFileKinds";
 import { PdfPreview } from "./PdfPreview";
 import { useConversationResources } from "./resources";
 
 /**
- * Fichier d’une conversation, repris de `ConversationFile` de OneApp : son nom, et, pour un fichier produit par
- * l’agent, l’ouverture avec l’application du système, l’enregistrement d’une copie et l’aperçu d’un PDF.
+ * Fichier produit ou cité par l’agent, repris de `ConversationFile` de OneApp : une `Card` à son nom, son dossier,
+ * l’ouverture avec l’application du système, l’enregistrement d’une copie et l’aperçu d’un PDF.
  */
-export function ConversationFile({
-  reference,
-  name,
-  actions = true,
-}: {
-  reference: string;
-  name?: string;
-  actions?: boolean;
-}) {
+function ConversationFile({ reference }: { reference: string }) {
   const { files } = useConversationResources();
-  const label = name ?? conversationFileName(reference);
+  const label = conversationFileName(reference);
   const folder = conversationFilePath(reference).split(/[\\/]/).slice(0, -1).join("/");
-  const available = actions ? files : undefined;
   return (
-    <div className="agent-chat__file">
-      <span className="agent-chat__attachment-file" title={reference}>
-        <Paperclip size={14} aria-hidden="true" />
-        <span>{label}</span>
-        {folder && available ? <small>{folder}</small> : null}
-      </span>
-      {available ? (
-        <span className="agent-chat__file-actions">
-          <Button size="sm" aria-label={`Ouvrir ${label}`} onPress={() => available.open(reference)}>
-            Ouvrir
-          </Button>
-          <Button size="sm" aria-label={`Enregistrer… une copie de ${label}`} onPress={() => available.save(reference)}>
-            Enregistrer…
-          </Button>
-        </span>
-      ) : null}
-      {available && isPdfDocument(reference) ? (
-        <Accordion title="Aperçu">
-          <PdfPreview label={`Aperçu de ${label}`} source={reference} generate={() => available.read(reference)} />
-        </Accordion>
-      ) : null}
-    </div>
+    <Card title={label} headingLevel={4}>
+      <Stack gap="sm">
+        {folder ? (
+          <Text tone="muted" size="meta">
+            {folder}
+          </Text>
+        ) : null}
+        {files ? (
+          <Row gap="sm">
+            <Button size="sm" aria-label={`Ouvrir ${label}`} onPress={() => files.open(reference)}>
+              Ouvrir
+            </Button>
+            <Button size="sm" aria-label={`Enregistrer… une copie de ${label}`} onPress={() => files.save(reference)}>
+              Enregistrer…
+            </Button>
+          </Row>
+        ) : null}
+        {files && isPdfDocument(reference) ? (
+          <Accordion title="Aperçu">
+            <PdfPreview label={`Aperçu de ${label}`} source={reference} generate={() => files.read(reference)} />
+          </Accordion>
+        ) : null}
+      </Stack>
+    </Card>
   );
 }
 
@@ -52,10 +45,12 @@ export function ConversationFiles({ files, label }: { files: readonly string[]; 
   const shown = [...new Set(files)];
   if (!shown.length) return null;
   return (
-    <section className="agent-chat__files" aria-label={label}>
-      {shown.map((reference) => (
-        <ConversationFile key={reference} reference={reference} />
-      ))}
+    <section aria-label={label}>
+      <Stack gap="sm">
+        {shown.map((reference) => (
+          <ConversationFile key={reference} reference={reference} />
+        ))}
+      </Stack>
     </section>
   );
 }

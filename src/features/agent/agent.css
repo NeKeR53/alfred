@@ -1,19 +1,13 @@
 /*
- * Page Agent, reprise de OneApp : agents.css (page, pied, suivi) et agent-chat.css (relevé), puis ce qui est
- * propre à Alfred (cartes d’accord et de placement, conversation dans le panneau d’une page).
+ * Page Agent : seulement ce que socle-ui 1.5 ne prévoit pas (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
  */
+
+/* Cadre de la page : la colonne de la conversation, puis le suivi dans la fenêtre Agent détachée (sans AppShell). */
 .agents-page {
   height: 100%;
   min-height: 0;
   display: flex;
-  flex-direction: column;
 }
-.agents-page__body {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-}
-/* Colonne de la conversation : sa barre du haut, puis le relevé ; la liste des conversations est à côté, en haut. */
 .agents-page__lead {
   min-width: 0;
   min-height: 0;
@@ -21,6 +15,22 @@
   display: flex;
   flex-direction: column;
 }
+.agents-page__side {
+  width: var(--detail-w);
+  min-height: 0;
+  flex: none;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* Nom de la conversation (InlineEdit) dans la barre d’outils : borné, pour laisser la place au harnais. */
+.agents-page__title {
+  min-width: 0;
+  max-width: 420px;
+}
+
+/* Conversation et saisie ; fichiers survolés (dépôt par le système, que ChatComposer ne voit pas dans Tauri). */
 .agents-page__main {
   position: relative;
   min-width: 0;
@@ -44,20 +54,7 @@
   pointer-events: none;
 }
 
-/* Même couleur que le lancement d’agent de l’en-tête produit. */
-
-.agents-page__state {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-}
-.agents-page__context {
-  margin: 0 0 4px;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-  text-align: center;
-}
+/* Pied aligné sur la colonne de 760 px de ChatTranscript : question, saisie, options. */
 .agents-page__footer {
   width: calc(100% - 32px);
   max-width: 760px;
@@ -65,104 +62,24 @@
   padding-bottom: 16px;
   flex: 0 0 auto;
 }
-/* Sur la ligne du choix du modèle, à gauche : texte seul, même hauteur et même taille que ce sélecteur. */
-.agents-page__git-summary {
-  height: 28px;
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-}
 .agents-page__question {
   max-height: min(40vh, 360px);
   margin-bottom: 8px;
   overflow: auto;
 }
+.agents-page__question:empty {
+  display: none;
+}
 
-/* Suivi des conversations (panneau de droite), repris de OneApp : la forme de la pastille ne change pas, la couleur
-   et la clarté distinguent les états. */
-.agent-list__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--line);
-}
-/* L’accent d’Alfred est proche du rouge d’échec : la pastille au travail pulse doucement pour s’en distinguer. */
-.agent-list__dot--working {
-  background: var(--accent);
-  animation: agent-list-dot-pulse 1.6s ease-in-out infinite;
-}
-@keyframes agent-list-dot-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-list__dot--working {
-    animation: none;
-  }
-}
-.agent-list__dot--attention {
-  background: var(--warning);
-}
-.agent-list__dot--error {
-  background: var(--danger);
-}
-.agent-list__dot--done {
-  background: var(--success);
-}
-/* Contraste élevé : pleine pour ce qui travaille ou attend l’utilisateur, creuse pour le reste. */
-@media (forced-colors: active) {
-  .agent-list__dot {
-    background: Canvas;
-    border: 1px solid CanvasText;
-  }
-  .agent-list__dot--working {
-    background: Highlight;
-    border-color: Highlight;
-  }
-  .agent-list__dot--attention,
-  .agent-list__dot--error {
-    background: CanvasText;
-  }
-}
-.agent-changes {
-  margin: 0;
-  padding: 0 0 4px;
-  list-style: none;
+/* Ligne de contexte en tête du relevé : « Depuis … · date ». */
+.agents-page__context {
+  margin: 0 0 4px;
   color: var(--fg-2);
   font-size: var(--fs-sm);
+  text-align: center;
 }
-.agent-changes__group {
-  padding: 0 0 4px;
-}
-.agent-changes__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-changes__summary {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-height: 20px;
-  color: var(--fg);
-}
-.agent-changes__totals {
-  margin-left: auto;
-  white-space: nowrap;
-}
-.agent-changes__added {
-  color: var(--success);
-}
-.agent-changes__removed {
-  color: var(--danger);
-}
+
+/* Activité locale : chemin de fichier cliquable (AgentActivity n’a pas de lien). */
 .agent-chat__activity-status {
   display: flex;
   align-items: center;
@@ -175,13 +92,14 @@
 .agent-chat__activity-status > svg {
   flex-shrink: 0;
 }
-
 .agent-chat__tool-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Vignettes d’images d’un message ou d’une sortie d’outil. */
 .agent-chat__message-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -193,23 +111,8 @@
 .agent-chat__message-attachments li {
   max-width: 100%;
 }
-.agent-chat__attachment-file {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 240px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  font-size: var(--fs-sm);
-}
-.agent-chat__attachment-file > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
+/* Bilan des modifications : un fichier par ligne, avec son DiffStat. */
 .agent-chat__change-files {
   list-style: none;
   margin: 0;
@@ -221,62 +124,4 @@
   justify-content: space-between;
   gap: 12px;
   padding: 4px 0;
-}
-
-/* Propre à Alfred */
-/* Fenêtre Agent détachée, sans AppShell : le suivi des conversations à droite de la conversation. */
-.agents-page__side {
-  width: var(--detail-w);
-  min-height: 0;
-  flex: none;
-  overflow-y: auto;
-  border-left: 1px solid var(--line);
-  background: var(--surface);
-}
-.agent-changes__lines {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-button.agent-chat__attachment-file {
-  color: var(--fg);
-  font: inherit;
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-button.agent-chat__attachment-file:hover {
-  background: var(--surface-side);
-}
-
-/* Cartes d’accord et de placement : habillage des décisions de OneApp (`agent-chat__permission`). */
-.agent-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 760px;
-  margin: 16px auto;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface-side);
-}
-.agent-card h3,
-.agent-card > strong {
-  margin: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
-.agent-card__note {
-  margin: 0;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-}
-.agents-page__question:empty {
-  display: none;
-}
-
-/* Nom de la conversation, modifiable sur place, en tête de la barre d’outils de la page. */
-.agents-page__title {
-  min-width: 0;
-  max-width: 420px;
 }

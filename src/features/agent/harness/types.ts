@@ -70,15 +70,6 @@ export type InputFile = { path: string; name: string; mimeType?: string };
  */
 export const ATTACHMENTS_ONLY_TEXT = "Analyse les fichiers joints.";
 
-export function messageText(message: string, files: readonly InputFile[] = []): string {
-  const text = message.trim();
-  return text || (files.length ? ATTACHMENTS_ONLY_TEXT : "");
-}
-
-export function isInputImage(file: InputFile): boolean {
-  return (file.mimeType ?? "").startsWith("image/") || /\.(?:png|jpe?g|gif|webp|avif)$/i.test(file.path);
-}
-
 /**
  * Liberté d’action de l’agent : `ask` (libre dans ses dossiers, accord ailleurs), `auto` (mode complet : ne demande
  * jamais), `strict` (accord à chaque écriture et chaque commande), `workspace` (mode espace de travail : n’agit que

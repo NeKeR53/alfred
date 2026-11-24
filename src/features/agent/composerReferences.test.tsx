@@ -11,8 +11,6 @@ import {
   clearReferenceCatalogs,
   loadComposerReferences,
   referenceInstructions,
-  referenceQuery,
-  replaceComposerRange,
   trimComposerReferences,
 } from "./lib/composerReferences";
 import { type Conversation, outgoingText, type UserMessage } from "./model";
@@ -185,14 +183,7 @@ describe("références de la saisie", () => {
 });
 
 describe("positions et consignes des références", () => {
-  it("`$` déclenche les skills, en début de mot seulement", () => {
-    expect(referenceQuery("lance $rel", 10)).toEqual({ kind: "skill", query: "rel", start: 6, end: 10 });
-    expect(referenceQuery("prix 5$", 7)).toBeUndefined();
-    expect(referenceQuery("@src", 4)?.kind).toBe("file");
-    expect(referenceQuery("/pub", 4)?.kind).toBe("command");
-  });
-
-  it("les pastilles suivent les modifications du texte", () => {
+  it("les pastilles suivent le texte rogné à l’envoi", () => {
     const mention = (offset: number): ComposerReferenceMention => ({
       id: String(offset),
       offset,
@@ -200,8 +191,6 @@ describe("positions et consignes des références", () => {
       name: "a",
       path: "/a",
     });
-    const shifted = replaceComposerRange([mention(2), mention(5), mention(9)], 4, 7, 1);
-    expect(shifted.map((item) => item.offset)).toEqual([2, 5, 7]);
     expect(
       trimComposerReferences("  bonjour  ", [mention(0), mention(9), mention(11)]).map((item) => item.offset),
     ).toEqual([0, 7, 7]);

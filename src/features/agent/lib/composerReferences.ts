@@ -18,13 +18,6 @@ export interface ComposerReference {
 }
 /** Référence placée dans le texte : `offset` est sa position, en caractères, dans le texte sans les pastilles. */
 export type ComposerReferenceMention = ComposerReference & { id: string; offset: number };
-export interface ReferenceQuery {
-  /** `file` pour `@`, `skill` pour `$`, `command` pour `/` (commandes et skills). */
-  kind: ReferenceKind;
-  query: string;
-  start: number;
-  end: number;
-}
 
 const normalizeSearch = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -70,48 +63,9 @@ export function filterComposerReferences(items: ComposerReference[], query: stri
     .map(({ item }) => item);
 }
 
-/** Mot en cours de frappe juste avant le curseur, s’il commence par `@`, `$` ou `/` (en début de mot). */
-export function referenceQuery(text: string, cursor: number): ReferenceQuery | undefined {
-  const match = /(?:^|\s)([@$/])([^\s]*)$/.exec(text.slice(0, cursor));
-  if (!match) return undefined;
-  return {
-    kind: match[1] === "@" ? "file" : match[1] === "$" ? "skill" : "command",
-    query: match[2],
-    start: cursor - match[2].length - 1,
-    end: cursor,
-  };
-}
-
 /** Nom affiché dans la pastille : le dernier segment d’un chemin, le nom d’une commande ou d’un skill. */
 export function referenceDisplayName(item: ComposerReference): string {
   return item.kind === "file" ? item.name.replace(/\/$/, "").split(/[\\/]/).at(-1) || item.name : item.name;
-}
-
-/** Retire le mot en cours (`@not`, `/pub`) : la pastille prend sa place. */
-export function removeReferenceQuery(text: string, query: ReferenceQuery) {
-  return { text: text.slice(0, query.start) + text.slice(query.end), cursor: query.start };
-}
-
-/**
- * Décale les pastilles après le remplacement de `start`–`end` par `replacementLength` caractères : celles d’avant ne
- * bougent pas, celles d’après suivent, celles du passage remplacé se posent à sa fin.
- */
-export function replaceComposerRange(
-  references: readonly ComposerReferenceMention[],
-  start: number,
-  end: number,
-  replacementLength = 0,
-): ComposerReferenceMention[] {
-  const delta = replacementLength - (end - start);
-  return references.map((reference) => ({
-    ...reference,
-    offset:
-      reference.offset <= start
-        ? reference.offset
-        : reference.offset >= end
-          ? reference.offset + delta
-          : start + replacementLength,
-  }));
 }
 
 /** Positions des pastilles dans le texte rogné (`text.trim()`) qui part avec le message. */
@@ -151,12 +105,6 @@ function validReference(raw: unknown): raw is ComposerReference {
     ["file", "skill", "command"].includes(String(item.kind)) &&
     (item.description === undefined || typeof item.description === "string")
   );
-}
-
-/** Relit des références venues d’un message enregistré : champs connus, chemins non vides, 50 au plus. */
-export function validReferences(value: unknown): ComposerReference[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 50).filter(validReference);
 }
 
 /** Références placées d’un brouillon enregistré : 50 au plus, chacune avec son identifiant et sa position. */

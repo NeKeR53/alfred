@@ -1,11 +1,11 @@
-import { Archive, FileDiff } from "lucide-react";
+import { Archive } from "lucide-react";
 import { useEffect, useState } from "react";
-import { type DetailSection, Drawer } from "socle-ui";
+import { type DetailSection, DiffStat, Drawer, PropertyRow, type StatusTone } from "socle-ui";
 import { invoke } from "../../lib/native";
 import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
-import { InfoPanelNote, InfoPanelRows } from "./panel/InfoPanel";
+import { InfoPanelRows } from "./panel/InfoPanel";
 import { useAgents } from "./store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
 
@@ -22,13 +22,15 @@ function rowState(state: ConversationState): ConversationState {
   return state === "waiting" ? "working" : state;
 }
 
-/**
- * Pastille de l’état, posée dans la marge de la ligne comme dans le suivi des agents de OneApp : au travail, réponse
- * attendue, échec, terminé ; une conversation en veille garde une pastille neutre.
- */
-function dotOf(state: ConversationState) {
-  return { glyph: <span className={`agent-list__dot agent-list__dot--${state}`} /> };
-}
+/** Ton du badge d’état de la ligne : au travail, réponse attendue, échec, à consulter ; en veille, neutre. */
+export const STATE_TONE: Record<ConversationState, StatusTone> = {
+  working: "info",
+  waiting: "info",
+  attention: "warning",
+  error: "danger",
+  done: "success",
+  idle: "neutral",
+};
 
 /** Dernière activité, comme dans OneApp : l’heure aujourd’hui, le jour et le mois avant. */
 export function lastActivity(at: number, now: number) {
@@ -99,8 +101,7 @@ export function GitSummaryPill({ git }: { git: GitChanges }) {
   const { count, additions, deletions, incomplete } = gitTotals(git);
   if (!count) return null;
   return (
-    <div
-      className="agents-page__git-summary"
+    <span
       role="status"
       title={
         incomplete
@@ -108,51 +109,15 @@ export function GitSummaryPill({ git }: { git: GitChanges }) {
           : undefined
       }
     >
-      {count} fichier{count > 1 ? "s" : ""} modifié{count > 1 ? "s" : ""}
-      {additions !== undefined && deletions !== undefined ? (
-        <>
-          <span className="agent-changes__added">+{additions.toLocaleString("fr-FR")}</span>
-          <span className="agent-changes__removed">−{deletions.toLocaleString("fr-FR")}</span>
-        </>
-      ) : null}
-    </div>
+      {count} fichier{count > 1 ? "s" : ""} modifié{count > 1 ? "s" : ""}{" "}
+      {additions !== undefined && deletions !== undefined ? <DiffStat added={additions} removed={deletions} /> : null}
+    </span>
   );
 }
 
-/** Un groupe par dépôt modifié, puis les dépôts illisibles s’il n’y a rien d’autre à montrer. */
-function GitChangesContent({ groups }: { groups: GitGroup[] }) {
-  const unavailable = groups.filter((group) => group.error).length;
-  return (
-    <div className="agent-changes">
-      {groups
-        .filter((group) => group.summary?.files.length)
-        .map((group) => (
-          <div key={group.path} className="agent-changes__group">
-            <div className="agent-changes__summary">
-              <FileDiff size={14} aria-hidden="true" />
-              <span className="agent-changes__name" title={group.path}>
-                Modifications
-              </span>
-              <span className="agent-changes__totals">
-                {group.summary?.additions != null && group.summary.deletions != null ? (
-                  <>
-                    <span className="agent-changes__added">+{group.summary.additions.toLocaleString("fr-FR")}</span>{" "}
-                    <span className="agent-changes__removed">−{group.summary.deletions.toLocaleString("fr-FR")}</span>
-                  </>
-                ) : (
-                  `${group.summary?.files.length} fichiers`
-                )}
-              </span>
-            </div>
-          </div>
-        ))}
-      {unavailable && !groups.some((group) => group.summary?.files.length) ? (
-        <InfoPanelNote>
-          {unavailable} dépôt{unavailable > 1 ? "s" : ""} indisponible{unavailable > 1 ? "s" : ""}.
-        </InfoPanelNote>
-      ) : null}
-    </div>
-  );
+/** Valeur d’une ligne de modifications : lignes ajoutées et retirées, sinon le nombre de fichiers. */
+function changesValue(files: number, lines?: { added: number; removed: number }) {
+  return lines ? <DiffStat {...lines} /> : `${files} fichier${files > 1 ? "s" : ""}`;
 }
 
 type TurnLines = Record<string, FileLines>;
@@ -211,53 +176,45 @@ function SpaceChanges({ conversation }: { conversation: Conversation }) {
     { added: 0, removed: 0 },
   );
   return (
-    <div className="agent-changes">
-      <div className="agent-changes__summary">
-        <FileDiff size={14} aria-hidden="true" />
-        <span className="agent-changes__name">Enregistrées dans l’espace de travail</span>
-        <span className="agent-changes__totals">
-          {counted.length ? <LineCounts {...totals} /> : `${files.length} fichier${files.length > 1 ? "s" : ""}`}
-        </span>
-      </div>
-    </div>
+    <PropertyRow
+      label="Enregistrées dans l’espace"
+      value={changesValue(files.length, counted.length ? totals : undefined)}
+    />
   );
 }
 
-/** Carte « Modifications » : l’état Git du dossier de travail, comme dans OneApp, puis les tours enregistrés. */
-function ChangedFiles({ conversation, git }: { conversation?: Conversation; git: GitChanges }) {
-  if (!conversation) return <InfoPanelNote>Ouvrez une conversation.</InfoPanelNote>;
-  const space = <SpaceChanges conversation={conversation} />;
-  if (git.loading)
-    return (
-      <>
-        <InfoPanelNote>Lecture de l’état Git…</InfoPanelNote>
-        {space}
-      </>
-    );
-  if (git.groups.some((group) => group.error || group.summary?.files.length))
-    return (
-      <>
-        <GitChangesContent groups={git.groups} />
-        {space}
-      </>
-    );
+/**
+ * Carte « Modifications » : l’état Git du dossier de travail (ce qui n’est pas encore enregistré), comme dans OneApp,
+ * puis les tours enregistrés dans l’espace.
+ */
+function ChangedFiles({ conversation, git }: { conversation: Conversation; git: GitChanges }) {
+  const changed = git.groups.filter((group) => group.summary?.files.length);
+  const unavailable = git.groups.filter((group) => group.error).length;
+  const pending = git.loading
+    ? "Lecture de l’état Git…"
+    : changed.length
+      ? undefined
+      : unavailable
+        ? `${unavailable} dépôt${unavailable > 1 ? "s" : ""} indisponible${unavailable > 1 ? "s" : ""}.`
+        : "Aucune";
   return (
     <>
-      <InfoPanelNote>Aucune modification Git.</InfoPanelNote>
-      {space}
+      <PropertyRow label="Dossier de travail" value={conversation.cwd} />
+      {pending !== undefined ? <PropertyRow label="Non enregistrées" value={pending} /> : null}
+      {changed.map(({ path, summary }) => (
+        <PropertyRow
+          key={path}
+          label="Non enregistrées"
+          value={changesValue(
+            summary?.files.length ?? 0,
+            summary?.additions != null && summary.deletions != null
+              ? { added: summary.additions, removed: summary.deletions }
+              : undefined,
+          )}
+        />
+      ))}
+      <SpaceChanges conversation={conversation} />
     </>
-  );
-}
-
-/** Lignes ajoutées en vert et retirées en rouge, comme un bilan de diff. */
-function LineCounts({ added, removed }: FileLines) {
-  return (
-    <span
-      className="agent-changes__lines"
-      title={`${added} ligne${added > 1 ? "s" : ""} ajoutée${added > 1 ? "s" : ""}, ${removed} retirée${removed > 1 ? "s" : ""}`}
-    >
-      <span className="agent-changes__added">+{added}</span> <span className="agent-changes__removed">−{removed}</span>
-    </span>
   );
 }
 
@@ -307,17 +264,12 @@ export function ConversationList({
       : header.parent
         ? ` · délégué${parent ? ` de ${parent.title}` : ""}`
         : "";
-    const details =
-      state === "attention" || state === "error"
-        ? `${provider}${role} · ${CONVERSATION_STATE_LABEL[state].toLowerCase()}`
-        : `${provider}${role}`;
-    const status = CONVERSATION_STATE_LABEL[state];
     return {
       key: header.id,
-      ...dotOf(state),
       text: header.title,
-      description: details,
-      announcement: status,
+      description: `${provider}${role}`,
+      announcement: CONVERSATION_STATE_LABEL[state],
+      tone: STATE_TONE[state],
       meta: lastActivity(header.updatedAt, now),
       selected: header.id === activeId,
       onSelect: () => void open(header.id),
@@ -336,22 +288,24 @@ export function ConversationList({
         : working.length
           ? `${working.length} au travail`
           : undefined,
-      content: <InfoPanelRows variant="detailed" empty="Aucune conversation." rows={rows} />,
+      content: <InfoPanelRows rows={rows} />,
     },
   ];
-  const detailSections: DetailSection[] = [
-    {
-      id: "agent-changes",
-      title: "Modifications",
-      content: <ChangedFiles conversation={active} git={git} />,
-    },
-  ];
+  const detailSections: DetailSection[] = active
+    ? [
+        {
+          id: "conversation-changes",
+          title: "Modifications",
+          content: <ChangedFiles conversation={active} git={git} />,
+        },
+      ]
+    : [];
   if (!withList) {
     // Fenêtre principale : seulement les détails de la conversation ouverte.
     return (
       <Drawer
         header={{ title: "Détails de la conversation" }}
-        sections={active ? detailSections : []}
+        sections={detailSections}
         emptyMessage="Aucune conversation ouverte."
       />
     );

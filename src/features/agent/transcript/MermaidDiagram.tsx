@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Code } from "socle-ui";
+import { Stack, Text } from "../../../kit";
 import { type MermaidTheme, renderMermaid } from "./mermaid";
 
 function applicationTheme(): MermaidTheme {
@@ -48,11 +50,13 @@ export function MermaidDiagram({ source }: { source: string }) {
       />
     );
   return (
-    <div className="mermaid-diagram__fallback">
+    <Stack gap="sm">
       {result?.key === key && result.error ? (
-        <p className="mermaid-diagram__error">Schéma Mermaid non dessiné : {result.error}</p>
+        <Text tone="muted" size="meta">{`Schéma Mermaid non dessiné : ${result.error}`}</Text>
       ) : null}
-      <pre>{source}</pre>
-    </div>
+      <Code block label="Source du schéma Mermaid">
+        {source}
+      </Code>
+    </Stack>
   );
 }

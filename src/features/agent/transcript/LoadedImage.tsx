@@ -27,7 +27,7 @@ export function LoadedImage({
   if (state?.reference === reference && state.url)
     return <ImagePreview src={state.url} alt={alt || "Image"} onSave={onSave} />;
   return (
-    <span className="markdown-text__image-status">
+    <span>
       {state?.reference === reference && state.failed
         ? `Image indisponible : ${alt || reference}`
         : "Chargement de l’image…"}

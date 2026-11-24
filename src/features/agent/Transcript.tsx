@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Undo2 } from "lucide-react";
-import { memo, type ReactNode, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AttachmentChip,
@@ -21,7 +21,6 @@ import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { Activities, type Activity, hasActivityOutput } from "./Activities";
 import { restoreMessageDraft } from "./Composer";
-import { effortLabel } from "./effort";
 import { followLink } from "./files";
 import type { ApprovalRequest } from "./harness";
 import { activityImageOutput, loadConversationImage, referencedLocalImages } from "./lib/chatImages";
@@ -130,19 +129,14 @@ export function producedFiles(turn: Turn): string[] {
   return turn.items.flatMap((item) => (item.kind === "activity" ? (item.files ?? []) : []));
 }
 
-/** Modèle de la conversation, en infobulle de son en-tête. */
-export function conversationModelLabel(conversation: Pick<Conversation, "model" | "effort">): string | undefined {
-  if (!conversation.model) return undefined;
-  return conversation.effort ? `${conversation.model} · ${effortLabel(conversation.effort)}` : conversation.model;
-}
-
 /** En-tête « Depuis {origine} · {date} », avec le modèle en infobulle, repris de la page Agents de OneApp. */
-export function TranscriptHeader({ conversation }: { conversation: Conversation }) {
+function TranscriptHeader({ conversation, modelLabel }: { conversation: Conversation; modelLabel?: string }) {
   // Une reprise (« Repartir d’ici ») vient de la conversation d’origine.
   const forkedFrom = (conversation as Conversation & { forkedFrom?: { title: string } }).forkedFrom;
   const origin = conversation.origin?.title ?? forkedFrom?.title;
   return (
-    <p className="agents-page__context" title={conversationModelLabel(conversation)}>
+    // Hors design : ligne de contexte en tête du relevé (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
+    <p className="agents-page__context" title={modelLabel}>
       {origin ? `Depuis ${origin} · ` : ""}
       {formatDateTimeShort(conversation.createdAt)}
     </p>
@@ -612,15 +606,12 @@ export function ConversationQuestion({
 export function Transcript({
   conversation,
   runtime,
-  header,
+  context,
 }: {
   conversation: Conversation;
   runtime: ConversationRuntime;
-  /**
-   * Ligne au-dessus du relevé, dans la colonne défilante. Quand elle est demandée, c’est l’en-tête de OneApp
-   * (« Depuis {origine} · {date} », modèle en infobulle) qui s’affiche, quel que soit le contenu passé.
-   */
-  header?: ReactNode;
+  /** En-tête de OneApp au-dessus du relevé : « Depuis {origine} · {date} », le modèle en infobulle. */
+  context?: { modelLabel?: string };
 }) {
   const retry = useAgents((state) => state.retry);
   const resend = useAgents((state) => (state as unknown as TurnActions).resend);
@@ -674,9 +665,7 @@ export function Transcript({
     >
       <ErrorBoundary resetKey={conversationId}>
         <ConversationResourcesContext.Provider value={resources}>
-          {header !== undefined && header !== null && header !== false ? (
-            <TranscriptHeader conversation={conversation} />
-          ) : null}
+          {context ? <TranscriptHeader conversation={conversation} modelLabel={context.modelLabel} /> : null}
           {visibleTurns.map((turn, index) => {
             const last = index === visibleTurns.length - 1;
             return (

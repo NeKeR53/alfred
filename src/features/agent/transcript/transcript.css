@@ -1,33 +1,4 @@
-/* Relevé d’une conversation : éléments repris de OneApp (fichiers, images, Mermaid, question, remise, pastilles). */
-
-/* Fichiers produits ou cités par l’agent : nom, actions et aperçu d’un PDF. */
-.agent-chat__files {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-.agent-chat__file {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.agent-chat__file > .agent-chat__attachment-file {
-  max-width: min(100%, 420px);
-}
-.agent-chat__file small {
-  color: var(--fg-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-chat__file-actions {
-  display: inline-flex;
-  gap: 4px;
-}
-.agent-chat__file > details {
-  flex-basis: 100%;
-}
+/* Relevé : seulement ce que socle-ui 1.5 ne prévoit pas — vignettes d’images agrandissables, captures, schémas Mermaid. */
 
 /* Vignettes d’image agrandissables (`ImagePreview` de OneApp). */
 .image-preview {
@@ -37,9 +8,6 @@
 }
 .image-preview--message {
   width: 360px;
-}
-.image-preview--attachment {
-  width: 72px;
 }
 .image-preview .image-preview__thumbnail {
   display: flex;
@@ -129,44 +97,14 @@
   height: auto;
   margin: 0 auto;
 }
-.mermaid-diagram__fallback pre {
-  margin: 8px 0;
-  overflow-x: auto;
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: var(--fs-sm);
-}
-.mermaid-diagram__error {
-  margin: 8px 0 0;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-}
 /* Images jointes à un message envoyé : vignettes carrées de 160 px. */
-.agent-chat__message-attachments .image-preview--message {
+.image-preview--sent {
   width: 160px;
 }
-.agent-chat__message-attachments .image-preview .image-preview__thumbnail {
+.image-preview--sent .image-preview__thumbnail {
   aspect-ratio: 1;
   border-radius: 12px;
 }
-.agent-chat__message-attachments .image-preview__thumbnail img {
+.image-preview--sent .image-preview__thumbnail img {
   object-fit: cover;
-}
-
-/* Références citées dans un message envoyé : pastilles, comme dans la saisie de OneApp. */
-.reference-text {
-  white-space: pre-wrap;
-}
-
-/* Image de la vue agrandie, dans le corps du `Dialog` de Socle. */
-.image-viewer {
-  display: grid;
-  place-items: center;
-  min-height: 240px;
-}
-.image-viewer__image {
-  display: block;
-  max-width: 100%;
-  max-height: 70dvh;
-  object-fit: contain;
-  border-radius: var(--radius-sm);
 }

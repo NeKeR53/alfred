@@ -6,7 +6,6 @@ import {
   finalQuestion,
   MAX_ACTIVITY_CONTENT,
   outgoingText,
-  pastedContextTitle,
   plainText,
   preparedMessage,
   replayedHistory,
@@ -89,13 +88,6 @@ describe("aperçu sans Markdown", () => {
 
   it("laisse intacts les soulignés d’un identifiant", () => {
     expect(plainText("Table notes_notes créée")).toBe("Table notes_notes créée");
-  });
-});
-
-describe("titre d’un collage long", () => {
-  it("ne compte pas le saut de ligne final comme une ligne", () => {
-    expect(pastedContextTitle("a\nb\n", 1)).toBe("Contexte 1 · 2 lignes");
-    expect(pastedContextTitle("seule", 2)).toBe("Contexte 2 · 1 ligne");
   });
 });
 

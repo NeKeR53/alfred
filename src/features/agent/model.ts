@@ -162,12 +162,6 @@ export function isLongPaste(text: string): boolean {
   return text.length > LONG_PASTE_CHARACTERS || text.split("\n").length > LONG_PASTE_LINES;
 }
 
-export function pastedContextTitle(text: string, index: number): string {
-  // Le saut de ligne final d’un collage ne compte pas pour une ligne de plus.
-  const lines = text.replace(/\r?\n$/, "").split("\n").length;
-  return `Contexte ${index} · ${lines} ligne${lines > 1 ? "s" : ""}`;
-}
-
 /** Texte d’un message fait seulement de collages, comme dans OneApp. */
 export const PASTES_ONLY_TEXT = "Traite les données jointes selon la demande en cours.";
 

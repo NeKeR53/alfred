@@ -28,7 +28,6 @@ import {
   CHAINED_TURN_GAP,
   ConversationQuestion,
   changedFilesOf,
-  conversationModelLabel,
   finalMessage,
   isLongChatText,
   producedFiles,
@@ -181,8 +180,6 @@ describe("présentation d’un tour", () => {
     expect(isLongChatText("a".repeat(2000))).toBe(true);
     expect(isLongChatText(Array(20).fill("l").join("\n"))).toBe(true);
     expect(isLongChatText("court\ntexte")).toBe(false);
-    expect(conversationModelLabel({ model: "gpt-5", effort: "high" })).toBe("gpt-5 · Élevé");
-    expect(conversationModelLabel({})).toBeUndefined();
     expect(activityStatusLabel("cancelled")).toBe("Arrêté");
     expect(activityStatusLabel("stopped")).toBe("Arrêté");
   });
@@ -252,7 +249,7 @@ describe("relevé", () => {
           { model: "gpt-5", origin: { reference: "notes/page", title: "Notes" } },
         )}
         runtime={idle}
-        header
+        context={{ modelLabel: "gpt-5" }}
       />,
     );
     const header = screen.getByText(/^Depuis Notes · /);
@@ -793,7 +790,7 @@ describe("en-tête d’une reprise", () => {
       <Transcript
         conversation={{ ...conversation([turn("t1")]), forkedFrom: { id: "c0", title: "Factures" } } as Conversation}
         runtime={idle}
-        header
+        context={{ modelLabel: "gpt-5" }}
       />,
     );
     expect(screen.getByText(/^Depuis Factures · /)).toBeInTheDocument();

@@ -76,11 +76,6 @@ export function isLocalImageReference(value: string): boolean {
   return Boolean(imageFileType(path.split(/[\\/]/).at(-1) ?? ""));
 }
 
-/** Image affichable d’une entrée : une adresse `data:` déjà bornée ou une image locale. */
-export function isConversationImage(value: string): boolean {
-  return Boolean(imageDataUrl(value)) || isLocalImageReference(value);
-}
-
 const markdownImage = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const codeFence = /```[\s\S]*?```/g;
 

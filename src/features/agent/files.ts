@@ -1,5 +1,5 @@
-/** Fichiers échangés avec un agent : joindre (boîte de dialogue, dépôt, collage) et ouvrir ce qu’il cite. */
-import { inTauri, invoke, openExternal } from "../../lib/native";
+/** Fichiers échangés avec un agent : joindre (sélecteur de fichiers, dépôt, collage) et ouvrir ce qu’il cite. */
+import { invoke, openExternal } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { isAgentFileReference } from "./lib/agentFileLinks";
 import type { Attachment } from "./model";
@@ -107,19 +107,6 @@ export async function attachmentsFromPaths(paths: readonly string[]): Promise<Pr
   return prepareAttachments(
     files.map((stat) => ({ path: stat.path, name: stat.name ?? stat.path, mimeType: stat.mimeType })),
   );
-}
-
-/**
- * Fait choisir des fichiers à joindre ; hors de la fenêtre Tauri, l’appelant passe par un champ de fichier. Comme
- * OneApp, seuls les 16 premiers fichiers choisis sont gardés.
- */
-export async function pickAttachments(): Promise<PreparedAttachment[]> {
-  if (!inTauri) return [];
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({ multiple: true, title: "Joindre des fichiers" });
-  const paths = (Array.isArray(selected) ? selected : selected ? [selected] : []).slice(0, MAX_ATTACHMENTS);
-  const attachments = await Promise.all(paths.map((path) => attachmentFromPath(path)));
-  return prepareAttachments(attachments.filter((attachment): attachment is Attachment => attachment !== undefined));
 }
 
 /** Suit un lien d’un message : une adresse web s’ouvre dans le navigateur, un fichier cité dans son application. */

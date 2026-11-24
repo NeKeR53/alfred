@@ -591,3 +591,18 @@ describe("résumé des fichiers modifiés sous la saisie", () => {
     view.unmount();
   });
 });
+
+describe("relances prévues", () => {
+  it("chaque relance est un encart au-dessus de la saisie, qu’on peut annuler", async () => {
+    const base = native.invoke.getMockImplementation();
+    native.invoke.mockImplementation(async (command: string, args: Record<string, unknown> = {}) => {
+      if (command === "agents.watches.list")
+        return [{ id: "w1", label: "la compilation", deadline: Date.UTC(2026, 10, 24, 17), status: "waiting" }];
+      return base?.(command, args);
+    });
+    render(<Composer conversation={conversation("a")} responding={false} />);
+    expect(await screen.findByText(/^Relance à la fin de la compilation · au plus tard /)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Annuler la relance" }));
+    expect(native.invoke).toHaveBeenCalledWith("agents.watches.cancel", { id: "w1" });
+  });
+});

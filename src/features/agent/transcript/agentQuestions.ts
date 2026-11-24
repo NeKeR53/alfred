@@ -5,7 +5,6 @@ import type { Conversation, ConversationRuntime, Turn } from "../model";
  * code ```alfred-question contenant {"question":"…","options":["…"]}. Le bloc est retiré du texte affiché et la
  * question est posée à part, au-dessus de la saisie. Les blocs ```oneapp-question sont lus de la même façon.
  */
-export const QUESTION_FENCE = "alfred-question";
 
 export type AgentQuestion = { question: string; options: string[] };
 

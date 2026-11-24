@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type Action,
   Alert,
+  ChatTranscript,
   EmptyState,
   InlineEdit,
   NotificationCenter,
@@ -82,8 +83,6 @@ export function ConversationTracking({ withList = true }: { withList?: boolean }
     />
   );
 }
-
-const startedAt = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
 /** Page Agent : la conversation ouverte ; ses détails vont dans le panneau de détail (`ConversationTracking`). */
 /** `detached` : la page Agent seule, dans sa fenêtre (`agentsWindow.ts`). */
@@ -229,126 +228,126 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
 
   return (
     <section className="agents-page" aria-label="Agent">
-      <div className="agents-page__body">
-        {/* Colonne de la conversation : son titre et ses actions, puis le relevé. La barre du haut est celle de la
-          coquille ; la liste des conversations est à côté. */}
-        <div className="agents-page__lead">
-          <Page
-            fill
-            actionsLabel="la conversation"
-            actions={actions}
-            toolbar={
-              <Row gap="sm">
-                <div className="agents-page__title">
-                  <InlineEdit
-                    key={conversation?.id}
-                    label="Nom de la conversation"
-                    value={conversation?.title ?? "Agent"}
-                    isDisabled={!conversation?.started}
-                    isEditing={renaming}
-                    onEditingChange={setRenaming}
-                    maxLength={MAX_TITLE_LENGTH}
-                    // Vide, l’ancien nom est gardé.
-                    onSave={(title) => {
-                      if (conversation && title.trim() && title.trim() !== conversation.title)
-                        void rename(conversation.id, title);
-                    }}
-                  />
-                </div>
-                {context ? (
-                  <Text as="span" tone="muted" size="meta">
-                    {context}
-                  </Text>
-                ) : null}
-                {detached ? <NotificationCenter /> : null}
-              </Row>
-            }
+      {/* Colonne de la conversation : son titre et ses actions, puis le relevé ; dans la fenêtre détachée, le suivi
+        des conversations est à côté. */}
+      <div className="agents-page__lead">
+        <Page
+          fill
+          actionsLabel="la conversation"
+          actions={actions}
+          toolbar={
+            <Row gap="sm">
+              <div className="agents-page__title">
+                <InlineEdit
+                  key={conversation?.id}
+                  label="Nom de la conversation"
+                  value={conversation?.title ?? "Agent"}
+                  isDisabled={!conversation?.started}
+                  isEditing={renaming}
+                  onEditingChange={setRenaming}
+                  maxLength={MAX_TITLE_LENGTH}
+                  // Vide, l’ancien nom est gardé.
+                  onSave={(title) => {
+                    if (conversation && title.trim() && title.trim() !== conversation.title)
+                      void rename(conversation.id, title);
+                  }}
+                />
+              </div>
+              {context ? (
+                <Text as="span" tone="muted" size="meta">
+                  {context}
+                </Text>
+              ) : null}
+              {detached ? <NotificationCenter /> : null}
+            </Row>
+          }
+        >
+          <section
+            className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
+            aria-label="Conversation et saisie"
           >
-            <section
-              className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
-              aria-label="Conversation et saisie"
-            >
-              {!ready && !loadError ? (
-                <div className="agents-page__state">
+            {/* Chargement, échec et conversation vide : l’emplacement vide du relevé de Socle. */}
+            {!ready && !loadError ? (
+              <ChatTranscript
+                empty={
                   <SkeletonGroup label="Chargement des conversations…">
                     <Skeleton width="60%" />
                     <Skeleton />
                     <Skeleton width="80%" />
                     <Skeleton width="40%" />
                   </SkeletonGroup>
-                </div>
-              ) : loadError ? (
-                <div className="agents-page__state">
+                }
+              />
+            ) : loadError ? (
+              <ChatTranscript
+                empty={
                   <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void load().catch(reportLoad) }}>
                     L’historique des agents n’a pas pu être chargé.
                   </Alert>
-                </div>
-              ) : conversation ? (
-                <>
-                  {conversation.turns.length === 0 ? (
-                    <div className="agents-page__state">
+                }
+              />
+            ) : conversation ? (
+              <>
+                {conversation.turns.length === 0 ? (
+                  <ChatTranscript
+                    label={`Conversation de ${conversation.title}`}
+                    empty={
                       <EmptyState
                         title="Que puis-je faire pour vous ?"
                         description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
                       />
-                    </div>
-                  ) : (
-                    <Transcript
-                      conversation={conversation}
-                      runtime={runtime}
-                      header={
-                        <p
-                          className="agents-page__context"
-                          title={modelChoiceLabel(
-                            { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
-                            models,
-                          )}
-                        >
-                          {conversation.origin ? `Depuis ${conversation.origin.title} · ` : ""}
-                          {startedAt.format(conversation.createdAt)}
-                        </p>
+                    }
+                  />
+                ) : (
+                  <Transcript
+                    conversation={conversation}
+                    runtime={runtime}
+                    context={{
+                      modelLabel: modelChoiceLabel(
+                        { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
+                        models,
+                      ),
+                    }}
+                  />
+                )}
+                <div className="agents-page__footer">
+                  {saveError ? (
+                    <Alert
+                      tone="danger"
+                      action={
+                        retrySave
+                          ? {
+                              label: "Réessayer la sauvegarde",
+                              onPress: () => void retrySave().catch(() => undefined),
+                            }
+                          : undefined
                       }
-                    />
-                  )}
-                  <div className="agents-page__footer">
-                    {saveError ? (
-                      <Alert
-                        tone="danger"
-                        action={
-                          retrySave
-                            ? {
-                                label: "Réessayer la sauvegarde",
-                                onPress: () => void retrySave().catch(() => undefined),
-                              }
-                            : undefined
-                        }
-                      >
-                        {saveError}
-                      </Alert>
-                    ) : null}
-                    {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
-                    <div className="agents-page__question">
-                      <ConversationQuestion conversation={conversation} runtime={runtime} />
-                    </div>
-                    <Composer
-                      conversation={conversation}
-                      responding={runtime.status !== "idle"}
-                      status={<GitSummaryPill git={git} />}
-                      onDraggingChange={setDragging}
-                    />
+                    >
+                      {saveError}
+                    </Alert>
+                  ) : null}
+                  {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
+                  <div className="agents-page__question">
+                    <ConversationQuestion conversation={conversation} runtime={runtime} />
                   </div>
-                </>
-              ) : null}
-            </section>
-          </Page>
-        </div>
-        {detached ? (
-          // Fenêtre Agent détachée : pas d’AppShell, le suivi reste à côté de la conversation.
-          <aside className="agents-page__side" aria-label="Suivi des conversations">
-            <ConversationTracking />
-          </aside>
-        ) : null}
+                  <Composer
+                    conversation={conversation}
+                    responding={runtime.status !== "idle"}
+                    status={<GitSummaryPill git={git} />}
+                    onDraggingChange={setDragging}
+                  />
+                </div>
+              </>
+            ) : null}
+          </section>
+        </Page>
       </div>
+      {detached ? (
+        // Fenêtre Agent détachée : pas d’AppShell, le suivi reste à côté de la conversation.
+        <aside className="agents-page__side" aria-label="Suivi des conversations">
+          <ConversationTracking />
+        </aside>
+      ) : null}
     </section>
   );
 }

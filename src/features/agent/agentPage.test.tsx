@@ -4,7 +4,7 @@ import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { AgentPage, ConversationTracking } from "./AgentPage";
-import { compareConversations, type GitSummary } from "./ConversationList";
+import { compareConversations, type GitSummary, STATE_TONE } from "./ConversationList";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
 import { AgentPageWithTracking, findConversationTitle, render } from "./socle.test-helper";
@@ -145,15 +145,15 @@ describe("page Agent", () => {
     await findConversationTitle("Factures");
     const pill = await findGitPill();
     expect(pill).toHaveTextContent("2 fichiers modifiés");
-    expect(pill).toHaveTextContent("+1 200");
-    expect(pill).toHaveTextContent("−3");
+    // DiffStat : compteurs visibles, et la phrase lue par le lecteur d’écran.
+    expect(pill).toHaveTextContent("+1200−3");
+    expect(pill).toHaveTextContent("1200 lignes ajoutées, 3 retirées");
     const card = within(screen.getByLabelText("Suivi des conversations")).getByRole("region", {
       name: "Modifications",
     });
-    expect(within(card).getByText("Modifications", { selector: ".agent-changes__name" })).toHaveAttribute(
-      "title",
-      "/espace",
-    );
+    // Lignes de propriété : le dossier lu, puis ce qui n’est pas encore enregistré (DiffStat).
+    expect(card).toHaveTextContent("Dossier de travail/espace");
+    expect(card).toHaveTextContent("Non enregistrées+1200−3");
     expect(native.invoke).toHaveBeenCalledWith("agentWorkspace.gitSummary", { path: "/espace" });
   });
 
@@ -308,19 +308,16 @@ describe("page Agent", () => {
     // La plus récemment créée d’abord, quel que soit son état.
     const rows = within(list).getAllByRole("row");
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Plus récente", "Récente", "Lue", "Ancienne"]);
-    // Pastille d’état dans la marge, état annoncé, heure de la dernière activité à droite.
+    // État en Badge de List (point coloré par son ton, libellé), harnais en sous-titre, heure à droite.
     const failed = within(list).getByRole("row", { name: "Récente" });
-    expect(failed).toHaveTextContent("Claude Code · en échec");
+    expect(failed).toHaveTextContent("Claude Code");
     expect(failed).toHaveTextContent("14:02");
     expect(failed).toHaveTextContent("En échec");
-    expect(failed.querySelector(".agent-list__dot--error")).not.toBeNull();
-    expect(
-      within(list).getByRole("row", { name: "Plus récente" }).querySelector(".agent-list__dot--done"),
-    ).not.toBeNull();
-    // Une conversation lue est en veille : pastille neutre, sans libellé d’état visible.
+    expect(within(list).getByRole("row", { name: "Plus récente" })).toHaveTextContent("À consulter");
+    // Une conversation lue est en veille.
     const read = within(list).getByRole("row", { name: "Lue" });
-    expect(read.querySelector(".agent-list__dot--idle")).not.toBeNull();
-    expect(read).not.toHaveTextContent("en échec");
+    expect(read).toHaveTextContent("En veille");
+    expect(read).not.toHaveTextContent("En échec");
     // Un autre jour : le jour et le mois.
     expect(within(list).getByRole("row", { name: "Ancienne" })).toHaveTextContent("5 janv.");
     // Chaque conversation s’archive depuis sa ligne, pas seulement les terminées.
@@ -338,7 +335,6 @@ describe("page Agent", () => {
     await waitFor(() => expect(list).toHaveTextContent("1 au travail"));
     const row = within(list).getByRole("row", { name: "Factures" });
     expect(row).toHaveTextContent("Au travail");
-    expect(row.querySelector(".agent-list__dot--working")).not.toBeNull();
   });
 
   it("archiver notifie aussitôt, avec « Annuler »", async () => {
@@ -390,5 +386,18 @@ describe("tri du suivi", () => {
     // La plus récemment créée d’abord, même si l’autre vient d’écrire : une ligne ne saute pas à chaque message.
     expect(compareConversations(old, recent)).toBeGreaterThan(0);
     expect(compareConversations(recent, old)).toBeLessThan(0);
+  });
+});
+
+describe("ton des états du suivi", () => {
+  it("donne au Badge de chaque ligne le ton de son état", () => {
+    expect(STATE_TONE).toEqual({
+      working: "info",
+      waiting: "info",
+      attention: "warning",
+      error: "danger",
+      done: "success",
+      idle: "neutral",
+    });
   });
 });

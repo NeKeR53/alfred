@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Button } from "socle-ui";
+import { AttachmentChip, AttachmentList, Button } from "socle-ui";
 import { imageFileType } from "../lib/chatImages";
 import type { Attachment } from "../model";
-import { ConversationFile } from "./ConversationFiles";
 import { ImagePreview } from "./ImagePreview";
 import { useConversationResources } from "./resources";
 
@@ -33,7 +32,6 @@ function ChatAttachment({ attachment }: { attachment: Attachment }) {
       active = false;
     };
   }, [attachment.path, attempt, loadImage, type]);
-  if (!type) return <ConversationFile reference={attachment.path} name={attachment.name} actions={false} />;
   if (error)
     return (
       <Button
@@ -47,20 +45,35 @@ function ChatAttachment({ attachment }: { attachment: Attachment }) {
       </Button>
     );
   return source ? (
-    <ImagePreview src={source} alt={attachment.name} />
+    <ImagePreview src={source} alt={attachment.name} size="sent" />
   ) : (
     <span role="status">Chargement de l’image : {attachment.name}…</span>
   );
 }
 
+/**
+ * Pièces jointes d’un message envoyé : les images en vignettes agrandissables (Hors design : `AttachmentChip` ne
+ * s’ouvre pas en grand), les autres fichiers en `AttachmentChip`.
+ */
 export function ChatAttachments({ attachments }: { attachments: readonly Attachment[] }) {
+  const images = attachments.filter((attachment) => attachmentImageType(attachment));
+  const files = attachments.filter((attachment) => !attachmentImageType(attachment));
   return (
-    <ul className="agent-chat__message-attachments">
-      {attachments.map((attachment) => (
-        <li key={attachment.path}>
-          <ChatAttachment attachment={attachment} />
-        </li>
-      ))}
-    </ul>
+    <>
+      {images.length ? (
+        <ul className="agent-chat__message-attachments">
+          {images.map((attachment) => (
+            <li key={attachment.path}>
+              <ChatAttachment attachment={attachment} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <AttachmentList>
+        {files.map((attachment) => (
+          <AttachmentChip key={attachment.path} kind="file" name={attachment.name} />
+        ))}
+      </AttachmentList>
+    </>
   );
 }

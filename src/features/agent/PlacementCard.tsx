@@ -1,6 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { Button, RadioButtonGroup, Select, TextInput } from "socle-ui";
-import { Row, Stack } from "../../kit";
+import { Button, Card, RadioButtonGroup, Select, TextInput } from "socle-ui";
+import { Row, Stack, Text } from "../../kit";
 import { type PlaceTarget, SECTION_COLORS } from "../../lib/types";
 import { useShell } from "../../shell/store";
 
@@ -67,64 +67,67 @@ export function PlacementCard({
   };
 
   return (
-    <form className="agent-card agent-placement" aria-label="Emplacement de la nouvelle page" onSubmit={submit}>
-      <strong>Où placer cette page ?</strong>
-      {typeof payload.description === "string" && payload.description ? (
-        <p className="agent-card__note">{payload.description}</p>
-      ) : null}
-      <Stack gap="sm">
-        <TextInput label="Titre de la page" value={title} onChange={setTitle} isRequired />
-        <RadioButtonGroup label="Emplacement" value={kind} onChange={(value) => setKind(value as Kind)}>
-          <RadioButtonGroup.Option value="menu">Nouvelle entrée du menu de gauche</RadioButtonGroup.Option>
-          <RadioButtonGroup.Option value="tab" isDisabled={!sections.length}>
-            Onglet d’une section existante
-          </RadioButtonGroup.Option>
-          <RadioButtonGroup.Option value="panel" isDisabled={!hosts.length}>
-            Panneau de droite d’une page existante
-          </RadioButtonGroup.Option>
-          <RadioButtonGroup.Option value="settings">Onglet des Réglages</RadioButtonGroup.Option>
-        </RadioButtonGroup>
-        {kind === "menu" ? (
-          <>
-            <TextInput label="Nom dans le menu" value={label} onChange={setLabel} isRequired />
-            <TextInput
-              label="Icône"
-              description="Nom Lucide, par exemple list-checks."
-              value={icon}
-              onChange={setIcon}
-            />
+    <Card title="Où placer cette page ?">
+      <form aria-label="Emplacement de la nouvelle page" onSubmit={submit}>
+        <Stack gap="sm">
+          {typeof payload.description === "string" && payload.description ? (
+            <Text tone="muted" size="meta">
+              {payload.description}
+            </Text>
+          ) : null}
+          <TextInput label="Titre de la page" value={title} onChange={setTitle} isRequired />
+          <RadioButtonGroup label="Emplacement" value={kind} onChange={(value) => setKind(value as Kind)}>
+            <RadioButtonGroup.Option value="menu">Nouvelle entrée du menu de gauche</RadioButtonGroup.Option>
+            <RadioButtonGroup.Option value="tab" isDisabled={!sections.length}>
+              Onglet d’une section existante
+            </RadioButtonGroup.Option>
+            <RadioButtonGroup.Option value="panel" isDisabled={!hosts.length}>
+              Panneau de droite d’une page existante
+            </RadioButtonGroup.Option>
+            <RadioButtonGroup.Option value="settings">Onglet des Réglages</RadioButtonGroup.Option>
+          </RadioButtonGroup>
+          {kind === "menu" ? (
+            <>
+              <TextInput label="Nom dans le menu" value={label} onChange={setLabel} isRequired />
+              <TextInput
+                label="Icône"
+                description="Nom Lucide, par exemple list-checks."
+                value={icon}
+                onChange={setIcon}
+              />
+              <Select
+                label="Couleur"
+                value={color}
+                onChange={(value) => value && setColor(value)}
+                options={SECTION_COLORS.map((name) => ({ id: name, label: COLOR_LABEL[name] }))}
+              />
+            </>
+          ) : kind === "tab" ? (
             <Select
-              label="Couleur"
-              value={color}
-              onChange={(value) => value && setColor(value)}
-              options={SECTION_COLORS.map((name) => ({ id: name, label: COLOR_LABEL[name] }))}
+              label="Section"
+              value={section}
+              onChange={(value) => value && setSection(value)}
+              options={sections.map((candidate) => ({ id: candidate.id, label: candidate.label }))}
             />
-          </>
-        ) : kind === "tab" ? (
-          <Select
-            label="Section"
-            value={section}
-            onChange={(value) => value && setSection(value)}
-            options={sections.map((candidate) => ({ id: candidate.id, label: candidate.label }))}
-          />
-        ) : kind === "panel" ? (
-          <Select
-            label="Page"
-            value={host}
-            onChange={(value) => value && setHost(value)}
-            options={hosts.map(({ page, section: owner }) => ({
-              id: page.reference,
-              label: `${owner.label} · ${page.title}`,
-            }))}
-          />
-        ) : null}
-        <Row gap="sm" justify="end">
-          <Button onPress={onCancel}>Annuler</Button>
-          <Button type="submit" variant="primary" isDisabled={!title.trim()}>
-            Placer la page
-          </Button>
-        </Row>
-      </Stack>
-    </form>
+          ) : kind === "panel" ? (
+            <Select
+              label="Page"
+              value={host}
+              onChange={(value) => value && setHost(value)}
+              options={hosts.map(({ page, section: owner }) => ({
+                id: page.reference,
+                label: `${owner.label} · ${page.title}`,
+              }))}
+            />
+          ) : null}
+          <Row gap="sm" justify="end">
+            <Button onPress={onCancel}>Annuler</Button>
+            <Button type="submit" variant="primary" isDisabled={!title.trim()}>
+              Placer la page
+            </Button>
+          </Row>
+        </Stack>
+      </form>
+    </Card>
   );
 }
