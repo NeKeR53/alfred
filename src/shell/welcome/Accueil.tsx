@@ -190,10 +190,11 @@ export function Accueil() {
   const snapshot = useShell((state) => state.snapshot);
   const startupError = useShell((state) => state.startupError);
 
-  // Premier démarrage : le parcours reste affiché une fois l’espace ouvert, jusqu’à « Ouvrir Alfred ».
+  // Premier démarrage : le parcours reste affiché une fois l’espace ouvert, jusqu’à « Ouvrir Alfred ». Pas quand le
+  // démarrage a échoué : l’accueil ne montre alors que l’erreur, et ne doit pas rester par-dessus l’espace rouvert.
   useEffect(() => {
-    if (!active) useWelcome.setState({ active: true });
-  }, [active]);
+    if (!active && !startupError) useWelcome.setState({ active: true });
+  }, [active, startupError]);
 
   // Sans espace ouvert, les étapes suivantes n’ont rien où écrire : retour au choix de l’espace.
   const lost = !snapshot && (step === "modules" || step === "basics");

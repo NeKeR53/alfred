@@ -95,6 +95,27 @@ function applyTheme(theme: Theme, accent: string | null | undefined) {
 
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** Tauri crée la fenêtre avant le `setup` qui enregistre l’état du cœur : un appel trop tôt est refusé ainsi. */
+const NOT_READY = /not managed|\.manage\(\)/i;
+/** Attente du cœur au démarrage : 60 essais espacés de 250 ms, soit 15 s au plus. */
+export const BACKEND_WAIT = { tries: 60, delayMs: 250 };
+
+/**
+ * `app.info`, une fois le cœur prêt. Sans cette attente, le premier démarrage échouait en debug : aucun espace récent
+ * n’était lu, l’accueil complet s’affichait et restait par-dessus l’espace rouvert.
+ */
+async function backendInfo(): Promise<AppInfo> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await invoke<AppInfo>("app.info");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!NOT_READY.test(message) || attempt >= BACKEND_WAIT.tries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, BACKEND_WAIT.delayMs));
+    }
+  }
+}
+
 export const useShell = create<ShellState>((set, get) => ({
   info: null,
   snapshot: undefined,
@@ -113,7 +134,7 @@ export const useShell = create<ShellState>((set, get) => ({
 
   async start() {
     try {
-      const info = await invoke<AppInfo>("app.info");
+      const info = await backendInfo();
       const [snapshot, theme, collapsed, recent] = await Promise.all([
         // Une fenêtre de page relit l’espace que la fenêtre principale a ouvert, sans le rouvrir.
         isSecondaryWindow()

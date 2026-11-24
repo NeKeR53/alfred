@@ -17,10 +17,35 @@ import { useShell } from "./shell/store";
 import { Accueil, ShortWelcome } from "./shell/welcome/Accueil";
 import { useWelcome } from "./shell/welcome/store";
 
+/**
+ * Écran de départ de la fenêtre principale. Tant que le démarrage n’est pas fini, rien : sinon l’accueil complet
+ * s’afficherait (aucun espace récent encore lu), se marquerait actif et resterait affiché par-dessus l’espace
+ * rouvert.
+ */
+export function startScreen({
+  started,
+  welcoming,
+  snapshotOpen,
+  firstRun,
+}: {
+  started: boolean;
+  welcoming: boolean;
+  snapshotOpen: boolean;
+  firstRun: boolean;
+}): "loading" | "welcome" | "short-welcome" | "shell" {
+  if (welcoming) return "welcome";
+  if (!started) return "loading";
+  if (!snapshotOpen && firstRun) return "welcome";
+  if (!snapshotOpen) return "short-welcome";
+  return "shell";
+}
+
 export function App() {
   const snapshot = useShell((state) => state.snapshot);
   const start = useShell((state) => state.start);
   const firstRun = useShell((state) => state.recentSpaces.length === 0);
+  // Le démarrage est fini quand l’app a répondu (ou échoué) : avant, la liste des espaces récents est encore vide.
+  const started = useShell((state) => state.info !== null || state.startupError !== null);
   const welcoming = useWelcome((state) => state.active);
   useEffect(() => {
     bindPageAi();
@@ -70,8 +95,10 @@ export function App() {
   }
   // Accueil complet : au premier démarrage (aucun espace connu), ou relancé depuis Réglages › Général. Il reste
   // affiché après l’ouverture de l’espace, jusqu’à « Ouvrir Alfred ». Le dernier espace fermé : la version courte.
-  if (welcoming || (snapshot === null && firstRun)) return <Accueil />;
-  if (snapshot === null) return <ShortWelcome />;
+  const screen = startScreen({ started, welcoming, snapshotOpen: snapshot !== null, firstRun });
+  if (screen === "loading") return null;
+  if (screen === "welcome") return <Accueil />;
+  if (screen === "short-welcome") return <ShortWelcome />;
   return (
     <>
       <AppShell
