@@ -1,8 +1,8 @@
 /**
  * « Corriger un élément » : l’utilisateur capture toute la fenêtre d’Alfred (barre de gauche, page, panneau de
  * droite), encadre l’élément qui ne va pas, et une
- * conversation d’agent s’ouvre dans le panneau de droite avec la capture annotée et la description de l’élément
- * déjà jointes. Il n’a plus qu’à écrire ce qu’il veut changer.
+ * conversation d’agent s’ouvre dans la page Agent avec la capture annotée et la description de l’élément déjà
+ * jointes. Il n’a plus qu’à écrire ce qu’il veut changer.
  */
 
 import { Crosshair } from "lucide-react";
@@ -19,7 +19,6 @@ import { Button, IconButton } from "socle-ui";
 import type { ResolvedPage } from "../../lib/types";
 import { type AppScreenshot, inspectApp, screenshotApp } from "../../shell/appScreenshot";
 import { notify } from "../../shell/notifications";
-import { useShell } from "../../shell/store";
 import { setComposerDraft } from "./drafts";
 import { saveBlob } from "./files";
 import { useAgents } from "./store";
@@ -79,7 +78,6 @@ function failure(title: string, error: unknown) {
 /** Bouton de la barre du haut et calque de sélection posé sur la page. */
 export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<HTMLElement | null> }) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const showAgentPanel = useShell((state) => state.showAgentPanel);
 
   // L’image vit jusqu’à la fin de l’annotation (confirm) ou l’annulation ; une fermeture de la page la libère aussi.
   const imageUrl = useRef<string | null>(null);
@@ -136,7 +134,8 @@ export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<H
           },
         ],
       });
-      showAgentPanel(page.reference, conversation.id);
+      // Page Agent, pas le panneau de droite de la page : la capture y est lisible en grand (demande d’Alexandre).
+      await useAgents.getState().show(conversation.id);
     } catch (error) {
       failure("Conversation non ouverte", error);
     } finally {
