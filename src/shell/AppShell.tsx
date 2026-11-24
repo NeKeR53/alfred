@@ -666,8 +666,13 @@ export function AppShell({
               id={navId.conversation(row.id)}
               title={row.label}
               subtitle={row.details}
-              status={row.status === "error" || row.status === "warning" ? "warning" : undefined}
-              unread={Boolean(row.badge)}
+              // Signes existants de Socle (D-044, D-055, D-385) : au travail, le point vert « En cours » ; réponse
+              // attendue ou échec, l’alerte ; terminée et pas encore lue, le point de non-lu.
+              indicator={row.status === "running" ? "activity" : undefined}
+              status={
+                row.status === "waiting" || row.status === "error" || row.status === "warning" ? "warning" : undefined
+              }
+              unread={row.status === "ok" || Boolean(row.badge)}
               // « Archiver » : un bouton-icône au survol, pas une entrée du menu « … » (D-381).
               quickActions={row.actions
                 ?.filter((action) => action.id === "archive")

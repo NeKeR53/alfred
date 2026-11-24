@@ -188,6 +188,44 @@ describe("zone dans le menu de gauche", () => {
   const navigation = () => screen.getAllByRole("treegrid", { name: "Navigation principale" })[0];
   const row = (name: string) => within(navigation()).getByRole("row", { name });
 
+  it("conversations : point vert au travail, alerte si une réponse est attendue, point de non-lu à consulter", async () => {
+    const conv = (id: string, title: string, createdAt: number) =>
+      ({
+        id,
+        title,
+        createdAt,
+        updatedAt: "2026-11-24T08:00:00Z",
+        archived: false,
+        started: true,
+      }) as unknown as ConversationHeader;
+    const states: Record<string, "working" | "attention" | "done" | "idle"> = {
+      a: "working",
+      b: "attention",
+      c: "done",
+      d: "idle",
+    };
+    const rows = agentZoneRows(
+      [conv("a", "Au travail", 4), conv("b", "Question", 3), conv("c", "Finie", 2), conv("d", "En veille", 1)],
+      (h) => states[h.id],
+      false,
+    );
+    render(
+      <AppShell
+        agent={<div>Agent</div>}
+        settingsTabs={[]}
+        agentAvailable
+        agentZone={{ rows, onOpen: vi.fn(), onAction: vi.fn() }}
+      />,
+    );
+    const row = async (name: RegExp) => screen.findByRole("row", { name });
+    expect((await row(/^Au travail/)).querySelector(".bg-success")).not.toBeNull();
+    expect(within(await row(/^Question/)).getByRole("img", { name: "À traiter" })).toBeTruthy();
+    expect(within(await row(/^Finie/)).getByRole("img", { name: "Non lu" })).toBeTruthy();
+    const idle = await row(/^En veille/);
+    expect(idle.querySelector(".bg-success")).toBeNull();
+    expect(within(idle).queryByRole("img")).toBeNull();
+  });
+
   it("conversation : « Archiver » est un bouton-icône au survol, absent du menu « … »", async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();
