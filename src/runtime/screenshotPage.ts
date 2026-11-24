@@ -72,7 +72,27 @@ function styleText(element: Element, parent: CSSStyleDeclaration | null, pseudo?
       parts.push(`${name}:${value}`);
     }
   }
+  for (const name of linkedWidths((property) => computed.getPropertyValue(property))) {
+    if (!parts.some((part) => part.startsWith(`${name}:`))) parts.push(`${name}:${computed.getPropertyValue(name)}`);
+  }
   return parts.join(";");
+}
+
+/**
+ * Épaisseurs à toujours écrire. Celle d’une bordure, d’un contour ou d’un filet de colonnes se calcule à 0 quand son
+ * style est `none` : la sonde du navigateur donne donc 0 px, comme la plupart des éléments, et la copie ne l’écrivait
+ * pas. Mais une feuille qui pose `border: 0 solid` partout (Tailwind 4, dont socle-ui) laisse un style `solid` : dans
+ * la copie, sans cette feuille, l’épaisseur revenait à `medium` (3 px), et chaque élément de la capture avait un cadre
+ * noir épais.
+ */
+export function linkedWidths(get: (property: string) => string): string[] {
+  const names: string[] = [];
+  for (const side of ["top", "right", "bottom", "left"]) {
+    if (get(`border-${side}-style`) && get(`border-${side}-style`) !== "none") names.push(`border-${side}-width`);
+  }
+  if (get("outline-style") && get("outline-style") !== "none") names.push("outline-width");
+  if (get("column-rule-style") && get("column-rule-style") !== "none") names.push("column-rule-width");
+  return names;
 }
 
 function hasPseudo(element: Element, pseudo: "::before" | "::after"): boolean {
