@@ -575,6 +575,8 @@ describe("outils groupés", () => {
       ({ kind: "activity", id, activityKind: "command", title: `Exécuté commande ${id}`, status }) as never;
     const { rerender } = render(<Activities activities={[tool("a", "completed"), tool("b", "running")]} />);
     const line = screen.getByRole("button", { name: "2 outils · 1 en cours" });
+    // Une icône par type d’outil appelé, avant le résumé (D-394) : ici, la console.
+    expect(line.querySelectorAll("[data-activity-kinds] svg")).toHaveLength(1);
     // Repliée même pendant le travail : les lignes ne s’affichent pas ; pas de roue, le texte dit ce qui tourne (D-391).
     expect(line).toHaveAttribute("aria-expanded", "false");
     expect(line.querySelector("[data-spinner]")).toBeNull();

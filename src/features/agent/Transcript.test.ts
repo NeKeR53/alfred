@@ -78,3 +78,16 @@ test("une activité devient une ligne Socle : type, verbe, objet, état et sorti
     activityItem({ kind: "activity", id: "e", activityKind: "command", title: "ls", status: "cancelled" as never }),
   ).toMatchObject({ verb: "ls", status: "stopped" });
 });
+
+test("chaque outil a le type de son icône : console, livre, crayon, dossier, loupe, clé", () => {
+  const kind = (title: string, activityKind = "tool") =>
+    activityItem({ kind: "activity", id: title, activityKind, title, status: "completed" } as never).kind;
+  expect(kind("Bash")).toBe("command");
+  expect(kind("PowerShell")).toBe("command");
+  expect(kind("Read src/a.ts")).toBe("read");
+  expect(kind("Edit src/a.ts")).toBe("edit");
+  expect(kind("apply_patch")).toBe("edit");
+  expect(kind("Glob **/*.ts")).toBe("list");
+  expect(kind("Grep formatDate")).toBe("search");
+  expect(kind("Génération d’image")).toBe("other");
+});

@@ -1,4 +1,3 @@
-import { BookOpen, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
 import { ActivityGroup, type ActivityItem, type ActivityKind } from "socle-ui";
 import type { ActivityAction } from "./harness";
 import { isAgentFileReference } from "./lib/agentFileLinks";
@@ -37,18 +36,6 @@ function activityTitle(activity: Activity): string {
   return title;
 }
 
-function activityIcon(activity: Activity) {
-  if (activity.activityKind === "command") return TerminalSquare;
-  if (activity.activityKind === "file") return Pencil;
-  if (activity.activityKind === "search") return Search;
-  const title = activityTitle(activity);
-  if (/^(read|lire|lecture)\b/i.test(title)) return BookOpen;
-  if (/^(edited|edit|modified|modifier|modifié|écrit|write)\b/i.test(title)) return Pencil;
-  if (/^(searched|search|recherché|recherche|chercher)\b/i.test(title)) return Search;
-  if (/^(ran|run|exécuté|execute|commande|command)(?:\s|$)/i.test(title)) return TerminalSquare;
-  return Wrench;
-}
-
 export function hasActivityOutput(activity: Activity): boolean {
   return Boolean(
     activity.detail?.trim() || activity.content?.trim() || activity.images?.length || activity.files?.length,
@@ -59,19 +46,20 @@ function isRunning(activity: Activity): boolean {
   return !["completed", "failed", "cancelled", "stopped"].includes(activity.status);
 }
 
-/** Type Socle d’une activité, qui choisit son icône. */
+/** Type Socle d’une activité, qui choisit son icône : console, crayon, loupe, livre, dossier, cerveau, clé (D-394). */
 function activityKind(activity: Activity): ActivityKind {
   if (activity.activityKind === "analysis") return "think";
-  const Icon = activityIcon(activity);
-  return Icon === TerminalSquare
-    ? "command"
-    : Icon === Pencil
-      ? "edit"
-      : Icon === Search
-        ? "search"
-        : Icon === BookOpen
-          ? "read"
-          : "other";
+  if (activity.activityKind === "command") return "command";
+  if (activity.activityKind === "file") return "edit";
+  if (activity.activityKind === "search") return "search";
+  const title = activityTitle(activity);
+  if (/^(ran|run|exécuté|execute|commande|command|bash|shell|powershell|terminal)(?:\s|$)/i.test(title))
+    return "command";
+  if (/^(read|lire|lecture|lu|view)\b/i.test(title)) return "read";
+  if (/^(edited|edit|modified|modifier|modifié|écrit|write|patch|apply_patch|multiedit)\b/i.test(title)) return "edit";
+  if (/^(ls|list|listé|lister|glob|listfiles)\b/i.test(title)) return "list";
+  if (/^(searched|search|recherché|recherche|chercher|grep|websearch)\b/i.test(title)) return "search";
+  return "other";
 }
 
 /** Verbe en tête d’un titre (« Exécuté npm test », « Read src/a.ts ») : il se sépare de l’objet, en chasse fixe. */
@@ -147,7 +135,14 @@ function activityItems(activity: Activity, onOpenFile?: (path: string) => void):
     const openable = path && onOpenFile && (action.type === "read" || action.type === "edit");
     return {
       id: `${activity.id}:${index}`,
-      kind: action.type === "read" ? "read" : action.type === "search" ? "search" : "edit",
+      kind:
+        action.type === "read"
+          ? "read"
+          : action.type === "search"
+            ? "search"
+            : action.type === "listFiles"
+              ? "list"
+              : "edit",
       verb: actionVerb(action),
       object: [action.query, actionFile(action)].filter(Boolean).join(" ") + actionLines(action),
       ...(openable ? { onObjectPress: () => onOpenFile(path) } : {}),
