@@ -1,5 +1,5 @@
 import { Paperclip } from "lucide-react";
-import { Button, Disclosure } from "socle-ui";
+import { Accordion, Button } from "socle-ui";
 import { conversationFileName, conversationFilePath, isPdfDocument } from "../lib/conversationFileKinds";
 import { PdfPreview } from "./PdfPreview";
 import { useConversationResources } from "./resources";
@@ -39,9 +39,9 @@ export function ConversationFile({
         </span>
       ) : null}
       {available && isPdfDocument(reference) ? (
-        <Disclosure title="Aperçu">
+        <Accordion title="Aperçu">
           <PdfPreview label={`Aperçu de ${label}`} source={reference} generate={() => available.read(reference)} />
-        </Disclosure>
+        </Accordion>
       ) : null}
     </div>
   );

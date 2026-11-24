@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { render } from "../socle.test-helper";
@@ -35,7 +35,7 @@ it("ne propose que les modèles affichés, plus le modèle déjà choisi", async
     status: "ready",
   });
   render(<ModelPicker value={{ provider: "claude", model: "haiku" }} cwd="/tmp" onChange={() => {}} />);
-  await userEvent.click(await screen.findByRole("button", { name: /Modèle de l’agent : Haiku/ }));
+  await userEvent.click(await screen.findByRole("button", { name: "Haiku : modèle de l’agent" }));
   // Le champ « Modèle » du volet montre le modèle choisi ; il ouvre la liste.
   await userEvent.click(await screen.findByRole("button", { name: /Haiku/ }));
   const options = screen.getAllByRole("option").map((option) => option.textContent);
@@ -45,7 +45,7 @@ it("ne propose que les modèles affichés, plus le modèle déjà choisi", async
 // Une conversation commencée garde son harnais : le menu le dit en clair, pas seulement par un curseur interdit.
 it("explique pourquoi les autres harnais sont grisés une fois la conversation commencée", async () => {
   render(<ModelPicker value={{ provider: "opencode" }} cwd="/tmp" providerLocked onChange={() => {}} />);
-  await userEvent.click(screen.getByRole("button", { name: /Modèle de l’agent/ }));
+  await userEvent.click(screen.getByRole("button", { name: /: modèle de l’agent$/ }));
   expect(screen.getByText(/Harnais fixé : cette conversation a commencé avec OpenCode/)).toHaveTextContent(
     "Pour Claude Code ou Codex, ouvrez une nouvelle conversation.",
   );
@@ -54,7 +54,20 @@ it("explique pourquoi les autres harnais sont grisés une fois la conversation c
 
 it("n’affiche aucune explication tant que la conversation n’a pas commencé", async () => {
   render(<ModelPicker value={{ provider: "opencode" }} cwd="/tmp" onChange={() => {}} />);
-  await userEvent.click(screen.getByRole("button", { name: /Modèle de l’agent/ }));
+  await userEvent.click(screen.getByRole("button", { name: /: modèle de l’agent$/ }));
   expect(screen.queryByText(/Harnais fixé/)).toBeNull();
   expect(screen.getByRole("radio", { name: "Codex" })).toBeEnabled();
+});
+
+// D-380 : le raisonnement est un curseur à crans, sa valeur écrite en mots ; un cran au clavier enregistre le niveau.
+it("règle le raisonnement au curseur à crans, sur les seuls niveaux du modèle", async () => {
+  vi.mocked(listModels).mockResolvedValue([{ id: "opus", name: "Opus", efforts: ["low", "high"] }]);
+  const onChange = vi.fn();
+  render(<ModelPicker value={{ provider: "claude", model: "opus" }} cwd="/tmp" onChange={onChange} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Opus : modèle de l’agent" }));
+  const slider = await screen.findByRole("slider", { name: "Raisonnement" });
+  expect(slider).toHaveAttribute("aria-valuetext", "Par défaut");
+  expect(slider).toHaveAttribute("max", "2");
+  fireEvent.keyDown(slider, { key: "ArrowRight" });
+  await waitFor(() => expect(onChange).toHaveBeenCalledWith({ provider: "claude", model: "opus", effort: "low" }));
 });

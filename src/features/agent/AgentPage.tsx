@@ -2,7 +2,7 @@ import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type Action,
-  Button,
+  Alert,
   EmptyState,
   InlineEdit,
   NotificationCenter,
@@ -10,7 +10,7 @@ import {
   Skeleton,
   SkeletonGroup,
 } from "socle-ui";
-import { Notice, Row, Text } from "../../kit";
+import { Row, Text } from "../../kit";
 import { inTauri, invoke } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -279,12 +279,9 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                 </div>
               ) : loadError ? (
                 <div className="agents-page__state">
-                  <Notice
-                    tone="danger"
-                    action={<Button onPress={() => void load().catch(reportLoad)}>Réessayer</Button>}
-                  >
+                  <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void load().catch(reportLoad) }}>
                     L’historique des agents n’a pas pu être chargé.
-                  </Notice>
+                  </Alert>
                 </div>
               ) : conversation ? (
                 <>
@@ -315,18 +312,19 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                   )}
                   <div className="agents-page__footer">
                     {saveError ? (
-                      <Notice
+                      <Alert
                         tone="danger"
                         action={
-                          retrySave ? (
-                            <Button onPress={() => void retrySave().catch(() => undefined)}>
-                              Réessayer la sauvegarde
-                            </Button>
-                          ) : undefined
+                          retrySave
+                            ? {
+                                label: "Réessayer la sauvegarde",
+                                onPress: () => void retrySave().catch(() => undefined),
+                              }
+                            : undefined
                         }
                       >
                         {saveError}
-                      </Notice>
+                      </Alert>
                     ) : null}
                     {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
                     <div className="agents-page__question">

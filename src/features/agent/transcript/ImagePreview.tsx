@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, Dialog, IconButton } from "socle-ui";
+import { Button, IconButton, Modal } from "socle-ui";
 import { Row, Text } from "../../../kit";
 
 /** Image montrée dans la vue agrandie : en ligne (`src`), ou fichier lu à la demande (`reference`). */
@@ -66,7 +66,7 @@ export function ImageViewer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [goLatest, open, several]);
   return (
-    <Dialog
+    <Modal
       isOpen={open}
       onOpenChange={(next) => {
         if (!next) onClose();
@@ -99,7 +99,7 @@ export function ImageViewer({
           <Text tone="muted">{failed ? `Image indisponible : ${label}` : "Chargement de l’image…"}</Text>
         )}
       </div>
-    </Dialog>
+    </Modal>
   );
 }
 

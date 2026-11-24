@@ -517,7 +517,7 @@ describe("file d’attente", () => {
     expect(screen.queryByText(/pour envoyer, .* pour mettre en file/)).toBeNull();
     // Le résumé des fichiers modifiés attend la fin : pendant la réponse, il ne laisse pas croire qu’elle est finie.
     expect(screen.queryByText("3 fichiers modifiés")).toBeNull();
-    await waitFor(() => expect(screen.getByRole("button", { name: /^Modèle de l’agent/ })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /: modèle de l’agent$/ })).toBeEnabled());
     expect(screen.getByRole("textbox", { name: "Message à Nouvelle conversation" })).toBeInTheDocument();
   });
 });

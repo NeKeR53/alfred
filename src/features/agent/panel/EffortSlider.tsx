@@ -1,11 +1,11 @@
-/* Repris de OneApp : components/agents/EffortSlider.tsx. */
-import { type CSSProperties, useId } from "react";
+import { useEffect, useState } from "react";
+import { Slider } from "socle-ui";
 import { effortLabel } from "../effort";
-import "./effort-slider.css";
 
 /**
- * Niveau de raisonnement en curseur, sur les seuls niveaux que le harnais propose pour le modèle choisi
- * (« par défaut » d’abord, puis du plus léger au plus poussé, dans l’ordre du harnais). Clavier : flèches.
+ * Niveau de raisonnement en `Slider` à crans (D-380), sur les seuls niveaux que le harnais propose pour le modèle
+ * choisi : « Par défaut » d’abord, puis du plus léger au plus poussé, dans l’ordre du harnais. La valeur s’écrit en
+ * mots à droite ; le choix s’enregistre au relâché. Rien quand le modèle n’a qu’un niveau.
  */
 export function EffortSlider({
   efforts,
@@ -21,57 +21,30 @@ export function EffortSlider({
   disabled?: boolean;
   label?: string;
 }) {
-  const id = useId();
   const levels = ["", ...efforts.filter((effort, index) => effort && efforts.indexOf(effort) === index)];
   const index = Math.max(0, levels.indexOf(value));
-  if (levels.length < 2)
-    return (
-      <div className="effort-slider effort-slider--single">
-        <span className="effort-slider__label">{label}</span>
-        <span className="effort-slider__value">Par défaut du modèle</span>
-      </div>
-    );
+  // La poignée suit le geste ; le niveau ne part qu’au relâché (ou à chaque touche).
+  const [position, setPosition] = useState(index);
+  useEffect(() => setPosition(index), [index]);
+  if (levels.length < 2) return null;
   return (
-    <div className="effort-slider">
-      <div className="effort-slider__head">
-        <label className="effort-slider__label" htmlFor={id}>
-          {label}
-        </label>
-        <span className="effort-slider__value" aria-hidden="true">
-          {effortName(levels[index])}
-        </span>
-      </div>
-      <input
-        id={id}
-        type="range"
-        min={0}
-        max={levels.length - 1}
-        step={1}
-        value={index}
-        disabled={disabled}
-        style={{ "--fill": index / (levels.length - 1) } as CSSProperties}
-        aria-valuetext={effortName(levels[index])}
-        onChange={(event) => onChange(levels[Number(event.target.value)] ?? "")}
-      />
-      {/* Les deux bouts seulement : le niveau choisi est écrit au-dessus, et six libellés se chevauchaient. */}
-      <div className="effort-slider__ticks" aria-hidden="true">
-        {levels.map((level, position) =>
-          position !== 0 && position !== levels.length - 1 ? null : (
-            <span
-              key={level || "default"}
-              className={level === levels[index] ? "is-current" : undefined}
-              style={{ "--position": position / (levels.length - 1) } as CSSProperties}
-            >
-              {level ? effortName(level) : "défaut"}
-            </span>
-          ),
-        )}
-      </div>
-    </div>
+    <Slider
+      label={label}
+      width="full"
+      minValue={0}
+      maxValue={levels.length - 1}
+      step={1}
+      showSteps
+      value={position}
+      isDisabled={disabled}
+      formatValue={(at) => effortName(levels[at] ?? "")}
+      onChange={(at) => setPosition(at as number)}
+      onChangeEnd={(at) => onChange(levels[at as number] ?? "")}
+    />
   );
 }
 
-/** Libellé d’un niveau sous le curseur, en minuscules comme dans OneApp (« élevé », « très élevé »). */
+/** Libellé d’un niveau : « Par défaut », « Élevé », « Très élevé ». */
 function effortName(effort: string): string {
-  return effort ? effortLabel(effort).toLocaleLowerCase("fr") : "par défaut";
+  return effort ? effortLabel(effort) : "Par défaut";
 }

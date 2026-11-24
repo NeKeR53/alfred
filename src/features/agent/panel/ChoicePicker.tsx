@@ -1,11 +1,10 @@
-import { ChevronDown } from "lucide-react";
-import { Button, Menu } from "socle-ui";
+import { ChatOptionButton, DropdownMenu } from "socle-ui";
 
 export type PickerChoice = { value: string; label: string };
 
 /**
- * Bouton discret (texte et chevron) qui ouvre une liste de choix : l’autonomie de l’agent, sous la saisie. Le choix
- * actuel est coché.
+ * Choix sous la saisie (l’autonomie de l’agent) : un `ChatOptionButton` qui ouvre un `DropdownMenu` de choix cochés
+ * (D-371). Le choix actuel est coché.
  */
 export function ChoicePicker({
   name,
@@ -29,22 +28,14 @@ export function ChoicePicker({
   const current = choices.find((choice) => choice.value === value);
   const label = current?.label ?? placeholder;
   return (
-    <Menu
+    <DropdownMenu
       label={name}
       placement={`${placement === "above" ? "top" : "bottom"} ${align}`}
       trigger={
-        <Button
-          size="sm"
-          variant="subtle"
-          icon={<ChevronDown size={13} />}
-          aria-label={`${name} : ${label}`}
-          isDisabled={disabled || !choices.length}
-        >
-          {label}
-        </Button>
+        <ChatOptionButton label={label} aria-label={`${label} : ${name}`} isDisabled={disabled || !choices.length} />
       }
     >
-      <Menu.Section
+      <DropdownMenu.Section
         title={name}
         selectionMode="single"
         selectedKeys={[value]}
@@ -54,9 +45,9 @@ export function ChoicePicker({
         }}
       >
         {choices.map((choice) => (
-          <Menu.Item key={choice.value} id={choice.value} label={choice.label} />
+          <DropdownMenu.Item key={choice.value} id={choice.value} label={choice.label} />
         ))}
-      </Menu.Section>
-    </Menu>
+      </DropdownMenu.Section>
+    </DropdownMenu>
   );
 }

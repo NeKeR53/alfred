@@ -1,8 +1,7 @@
-import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button, Popover, RadioGroup, Select } from "socle-ui";
+import { ChatOptionButton, Popover, RadioButtonGroup, Select } from "socle-ui";
 import { create } from "zustand";
-import { Stack, Text } from "../../../kit";
+import { Stack } from "../../../kit";
 import { invoke } from "../../../lib/native";
 import { effortLabel } from "../effort";
 import {
@@ -128,9 +127,11 @@ export function modelChoiceLabel(choice: ModelChoice, models: readonly HarnessMo
 }
 
 /**
- * Choix du modèle d’une conversation, repris de `AgentModelPicker` de OneApp : le harnais en onglets segmentés,
- * le modèle en liste (les seuls modèles affichés dans les réglages, plus celui déjà choisi), puis le raisonnement en curseur sur les seuls niveaux que ce modèle propose. Le harnais ne
- * change plus une fois la conversation commencée : la session de l’agent y reste attachée.
+ * Choix du modèle d’une conversation, assemblé selon D-380 : un `ChatOptionButton` (modèle, puis raisonnement en
+ * valeur) ouvre un `Popover` de champs sans titre. Le harnais en boutons radio (propre à Alfred), le modèle en liste
+ * (les seuls modèles affichés dans les réglages, plus celui déjà choisi), puis le raisonnement en curseur à crans sur
+ * les seuls niveaux que ce modèle propose. Le harnais ne change plus une fois la conversation commencée : la session
+ * de l’agent y reste attachée.
  */
 export function ModelPicker({
   value,
@@ -158,72 +159,75 @@ export function ModelPicker({
     (provider) => provider === value.provider || installed === null || installed.includes(provider),
   );
   const others = providers.filter((provider) => provider !== value.provider);
-  const label = modelChoiceLabel(value, models);
+  const modelName = value.model
+    ? (current?.name ?? value.model)
+    : `${PROVIDER_LABEL[value.provider]} · modèle par défaut`;
+  const effort = value.effort ? effortLabel(value.effort).toLocaleLowerCase("fr") : undefined;
   const modelOptions = [
     { id: DEFAULT_MODEL, label: "Modèle par défaut" },
     ...(value.model && !current ? [{ id: value.model, label: value.model }] : []),
     ...choices.map((model) => ({ id: model.id, label: model.name })),
   ];
+  const efforts = current?.efforts ?? [];
   return (
     <Popover
       label="Modèle de l’agent"
-      // Un cran par niveau de raisonnement : au-delà de quatre, la fenêtre s’élargit pour que les libellés restent lisibles.
-      width={(current?.efforts.length ?? 0) > 4 ? "lg" : "md"}
+      width={efforts.length > 4 ? "lg" : "md"}
       placement={placement === "below" ? "bottom start" : "bottom end"}
       isOpen={open}
       onOpenChange={setOpen}
       trigger={
-        <Button
-          size="sm"
-          variant="subtle"
-          icon={<ChevronDown size={13} />}
-          aria-label={`Modèle de l’agent : ${label}`}
+        <ChatOptionButton
+          label={modelName}
+          value={effort}
+          aria-label={`${modelChoiceLabel(value, models)} : modèle de l’agent`}
           isDisabled={disabled}
-        >
-          {label}
-        </Button>
+        />
       }
     >
       <Stack gap="md">
         {providers.length > 1 ? (
-          <RadioGroup
+          <RadioButtonGroup
             label="Harnais"
+            isRequired
             orientation="horizontal"
             value={value.provider}
+            description={
+              providerLocked && others.length > 0
+                ? `Harnais fixé : cette conversation a commencé avec ${PROVIDER_LABEL[value.provider]}. Pour ${others
+                    .map((provider) => PROVIDER_LABEL[provider])
+                    .join(" ou ")}, ouvrez une nouvelle conversation.`
+                : undefined
+            }
             onChange={(provider) => {
-              if (provider !== value.provider) onChange({ provider: provider as Provider });
+              if (provider && provider !== value.provider) onChange({ provider: provider as Provider });
             }}
           >
             {providers.map((provider) => (
-              <RadioGroup.Option
+              <RadioButtonGroup.Option
                 key={provider}
                 value={provider}
                 isDisabled={providerLocked && provider !== value.provider}
               >
                 {PROVIDER_LABEL[provider]}
-              </RadioGroup.Option>
+              </RadioButtonGroup.Option>
             ))}
-          </RadioGroup>
-        ) : null}
-        {providerLocked && others.length > 0 ? (
-          <Text tone="muted" size="meta">
-            {`Harnais fixé : cette conversation a commencé avec ${PROVIDER_LABEL[value.provider]}. Pour ${others
-              .map((provider) => PROVIDER_LABEL[provider])
-              .join(" ou ")}, ouvrez une nouvelle conversation.`}
-          </Text>
+          </RadioButtonGroup>
         ) : null}
         <Select
           label="Modèle"
+          isRequired
           value={value.model ?? DEFAULT_MODEL}
           options={modelOptions}
+          description={efforts.length ? undefined : "Raisonnement : par défaut du modèle."}
           onChange={(model) =>
-            onChange({ provider: value.provider, model: model && model !== DEFAULT_MODEL ? model : undefined })
+            onChange({ provider: value.provider, model: model && model !== DEFAULT_MODEL ? String(model) : undefined })
           }
         />
         <EffortSlider
-          efforts={current?.efforts ?? []}
+          efforts={efforts}
           value={value.effort ?? ""}
-          onChange={(effort) => onChange({ ...value, effort: effort || undefined })}
+          onChange={(next) => onChange({ ...value, effort: next || undefined })}
         />
       </Stack>
     </Popover>

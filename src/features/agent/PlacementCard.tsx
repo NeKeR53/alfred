@@ -1,5 +1,5 @@
 import { type FormEvent, useMemo, useState } from "react";
-import { Button, RadioGroup, Select, TextField } from "socle-ui";
+import { Button, RadioButtonGroup, Select, TextInput } from "socle-ui";
 import { Row, Stack } from "../../kit";
 import { type PlaceTarget, SECTION_COLORS } from "../../lib/types";
 import { useShell } from "../../shell/store";
@@ -73,21 +73,21 @@ export function PlacementCard({
         <p className="agent-card__note">{payload.description}</p>
       ) : null}
       <Stack gap="sm">
-        <TextField label="Titre de la page" value={title} onChange={setTitle} isRequired />
-        <RadioGroup label="Emplacement" value={kind} onChange={(value) => setKind(value as Kind)}>
-          <RadioGroup.Option value="menu">Nouvelle entrée du menu de gauche</RadioGroup.Option>
-          <RadioGroup.Option value="tab" isDisabled={!sections.length}>
+        <TextInput label="Titre de la page" value={title} onChange={setTitle} isRequired />
+        <RadioButtonGroup label="Emplacement" value={kind} onChange={(value) => setKind(value as Kind)}>
+          <RadioButtonGroup.Option value="menu">Nouvelle entrée du menu de gauche</RadioButtonGroup.Option>
+          <RadioButtonGroup.Option value="tab" isDisabled={!sections.length}>
             Onglet d’une section existante
-          </RadioGroup.Option>
-          <RadioGroup.Option value="panel" isDisabled={!hosts.length}>
+          </RadioButtonGroup.Option>
+          <RadioButtonGroup.Option value="panel" isDisabled={!hosts.length}>
             Panneau de droite d’une page existante
-          </RadioGroup.Option>
-          <RadioGroup.Option value="settings">Onglet des Réglages</RadioGroup.Option>
-        </RadioGroup>
+          </RadioButtonGroup.Option>
+          <RadioButtonGroup.Option value="settings">Onglet des Réglages</RadioButtonGroup.Option>
+        </RadioButtonGroup>
         {kind === "menu" ? (
           <>
-            <TextField label="Nom dans le menu" value={label} onChange={setLabel} isRequired />
-            <TextField
+            <TextInput label="Nom dans le menu" value={label} onChange={setLabel} isRequired />
+            <TextInput
               label="Icône"
               description="Nom Lucide, par exemple list-checks."
               value={icon}
