@@ -128,3 +128,58 @@ Relevés en refaisant le parcours de configuration d'un module (`src/features/se
 | État par case (`Badge` « Déjà là », « Indisponible ») dans un `CheckboxGroup` ; liste longue qui défile (catalogue d'un marketplace, plus de 10 modules). | L'état passe dans la description de la case ; l'erreur d'import dans `error` de la case. La liste ne défile plus dans un cadre. |
 | Bouton visible sur une ligne de `List` (« Ouvrir » un espace récent). Les actions de ligne n'apparaissent qu'au survol. | `List` avec `itemActions` (« Ouvrir l'espace … ») et `onAction` (Entrée, double-clic). |
 | Paires libellé/valeur hors du panneau de détail (résumé « C'est prêt » de l'accueil). | `PropertyRow` posées dans l'écran d'accueil, sans cadre. |
+
+## Manques vus en 1.4
+
+Relevés en refaisant la conversation (`src/features/agent/`) avec les composants de chat de socle-ui 1.4.0 (D-371 à D-378, D-380). Chacun peut devenir un `/design propose`. Rien n'est implémenté autrement en local : l'existant est gardé, ou la fonction passe par une option voisine, dite ici.
+
+### Gabarit
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| Page de chat : le pied (`ChoicePrompt`, `ChatComposer`, `ChatOptions`) aligné sur la colonne de 760 px de `ChatTranscript`. Les stories le posent dans une `div` à classes. | `agents-page__footer` (largeur, centrage, marge basse) et `agents-page__question` (hauteur bornée) dans `agent.css`. |
+| Ligne d'en-tête du relevé (« Depuis Notes · 24/11/2026 09:03 », modèle en infobulle). | Un `p` à classe en tête du relevé. |
+| Lignes au-dessus de la saisie (relances prévues, avec « Annuler la relance ») : `ChatComposer` n'a pas d'emplacement pour elles. | Liste locale `agent-watches` posée juste avant `ChatComposer`. |
+
+### Relevé
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `ChatMessage` sans texte (pièces jointes seules) : la bulle reste vide sous les pièces. | Les pièces jointes passent dans la bulle (`children`), sans `attachments`. |
+| Image envoyée : vignette qui s'agrandit, avec « Chargement… » et « Image indisponible · Réessayer ». `AttachmentChip` ne s'ouvre pas en grand et n'a pas de nouvel essai. | `ImagePreview` local (bouton-vignette et `Modal`) ; les fichiers et collages passent en `AttachmentChip`. |
+| `MentionText` : infobulle d'une pastille (description d'une commande). | Plus d'infobulle sur les pastilles d'un message envoyé. |
+| Liste de fichiers modifiés : chemin cliquable et `DiffStat` par ligne, « Afficher N de plus ». | `ul` local dans une `Card`, avec `Link`, `DiffStat` et un `Button` `subtle`. |
+| Libellés de Socle avec apostrophe droite (« Repartir d'ici », « Question de l'agent ») au milieu des libellés d'Alfred en apostrophe typographique (’). | Rien : à harmoniser dans les `messages` de Socle, ou par `SocleProvider` `messages` côté Alfred. |
+
+### Activités
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `AgentActivity` : objet cliquable (ouvrir le fichier lu ou modifié). La spec exclut le lien et propose `detail`, qui est un texte. | Les outils qui citent un chemin gardent une ligne locale avec un `Link` ; les autres passent en `ActivityGroup`, dans l'ordre. Le résumé « n outils » ne compte que les outils d'un même groupe. |
+| `AgentActivity` : images et fichiers dans la sortie (capture, image générée). | Ligne locale : `Accordion` avec `TextArea` en lecture seule, images et fichiers. |
+| `AgentActivity` : état « Arrêté » (outil interrompu), à côté de `running`, `done`, `error`. | `status: "done"` et « · Arrêté » ajouté au verbe. |
+| `WorkStatus` : heure de début (« Début à 09:06:48 »). | Retirée ; l'heure d'envoi reste dans la ligne du message (« Envoyé · 24/11/2026 09:06 »). |
+| `WorkSummary` : tour terminé dont la durée est inconnue (ancien historique). L'ancien résumé disait « Travail terminé ». | `durationMs: 0`, donc « A travaillé pendant 0 s ». |
+
+### Question
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `ChoicePrompt` repliable en pastille (« Question de l'agent en attente »), pour relire le relevé derrière. | Deux `Button` `subtle` `sm` hors de la carte : « Replier la question » sous la carte, la pastille à sa place quand elle est repliée. |
+
+### Saisie
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `ChatComposer` : touche propre à l'app dans le champ (Échap annule une dictée en cours). Pas d'`onKeyDown`. | Échap arrête l'agent ; la dictée s'arrête par son bouton. |
+| `ChatComposer` : dépôt de fichiers par le système (Tauri donne des chemins, pas de `drop` dans la page) ; le cadre en tirets ne paraît pas. | Écouteur Tauri gardé ; la page se couvre de sa zone de dépôt (`agents-page__main.is-file-dragging`). |
+| Icône d'un déclencheur dans le menu « + » (`MentionTrigger` n'en a pas). | Entrées sans icône ; le caractère est à droite. |
+| `MentionReference` : le caractère d'une pastille suit le déclencheur tapé ; une référence enregistrée n'a pas ce caractère. | Le caractère est déduit du type : `@` fichier, `$` skill, `/` commande (un skill choisi par `/` se relit avec `$`). |
+
+### Modèle et effort
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `Popover` au-dessus de son bouton (`top end`) : D-380 l'ouvre depuis `ChatOptions`, sous la saisie. `UsageRing` note la même limite. | `bottom end` ; le volet change de côté faute de place. |
+| `Slider` à un seul niveau (modèle sans raisonnement réglable). | Pas de curseur ; « Raisonnement : par défaut du modèle. » en aide du champ Modèle. |
+| Mise en page des champs d'un `Popover` (écart entre champs). | `Stack` du kit d'Alfred. |
+
+### Garde-fous
+| Manque | Ce qu'Alfred fait à la place |
+|---|---|
+| `socle-ui/biome` : `lint/a11y/useValidAriaRole` refuse `role="user"` et `role="assistant"` de `ChatMessage`. | `biome.json` d'Alfred : `allowInvalidRoles: ["user", "assistant"]`. À mettre dans la configuration de Socle. |
+
