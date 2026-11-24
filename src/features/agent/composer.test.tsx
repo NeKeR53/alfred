@@ -402,10 +402,12 @@ describe("file d’attente", () => {
       },
     });
     render(<Composer conversation={conversation("a")} responding />);
-    const queue = screen.getByRole("region", { name: "2 messages en file, envoyés à la fin de l’étape en cours" });
+    // MessageQueue : une région « 2 messages en file », décrite par le moment du départ.
+    const queue = screen.getByRole("region", { name: "2 messages en file" });
+    expect(queue).toHaveAccessibleDescription(/part à la fin de l.étape en cours/);
     const rows = within(queue).getAllByRole("listitem");
-    expect(within(rows[0]).getByText("relire")).toHaveClass("reference-pill");
-    expect(rows[0]).toHaveTextContent("relireVérifie la page");
+    expect(within(rows[0]).getByText("$relire")).toBeInTheDocument();
+    expect(rows[0]).toHaveTextContent("$relireVérifie la page");
     expect(rows[1]).toHaveTextContent("Texte collé");
     expect(within(queue).getByRole("button", { name: "Envoyer le message 2 maintenant" })).toBeInTheDocument();
     // Sans action de réordonnancement dans le store, pas de poignée.
@@ -448,8 +450,10 @@ describe("file d’attente", () => {
     useAgents.setState({ reorderQueued: undefined } as never);
   });
 
-  it("comme dans OneApp : la file est en tête du cadre de la saisie, avec le même bouton d’envoi rond", async () => {
+  it("comme dans OneApp : la file est en tête du cadre de la saisie, et un message part tout de suite", async () => {
+    const sendQueuedNow = vi.fn(async () => undefined);
     useAgents.setState({
+      sendQueuedNow,
       runtime: {
         a: {
           status: "responding",
@@ -467,10 +471,12 @@ describe("file d’attente", () => {
     while (frame && !frame.contains(input)) frame = frame.parentElement;
     expect(frame?.contains(screen.getByRole("button", { name: "Envoyer maintenant" }))).toBe(true);
     expect(queue.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(queue).toHaveClass("agent-queue");
+    // Un seul message : une horloge à la place de la poignée ; « Envoyer maintenant » le fait partir.
+    expect(within(queue).queryByRole("button", { name: /Déplacer le message/ })).toBeNull();
     const sendNow = within(queue).getByRole("button", { name: "Envoyer le message 1 maintenant" });
-    // Même bouton d’envoi que la saisie, la flèche inclinée.
-    expect(sendNow.querySelector(".lucide-arrow-up-right")).not.toBeNull();
+    await waitFor(() => expect(sendNow).toBeEnabled());
+    fireEvent.click(sendNow);
+    expect(sendQueuedNow).toHaveBeenCalledWith("a", "q1");
   });
 
   it("modifier reprend le texte et les pastilles à la place de la saisie ; pas pour un message avec pièces jointes", async () => {

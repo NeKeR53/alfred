@@ -1,0 +1,28 @@
+/* Suivis : « Relance à la fin de … » au-dessus de la saisie, avec sa croix. */
+.agent-watches {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-watches__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-side);
+  color: var(--fg-2);
+  font-size: 12px;
+}
+
+.agent-watches__item > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

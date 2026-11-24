@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { IconButton } from "socle-ui";
 import { invoke, onNativeEvent } from "../../lib/native";
 import { useAgents } from "./store";
-import "./agent-composer.css";
+import "./watches.css";
 
 export interface AgentWatch {
   id: string;
