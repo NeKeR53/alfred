@@ -35,6 +35,9 @@ pub struct SpaceManifest {
     /// compte montre toutes ses pages jusqu’à `migrate_account_pages`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_pages: Option<BTreeMap<String, Vec<String>>>,
+    /// Sections du menu créées pendant l’usage par les modules (`menu.addSection`), dans l’ordre de création.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub created_sections: Vec<crate::menu_sections::CreatedSection>,
 }
 
 /// Clé d’un compte dans `account_pages`.
@@ -566,6 +569,8 @@ pub struct Snapshot {
     pub templates: Vec<crate::menu::PageTemplate>,
     /// Sections déclarées : l’apparence d’une page et ses onglets par défaut.
     pub section_templates: Vec<crate::menu::SectionTemplate>,
+    /// Sections créées par les modules installés (`menu.addSection`), dans l’ordre de création.
+    pub created_sections: Vec<crate::menu_sections::CreatedSection>,
     /// Onglets qui se servent de chaque compte (`client/instance` → références).
     pub account_usage: BTreeMap<String, Vec<String>>,
     /// Services dont les comptes peuvent servir à chaque besoin d’un modèle (`module/besoin` → clients), le sien
@@ -600,9 +605,6 @@ pub struct ResolvedSection {
     pub instance_of: Option<String>,
     /// Section par instance qui n’a encore aucune instance à montrer : ce qu’il faut faire.
     pub waiting: Option<String>,
-    /// Section créée pendant l’usage par son module (`menu.addSection`) : l’identifiant qu’il lui a donné.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1506,7 +1508,6 @@ impl Space {
                     instance: None,
                     instance_of: None,
                     waiting: None,
-                    created: None,
                     id,
                 });
             }
@@ -1607,7 +1608,15 @@ impl Space {
             }
         }
 
+        // Sections créées par un module encore là : celles d’un module disparu attendent qu’il revienne.
+        let created_sections: Vec<crate::menu_sections::CreatedSection> = manifest
+            .created_sections
+            .iter()
+            .filter(|section| modules.iter().any(|module| module.id == section.module))
+            .cloned()
+            .collect();
         Ok(Snapshot {
+            created_sections,
             path: self.root.to_string_lossy().to_string(),
             name: manifest.name,
             accent: manifest.accent,

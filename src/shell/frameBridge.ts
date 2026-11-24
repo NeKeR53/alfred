@@ -16,7 +16,7 @@ import {
   pickSaveFile,
 } from "../lib/native";
 import { isKnownPage } from "./badges";
-import { takePendingEntryActions, useMenuZones } from "./menuZones";
+import { SECTION_ZONE, sectionZone, takePendingEntryActions, useMenuZones } from "./menuZones";
 import { findPage } from "./navigationLayout";
 import { type NotificationAction, notify } from "./notifications";
 import { cleanView, closeView, type OpenedView, openView, sectionOfPage, useOpenViews, viewKey } from "./openViews";
@@ -78,11 +78,21 @@ export function onSelectionChange(listener: (page: string) => void): () => void 
   };
 }
 
-/** Entrée du menu ouverte dans la page (ou dans la page d’un panneau) : `usePageContext().entry`. */
-function entryOf(identity: FrameIdentity): { id: string; label: string } | null {
+/**
+ * Entrée du menu ouverte dans la page (ou dans la page d’un panneau) : `usePageContext().entry`, avec la section créée
+ * qui la porte (`menu.addSection`), s’il y a lieu.
+ */
+function entryOf(identity: FrameIdentity): { id: string; label: string; section?: string } | null {
   if (identity.kind === "function") return null;
   const opened = useShell.getState().activeEntry[identity.host ?? identity.reference];
-  return opened ? { id: opened.id, label: opened.label } : null;
+  if (!opened) return null;
+  const section = opened.zone.startsWith(SECTION_ZONE) ? opened.zone.split("/").slice(1).join("/") : undefined;
+  return section ? { id: opened.id, label: opened.label, section } : { id: opened.id, label: opened.label };
+}
+
+/** Page d’un cadre, sans son module ni son suffixe de copie (« projet ») : la page par défaut d’une section créée. */
+function ownPageId(identity: FrameIdentity): string {
+  return (identity.host ?? identity.reference).replace(/@[^@/]*$/, "").slice(identity.module.length + 1);
 }
 
 /** Paramètres de la fenêtre ouverte sur un élément précis, pour sa page et son panneau ; ailleurs `null`. */
@@ -193,7 +203,6 @@ export function frameContext(identity: FrameIdentity) {
     selection: identity.host ? selectionOf(identity.host) : null,
     entry: entryOf(identity),
     params: paramsOf(identity),
-    section: createdSectionOf(identity),
     view:
       identity.kind !== "function" && identity.view
         ? { id: identity.view.id, label: identity.view.label, params: identity.view.params }
@@ -233,30 +242,6 @@ function viewSection(identity: FrameIdentity): string {
 }
 
 type Params = Record<string, unknown>;
-
-/** Section créée par le module (`menu.addSection`) qui montre la page du cadre : `usePageContext().section`. */
-function createdSectionOf(identity: FrameIdentity): { id: string; title: string } | null {
-  if (identity.kind === "function") return null;
-  const page = identity.host ?? identity.reference;
-  const section = useShell
-    .getState()
-    .snapshot?.sections.find((candidate) => candidate.pages.some((known) => known.reference === page));
-  return section?.created ? { id: section.created, title: section.label } : null;
-}
-
-/**
- * Page dont la zone porte les entrées d’une section créée (`menu.setEntries(…, { section })`) : son premier onglet,
- * sans le nom du module (« projet@atlas »).
- */
-function sectionZonePage(identity: FrameIdentity, section: unknown): string {
-  const id = String(section);
-  const found = useShell
-    .getState()
-    .snapshot?.sections.find((candidate) => candidate.created === id && candidate.module === identity.module);
-  const first = found?.pages[0]?.reference;
-  if (!first) throw new AlfredError({ message: `La section « ${id} » n’existe pas (ou plus) dans le menu.` });
-  return first.slice(identity.module.length + 1);
-}
 
 /** Dernier onglet fixe d’une section : celui qui s’affiche quand on ferme le premier onglet d’élément actif. */
 function lastFixedTab(section: string): string | undefined {
@@ -449,30 +434,24 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.menuZones.update", {
         ...pick(params, ["op", "title", "order", "visible", "entries", "id", "patch"]),
         subject,
-        page: badgeTarget(
-          identity,
+        // Les entrées d’une section créée par le module (`{ section }`) sont la zone de cette section.
+        page:
           params.section !== undefined && params.section !== null
-            ? sectionZonePage(identity, params.section)
-            : params.page,
-          MENU_TARGET,
-        ),
+            ? sectionZone(identity.module, String(params.section))
+            : badgeTarget(identity, params.page, MENU_TARGET),
       });
     // Sections créées par le module (`menu.addSection`…) : Rust les écrit dans l’espace, avec un commit.
     case "menu.sections": {
       if (identity.capture) return params.op === "list" ? [] : null;
-      const op = String(params.op ?? "");
-      const host = identity.host ?? identity.reference;
-      const pages =
-        Array.isArray(params.pages) && params.pages.length
-          ? params.pages.map(String)
-          : op === "add" && identity.kind !== "function"
-            ? [host.replace(/@[^@/]*$/, "")]
+      const page =
+        params.page !== undefined && params.page !== null
+          ? String(params.page)
+          : params.op === "add" && identity.kind !== "function"
+            ? ownPageId(identity)
             : undefined;
       return invoke("frame.menuSections.update", {
-        op,
-        ...pick(params, ["id", "title"]),
-        ...(params.icon !== undefined ? { icon: params.icon === null ? "" : String(params.icon) } : {}),
-        ...(pages ? { pages } : {}),
+        ...pick(params, ["op", "id", "title"]),
+        ...(page ? { page } : {}),
         subject,
       });
     }

@@ -96,8 +96,6 @@ export interface ResolvedSection {
   instanceOf?: string | null;
   /** Section par instance sans instance à montrer : ce qu’il faut faire. */
   waiting?: string | null;
-  /** Section créée pendant l’usage par son module (`menu.addSection`) : l’identifiant qu’il lui a donné. */
-  created?: string | null;
 }
 
 export interface ModuleOrigin {
@@ -213,6 +211,18 @@ export interface Snapshot {
   accountUsage?: Record<string, string[]>;
   /** Services dont les comptes peuvent servir à chaque besoin (`module/besoin` → clients), le sien d’abord. */
   compatibleClients?: Record<string, string[]>;
+  /** Sections du menu créées pendant l’usage par les modules (`menu.addSection`), dans l’ordre de création. */
+  createdSections?: CreatedSection[];
+}
+
+/** Section du menu créée par un module : un titre repliable, avec les entrées de sa zone dessous. */
+export interface CreatedSection {
+  module: string;
+  /** Identifiant donné par le module (« atlas ») ; ses entrées sont la zone `section:<module>/<id>`. */
+  id: string;
+  title: string;
+  /** Page du module ouverte par une entrée qui ne nomme pas la sienne (identifiant de page). */
+  page: string;
 }
 
 export interface Override {

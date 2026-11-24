@@ -114,13 +114,10 @@ fn modify<T>(state: &AppState, change: impl FnOnce(&mut Zones) -> AppResult<T>) 
     Ok(result)
 }
 
-/// Oublie les zones de pages retirées du menu (les onglets d’une section créée qui s’en va).
-pub fn forget_pages(state: &AppState, pages: &[String]) -> AppResult<()> {
-    if pages.is_empty() {
-        return Ok(());
-    }
+/// Oublie la zone `page` (les entrées d’une section créée qui s’en va).
+pub fn forget(state: &AppState, page: &str) -> AppResult<()> {
     modify(state, |zones| {
-        zones.retain(|page, _| !pages.contains(page));
+        zones.remove(page);
         Ok(())
     })
 }
@@ -281,8 +278,19 @@ fn clean_text(text: &str, what: &str) -> AppResult<String> {
     Ok(text.trim().chars().take(MAX_TEXT).collect())
 }
 
-/// Une page ne règle que les zones de son module : la sienne, ou celle d’une autre page du module.
+/// Une page ne règle que les zones de son module : la sienne, celle d’une autre page du module, ou celle d’une section
+/// créée par le module (`section:<module>/<id>`).
 fn check_target(subject: &Subject, page: &str) -> AppResult<()> {
+    if let Some(section) = page.strip_prefix("section:") {
+        let valid = section
+            .split_once('/')
+            .is_some_and(|(module, id)| module == subject.module && crate::space::valid_id(id));
+        return if valid {
+            Ok(())
+        } else {
+            Err(AppError::new(format!("Menu refusé : « {section} » n’est pas une section du module « {} ».", subject.module)))
+        };
+    }
     let (base, instance) = match page.split_once('@') {
         Some((base, instance)) => (base, Some(instance)),
         None => (page, None),

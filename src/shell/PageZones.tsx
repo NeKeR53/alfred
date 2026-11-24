@@ -1,6 +1,6 @@
 import { openPageWindow } from "../lib/native";
 import { frameServices } from "./frameBridge";
-import { deliverEntryAction, entryTarget, type MenuEntry } from "./menuZones";
+import { deliverEntryAction, entryTarget, type MenuEntry, SECTION_ZONE, zoneModule } from "./menuZones";
 import { notify } from "./notifications";
 import { useShell } from "./store";
 
@@ -32,10 +32,11 @@ export function runZoneAction(zonePage: string, entry: MenuEntry, actionId: stri
   const action = entry.actions?.find((candidate) => candidate.id === actionId);
   const event = { entry: entry.id, action: actionId, ...(value !== undefined ? { value } : {}) };
   if (action?.function) {
-    const module = zonePage.split("/")[0] ?? "";
+    const module = zoneModule(zonePage);
+    const reference = zonePage.startsWith(SECTION_ZONE) ? entryTarget(zonePage, entry) : zonePage;
     if (!frameServices.callFunction) return;
     void frameServices
-      .callFunction({ kind: "page", module, reference: zonePage }, `${module}/${action.function}`, {
+      .callFunction({ kind: "page", module, reference }, `${module}/${action.function}`, {
         ...event,
         page: zonePage,
       })
@@ -50,7 +51,8 @@ export function runZoneAction(zonePage: string, entry: MenuEntry, actionId: stri
   }
   // « Ouvrir dans une fenêtre » (`window`) : Alfred ouvre la page de l’entrée seule, sur cette entrée.
   if (actionId === "window") return openZoneEntryWindow(zonePage, entry);
-  deliverEntryAction(zonePage, event);
+  // Une section créée n’a pas de page à elle : l’action va à la page que l’entrée ouvre.
+  deliverEntryAction(zonePage.startsWith(SECTION_ZONE) ? entryTarget(zonePage, entry) : zonePage, event);
   // Renommer se fait dans la ligne : la page reçoit le nouveau libellé sans être ouverte.
   if (actionId !== "rename") openZoneEntry(zonePage, entry);
 }

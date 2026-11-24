@@ -5,6 +5,7 @@
  */
 import { create } from "zustand";
 import { invoke, onNativeEvent } from "../lib/native";
+import { findPage } from "./navigationLayout";
 import { useShell } from "./store";
 
 export type MenuEntryStatus = "ok" | "warning" | "error" | "running" | "waiting";
@@ -95,8 +96,30 @@ export function moveEntry(zonePage: string, zone: MenuZone, id: string, step: -1
   return true;
 }
 
-/** Page ouverte par une entrée : `entry.page` (même module, même copie), sinon la page de la zone. */
+/** Préfixe des zones qui portent les entrées d’une section créée par un module (`section:<module>/<id>`). */
+export const SECTION_ZONE = "section:";
+
+/** Zone d’une section créée par un module. */
+export const sectionZone = (module: string, id: string) => `${SECTION_ZONE}${module}/${id}`;
+
+/** Module d’une zone : celui de sa page, ou celui de sa section. */
+export function zoneModule(zone: string): string {
+  return (zone.startsWith(SECTION_ZONE) ? zone.slice(SECTION_ZONE.length) : zone).split("/")[0] ?? "";
+}
+
+/**
+ * Page ouverte par une entrée : `entry.page` (même module, même copie), sinon la page de la zone ; pour une section
+ * créée, sa page. La référence est celle affichée dans le menu (la première copie d’une page déclarée).
+ */
 export function entryTarget(zonePage: string, entry: MenuEntry): string {
+  if (zonePage.startsWith(SECTION_ZONE)) {
+    const module = zoneModule(zonePage);
+    const id = zonePage.slice(SECTION_ZONE.length + module.length + 1);
+    const snapshot = useShell.getState().snapshot;
+    const section = snapshot?.createdSections?.find((known) => known.module === module && known.id === id);
+    const named = `${module}/${entry.page ?? section?.page ?? ""}`;
+    return (snapshot && findPage(snapshot, named)?.page.reference) ?? named;
+  }
   if (!entry.page) return zonePage;
   const module = zonePage.split("/")[0];
   const suffix = /@([^@/]*)$/.exec(zonePage)?.[1];

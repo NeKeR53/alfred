@@ -30,10 +30,6 @@ pub struct MenuPage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     pub tabs: Vec<MenuTab>,
-    /// Section créée pendant l’usage par une page ou une fonction du module (`menu.addSection`) : l’identifiant que
-    /// le module lui a donné (`atlas`). Elle suit le module : elle part avec lui.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<String>,
 }
 
 /// Onglet d’une page de l’utilisateur : un modèle de page avec ses comptes.
@@ -310,7 +306,7 @@ impl Space {
                         }
                     })
                     .collect();
-                MenuPage { id: section.id.clone(), section: template, label, icon: None, tabs, created: None }
+                MenuPage { id: section.id.clone(), section: template, label, icon: None, tabs }
             })
             .collect()
     }
@@ -360,7 +356,6 @@ impl Space {
                     instance: None,
                     instance_of: None,
                     waiting: None,
-                    created: None,
                 },
             };
             let base_override = overrides.get(&format!("section:{}", entry.section));
@@ -389,7 +384,6 @@ impl Space {
             section.waiting = None;
             section.pages = pages;
             section.id = entry.id.clone();
-            section.created = entry.created.clone();
             sections.push(section);
         }
         ResolvedMenu { sections, usage }
@@ -614,7 +608,7 @@ impl Space {
         used.insert(id.clone());
         let tabs = self.new_tabs(&snapshot.templates, tabs, &mut used)?;
         let icon = icon.map(|icon| icon.trim().to_string()).filter(|icon| !icon.is_empty());
-        menu.push(MenuPage { id: id.clone(), section: section.to_string(), label, icon, tabs, created: None });
+        menu.push(MenuPage { id: id.clone(), section: section.to_string(), label, icon, tabs });
         self.write_manifest(&manifest)?;
         Ok(id)
     }
@@ -861,225 +855,6 @@ impl Space {
     }
 }
 
-/// Sections qu’un module crée pendant l’usage (`menu.addSection`) : au plus autant, pour que le menu reste un menu.
-pub const MAX_CREATED_SECTIONS: usize = 50;
-
-/// Section demandée par une page ou une fonction (`menu.addSection`).
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct NewSection {
-    /// Identifiant donné par le module (`atlas`), propre au module.
-    pub id: String,
-    pub title: String,
-    /// Nom d’icône Lucide ; sans icône, celle de la section déclarée de la première page.
-    pub icon: Option<String>,
-    /// Pages du module en onglets (`module/page`), dans l’ordre.
-    pub pages: Vec<String>,
-}
-
-/// Section créée, telle que son module la relit (`menu.listSections`).
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct CreatedSection {
-    pub id: String,
-    pub title: String,
-    pub icon: Option<String>,
-    /// Onglets : référence de chaque copie (`module/page@atlas`).
-    pub pages: Vec<String>,
-    /// Identifiant de la section dans le menu (`module/section@atlas`).
-    pub reference: String,
-}
-
-/// Texte d’une section créée : une ligne, 120 caractères au plus, non vide.
-fn section_title(title: &str) -> AppResult<String> {
-    if title.chars().any(char::is_control) {
-        return Err(AppError::new("Le titre d’une section tient sur une ligne."));
-    }
-    let title: String = title.trim().chars().take(120).collect();
-    if title.is_empty() {
-        return Err(AppError::new("Une section a un titre : le nom de la notion (« Atlas »)."));
-    }
-    Ok(title)
-}
-
-/// Icône d’une section créée : un nom Lucide (`folder-kanban`), vide pour revenir à celle par défaut.
-fn section_icon(icon: Option<String>) -> AppResult<Option<String>> {
-    let Some(icon) = icon.map(|icon| icon.trim().to_string()).filter(|icon| !icon.is_empty()) else { return Ok(None) };
-    if !valid_id(&icon) {
-        return Err(AppError::new(format!("Icône inconnue « {icon} » : un nom Lucide en minuscules et tirets.")));
-    }
-    Ok(Some(icon))
-}
-
-/// Référence libre `base@stem`, sinon `base@stem-2`, `base@stem-3`…
-fn suffixed(base: &str, stem: &str, used: &BTreeSet<String>) -> String {
-    let first = format!("{base}@{stem}");
-    if !used.contains(&first) {
-        return first;
-    }
-    (2..).map(|index| format!("{base}@{stem}-{index}")).find(|candidate| !used.contains(candidate)).unwrap_or(first)
-}
-
-fn created_position(menu: &[MenuPage], module: &str, id: &str) -> Option<usize> {
-    let prefix = format!("{module}/");
-    menu.iter().position(|entry| entry.created.as_deref() == Some(id) && entry.section.starts_with(&prefix))
-}
-
-impl Space {
-    /// Crée une section du menu pour une notion du module (`menu.addSection`), ou met à jour son titre et son icône
-    /// si elle existe déjà. Elle se range après les sections du module, dans l’ordre de création ; ses onglets sont
-    /// des copies des pages demandées (`module/page@id`), avec les comptes de la page qui l’a créée. Renvoie son
-    /// identifiant dans le menu et vrai si elle est nouvelle.
-    pub fn add_created_section(
-        &self,
-        module: &str,
-        wanted: NewSection,
-        accounts: &BTreeMap<String, String>,
-    ) -> AppResult<(String, bool)> {
-        if !valid_id(&wanted.id) {
-            return Err(AppError::new(format!(
-                "Identifiant de section invalide « {} » : minuscules, chiffres et tirets (« atlas »).",
-                wanted.id
-            )));
-        }
-        let title = section_title(&wanted.title)?;
-        let icon = section_icon(wanted.icon)?;
-        let mut manifest = self.stored_manifest()?;
-        let snapshot = self.snapshot()?;
-        let overrides = manifest.layout.overrides.clone();
-        let menu = manifest.layout.menu.get_or_insert_with(Vec::new);
-        if let Some(index) = created_position(menu, module, &wanted.id) {
-            let entry = &mut menu[index];
-            let changed = entry.label.as_deref() != Some(title.as_str()) || (icon.is_some() && entry.icon != icon);
-            entry.label = Some(title);
-            if icon.is_some() {
-                entry.icon = icon;
-            }
-            let id = entry.id.clone();
-            if changed {
-                self.write_manifest(&manifest)?;
-            }
-            return Ok((id, false));
-        }
-        let prefix = format!("{module}/");
-        if menu.iter().filter(|entry| entry.created.is_some() && entry.section.starts_with(&prefix)).count()
-            >= MAX_CREATED_SECTIONS
-        {
-            return Err(AppError::new(format!(
-                "Le module « {module} » a déjà {MAX_CREATED_SECTIONS} sections créées : retirez-en une (menu.removeSection)."
-            )));
-        }
-        if wanted.pages.is_empty() {
-            return Err(AppError::new("Une section a au moins une page du module en onglet : { pages: [\"projet\"] }."));
-        }
-        let mut templates = Vec::new();
-        for page in &wanted.pages {
-            let reference = if page.contains('/') { page.clone() } else { format!("{module}/{page}") };
-            let template = snapshot
-                .templates
-                .iter()
-                .find(|known| known.reference == reference && known.module == module)
-                .ok_or_else(|| AppError::new(format!("« {page} » n’est pas une page du module « {module} ».")))?;
-            templates.push(template.clone());
-        }
-        let mut used = used_ids(menu, &overrides);
-        let id = suffixed(&templates[0].section, &wanted.id, &used);
-        used.insert(id.clone());
-        let mut tabs = Vec::new();
-        for template in &templates {
-            let tab_id = suffixed(&template.reference, &wanted.id, &used);
-            used.insert(tab_id.clone());
-            // Les comptes de la page qui crée la section, pour les besoins de ce modèle.
-            let mut chosen: BTreeMap<String, String> =
-                accounts.iter().filter(|(need, _)| template.needs.contains(need)).map(|(k, v)| (k.clone(), v.clone())).collect();
-            if self.check_accounts(template, &chosen).is_err() {
-                chosen.clear();
-            }
-            tabs.push(MenuTab { id: tab_id, page: template.reference.clone(), label: None, icon: None, accounts: chosen });
-        }
-        let entry = MenuPage {
-            id: id.clone(),
-            section: templates[0].section.clone(),
-            label: Some(title),
-            icon,
-            tabs,
-            created: Some(wanted.id),
-        };
-        // Après la dernière section du module ; sans section du module au menu, à la fin.
-        match menu.iter().rposition(|known| known.section.starts_with(&prefix)) {
-            Some(index) => menu.insert(index + 1, entry),
-            None => menu.push(entry),
-        }
-        self.write_manifest(&manifest)?;
-        Ok((id, true))
-    }
-
-    /// Renomme une section créée ou change son icône. Un nom donné par l’utilisateur dans le menu passe devant.
-    pub fn update_created_section(
-        &self,
-        module: &str,
-        id: &str,
-        title: Option<String>,
-        icon: Option<String>,
-    ) -> AppResult<String> {
-        let title = title.map(|title| section_title(&title)).transpose()?;
-        let icon = match icon {
-            Some(icon) => Some(section_icon(Some(icon))?),
-            None => None,
-        };
-        let mut manifest = self.stored_manifest()?;
-        let menu = manifest.layout.menu.get_or_insert_with(Vec::new);
-        let index = created_position(menu, module, id)
-            .ok_or_else(|| AppError::new(format!("La section « {id} » n’existe pas (ou plus) dans le menu.")))?;
-        let entry = &mut menu[index];
-        if let Some(title) = title {
-            entry.label = Some(title);
-        }
-        if let Some(icon) = icon {
-            entry.icon = icon;
-        }
-        let label = entry.label.clone().unwrap_or_else(|| id.to_string());
-        self.write_manifest(&manifest)?;
-        Ok(label)
-    }
-
-    /// Retire une section créée, avec ses onglets ; les données du module restent. Renvoie les onglets retirés, ou
-    /// `None` si elle n’existe pas (déjà retirée par l’utilisateur).
-    pub fn remove_created_section(&self, module: &str, id: &str) -> AppResult<Option<(String, Vec<String>)>> {
-        let manifest = self.stored_manifest()?;
-        let menu = manifest.layout.menu.unwrap_or_default();
-        let Some(index) = created_position(&menu, module, id) else { return Ok(None) };
-        let entry = &menu[index];
-        let tabs = entry.tabs.iter().map(|tab| tab.id.clone()).collect();
-        let label = entry.label.clone().unwrap_or_else(|| id.to_string());
-        self.remove_menu_item(&entry.id)?;
-        Ok(Some((label, tabs)))
-    }
-
-    /// Sections créées par le module, dans l’ordre du menu.
-    pub fn created_sections(&self, module: &str) -> AppResult<Vec<CreatedSection>> {
-        let manifest = self.stored_manifest()?;
-        let prefix = format!("{module}/");
-        Ok(manifest
-            .layout
-            .menu
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|entry| entry.section.starts_with(&prefix))
-            .filter_map(|entry| {
-                let id = entry.created?;
-                Some(CreatedSection {
-                    title: entry.label.unwrap_or_else(|| id.clone()),
-                    id,
-                    icon: entry.icon,
-                    pages: entry.tabs.into_iter().map(|tab| tab.id).collect(),
-                    reference: entry.id,
-                })
-            })
-            .collect())
-    }
-}
-
 /// Oublie dans le menu ce qui vient d’un module retiré.
 pub fn forget_module(manifest: &mut SpaceManifest, module: &str) {
     let prefix = format!("{module}/");
@@ -1090,6 +865,7 @@ pub fn forget_module(manifest: &mut SpaceManifest, module: &str) {
         menu.retain(|entry| !entry.tabs.is_empty() && !entry.section.starts_with(&prefix));
     }
     manifest.layout.menu_templates.retain(|template| !template.starts_with(&prefix));
+    manifest.created_sections.retain(|section| section.module != module);
 }
 
 /// Réécrit les références du menu après une fusion ou une scission de modules.
@@ -1670,7 +1446,6 @@ mod tests {
                 icon: None,
                 accounts: BTreeMap::new(),
             }],
-            created: None,
         }]);
         space.write_manifest(&manifest).unwrap();
         let accounts = BTreeMap::from([("prefect".to_string(), "prod".to_string())]);
@@ -1814,141 +1589,6 @@ mod tests {
         let shown = space.root.to_string_lossy().to_string();
         let snapshot = invoke(&state, "space.menu.addPage", add(shown)).await.unwrap();
         assert_eq!(snapshot["created"], json!("atlassian/jira@2"));
-    }
-
-    fn new_section(id: &str, title: &str, pages: &[&str]) -> NewSection {
-        NewSection {
-            id: id.into(),
-            title: title.into(),
-            icon: None,
-            pages: pages.iter().map(|page| page.to_string()).collect(),
-        }
-    }
-
-    /// Une page crée une section pour une notion du module : elle se range après les sections du module, dans
-    /// l’ordre de création, avec des copies de ses pages et les comptes de la page qui l’a créée ; la recréer la met à
-    /// jour sans doublon.
-    #[tokio::test]
-    async fn a_module_creates_renames_and_removes_its_sections() {
-        let (state, _dir) = test_state();
-        let space = state.space().unwrap();
-        prefect_module(&space, false);
-        write_client(&space, "prefect", &[("prod", "Prod"), ("recette", "Recette")]);
-        let accounts = BTreeMap::from([("prefect".to_string(), "recette".to_string())]);
-        let mut atlas = new_section("atlas", "Atlas", &["deploiements", "prefect/files"]);
-        atlas.icon = Some("folder-kanban".into());
-        let (id, created) = space.add_created_section("prefect", atlas, &accounts).unwrap();
-        assert_eq!((id.as_str(), created), ("prefect/principal@atlas", true));
-        let (borea, _) = space.add_created_section("prefect", new_section("borea", "Boréa", &["files"]), &accounts).unwrap();
-
-        let snapshot = space.snapshot().unwrap();
-        let ids: Vec<_> = snapshot.sections.iter().map(|section| section.id.as_str()).collect();
-        assert_eq!(ids, ["prefect/principal", "prefect/principal@atlas", "prefect/principal@borea"]);
-        let section = &snapshot.sections[1];
-        assert_eq!(section.created.as_deref(), Some("atlas"));
-        assert_eq!((section.label.as_str(), section.icon.as_deref()), ("Atlas", Some("folder-kanban")));
-        let tabs: Vec<_> = section.pages.iter().map(|page| page.reference.as_str()).collect();
-        assert_eq!(tabs, ["prefect/deploiements@atlas", "prefect/files@atlas"]);
-        assert_eq!(section.pages[0].accounts.get("prefect").map(String::as_str), Some("recette"));
-        assert!(snapshot.sections[0].created.is_none(), "la section déclarée n’est pas une section créée");
-
-        // Recréée : titre et icône mis à jour, pas de doublon ; renommée par la page ensuite.
-        let (again, created) =
-            space.add_created_section("prefect", new_section("atlas", "Atlas 2", &["files"]), &accounts).unwrap();
-        assert_eq!((again.as_str(), created), ("prefect/principal@atlas", false));
-        space.update_created_section("prefect", "atlas", Some("Projet Atlas".into()), Some(String::new())).unwrap();
-        let listed = space.created_sections("prefect").unwrap();
-        assert_eq!(listed.len(), 2);
-        assert_eq!((listed[0].title.as_str(), listed[0].icon.as_ref()), ("Projet Atlas", None));
-        assert_eq!(listed[0].pages, ["prefect/deploiements@atlas", "prefect/files@atlas"]);
-        assert_eq!(listed[1].reference, borea);
-        assert!(space.created_sections("autre").unwrap().is_empty(), "un module ne voit que les siennes");
-
-        // Retirée : elle quitte le menu avec ses onglets ; une deuxième fois, rien.
-        let (label, removed) = space.remove_created_section("prefect", "atlas").unwrap().unwrap();
-        assert_eq!((label.as_str(), removed.len()), ("Projet Atlas", 2));
-        assert!(space.remove_created_section("prefect", "atlas").unwrap().is_none());
-        assert!(!space.snapshot().unwrap().sections.iter().any(|section| section.created.as_deref() == Some("atlas")));
-        // Le même identifiant reprend la même référence : les entrées et l’état de la page la retrouvent.
-        let (back, _) = space.add_created_section("prefect", new_section("atlas", "Atlas", &["files"]), &accounts).unwrap();
-        assert_eq!(back, "prefect/principal@atlas");
-    }
-
-    #[tokio::test]
-    async fn invalid_sections_are_refused() {
-        let (state, _dir) = test_state();
-        let space = state.space().unwrap();
-        prefect_module(&space, false);
-        let none = BTreeMap::new();
-        for wanted in [
-            new_section("Atlas!", "Atlas", &["files"]),
-            new_section("atlas", "  ", &["files"]),
-            new_section("atlas", "A\nB", &["files"]),
-            new_section("atlas", "Atlas", &[]),
-            new_section("atlas", "Atlas", &["absente"]),
-            new_section("atlas", "Atlas", &["autre/files"]),
-            NewSection { icon: Some("Pas une icône".into()), ..new_section("atlas", "Atlas", &["files"]) },
-        ] {
-            assert!(space.add_created_section("prefect", wanted.clone(), &none).is_err(), "{wanted:?}");
-        }
-        assert!(space.created_sections("prefect").unwrap().is_empty(), "rien n’est écrit après un refus");
-        assert!(space.update_created_section("prefect", "absente", Some("X".into()), None).is_err());
-    }
-
-    /// Le module retiré emporte ses sections créées ; celles d’un autre module restent.
-    #[tokio::test]
-    async fn created_sections_leave_with_their_module() {
-        let (state, _dir) = test_state();
-        let space = state.space().unwrap();
-        prefect_module(&space, false);
-        space.add_created_section("prefect", new_section("atlas", "Atlas", &["files"]), &BTreeMap::new()).unwrap();
-        let mut manifest = space.manifest().unwrap();
-        forget_module(&mut manifest, "prefect");
-        let menu = manifest.layout.menu.unwrap();
-        assert!(menu.iter().all(|entry| entry.created.is_none() && !entry.section.starts_with("prefect/")));
-    }
-
-    /// Par le pont : une page crée la section (un commit dans l’espace), puis la retire avec ses entrées.
-    #[tokio::test]
-    async fn the_bridge_commits_each_change_and_forgets_the_entries() {
-        let (state, _dir) = test_state();
-        let space = state.space().unwrap();
-        prefect_module(&space, false);
-        space.persist_menu().unwrap();
-        crate::git::commit_all(&space.root, "Départ").unwrap();
-        let subject = page_subject("prefect");
-        let created = invoke(
-            &state,
-            "frame.menuSections.update",
-            json!({ "subject": subject, "op": "add", "id": "atlas", "title": "Atlas", "pages": ["files"] }),
-        )
-        .await
-        .unwrap();
-        assert_eq!(created["reference"], json!("prefect/principal@atlas"));
-        let log = crate::git::log(&space.root, 1, None).unwrap();
-        assert_eq!(log[0].message.trim(), "Section « Atlas » créée par le module prefect");
-        invoke(
-            &state,
-            "frame.menuZones.update",
-            json!({ "subject": subject, "page": "prefect/files@atlas", "op": "setEntries",
-                    "entries": [{ "id": "lot-1", "label": "Lot 1" }] }),
-        )
-        .await
-        .unwrap();
-        let listed = invoke(&state, "frame.menuSections.update", json!({ "subject": subject, "op": "list" })).await.unwrap();
-        assert_eq!(listed[0]["id"], json!("atlas"));
-        let removed =
-            invoke(&state, "frame.menuSections.update", json!({ "subject": subject, "op": "remove", "id": "atlas" }))
-                .await
-                .unwrap();
-        assert_eq!(removed, json!(true));
-        let zones = invoke(&state, "menuZones.list", json!({})).await.unwrap();
-        assert!(zones.get("prefect/files@atlas").is_none(), "les entrées partent avec la section");
-        let again =
-            invoke(&state, "frame.menuSections.update", json!({ "subject": subject, "op": "remove", "id": "atlas" }))
-                .await
-                .unwrap();
-        assert_eq!(again, json!(false));
     }
 }
 

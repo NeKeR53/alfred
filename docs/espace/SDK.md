@@ -776,10 +776,9 @@ interface PageContext {
   selection: unknown; // panneau : dernière valeur publiée par sa page ; sinon null
   instance: string | null; // compte du besoin que suit la page (`perInstance`), ou son seul compte ; sinon null
   accounts: Record<string, string>; // compte choisi par l’utilisateur pour chaque besoin de la page : { jira: "acme" }
-  entry: { id: string; label: string } | null; // entrée du menu ouverte dans la page (`menu`), ou celle de sa page pour un panneau
+  entry: { id: string; label: string; section?: string } | null; // entrée du menu ouverte dans la page (`menu`), ou celle de sa page pour un panneau ; `section` : sa section créée (`menu.addSection`)
   params: Record<string, unknown> | null; // paramètres de la fenêtre ouverte sur un élément (`shell.openWindow`), sinon null
   view: { id: string; label: string; params: Record<string, unknown> | null } | null; // onglet ouvert sur un élément (`views.open`), sinon null
-  section: { id: string; title: string } | null; // section créée par le module (`menu.addSection`) qui montre la page, sinon null
 }
 ```
 
@@ -890,41 +889,39 @@ export default function Produits() {
 }
 ```
 
-### Sections créées par l’usage : `menu.addSection`
+### Sections du menu : `menu.addSection`
 
 ```ts
-menu.addSection(section: { id: string; title: string; icon?: string; pages?: string[] }): Promise<{ reference: string; created: boolean }>;
-menu.updateSection(id: string, patch: { title?: string; icon?: string | null }): Promise<void>;
+menu.addSection(section: { id: string; title: string; page?: string }): Promise<boolean>; // vrai si nouvelle
 menu.removeSection(id: string): Promise<boolean>;     // faux si elle n’était plus au menu
-menu.listSections(): Promise<Array<{ id: string; title: string; icon: string | null; pages: string[]; reference: string }>>;
-menu.setEntries(entries, { section: "atlas" });       // entrées de la section : mêmes formes que la zone
-usePageContext()?.section;                             // { id: "atlas", title: "Atlas" } dans une section créée, sinon null
+menu.listSections(): Promise<Array<{ id: string; title: string; page: string }>>;
+menu.setEntries(entries, { section: "atlas" });       // ses entrées : mêmes formes que la zone
+usePageContext()?.entry;                               // { id, label, section: "atlas" } pour une entrée d’une section
 ```
 
-Quand l’utilisateur crée une **notion métier** dans un module (un projet, un client suivi, un chantier, un exercice comptable), la page (ou une fonction du module) peut en faire une **section du menu de gauche** : une entrée avec son icône, ses onglets et, dessous, ses entrées. C’est l’usage qui la crée, pas le `module.json`.
+Quand le module ajoute au menu de gauche des entrées pour une notion de l’utilisateur (un projet, un client suivi, un chantier), elles vont dans **une section** : un titre repliable (« Atlas »), avec les entrées dessous, une par ligne, chacune avec son icône. C’est l’usage qui la crée, pas le `module.json`.
 
-- `id` est propre au module (minuscules, chiffres, tirets : « atlas »). `addSection` avec un `id` qui existe déjà met à jour son titre et son icône, sans doublon : appelle-la quand la notion est créée, ou pour la renommer.
-- `pages` : les pages du module en onglets (« projet », « planning »), chacune copiée pour la section (`projets/projet@atlas`) : son état, ses entrées et son compteur sont à elle. Par défaut, la page qui crée la section ; une fonction les nomme toujours. Une page la lit dans `usePageContext()?.section` et montre la notion ; ses comptes sont ceux de la page qui l’a créée.
-- **Place** : après les sections du module, dans l’ordre de création. L’utilisateur la déplace, la renomme, change son icône ou la masque comme toute section ; un nom qu’il donne passe devant `updateSection`.
-- **Entrées** : `menu.setZone`, `setEntries`, `updateEntry`, `removeEntry` et `clear` avec `{ section: "atlas" }`. Un clic ouvre la page de la section (ou `page` de l’entrée) avec l’entrée, comme la zone (`usePageContext().entry`).
-- **Retrait** : la page par `menu.removeSection(id)` (onglets et entrées partent, les données du module restent) ; l’utilisateur par « Retirer la section… » dans le menu « … » de la section, après confirmation. Une section retirée par l’utilisateur ne revient que si la page rappelle `addSection` : ne la recrée pas d’elle-même à chaque chargement ; `listSections()` dit lesquelles sont encore au menu.
-- **Enregistrement** : dans l’espace (`alfred.json`, `layout.menu`, avec le module d’origine) ; chaque création, modification ou retrait fait un commit dans l’historique de l’espace (« Section « Atlas » créée par le module projets »), annulable comme les autres. Les entrées restent sur le poste, comme une zone. Le module désinstallé emporte ses sections.
-- 50 sections créées au plus par module. Une fonction en script (bash, Python) n’a pas `menu` ; une fonction TypeScript, si.
+- `id` est propre au module (minuscules, chiffres, tirets : « atlas »). `addSection` avec un `id` qui existe déjà change son titre, sans doublon : appelle-la quand la notion est créée ou renommée.
+- `page` : la page du module qu’ouvre une entrée qui ne nomme pas la sienne. Par défaut, la page qui crée la section ; une fonction la nomme toujours.
+- **Entrées** : `menu.setZone`, `setEntries`, `updateEntry`, `removeEntry` et `clear` avec `{ section: "atlas" }`, aux mêmes règles que la zone (état, compteur, deux actions au survol, `visible` pour « Afficher plus »). Donne une `icon` Lucide à chaque entrée ; sans icône, un point. Un clic ouvre la page de la section (ou `page` de l’entrée) avec l’entrée : la page la lit dans `usePageContext()?.entry`, avec `section`. Une section sans entrée ne s’affiche pas.
+- **Place** : sous les entrées du menu, avec les autres sections, dans l’ordre de création. L’utilisateur la replie ; Alfred s’en souvient.
+- **Retrait** : par la page ou une fonction, `menu.removeSection(id)` ; ses entrées partent avec elle, les données du module restent.
+- **Enregistrement** : dans l’espace (`alfred.json`, `createdSections`, avec le module d’origine) ; chaque création, renommage ou retrait fait un commit dans l’historique de l’espace (« Section « Atlas » créée par le module projets »), annulable comme les autres. Les entrées restent sur le poste, comme une zone. Le module désinstallé emporte ses sections.
+- 50 sections au plus par module. Une fonction en script (bash, Python) n’a pas `menu` ; une fonction TypeScript, si.
 
 ```tsx
-// pages/liste.tsx (module projets) : « Nouveau projet » crée la notion, puis sa section du menu.
+// pages/liste.tsx (module projets) : « Nouveau projet » crée la notion, sa section et ses lots.
 const creer = async (nom: string) => {
   const id = nom.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   await db.execute("INSERT INTO projets_projets (id, nom) VALUES (?, ?)", [id, nom]);
-  await menu.addSection({ id, title: nom, icon: "folder-kanban", pages: ["projet", "planning"] });
-  await menu.setEntries([{ id: "lot-1", label: "Lot 1", status: "running" }], { section: id });
+  await menu.addSection({ id, title: nom, page: "projet" });
+  await menu.setEntries([{ id: "lot-1", label: "Lot 1", icon: "package", status: "running" }], { section: id });
 };
 
-// pages/projet.tsx : la page d’une section créée montre son projet.
-const projet = usePageContext()?.section?.id;
+// pages/projet.tsx : un clic sur un lot ouvre cette page avec le lot et son projet.
+const entry = usePageContext()?.entry; // { id: "lot-1", label: "Lot 1", section: "atlas" }
 // Le projet supprimé : sa section s’en va.
-const supprimer = async () => {
-  if (!projet) return;
+const supprimer = async (projet: string) => {
   await db.execute("DELETE FROM projets_projets WHERE id = ?", [projet]);
   await menu.removeSection(projet);
 };

@@ -7,6 +7,7 @@ import { pressRowAction } from "../features/space/sections.test-helper";
 import { invoke, openPageWindow } from "../lib/native";
 import type { ResolvedPage, ResolvedSection, Snapshot } from "../lib/types";
 import { AppShell } from "./AppShell";
+import { useMenuZones } from "./menuZones";
 import { applyLayoutChange } from "./navigationEditing";
 import { type FullLayout, project, SETTINGS_SECTION, setModuleHidden } from "./navigationLayout";
 import { useNotifications } from "./notifications";
@@ -260,27 +261,27 @@ describe("réorganisation de la navigation", () => {
     await waitFor(() => expect(useShell.getState().snapshot?.sections[0].pages).toHaveLength(1));
   });
 
-  it("retire une section créée par son module après confirmation ; une section déclarée n’a pas ce choix", async () => {
+  it("range les entrées d’une section créée par un module sous son titre ; un clic ouvre sa page avec l’entrée", async () => {
     const user = userEvent.setup();
-    const created = section("compta/principal@2026", "Exercice 2026", [page("compta", "factures@2026", "Factures")], {
-      created: "2026",
+    useShell.setState({
+      snapshot: { ...fixture(), createdSections: [{ module: "suivi", id: "atlas", title: "Atlas", page: "notes" }] },
     });
-    useShell.setState({ snapshot: { ...fixture(), sections: [...fixture().sections, created] } });
     renderShell();
-    const declared = await openSectionMenu(user, "Compta");
-    expect(within(declared).queryByRole("menuitem", { name: /Retirer la section/ })).toBeNull();
-    await user.keyboard("{Escape}");
-    const menu = await openSectionMenu(user, "Exercice 2026");
-    await user.click(within(menu).getByRole("menuitem", { name: /Retirer la section/ }));
-    const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Retirer la section « Exercice 2026 » ?");
-    await user.click(within(dialog).getByRole("button", { name: "Retirer" }));
-    await waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith("space.menu.remove", {
-        target: "compta/principal@2026",
-        space: "/espace",
+    act(() =>
+      useMenuZones.setState({
+        zones: { "section:suivi/atlas": { order: "page", entries: [{ id: "lot-1", label: "Lot 1", badge: 2 }] } },
       }),
     );
+    const title = await within(navigation()).findByRole("row", { name: "Atlas" });
+    const item = sidebarRow("Lot 1");
+    expect(title.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(item);
+    expect(useShell.getState().activeEntry["suivi/notes"]).toEqual({
+      id: "lot-1",
+      label: "Lot 1",
+      zone: "section:suivi/atlas",
+    });
+    expect(useShell.getState().activeTab["suivi/principal"]).toBe("suivi/notes");
   });
 
   it("propose de masquer une page d’un module en lecture seule, et rétablit si le backend refuse", async () => {

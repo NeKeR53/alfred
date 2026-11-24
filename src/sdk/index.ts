@@ -1469,7 +1469,7 @@ export interface PageContext {
    * Entrée du menu de gauche ouverte dans la page (`menu.setEntries`), par exemple le produit choisi ; `null` quand
    * la page est ouverte par l’entrée de sa section, ou pour une fonction. Un panneau reçoit celle de sa page.
    */
-  entry: { id: string; label: string } | null;
+  entry: { id: string; label: string; section?: string } | null;
   /**
    * Paramètres de la fenêtre ouverte sur un élément précis (`shell.openWindow("journal", { params })`), pour la page
    * et son panneau ; `null` ailleurs.
@@ -1480,11 +1480,6 @@ export interface PageContext {
    * de la section. Un panneau reçoit celui de sa page.
    */
   view: OpenedView | null;
-  /**
-   * Section créée par le module (`menu.addSection`) qui montre la page : la notion à afficher (`{ id: "atlas",
-   * title: "Atlas" }`). `null` dans une section déclarée par le module.
-   */
-  section: { id: string; title: string } | null;
 }
 
 /** Élément porté par un onglet ouvert : ce que la page a passé à `views.open`. */
@@ -2044,37 +2039,21 @@ export interface MenuZoneOptions {
 
 /**
  * Une fonction nomme la page dont elle règle la zone ; une page règle la sienne. `section` vise les entrées d’une
- * section créée (`menu.addSection`), à la place de `page`.
+ * section créée par le module (`menu.addSection`), à la place de `page`.
  */
 export interface MenuTarget {
   page?: string;
   section?: string;
 }
 
-/** Section du menu créée pour une notion du module (`menu.addSection`). */
+/** Section du menu créée par le module pour une notion de l’utilisateur (`menu.addSection`). */
 export interface MenuSection {
   /** Identifiant propre au module : minuscules, chiffres et tirets (« atlas »). */
   id: string;
-  /** Nom de la notion, libellé de l’entrée du menu (« Atlas »). */
+  /** Titre de la section, au-dessus de ses entrées (« Atlas »). */
   title: string;
-  /** Nom d’icône Lucide (« folder-kanban ») ; sans icône, celle de la section de la première page. */
-  icon?: string;
-  /**
-   * Pages du module en onglets de la section (« projet », « planning »), dans l’ordre. Par défaut, la page qui crée
-   * la section ; une fonction les nomme toujours.
-   */
-  pages?: string[];
-}
-
-/** Section créée, relue par son module. */
-export interface CreatedMenuSection {
-  id: string;
-  title: string;
-  icon: string | null;
-  /** Références de ses onglets (« projets/projet@atlas »). */
-  pages: string[];
-  /** Identifiant de la section dans le menu (« projets/principal@atlas »). */
-  reference: string;
+  /** Page du module qu’ouvre une entrée sans `page` (« projet ») ; par défaut, la page qui crée la section. */
+  page?: string;
 }
 
 /**
@@ -2102,23 +2081,20 @@ export const menu = {
     return request<void>("menu.update", { op: "clear", ...target });
   },
   /**
-   * Crée une section du menu pour une notion du module, après ses autres sections, ou met à jour le titre et l’icône
-   * de celle qui a déjà cet `id`. Écrite dans l’espace (un commit) ; elle part avec le module.
+   * Crée une section du menu de gauche (un titre repliable) pour y ranger des entrées, ou renomme celle qui a déjà cet
+   * `id`. Ses entrées : `setEntries(entries, { section: id })`. Écrite dans l’espace (un commit) ; elle part avec le
+   * module. Rend vrai si elle est nouvelle.
    */
-  addSection(section: MenuSection): Promise<{ reference: string; created: boolean }> {
-    return request("menu.sections", { op: "add", ...section });
+  addSection(section: MenuSection): Promise<boolean> {
+    return request<boolean>("menu.sections", { op: "add", ...section });
   },
-  /** Renomme une section créée ou change son icône (`null` : celle par défaut). Un nom donné par l’utilisateur passe devant. */
-  updateSection(id: string, patch: { title?: string; icon?: string | null }): Promise<void> {
-    return request<void>("menu.sections", { op: "update", id, ...patch });
-  },
-  /** Retire une section créée, ses onglets et ses entrées ; les données du module restent. Faux si elle n’y était plus. */
+  /** Retire une section créée et ses entrées ; les données du module restent. Faux si elle n’y était plus. */
   removeSection(id: string): Promise<boolean> {
     return request<boolean>("menu.sections", { op: "remove", id });
   },
-  /** Sections créées par le module encore au menu (l’utilisateur a pu en retirer). */
-  listSections(): Promise<CreatedMenuSection[]> {
-    return request<CreatedMenuSection[]>("menu.sections", { op: "list" });
+  /** Sections créées par le module. */
+  listSections(): Promise<Array<Required<MenuSection>>> {
+    return request<Array<Required<MenuSection>>>("menu.sections", { op: "list" });
   },
 };
 

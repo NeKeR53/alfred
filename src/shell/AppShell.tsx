@@ -28,13 +28,21 @@ import {
 import { SetupGate } from "../features/setup/SetupGate";
 import { spaceList, useSpaceActions } from "../features/space/spaceActions";
 import { inTauri, openPageWindow } from "../lib/native";
-import type { ResolvedPage, ResolvedSection } from "../lib/types";
+import type { CreatedSection, ResolvedPage, ResolvedSection } from "../lib/types";
 import { accountName } from "./accountName";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
 import { NamedIcon, SectionIcon } from "./icons";
 import type { ZoneRow } from "./MenuZone";
-import { entryTarget, type MenuZone, orderedEntries, startMenuZones, useMenuZones } from "./menuZones";
+import {
+  entryTarget,
+  type MenuZone,
+  orderedEntries,
+  SECTION_ZONE,
+  sectionZone,
+  startMenuZones,
+  useMenuZones,
+} from "./menuZones";
 import { useNavigationEditor } from "./navigationEditing";
 import { findPage, SETTINGS_SECTION } from "./navigationLayout";
 import { notify } from "./notifications";
@@ -359,6 +367,8 @@ export function agentEntryLabel(summary: AgentSummary | undefined): string {
 const navId = {
   section: (id: string) => `section:${id}`,
   entry: (page: string, entry: string) => `entry:${page}\u0000${entry}`,
+  /** Entrée d’une section créée par un module : la clé de sa zone (`section:<module>/<id>`) et l’entrée. */
+  sectionEntry: (zone: string, entry: string) => `sentry:${zone}\u0000${entry}`,
   agent: "agent",
   conversation: (id: string) => `agent:${id}`,
 };
@@ -428,6 +438,51 @@ function sectionItem(
     >
       {entries.length ? entries : undefined}
     </Sidebar.Item>
+  );
+}
+
+/**
+ * Section créée par un module (`menu.addSection`) : un titre repliable (`Sidebar.Section`), avec ses entrées dessous
+ * en éléments de navigation. Sans entrée, Socle ne l’affiche pas.
+ */
+function createdSectionNode(created: CreatedSection, zone: MenuZone | undefined, rename: Rename) {
+  const key = sectionZone(created.module, created.id);
+  const entries = zone ? orderedEntries(zone) : [];
+  return (
+    <Sidebar.Section
+      key={key}
+      id={`created:${created.module}/${created.id}`}
+      title={created.title}
+      limit={zone?.visible}
+    >
+      {entries.map((entry) => {
+        const actions = (entry.actions ?? []).slice(0, 2).map((action) => ({
+          icon: <NamedIcon name={action.icon} size={14} />,
+          label: `${action.label} ${entry.label}`,
+          onPress: () => {
+            if (action.id !== "rename") return runZoneAction(key, entry, action.id);
+            rename(`Renommer « ${entry.label} »`, entry.label, (value) => {
+              const next = value.trim();
+              if (next && next !== entry.label) runZoneAction(key, entry, "rename", next);
+            });
+          },
+        }));
+        return (
+          <Sidebar.Item
+            key={entry.id}
+            id={navId.sectionEntry(key, entry.id)}
+            // Un élément de navigation a toujours une icône : celle de l’entrée, sinon un point.
+            icon={<NamedIcon name={entry.icon ?? "dot"} size={16} />}
+            label={entry.label}
+            count={entry.badge ? entry.badge : undefined}
+            indicator={
+              !entry.badge && (entry.status === "running" || entry.status === "waiting") ? "activity" : undefined
+            }
+            actions={actions.length ? actions : undefined}
+          />
+        );
+      })}
+    </Sidebar.Section>
   );
 }
 
@@ -506,7 +561,11 @@ export function AppShell({
   if (effective.kind === "section" && shownSection) {
     const page = activeTabs[shownSection.id];
     const opened = page ? activeEntry[page] : undefined;
-    selectedId = opened ? navId.entry(opened.zone, opened.id) : navId.section(shownSection.id);
+    selectedId = !opened
+      ? navId.section(shownSection.id)
+      : opened.zone.startsWith(SECTION_ZONE)
+        ? navId.sectionEntry(opened.zone, opened.id)
+        : navId.entry(opened.zone, opened.id);
   } else if (effective.kind === "agent" && agentZone?.activeId) {
     selectedId = navId.conversation(agentZone.activeId);
   }
@@ -523,6 +582,17 @@ export function AppShell({
       // L’entrée de la section ouvre ses pages sans entrée de zone.
       useShell.getState().clearEntries((section?.pages ?? []).map((page) => page.reference));
       return setView({ kind: "section", id: sectionId });
+    }
+    if (id.startsWith("sentry:")) {
+      const [zone = "", entryId] = id.slice("sentry:".length).split("\u0000");
+      const entry = zones[zone]?.entries.find((candidate) => candidate.id === entryId);
+      if (!entry) return;
+      // La page de l’entrée (ou celle de la section) s’ouvre avec l’entrée, dans la section du menu qui la montre.
+      openZoneEntry(zone, entry);
+      const target = entryTarget(zone, entry);
+      const section = sections.find((candidate) => candidate.pages.some((page) => page.reference === target));
+      if (section) setView({ kind: "section", id: section.id });
+      return;
     }
     if (id.startsWith("entry:")) {
       const [zonePage = "", entryId] = id.slice("entry:".length).split("\u0000");
@@ -584,6 +654,9 @@ export function AppShell({
           menu: editor.sectionMenu(section.id),
           rename: editor.rename,
         }),
+      )}
+      {(snapshot.createdSections ?? []).map((created) =>
+        createdSectionNode(created, zones[sectionZone(created.module, created.id)], editor.rename),
       )}
       {agentAvailable === true && agentZone?.rows.length ? (
         <Sidebar.Section id="agent-conversations" title="Conversations" limit={agentZone.visible}>
