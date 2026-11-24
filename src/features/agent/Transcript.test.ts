@@ -76,5 +76,5 @@ test("une activité devient une ligne Socle : type, verbe, objet, état et sorti
   ).toMatchObject({ kind: "think", verb: "Réflexion" });
   expect(
     activityItem({ kind: "activity", id: "e", activityKind: "command", title: "ls", status: "cancelled" as never }),
-  ).toMatchObject({ verb: "ls · Arrêté", status: "done" });
+  ).toMatchObject({ verb: "ls", status: "stopped" });
 });

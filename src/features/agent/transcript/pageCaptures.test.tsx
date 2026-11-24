@@ -80,6 +80,13 @@ beforeEach(() => {
   );
 });
 
+/** Vignette lue : jsdom ne charge pas les images, l’événement `load` les rend prêtes à s’agrandir. */
+async function loadedThumbnail(within_: HTMLElement, alt: string) {
+  const image = await within(within_).findByRole("img", { name: alt });
+  fireEvent.load(image);
+  return within(within_).findByRole("button", { name: `Agrandir ${alt}` });
+}
+
 describe("captures prises par l’agent", () => {
   it("lit la capture dans la sortie de chaque harnais", () => {
     const claude = screenshot("a", "/echanges/c1/captures/a.png");
@@ -122,14 +129,17 @@ describe("captures prises par l’agent", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /A travaillé pendant/ })).toHaveAttribute("aria-expanded", "false");
-    const row = screen.getByRole("region", { name: "Captures de l’agent" });
-    expect(row.closest('[role="group"]')).toBeNull();
+    // ImageGallery : un groupe « Captures de l’agent », une liste par page.
+    const row = screen.getByRole("group", { name: "Captures de l’agent" });
+    expect(within(row).getByRole("list", { name: "Tâches" })).toBeInTheDocument();
     expect(within(row).getByText("Tâches · page entière")).toBeInTheDocument();
-    const thumbnail = await within(row).findByRole("button", { name: "Agrandir l’image : Tâches · page entière" });
-    expect(native.invoke).toHaveBeenCalledWith("files.readImage", {
-      path: "/echanges/c1/captures/a.png",
-      base: "/espace",
-    });
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith("files.readImage", {
+        path: "/echanges/c1/captures/a.png",
+        base: "/espace",
+      }),
+    );
+    const thumbnail = await loadedThumbnail(row, "Tâches · page entière");
     fireEvent.click(thumbnail);
     const viewer = await screen.findByRole("dialog", { name: "Tâches · page entière" });
     expect(within(viewer).getByRole("img", { name: "Tâches · page entière" })).toHaveAttribute(
@@ -152,8 +162,8 @@ describe("captures prises par l’agent", () => {
         runtime={{ ...idle, status: "responding" }}
       />,
     );
-    const row = screen.getByRole("region", { name: "Captures de l’agent" });
-    expect(await within(row).findByRole("button", { name: "Agrandir l’image : Tâches" })).toBeInTheDocument();
+    const row = screen.getByRole("group", { name: "Captures de l’agent" });
+    expect(await loadedThumbnail(row, "Tâches")).toBeInTheDocument();
   });
 
   it("ne garde que les trois dernières captures d’une page, les autres derrière « + N »", async () => {
@@ -169,31 +179,33 @@ describe("captures prises par l’agent", () => {
     ]);
 
     render(<Transcript conversation={conversation([turn([...shots, notes])])} runtime={idle} />);
-    const row = screen.getByRole("region", { name: "Captures de l’agent" });
-    await waitFor(() => expect(within(row).getAllByRole("button", { name: /^Agrandir l’image/ })).toHaveLength(4));
-    const more = within(row).getByRole("button", { name: "+ 7 : voir 7 autres captures de Tâches" });
+    const row = screen.getByRole("group", { name: "Captures de l’agent" });
+    // Trois vignettes pour la page aux dix captures, une pour l’autre ; les plus anciennes derrière « + 7 ».
+    await waitFor(() => expect(row.querySelectorAll("img")).toHaveLength(4));
+    const more = within(row).getByRole("button", { name: "Voir 7 autres images de Tâches" });
     expect(more).toHaveTextContent("+ 7");
     fireEvent.click(more);
-    // La vue agrandie s’ouvre sur la plus récente des captures cachées, et parcourt toutes celles de la page.
+    // La vue agrandie parcourt toutes les captures de la page ; une capture cachée est lue quand on l’atteint.
     const viewer = await screen.findByRole("dialog", { name: "Tâches" });
-    expect(within(viewer).getByText("Tâches · 7 / 10")).toBeInTheDocument();
+    // Elle s’ouvre sur la plus récente des captures cachées.
+    expect(within(viewer).getByText("7 / 10")).toBeInTheDocument();
     expect(await within(viewer).findByRole("img")).toHaveAttribute(
       "src",
       `data:image/png;base64,${btoa("/captures/6.png")}`,
     );
     fireEvent.click(within(viewer).getByRole("button", { name: "Image précédente" }));
-    expect(within(viewer).getByText("Tâches · 6 / 10")).toBeInTheDocument();
+    expect(within(viewer).getByText("6 / 10")).toBeInTheDocument();
     expect(await within(viewer).findByRole("img")).toHaveAttribute(
       "src",
       `data:image/png;base64,${btoa("/captures/5.png")}`,
     );
     fireEvent.keyDown(viewer, { key: "ArrowRight" });
     fireEvent.keyDown(viewer, { key: "ArrowRight" });
-    expect(within(viewer).getByText("Tâches · 8 / 10")).toBeInTheDocument();
+    expect(within(viewer).getByText("8 / 10")).toBeInTheDocument();
   });
 
   it("n’affiche rien pour une capture sans fichier", () => {
     render(<Transcript conversation={conversation([turn([screenshot("a", "")])])} runtime={idle} />);
-    expect(screen.queryByRole("region", { name: "Captures de l’agent" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Captures de l’agent" })).not.toBeInTheDocument();
   });
 });

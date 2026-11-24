@@ -3,11 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type Action,
   Alert,
+  ChatPage,
   ChatTranscript,
   EmptyState,
   InlineEdit,
   NotificationCenter,
-  Page,
   Skeleton,
   SkeletonGroup,
 } from "socle-ui";
@@ -231,8 +231,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
       {/* Colonne de la conversation : son titre et ses actions, puis le relevé ; dans la fenêtre détachée, le suivi
         des conversations est à côté. */}
       <div className="agents-page__lead">
-        <Page
-          fill
+        <ChatPage
           actionsLabel="la conversation"
           actions={actions}
           toolbar={
@@ -261,86 +260,78 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
               {detached ? <NotificationCenter /> : null}
             </Row>
           }
+          // Le dépôt de fichiers arrive par le système (Tauri) : la saisie le signale, la page montre le cadre.
+          isDraggingFiles={dragging}
+          alerts={
+            saveError ? (
+              <Alert
+                tone="danger"
+                action={
+                  retrySave
+                    ? { label: "Réessayer la sauvegarde", onPress: () => void retrySave().catch(() => undefined) }
+                    : undefined
+                }
+              >
+                {saveError}
+              </Alert>
+            ) : undefined
+          }
+          // Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie.
+          question={conversation ? <ConversationQuestion conversation={conversation} runtime={runtime} /> : undefined}
+          composer={
+            conversation ? (
+              <Composer
+                conversation={conversation}
+                responding={runtime.status !== "idle"}
+                status={<GitSummaryPill git={git} />}
+                onDraggingChange={setDragging}
+              />
+            ) : undefined
+          }
         >
-          <section
-            className={`agents-page__main${dragging ? " is-file-dragging" : ""}`}
-            aria-label="Conversation et saisie"
-          >
-            {/* Chargement, échec et conversation vide : l’emplacement vide du relevé de Socle. */}
-            {!ready && !loadError ? (
-              <ChatTranscript
-                empty={
-                  <SkeletonGroup label="Chargement des conversations…">
-                    <Skeleton width="60%" />
-                    <Skeleton />
-                    <Skeleton width="80%" />
-                    <Skeleton width="40%" />
-                  </SkeletonGroup>
-                }
-              />
-            ) : loadError ? (
-              <ChatTranscript
-                empty={
-                  <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void load().catch(reportLoad) }}>
-                    L’historique des agents n’a pas pu être chargé.
-                  </Alert>
-                }
-              />
-            ) : conversation ? (
-              <>
-                {conversation.turns.length === 0 ? (
-                  <ChatTranscript
-                    label={`Conversation de ${conversation.title}`}
-                    empty={
-                      <EmptyState
-                        title="Que puis-je faire pour vous ?"
-                        description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
-                      />
-                    }
-                  />
-                ) : (
-                  <Transcript
-                    conversation={conversation}
-                    runtime={runtime}
-                    context={{
-                      modelLabel: modelChoiceLabel(
-                        { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
-                        models,
-                      ),
-                    }}
-                  />
-                )}
-                <div className="agents-page__footer">
-                  {saveError ? (
-                    <Alert
-                      tone="danger"
-                      action={
-                        retrySave
-                          ? {
-                              label: "Réessayer la sauvegarde",
-                              onPress: () => void retrySave().catch(() => undefined),
-                            }
-                          : undefined
-                      }
-                    >
-                      {saveError}
-                    </Alert>
-                  ) : null}
-                  {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
-                  <div className="agents-page__question">
-                    <ConversationQuestion conversation={conversation} runtime={runtime} />
-                  </div>
-                  <Composer
-                    conversation={conversation}
-                    responding={runtime.status !== "idle"}
-                    status={<GitSummaryPill git={git} />}
-                    onDraggingChange={setDragging}
-                  />
-                </div>
-              </>
-            ) : null}
-          </section>
-        </Page>
+          {/* Chargement, échec et conversation vide : l’emplacement vide du relevé de Socle. */}
+          {!ready && !loadError ? (
+            <ChatTranscript
+              empty={
+                <SkeletonGroup label="Chargement des conversations…">
+                  <Skeleton width="60%" />
+                  <Skeleton />
+                  <Skeleton width="80%" />
+                  <Skeleton width="40%" />
+                </SkeletonGroup>
+              }
+            />
+          ) : loadError ? (
+            <ChatTranscript
+              empty={
+                <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void load().catch(reportLoad) }}>
+                  L’historique des agents n’a pas pu être chargé.
+                </Alert>
+              }
+            />
+          ) : conversation?.turns.length ? (
+            <Transcript
+              conversation={conversation}
+              runtime={runtime}
+              context={{
+                modelLabel: modelChoiceLabel(
+                  { provider: conversation.provider, model: conversation.model, effort: conversation.effort },
+                  models,
+                ),
+              }}
+            />
+          ) : (
+            <ChatTranscript
+              label={conversation ? `Conversation de ${conversation.title}` : undefined}
+              empty={
+                <EmptyState
+                  title="Que puis-je faire pour vous ?"
+                  description="Dites-moi ce dont vous avez besoin : je le mets en place et je vous dis où le trouver."
+                />
+              }
+            />
+          )}
+        </ChatPage>
       </div>
       {detached ? (
         // Fenêtre Agent détachée : pas d’AppShell, le suivi reste à côté de la conversation.

@@ -1,10 +1,10 @@
 import { memo, useCallback, useMemo } from "react";
+import { ImageThumbnail } from "socle-ui";
 import { Markdown } from "socle-ui/markdown";
 import { followLink } from "../files";
 import { fileFromLink, linkAgentFiles } from "../lib/agentFileLinks";
 import { chatImageUrl, isLocalImageReference } from "../lib/chatImages";
 import { markdownUrl } from "../lib/markdown";
-import { ImagePreview } from "./ImagePreview";
 import { LoadedImage } from "./LoadedImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { useConversationResources } from "./resources";
@@ -34,7 +34,7 @@ export const AgentMarkdown = memo(function AgentMarkdown({ text, cwd }: { text: 
     (src: string, alt: string) => {
       if (loadImage && isLocalImageReference(src)) return <LoadedImage reference={src} alt={alt} load={loadImage} />;
       const url = chatImageUrl(src);
-      return url ? <ImagePreview src={url} alt={alt || "Image"} /> : <span>{alt || "Image indisponible"}</span>;
+      return url ? <ImageThumbnail src={url} alt={alt || "Image"} /> : <span>{alt || "Image indisponible"}</span>;
     },
     [loadImage],
   );

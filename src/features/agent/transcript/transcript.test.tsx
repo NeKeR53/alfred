@@ -19,7 +19,7 @@ vi.mock("../../../lib/native", async (importOriginal) => ({
 
 import { MentionText } from "socle-ui";
 import { Markdown } from "socle-ui/markdown";
-import { Activities, activityStatusLabel } from "../Activities";
+import { Activities } from "../Activities";
 import { referencedLocalImages } from "../lib/chatImages";
 import { mentionReferences } from "../lib/composerReferences";
 import type { Conversation, ConversationRuntime, Turn } from "../model";
@@ -180,8 +180,6 @@ describe("présentation d’un tour", () => {
     expect(isLongChatText("a".repeat(2000))).toBe(true);
     expect(isLongChatText(Array(20).fill("l").join("\n"))).toBe(true);
     expect(isLongChatText("court\ntexte")).toBe(false);
-    expect(activityStatusLabel("cancelled")).toBe("Arrêté");
-    expect(activityStatusLabel("stopped")).toBe("Arrêté");
   });
 
   it("trouve les images citées hors des images insérées et des blocs de code, 8 au plus", () => {
@@ -230,7 +228,7 @@ describe("relevé", () => {
     expect(screen.getByText(`Demande t${RECENT_TURNS + 3}`)).toBeInTheDocument();
   });
 
-  it("montre l’en-tête avec le modèle, la remise, un long message en carte et les pastilles", () => {
+  it("montre l’en-tête avec le modèle, la remise, un long message en carte et les pastilles", async () => {
     const long = "x".repeat(2500);
     render(
       <Transcript
@@ -252,8 +250,11 @@ describe("relevé", () => {
         context={{ modelLabel: "gpt-5" }}
       />,
     );
+    // Ligne de contexte de ChatTranscript : le modèle s’ouvre en info-bulle au focus clavier.
     const header = screen.getByText(/^Depuis Notes · /);
-    expect(header).toHaveAttribute("title", "gpt-5");
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    act(() => header.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("gpt-5");
     expect(screen.getByRole("button", { name: /^Voir Message · 2.500 caractères$/ })).toBeInTheDocument();
     const second = screen.getAllByRole("article", { name: "Vous" })[1];
     expect(second).toHaveTextContent("/publier maintenant");
@@ -391,8 +392,10 @@ describe("relevé", () => {
         runtime={idle}
       />,
     );
-    const images = screen.getByRole("region", { name: "Images citées" });
-    expect(await within(images).findByRole("button", { name: "Agrandir l’image : graphe.png" })).toBeInTheDocument();
+    // ImageGallery : une liste « Images citées » ; la vignette lue s’agrandit d’un clic.
+    const images = screen.getByRole("list", { name: "Images citées" });
+    fireEvent.load(await within(images).findByRole("img", { name: "graphe.png" }));
+    expect(await within(images).findByRole("button", { name: "Agrandir graphe.png" })).toBeInTheDocument();
     expect(native.invoke).toHaveBeenCalledWith("files.readImage", { path: "sortie/graphe.png", base: "/espace" });
     const files = screen.getByRole("region", { name: "Fichiers cités" });
     fireEvent.click(within(files).getByRole("button", { name: "Ouvrir rapport.pdf" }));
@@ -416,9 +419,11 @@ describe("relevé", () => {
         runtime={idle}
       />,
     );
-    const retry = await screen.findByRole("button", { name: "Image indisponible · Réessayer : photo.png" });
-    fireEvent.click(retry);
-    expect(await screen.findByRole("button", { name: "Agrandir l’image : photo.png" })).toBeInTheDocument();
+    const images = screen.getByRole("list", { name: "Images jointes" });
+    expect(await within(images).findByText("Image indisponible")).toBeInTheDocument();
+    fireEvent.click(within(images).getByRole("button", { name: "Réessayer photo.png" }));
+    fireEvent.load(await within(images).findByRole("img", { name: "photo.png" }));
+    expect(await within(images).findByRole("button", { name: "Agrandir photo.png" })).toBeInTheDocument();
   });
 
   it("détaille le bilan des modifications par fichier", () => {
@@ -551,12 +556,36 @@ describe("activités", () => {
         ]}
       />,
     );
-    // Les chemins s’ouvrent d’un clic ; la commande arrêtée garde son état écrit.
-    fireEvent.click(screen.getByRole("button", { name: "page.tsx" }));
+    // Un seul ActivityGroup ; les chemins s’ouvrent d’un clic (onObjectPress) ; la commande arrêtée le dit.
+    fireEvent.click(screen.getByRole("button", { name: /^page\.tsx/ }));
     expect(open).toHaveBeenCalledWith("src/page.tsx");
     fireEvent.click(screen.getByRole("button", { name: "notes/plan.md" }));
     expect(open).toHaveBeenCalledWith("notes/plan.md");
-    expect(screen.getByText(/· Arrêté/)).toBeInTheDocument();
+    expect(screen.getByText("Arrêté")).toBeInTheDocument();
+  });
+});
+
+describe("pièces d’un outil", () => {
+  it("montre les images produites dans la sortie de l’outil, sous son texte", async () => {
+    render(
+      <Activities
+        activities={[
+          {
+            kind: "activity",
+            id: "g",
+            activityKind: "tool",
+            title: "Génération d’image",
+            status: "completed",
+            content: "Image prête.",
+            images: ["data:image/png;base64,iVBORw0KGgo="],
+          },
+        ]}
+      />,
+    );
+    // La ligne s’ouvre (AgentActivity, option attachments) sur le texte puis la galerie de l’outil.
+    fireEvent.click(screen.getByRole("button", { name: /Génération d’image/ }));
+    expect(await screen.findByText("Image prête.")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Images de Génération d’image" })).toBeInTheDocument();
   });
 });
 

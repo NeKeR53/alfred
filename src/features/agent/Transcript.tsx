@@ -129,18 +129,11 @@ export function producedFiles(turn: Turn): string[] {
   return turn.items.flatMap((item) => (item.kind === "activity" ? (item.files ?? []) : []));
 }
 
-/** En-tête « Depuis {origine} · {date} », avec le modèle en infobulle, repris de la page Agents de OneApp. */
-function TranscriptHeader({ conversation, modelLabel }: { conversation: Conversation; modelLabel?: string }) {
-  // Une reprise (« Repartir d’ici ») vient de la conversation d’origine.
+/** Ligne de contexte de OneApp en tête du relevé : « Depuis {origine} · {date} » (une reprise vient de son origine). */
+function contextLine(conversation: Conversation): string {
   const forkedFrom = (conversation as Conversation & { forkedFrom?: { title: string } }).forkedFrom;
   const origin = conversation.origin?.title ?? forkedFrom?.title;
-  return (
-    // Hors design : ligne de contexte en tête du relevé (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
-    <p className="agents-page__context" title={modelLabel}>
-      {origin ? `Depuis ${origin} · ` : ""}
-      {formatDateTimeShort(conversation.createdAt)}
-    </p>
-  );
+  return `${origin ? `Depuis ${origin} · ` : ""}${formatDateTimeShort(conversation.createdAt)}`;
 }
 
 /** Horodatage court d’un message, au bout de sa rangée d’actions. */
@@ -569,7 +562,7 @@ function QuestionCard({ conversation, question }: { conversation: string; questi
 
 /**
  * Question de l’agent ou autorisation attendue, reprise de OneApp, où elle se pose dans le pied de la page, au-dessus
- * de la saisie (`agents-page__question`). Rien quand aucune réponse n’est attendue.
+ * de la saisie (zone `question` de `ChatPage`). Rien quand aucune réponse n’est attendue.
  */
 export function ConversationQuestion({
   conversation,
@@ -610,7 +603,7 @@ export function Transcript({
 }: {
   conversation: Conversation;
   runtime: ConversationRuntime;
-  /** En-tête de OneApp au-dessus du relevé : « Depuis {origine} · {date} », le modèle en infobulle. */
+  /** Ligne de contexte en tête du relevé (« Depuis {origine} · {date} »), le modèle en infobulle. */
   context?: { modelLabel?: string };
 }) {
   const retry = useAgents((state) => state.retry);
@@ -659,13 +652,14 @@ export function Transcript({
   return (
     <ChatTranscript
       label={`Conversation de ${conversation.title}`}
+      context={context ? contextLine(conversation) : undefined}
+      contextDetail={context?.modelLabel}
       // Une conversation ouverte part du bas ; un envoi de l’utilisateur l’y recolle, même s’il était remonté.
       followKey={`${conversationId}:${sent}`}
       announce={settled && lastTurn?.status === "done" ? "Réponse terminée" : ""}
     >
       <ErrorBoundary resetKey={conversationId}>
         <ConversationResourcesContext.Provider value={resources}>
-          {context ? <TranscriptHeader conversation={conversation} modelLabel={context.modelLabel} /> : null}
           {visibleTurns.map((turn, index) => {
             const last = index === visibleTurns.length - 1;
             return (

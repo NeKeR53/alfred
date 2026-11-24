@@ -1,5 +1,5 @@
 /*
- * Page Agent : seulement ce que socle-ui 1.5 ne prévoit pas (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
+ * Page Agent : seulement ce que socle-ui 1.6 ne prévoit pas (voir docs/socle-propositions.md, « État des manques »).
  */
 
 /* Cadre de la page : la colonne de la conversation, puis le suivi dans la fenêtre Agent détachée (sans AppShell). */
@@ -28,88 +28,6 @@
 .agents-page__title {
   min-width: 0;
   max-width: 420px;
-}
-
-/* Conversation et saisie ; fichiers survolés (dépôt par le système, que ChatComposer ne voit pas dans Tauri). */
-.agents-page__main {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.agents-page__main.is-file-dragging::after {
-  content: "Déposez les fichiers pour les joindre";
-  position: absolute;
-  inset: 12px;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  border: 1px dashed var(--accent);
-  border-radius: var(--radius-md);
-  background: color-mix(in oklch, var(--accent) 6%, var(--surface));
-  color: var(--accent);
-  font-size: var(--fs-md);
-  pointer-events: none;
-}
-
-/* Pied aligné sur la colonne de 760 px de ChatTranscript : question, saisie, options. */
-.agents-page__footer {
-  width: calc(100% - 32px);
-  max-width: 760px;
-  align-self: center;
-  padding-bottom: 16px;
-  flex: 0 0 auto;
-}
-.agents-page__question {
-  max-height: min(40vh, 360px);
-  margin-bottom: 8px;
-  overflow: auto;
-}
-.agents-page__question:empty {
-  display: none;
-}
-
-/* Ligne de contexte en tête du relevé : « Depuis … · date ». */
-.agents-page__context {
-  margin: 0 0 4px;
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-  text-align: center;
-}
-
-/* Activité locale : chemin de fichier cliquable (AgentActivity n’a pas de lien). */
-.agent-chat__activity-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-  padding: 2px 0;
-  font-size: var(--fs-sm);
-  color: var(--fg-2);
-}
-.agent-chat__activity-status > svg {
-  flex-shrink: 0;
-}
-.agent-chat__tool-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Vignettes d’images d’un message ou d’une sortie d’outil. */
-.agent-chat__message-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 0;
-}
-.agent-chat__message-attachments li {
-  max-width: 100%;
 }
 
 /* Bilan des modifications : un fichier par ligne, avec son DiffStat. */

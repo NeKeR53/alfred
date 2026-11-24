@@ -230,10 +230,8 @@ export function AgentPanel({ conversationId, onClose }: { conversationId: string
                 content: (
                   <>
                     <Transcript conversation={conversation} runtime={runtime} />
-                    <div className="agents-page__footer">
-                      <ConversationQuestion conversation={conversation} runtime={runtime} />
-                      <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />
-                    </div>
+                    <ConversationQuestion conversation={conversation} runtime={runtime} />
+                    <Composer conversation={conversation} responding={runtime.status !== "idle"} compact />
                   </>
                 ),
               },

@@ -283,7 +283,9 @@ describe("page Agent", () => {
     render(<AgentPageWithTracking />);
     await findConversationTitle("Factures");
     expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
-    expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
+    expect(
+      within(screen.getByRole("region", { name: "Conversation de Factures" })).getByText(/^Depuis Factures du mois · /),
+    ).toBeInTheDocument();
     const pill = await findGitPill();
     expect(pill.closest('[role="group"][aria-label="Réglages de la conversation"]')).not.toBeNull();
   });

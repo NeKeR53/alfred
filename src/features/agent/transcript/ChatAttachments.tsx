@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
-import { AttachmentChip, AttachmentList, Button } from "socle-ui";
+import { AttachmentChip, AttachmentList, ImageGallery } from "socle-ui";
 import { imageFileType } from "../lib/chatImages";
 import type { Attachment } from "../model";
-import { ImagePreview } from "./ImagePreview";
+import { useLoadedImages } from "./LoadedImage";
 import { useConversationResources } from "./resources";
 
 function attachmentImageType(attachment: Attachment): string | undefined {
@@ -11,63 +10,26 @@ function attachmentImageType(attachment: Attachment): string | undefined {
 }
 
 /**
- * Pièce jointe d’un message, reprise de `ChatAttachment` de OneApp : une image est lue depuis le disque, avec les
- * états « Chargement… » et « Image indisponible · Réessayer » ; un autre fichier s’affiche par son nom.
- */
-function ChatAttachment({ attachment }: { attachment: Attachment }) {
-  const { loadImage } = useConversationResources();
-  const type = attachmentImageType(attachment);
-  const [source, setSource] = useState<string>();
-  const [error, setError] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    if (!type || !loadImage) return;
-    if (attempt > 0) setSource(undefined);
-    let active = true;
-    loadImage(attachment.path).then(
-      (url) => active && setSource(url),
-      () => active && setError(true),
-    );
-    return () => {
-      active = false;
-    };
-  }, [attachment.path, attempt, loadImage, type]);
-  if (error)
-    return (
-      <Button
-        size="sm"
-        onPress={() => {
-          setError(false);
-          setAttempt((value) => value + 1);
-        }}
-      >
-        {`Image indisponible · Réessayer : ${attachment.name}`}
-      </Button>
-    );
-  return source ? (
-    <ImagePreview src={source} alt={attachment.name} size="sent" />
-  ) : (
-    <span role="status">Chargement de l’image : {attachment.name}…</span>
-  );
-}
-
-/**
- * Pièces jointes d’un message envoyé : les images en vignettes agrandissables (Hors design : `AttachmentChip` ne
- * s’ouvre pas en grand), les autres fichiers en `AttachmentChip`.
+ * Pièces jointes d’un message envoyé, reprises de `ChatAttachment` de OneApp : les images lues depuis le disque, en
+ * vignettes carrées d’une `ImageGallery` (agrandies d’un clic, « Réessayer » après un échec), les autres fichiers en
+ * `AttachmentChip`.
  */
 export function ChatAttachments({ attachments }: { attachments: readonly Attachment[] }) {
+  const { loadImage } = useConversationResources();
   const images = attachments.filter((attachment) => attachmentImageType(attachment));
   const files = attachments.filter((attachment) => !attachmentImageType(attachment));
+  const { source } = useLoadedImages(
+    images.map((image) => image.path),
+    loadImage,
+  );
   return (
     <>
       {images.length ? (
-        <ul className="agent-chat__message-attachments">
-          {images.map((attachment) => (
-            <li key={attachment.path}>
-              <ChatAttachment attachment={attachment} />
-            </li>
-          ))}
-        </ul>
+        <ImageGallery
+          label="Images jointes"
+          shape="square"
+          images={images.map((image) => ({ id: image.path, alt: image.name, ...source(image.path) }))}
+        />
       ) : null}
       <AttachmentList>
         {files.map((attachment) => (

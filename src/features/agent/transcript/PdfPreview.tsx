@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { DocumentViewer, EmptyState, Skeleton, SkeletonGroup } from "socle-ui";
 import { notify } from "../../../shell/notifications";
-import { useLatest } from "./ImagePreview";
 
 /** Charge pdf.js et son worker, à la demande : le premier aperçu seul paie le chargement. */
 async function loadPdf() {
@@ -66,4 +65,12 @@ export function PdfPreview({
       </SkeletonGroup>
     );
   return <DocumentViewer label={label} data={state.bytes} name="apercu.pdf" type="application/pdf" loadPdf={loadPdf} />;
+}
+
+/** Fonction stable qui appelle toujours la dernière version reçue. */
+function useLatest<T extends (...args: never[]) => unknown>(callback: T) {
+  const [holder] = useState(() => ({ current: callback }));
+  holder.current = callback;
+  const [stable] = useState(() => ((...args: Parameters<T>) => holder.current(...args)) as T);
+  return stable;
 }
