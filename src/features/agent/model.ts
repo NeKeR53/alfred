@@ -15,6 +15,11 @@ export interface PastedContext {
   id: string;
   title: string;
   text: string;
+  /**
+   * Contexte pour l’agent seul : envoyé avec le message, mais jamais affiché (ni dans la saisie, ni dans le relevé).
+   * Par exemple la description de ce qu’encadre « Corriger un élément » : l’utilisateur ne voit que la capture.
+   */
+  hidden?: boolean;
 }
 
 export interface UserMessage {

@@ -131,6 +131,8 @@ export function UiFixTool({ page }: { page: ResolvedPage; container: RefObject<H
             id: crypto.randomUUID(),
             title: rect ? `Élément à corriger · ${page.title}` : `Page à corriger · ${page.title}`,
             text: fixContext(page, shot, rect, region, attachment.path),
+            // Pour l’agent seul : l’utilisateur ne voit que la capture (demande d’Alexandre).
+            hidden: true,
           },
         ],
       });

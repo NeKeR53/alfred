@@ -294,6 +294,23 @@ describe("envoi", () => {
     expect(sent[0].contexts[0].text).toContain("ligne 24");
   });
 
+  it("un contexte caché (Corriger un élément) part avec le message sans s’afficher dans la saisie", async () => {
+    const user = userEvent.setup();
+    setComposerDraft("a", {
+      contexts: [{ id: "c", title: "Élément à corriger · Jira", text: "Cadre : x=247", hidden: true }],
+    });
+    render(<Composer conversation={conversation("a")} responding={false} />);
+    const input = await editor();
+    await user.click(input);
+    await user.keyboard("Corrige ça");
+    expect(screen.queryByRole("button", { name: /Élément à corriger/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Envoyer" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0].contexts).toEqual([
+      { id: "c", title: "Élément à corriger · Jira", text: "Cadre : x=247", hidden: true },
+    ]);
+  });
+
   it("pendant une réponse, l’indication propose de mettre en file", async () => {
     render(<Composer conversation={conversation("a", { turns: [] })} responding />);
     expect(await editor()).toHaveAttribute("aria-placeholder", expect.stringMatching(/↩ pour mettre en file$/));

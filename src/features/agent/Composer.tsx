@@ -436,7 +436,8 @@ export function Composer({
   );
 
   // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, ⌘/Ctrl+Entrée met le message en file.
-  const pieces = draft.attachments.length + draft.pastes.length;
+  const shownPastes = draft.pastes.filter((paste) => !paste.hidden);
+  const pieces = draft.attachments.length + shownPastes.length;
   // Comme dans OneApp : après une erreur ou une interruption, envoyer sans rien écrire relance le dernier message.
   const canResume = !responding && (lastStatus === "error" || lastStatus === "cancelled");
 
@@ -567,7 +568,7 @@ export function Composer({
         attachments={
           pieces ? (
             <AttachmentList>
-              {draft.pastes.map((paste) => (
+              {shownPastes.map((paste) => (
                 <AttachmentChip
                   key={paste.id}
                   kind="text"

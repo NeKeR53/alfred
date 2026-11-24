@@ -402,7 +402,9 @@ const UserEntry = memo(function UserEntry({
   onResend?: () => void;
   onFork?: () => void;
 }) {
-  const { attachments, contexts, text, references } = turn.user;
+  const { attachments, text, references } = turn.user;
+  // Un contexte caché (pour l’agent seul) ne s’affiche pas dans le relevé.
+  const contexts = turn.user.contexts.filter((context) => !context.hidden);
   const delivery = turnDelivery(turn);
   const mentions = useMemo(() => mentionReferences(references ?? []), [references]);
   const pieces =
