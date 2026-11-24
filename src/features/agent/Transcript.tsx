@@ -574,11 +574,6 @@ function QuestionCard({ conversation, question }: { conversation: string; questi
   );
 }
 
-/** Donne le focus au champ de saisie posé dans `footer` (« Autre réponse… » y renvoie). */
-export function focusComposer(footer: HTMLElement | null) {
-  footer?.querySelector<HTMLElement>('[role="textbox"], textarea, [contenteditable="true"]')?.focus();
-}
-
 /**
  * Question de l’agent ou autorisation attendue, reprise de OneApp, où elle se pose dans le pied de la page, au-dessus
  * de la saisie (`agents-page__question`). Rien quand aucune réponse n’est attendue.
@@ -586,12 +581,9 @@ export function focusComposer(footer: HTMLElement | null) {
 export function ConversationQuestion({
   conversation,
   runtime,
-  onOther,
 }: {
   conversation: Conversation;
   runtime: ConversationRuntime;
-  /** « Autre réponse… » : renvoie au champ de saisie. */
-  onOther: () => void;
 }) {
   const send = useAgents((state) => state.send);
   const answerApproval = useAgents((state) => state.answerApproval);
@@ -609,7 +601,6 @@ export function ConversationQuestion({
       onRespond={(optionId) =>
         permission && void answerApproval(id, permission.id, optionId).catch(report("Réponse non transmise"))
       }
-      onOther={onOther}
     />
   );
 }

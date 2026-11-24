@@ -78,7 +78,7 @@ function TranscriptAndQuestion(props: { conversation: Conversation; runtime: Con
   return (
     <>
       <Transcript {...props} />
-      <ConversationQuestion {...props} onOther={() => undefined} />
+      <ConversationQuestion {...props} />
     </>
   );
 }
@@ -340,12 +340,15 @@ describe("relevé", () => {
       />,
     );
     expect(screen.queryByText(/alfred-question/)).not.toBeInTheDocument();
-    const card = screen.getByRole("region", { name: "Question de l’agent" });
-    expect(within(card).getByText("Quel format ?")).toBeVisible();
-    fireEvent.keyDown(within(card).getByRole("button", { name: "Word" }), { key: "2" });
+    // ChoicePrompt : une carte nommée par la question, sous l’en-tête « Question de l’agent ».
+    const card = screen.getByRole("region", { name: "Quel format ?" });
+    expect(within(card).getByText(/^Question de l.agent$/)).toBeVisible();
+    fireEvent.keyDown(within(card).getByRole("option", { name: /Word/ }), { key: "2" });
     expect(useAgents.getState().send).toHaveBeenCalledWith("c1", { text: "Word", attachments: [], contexts: [] });
-    fireEvent.click(within(card).getByRole("button", { name: "Replier la question" }));
-    expect(screen.getByRole("button", { name: /Question de l’agent en attente/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Replier la question" }));
+    expect(screen.queryByRole("region", { name: "Quel format ?" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Question de l’agent en attente/ }));
+    expect(screen.getByRole("region", { name: "Quel format ?" })).toBeInTheDocument();
   });
 
   it("présente l’autorisation dans la même carte, options numérotées", () => {
@@ -369,8 +372,12 @@ describe("relevé", () => {
         }}
       />,
     );
-    const card = screen.getByRole("region", { name: "Autorisation demandée" });
-    fireEvent.keyDown(card, { key: "1" });
+    const card = screen.getByRole("region", { name: "Exécuter une commande" });
+    expect(within(card).getByText("Autorisation demandée")).toBeInTheDocument();
+    expect(within(card).getByText("ls")).toBeInTheDocument();
+    // Pas de réponse libre pour une autorisation.
+    expect(within(card).queryByRole("button", { name: "Autre réponse…" })).toBeNull();
+    fireEvent.keyDown(within(card).getAllByRole("option")[0], { key: "1" });
     expect(useAgents.getState().answerApproval).toHaveBeenCalledWith("c1", "a1", "allow");
     expect(screen.getByText("Autorisation requise")).toBeInTheDocument();
   });
@@ -709,22 +716,20 @@ describe("parité avec OneApp", () => {
   it("laisse la page poser la question dans son pied, au-dessus de la saisie", () => {
     const content = question('{"question":"Quel format ?","options":["PDF"]}');
     const value = conversation([turn("t1", { items: [{ kind: "message", id: "m", content }] })]);
-    const onOther = vi.fn();
-    render(
-      <>
-        <Transcript conversation={value} runtime={idle} />
-        <ConversationQuestion conversation={value} runtime={idle} onOther={onOther} />
-      </>,
-    );
+    render(<TranscriptAndQuestion conversation={value} runtime={idle} />);
     // Le relevé ne pose pas la question : une seule carte, celle du pied.
     expect(
       within(screen.getByRole("region", { name: "Conversation de Factures" })).queryByRole("region", {
-        name: "Question de l’agent",
+        name: "Quel format ?",
       }),
     ).toBeNull();
-    const card = screen.getByRole("region", { name: "Question de l’agent" });
+    // « Autre réponse… » ouvre un champ dans la carte ; Entrée envoie le texte saisi.
+    const card = screen.getByRole("region", { name: "Quel format ?" });
     fireEvent.click(within(card).getByRole("button", { name: "Autre réponse…" }));
-    expect(onOther).toHaveBeenCalledOnce();
+    const field = within(card).getByRole("textbox");
+    fireEvent.change(field, { target: { value: "Markdown" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(useAgents.getState().send).toHaveBeenCalledWith("c1", { text: "Markdown", attachments: [], contexts: [] });
   });
 
   it("rend le Markdown d’un agent comme OneApp : intertitres, fichiers, liens web seuls, sans HTML", async () => {

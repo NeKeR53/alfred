@@ -1,13 +1,14 @@
-import { ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
-import { IconButton } from "socle-ui";
+import { Button, ChoicePrompt } from "socle-ui";
 import type { ApprovalRequest } from "../harness";
 import type { AgentQuestion } from "./agentQuestions";
 
 /**
- * Question ou autorisation attendue, posée au-dessus du champ de saisie, reprise de `AgentQuestion` de OneApp. Les
- * choix se valident d’un clic ou par leur numéro ; « Autre réponse » renvoie au champ. La carte se replie en une
- * pastille sans perdre la question.
+ * Question ou autorisation attendue, posée au-dessus du champ de saisie : `ChoicePrompt` de Socle (D-377). Un choix
+ * répond tout de suite, au clic ou par son numéro quand le focus est dans la carte ; « Autre réponse… » ouvre un champ
+ * dans la carte. Le repli en pastille, repris de OneApp, n’existe pas dans Socle 1.4 : il reste en boutons de Socle
+ * sous la carte (voir docs/socle-propositions.md, « Manques vus en 1.4 »).
  */
 export function AgentQuestionCard({
   question,
@@ -15,78 +16,44 @@ export function AgentQuestionCard({
   disabled,
   onAnswer,
   onRespond,
-  onOther,
 }: {
   question?: AgentQuestion;
   permission?: ApprovalRequest;
   disabled?: boolean;
   onAnswer: (text: string) => void;
   onRespond: (optionId: string) => void;
-  onOther: () => void;
 }) {
   const [folded, setFolded] = useState(false);
-  const options = permission
-    ? permission.options.map((option) => ({ id: option.id, label: option.label, run: () => onRespond(option.id) }))
-    : (question?.options ?? []).map((option) => ({ id: option, label: option, run: () => onAnswer(option) }));
   const text = permission?.title ?? question?.question;
   if (!text) return null;
   const kind = permission ? "Autorisation demandée" : "Question de l’agent";
   if (folded)
     return (
-      <button type="button" className="agent-question__pill" onClick={() => setFolded(false)}>
-        <span className="agent-question__mark" aria-hidden="true">
-          ?
-        </span>
-        {kind} en attente
-        <ChevronUp size={13} aria-hidden="true" />
-      </button>
+      <Button size="sm" variant="subtle" icon={<ChevronUp size={14} />} onPress={() => setFolded(false)}>
+        {`${kind} en attente`}
+      </Button>
     );
   return (
-    <section
-      className="agent-question"
-      aria-label={kind}
-      onKeyDown={(event) => {
-        if (disabled || event.target instanceof HTMLTextAreaElement) return;
-        const index = Number(event.key) - 1;
-        const option = options[index];
-        if (!option || event.altKey || event.ctrlKey || event.metaKey) return;
-        event.preventDefault();
-        option.run();
-      }}
-    >
-      <header className="agent-question__head">
-        <span className="agent-question__mark" aria-hidden="true">
-          {permission ? <ShieldCheck size={12} /> : "?"}
-        </span>
-        <span className="agent-question__kind">{kind}</span>
-        <IconButton icon={<ChevronDown size={14} />} label="Replier la question" onPress={() => setFolded(true)} />
-      </header>
-      <p className="agent-question__text">{text}</p>
-      {permission?.detail ? <pre className="agent-card__detail">{permission.detail}</pre> : null}
-      {options.length ? (
-        <ol className="agent-question__options">
-          {options.map((option, index) => (
-            <li key={option.id}>
-              <button
-                type="button"
-                className="agent-question__option"
-                disabled={disabled}
-                aria-label={option.label}
-                aria-keyshortcuts={String(index + 1)}
-                onClick={option.run}
-              >
-                <kbd>{index + 1}</kbd>
-                <span>{option.label}</span>
-              </button>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      {permission ? null : (
-        <button type="button" className="agent-question__other" disabled={disabled} onClick={onOther}>
-          {options.length ? "Autre réponse…" : "Répondre…"}
-        </button>
+    <>
+      {permission ? (
+        <ChoicePrompt
+          kind="permission"
+          question={text}
+          detail={permission.detail}
+          options={permission.options.map(({ id, label }) => ({ id, label }))}
+          onChoose={(answer) => "id" in answer && onRespond(answer.id)}
+        />
+      ) : (
+        <ChoicePrompt
+          question={text}
+          options={(question?.options ?? []).map((option) => ({ id: option, label: option }))}
+          isDisabled={disabled}
+          onChoose={(answer) => onAnswer("id" in answer ? answer.id : answer.text)}
+        />
       )}
-    </section>
+      <Button size="sm" variant="subtle" icon={<ChevronDown size={14} />} onPress={() => setFolded(true)}>
+        Replier la question
+      </Button>
+    </>
   );
 }

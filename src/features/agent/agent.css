@@ -266,18 +266,6 @@ button.agent-chat__attachment-file:hover {
   font-size: var(--fs-lg);
   font-weight: 600;
 }
-.agent-card__detail {
-  max-height: 180px;
-  margin: 0;
-  padding: 8px;
-  overflow: auto;
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .agent-card__note {
   margin: 0;
   color: var(--fg-2);

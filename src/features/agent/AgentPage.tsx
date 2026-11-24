@@ -1,5 +1,5 @@
 import { AppWindow, Archive, Bot, Code2, FolderOpen } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type Action,
   Button,
@@ -22,7 +22,7 @@ import { PROVIDER_LABEL } from "./harness";
 import { type ConversationHeader, type ConversationRuntime, MAX_TITLE_LENGTH } from "./model";
 import { modelChoiceLabel, useHarnessModels, usePreferences } from "./panel/ModelPicker";
 import { bindAgentQuestions, useAgents } from "./store";
-import { ConversationQuestion, focusComposer, Transcript } from "./Transcript";
+import { ConversationQuestion, Transcript } from "./Transcript";
 import "./agent.css";
 
 const idle: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
@@ -104,7 +104,6 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
   const retrySave = useAgents((state) => (state as Persistence).retrySave);
   const [renaming, setRenaming] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const footer = useRef<HTMLDivElement>(null);
   const git = useWorkspaceGit(conversation);
   const { textEditor } = usePreferences();
 
@@ -314,7 +313,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                       }
                     />
                   )}
-                  <div ref={footer} className="agents-page__footer">
+                  <div className="agents-page__footer">
                     {saveError ? (
                       <Notice
                         tone="danger"
@@ -331,11 +330,7 @@ export function AgentPage({ detached = false }: { detached?: boolean } = {}) {
                     ) : null}
                     {/* Comme OneApp : la question de l’agent ou l’autorisation attendue se pose au-dessus de la saisie. */}
                     <div className="agents-page__question">
-                      <ConversationQuestion
-                        conversation={conversation}
-                        runtime={runtime}
-                        onOther={() => focusComposer(footer.current)}
-                      />
+                      <ConversationQuestion conversation={conversation} runtime={runtime} />
                     </div>
                     <Composer
                       conversation={conversation}
