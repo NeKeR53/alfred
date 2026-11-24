@@ -568,7 +568,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "user_pages",
-            "Pages de l’utilisateur : les entrées du menu qu’il crée à partir des modèles de pages des modules (les pages que tu écris dans `module.json`), chacune avec ses onglets et le compte de chaque onglet. C’est lui qui les crée et les configure, dans Réglages → Modules, fiche du module. N’utilise cet outil que s’il te le demande explicitement (« ajoute-moi une page Prefect pour la recette », « renomme l’onglet Prod »), jamais de toi-même, ni pour livrer une page que tu viens d’écrire : un modèle nouveau entre déjà au menu une fois, tout seul. `list` montre les pages, leurs onglets, leurs comptes, et les modèles disponibles. Chaque autre action fait un commit.",
+            "Pages de l’utilisateur : les entrées du menu qu’il crée à partir des modèles de pages des modules (les pages que tu écris dans `module.json`), chacune avec ses onglets et le compte de chaque onglet. C’est lui qui les crée et les configure, dans Réglages → Modules, fiche du module. N’utilise cet outil que s’il te le demande explicitement (« ajoute-moi une page Prefect pour la recette », « renomme l’onglet Prod »), jamais de toi-même, ni pour livrer une page que tu viens d’écrire : un modèle nouveau entre déjà au menu une fois, tout seul. `list` montre les pages, leurs onglets, leurs comptes, et les modèles disponibles ; une page avec `created` est une section créée pendant l’usage par son module (`menu.addSection` du SDK, pour une notion métier : un projet, un client suivi) : c’est le module qui la tient à jour, ne la crée pas par cet outil. Chaque autre action fait un commit.",
             json!({
                 "action": { "type": "string", "enum": ["list", "add_page", "add_tab", "configure", "remove", "move"], "description": "`list` ; `add_page` (section, tabs, label, icon) ; `add_tab` (page, tab) ; `configure` (target, label, icon, accounts) ; `remove` (target) ; `move` (target, delta)." },
                 "section": { "type": "string", "description": "add_page : section déclarée du modèle, « module/section » (son apparence par défaut)." },
@@ -1249,6 +1249,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                             "id": section.id,
                             "label": section.label,
                             "section": section.instance_of.clone().unwrap_or_else(|| section.id.clone()),
+                            "created": section.created,
                             "hidden": section.hidden,
                             "tabs": section.pages.iter().map(|page| json!({
                                 "id": page.reference, "label": page.title, "template": page.template,

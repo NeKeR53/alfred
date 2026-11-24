@@ -114,6 +114,17 @@ fn modify<T>(state: &AppState, change: impl FnOnce(&mut Zones) -> AppResult<T>) 
     Ok(result)
 }
 
+/// Oublie les zones de pages retirées du menu (les onglets d’une section créée qui s’en va).
+pub fn forget_pages(state: &AppState, pages: &[String]) -> AppResult<()> {
+    if pages.is_empty() {
+        return Ok(());
+    }
+    modify(state, |zones| {
+        zones.retain(|page, _| !pages.contains(page));
+        Ok(())
+    })
+}
+
 fn update(state: &AppState, args: &Value) -> AppResult<Value> {
     let subject: Subject = arg(args, "subject")?;
     let page: String = arg(args, "page")?;

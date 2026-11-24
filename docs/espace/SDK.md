@@ -749,6 +749,7 @@ interface PageContext {
   entry: { id: string; label: string } | null; // entrée du menu ouverte dans la page (`menu`), ou celle de sa page pour un panneau
   params: Record<string, unknown> | null; // paramètres de la fenêtre ouverte sur un élément (`shell.openWindow`), sinon null
   view: { id: string; label: string; params: Record<string, unknown> | null } | null; // onglet ouvert sur un élément (`views.open`), sinon null
+  section: { id: string; title: string } | null; // section créée par le module (`menu.addSection`) qui montre la page, sinon null
 }
 ```
 
@@ -857,6 +858,46 @@ export default function Produits() {
   // entry === null : vue d’ensemble ; sinon le produit choisi dans le menu.
   …
 }
+```
+
+### Sections créées par l’usage : `menu.addSection`
+
+```ts
+menu.addSection(section: { id: string; title: string; icon?: string; pages?: string[] }): Promise<{ reference: string; created: boolean }>;
+menu.updateSection(id: string, patch: { title?: string; icon?: string | null }): Promise<void>;
+menu.removeSection(id: string): Promise<boolean>;     // faux si elle n’était plus au menu
+menu.listSections(): Promise<Array<{ id: string; title: string; icon: string | null; pages: string[]; reference: string }>>;
+menu.setEntries(entries, { section: "atlas" });       // entrées de la section : mêmes formes que la zone
+usePageContext()?.section;                             // { id: "atlas", title: "Atlas" } dans une section créée, sinon null
+```
+
+Quand l’utilisateur crée une **notion métier** dans un module (un projet, un client suivi, un chantier, un exercice comptable), la page (ou une fonction du module) peut en faire une **section du menu de gauche** : une entrée avec son icône, ses onglets et, dessous, ses entrées. C’est l’usage qui la crée, pas le `module.json`.
+
+- `id` est propre au module (minuscules, chiffres, tirets : « atlas »). `addSection` avec un `id` qui existe déjà met à jour son titre et son icône, sans doublon : appelle-la quand la notion est créée, ou pour la renommer.
+- `pages` : les pages du module en onglets (« projet », « planning »), chacune copiée pour la section (`projets/projet@atlas`) : son état, ses entrées et son compteur sont à elle. Par défaut, la page qui crée la section ; une fonction les nomme toujours. Une page la lit dans `usePageContext()?.section` et montre la notion ; ses comptes sont ceux de la page qui l’a créée.
+- **Place** : après les sections du module, dans l’ordre de création. L’utilisateur la déplace, la renomme, change son icône ou la masque comme toute section ; un nom qu’il donne passe devant `updateSection`.
+- **Entrées** : `menu.setZone`, `setEntries`, `updateEntry`, `removeEntry` et `clear` avec `{ section: "atlas" }`. Un clic ouvre la page de la section (ou `page` de l’entrée) avec l’entrée, comme la zone (`usePageContext().entry`).
+- **Retrait** : la page par `menu.removeSection(id)` (onglets et entrées partent, les données du module restent) ; l’utilisateur par « Retirer la section… » dans le menu « … » de la section, après confirmation. Une section retirée par l’utilisateur ne revient que si la page rappelle `addSection` : ne la recrée pas d’elle-même à chaque chargement ; `listSections()` dit lesquelles sont encore au menu.
+- **Enregistrement** : dans l’espace (`alfred.json`, `layout.menu`, avec le module d’origine) ; chaque création, modification ou retrait fait un commit dans l’historique de l’espace (« Section « Atlas » créée par le module projets »), annulable comme les autres. Les entrées restent sur le poste, comme une zone. Le module désinstallé emporte ses sections.
+- 50 sections créées au plus par module. Une fonction en script (bash, Python) n’a pas `menu` ; une fonction TypeScript, si.
+
+```tsx
+// pages/liste.tsx (module projets) : « Nouveau projet » crée la notion, puis sa section du menu.
+const creer = async (nom: string) => {
+  const id = nom.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  await db.execute("INSERT INTO projets_projets (id, nom) VALUES (?, ?)", [id, nom]);
+  await menu.addSection({ id, title: nom, icon: "folder-kanban", pages: ["projet", "planning"] });
+  await menu.setEntries([{ id: "lot-1", label: "Lot 1", status: "running" }], { section: id });
+};
+
+// pages/projet.tsx : la page d’une section créée montre son projet.
+const projet = usePageContext()?.section?.id;
+// Le projet supprimé : sa section s’en va.
+const supprimer = async () => {
+  if (!projet) return;
+  await db.execute("DELETE FROM projets_projets WHERE id = ?", [projet]);
+  await menu.removeSection(projet);
+};
 ```
 
 ### Onglet sur un élément : `views.open`, `views.close`

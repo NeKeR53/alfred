@@ -596,6 +596,9 @@ pub struct ResolvedSection {
     pub instance_of: Option<String>,
     /// Section par instance qui n’a encore aucune instance à montrer : ce qu’il faut faire.
     pub waiting: Option<String>,
+    /// Section créée pendant l’usage par son module (`menu.addSection`) : l’identifiant qu’il lui a donné.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1499,6 +1502,7 @@ impl Space {
                     instance: None,
                     instance_of: None,
                     waiting: None,
+                    created: None,
                     id,
                 });
             }

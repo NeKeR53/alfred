@@ -96,6 +96,8 @@ export interface ResolvedSection {
   instanceOf?: string | null;
   /** Section par instance sans instance à montrer : ce qu’il faut faire. */
   waiting?: string | null;
+  /** Section créée pendant l’usage par son module (`menu.addSection`) : l’identifiant qu’il lui a donné. */
+  created?: string | null;
 }
 
 export interface ModuleOrigin {

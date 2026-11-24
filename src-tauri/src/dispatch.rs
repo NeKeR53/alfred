@@ -29,7 +29,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
-    delegate!(vault, agent_workspace, examples, clients, space_db, function_tests, backups, module_files, folders, folder_git, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, model_files, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, menu_zones, setup, team_sync, spaces);
+    delegate!(vault, agent_workspace, examples, clients, space_db, function_tests, backups, module_files, folders, folder_git, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, model_files, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, menu_sections, menu_zones, setup, team_sync, spaces);
     match command {
         "app.info" => {
             let server = state.server()?;

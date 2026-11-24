@@ -2,10 +2,11 @@
  * Gestes de réorganisation de la navigation : application optimiste d’un nouveau `layout`, commit par
  * `space.updateLayout`, retour en arrière si le backend refuse ; menus contextuels et dialogues de la coquille.
  */
-import { ArrowDown, ArrowUp, EyeOff, icons, Pencil, Settings2, Shapes } from "lucide-react";
+import { ArrowDown, ArrowUp, EyeOff, icons, Pencil, Settings2, Shapes, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
 import { type Action, Button, DropdownMenu, Modal, TextInput, useConfirm, useOpenForm } from "socle-ui";
 import { create } from "zustand";
+import { userPages } from "../features/modules/menuApi";
 import { PageHistoryDialog } from "../features/navigation/PageHistory";
 import { openModuleSettings } from "../features/settings/open";
 import { inTauri, invoke, openPageWindow } from "../lib/native";
@@ -392,8 +393,34 @@ export function useNavigationEditor() {
           icon={icon16(EyeOff)}
           onAction={() => void applyLayoutChange((state) => setSectionHidden(state, section.id, true))}
         />
+        {section.created ? (
+          // Une section créée par son module pendant l’usage : l’utilisateur la retire comme le module le ferait.
+          <DropdownMenu.Item
+            label="Retirer la section…"
+            icon={icon16(Trash2)}
+            danger
+            onAction={() => void removeCreatedSection(section.id, section.label)}
+          />
+        ) : null}
       </>
     );
+  };
+
+  /** Retire une section créée par son module (`menu.addSection`), après confirmation. */
+  const removeCreatedSection = async (id: string, label: string) => {
+    const accepted = await confirm({
+      title: `Retirer la section « ${label} » ?`,
+      message:
+        "Ses onglets et ses entrées quittent le menu. Les données du module restent, et le retrait reste annulable par l’historique de l’espace de travail.",
+      confirmLabel: "Retirer",
+      tone: "danger",
+    });
+    if (!accepted) return;
+    await userPages
+      .remove(id)
+      .catch((error: unknown) =>
+        notify({ tone: "error", title: "La section n’a pas été retirée", description: errorText(error) }),
+      );
   };
 
   /** Actions de la page affichée (onglet), rangées dans le « … » de la barre du haut. */

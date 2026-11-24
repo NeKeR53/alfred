@@ -260,6 +260,29 @@ describe("réorganisation de la navigation", () => {
     await waitFor(() => expect(useShell.getState().snapshot?.sections[0].pages).toHaveLength(1));
   });
 
+  it("retire une section créée par son module après confirmation ; une section déclarée n’a pas ce choix", async () => {
+    const user = userEvent.setup();
+    const created = section("compta/principal@2026", "Exercice 2026", [page("compta", "factures@2026", "Factures")], {
+      created: "2026",
+    });
+    useShell.setState({ snapshot: { ...fixture(), sections: [...fixture().sections, created] } });
+    renderShell();
+    const declared = await openSectionMenu(user, "Compta");
+    expect(within(declared).queryByRole("menuitem", { name: /Retirer la section/ })).toBeNull();
+    await user.keyboard("{Escape}");
+    const menu = await openSectionMenu(user, "Exercice 2026");
+    await user.click(within(menu).getByRole("menuitem", { name: /Retirer la section/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Retirer la section « Exercice 2026 » ?");
+    await user.click(within(dialog).getByRole("button", { name: "Retirer" }));
+    await waitFor(() =>
+      expect(mockedInvoke).toHaveBeenCalledWith("space.menu.remove", {
+        target: "compta/principal@2026",
+        space: "/espace",
+      }),
+    );
+  });
+
   it("propose de masquer une page d’un module en lecture seule, et rétablit si le backend refuse", async () => {
     const user = userEvent.setup();
     act(() => useShell.setState({ view: { kind: "section", id: "crm/principal" } }));

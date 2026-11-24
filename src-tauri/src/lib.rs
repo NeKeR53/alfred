@@ -35,6 +35,7 @@ mod module_search;
 mod module_semantic;
 mod mcp;
 mod menu;
+mod menu_sections;
 mod menu_zones;
 mod oauth;
 mod page_windows;

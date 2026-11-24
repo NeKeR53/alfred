@@ -193,6 +193,7 @@ export function frameContext(identity: FrameIdentity) {
     selection: identity.host ? selectionOf(identity.host) : null,
     entry: entryOf(identity),
     params: paramsOf(identity),
+    section: createdSectionOf(identity),
     view:
       identity.kind !== "function" && identity.view
         ? { id: identity.view.id, label: identity.view.label, params: identity.view.params }
@@ -232,6 +233,30 @@ function viewSection(identity: FrameIdentity): string {
 }
 
 type Params = Record<string, unknown>;
+
+/** Section créée par le module (`menu.addSection`) qui montre la page du cadre : `usePageContext().section`. */
+function createdSectionOf(identity: FrameIdentity): { id: string; title: string } | null {
+  if (identity.kind === "function") return null;
+  const page = identity.host ?? identity.reference;
+  const section = useShell
+    .getState()
+    .snapshot?.sections.find((candidate) => candidate.pages.some((known) => known.reference === page));
+  return section?.created ? { id: section.created, title: section.label } : null;
+}
+
+/**
+ * Page dont la zone porte les entrées d’une section créée (`menu.setEntries(…, { section })`) : son premier onglet,
+ * sans le nom du module (« projet@atlas »).
+ */
+function sectionZonePage(identity: FrameIdentity, section: unknown): string {
+  const id = String(section);
+  const found = useShell
+    .getState()
+    .snapshot?.sections.find((candidate) => candidate.created === id && candidate.module === identity.module);
+  const first = found?.pages[0]?.reference;
+  if (!first) throw new AlfredError({ message: `La section « ${id} » n’existe pas (ou plus) dans le menu.` });
+  return first.slice(identity.module.length + 1);
+}
 
 /** Dernier onglet fixe d’une section : celui qui s’affiche quand on ferme le premier onglet d’élément actif. */
 function lastFixedTab(section: string): string | undefined {
@@ -422,8 +447,33 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.menuZones.update", {
         ...pick(params, ["op", "title", "order", "visible", "entries", "id", "patch"]),
         subject,
-        page: badgeTarget(identity, params.page, MENU_TARGET),
+        page: badgeTarget(
+          identity,
+          params.section !== undefined && params.section !== null
+            ? sectionZonePage(identity, params.section)
+            : params.page,
+          MENU_TARGET,
+        ),
       });
+    // Sections créées par le module (`menu.addSection`…) : Rust les écrit dans l’espace, avec un commit.
+    case "menu.sections": {
+      if (identity.capture) return params.op === "list" ? [] : null;
+      const op = String(params.op ?? "");
+      const host = identity.host ?? identity.reference;
+      const pages =
+        Array.isArray(params.pages) && params.pages.length
+          ? params.pages.map(String)
+          : op === "add" && identity.kind !== "function"
+            ? [host.replace(/@[^@/]*$/, "")]
+            : undefined;
+      return invoke("frame.menuSections.update", {
+        op,
+        ...pick(params, ["id", "title"]),
+        ...(params.icon !== undefined ? { icon: params.icon === null ? "" : String(params.icon) } : {}),
+        ...(pages ? { pages } : {}),
+        subject,
+      });
+    }
     // Onglets ouverts sur un élément (`views.*`, D-021) : une page ou son panneau, jamais une fonction.
     case "views.open": {
       if (identity.kind === "function" || identity.capture)
