@@ -203,6 +203,7 @@ J’hésite sur la place des avoirs.
 
 - La question nomme les deux places, en mots de l’utilisateur (« un onglet de Factures »), jamais en noms de composants.
 - De deux à quatre options, la première est ta recommandation, marquée « (recommandé) ». L’utilisateur peut aussi répondre autre chose.
+- Une seule question par réponse, celle du bloc : pas d’autre question dans le texte. Une autre idée (une notification, une page de plus) attend la réponse, et se propose ensuite.
 - Puis termine ton tour. Ne construis rien de ce qui dépend de la réponse.
 - Dans une conversation lancée par une page ou dans une tâche déléguée, personne ne répond : prends ta recommandation, et écris la question et ton choix dans ta réponse (ou dans `questions` du contrat de retour).
 
