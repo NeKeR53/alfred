@@ -75,21 +75,15 @@ async fn call_script(
 ) -> AppResult<Value> {
     let reference = format!("{}/{}", manifest.id, declared.id);
     let started = std::time::Instant::now();
-    // Pont du SDK : un jeton propre à cet appel, qui cesse de valoir à la fin du script.
-    let bridge = crate::script_sdk::grant(&manifest.id, &declared.id, examples);
+    // Pont du SDK : un jeton propre à cet appel, qui cesse de valoir à la fin du script ; `PYTHONPATH` donne
+    // `import alfred` à une fonction Python.
+    let bridge = crate::python::bridge::env(state, &manifest.id, Some(&declared.id), examples)?;
     let mut env = vec![
-        ("ALFRED_MODULE".to_string(), manifest.id.clone()),
         ("ALFRED_FUNCTION".to_string(), declared.id.clone()),
         ("ALFRED_CALLER".to_string(), caller.to_string()),
         ("ALFRED_SPACE".to_string(), space.root.to_string_lossy().to_string()),
-        ("ALFRED_SDK_TOKEN".to_string(), bridge.token.clone()),
     ];
-    if let Some(url) = crate::script_sdk::url(state) {
-        env.push(("ALFRED_SDK_URL".to_string(), url));
-    }
-    if examples {
-        env.push(("ALFRED_EXAMPLES".to_string(), "1".to_string()));
-    }
+    env.extend(bridge.env.iter().cloned());
     let result = scripts::run(ScriptCall {
         runtime: declared.runtime,
         file: space.function_path(&manifest.id, declared),
@@ -99,6 +93,8 @@ async fn call_script(
         timeout: scripts::TIMEOUT,
     })
     .await;
+    // Ce que le script a écrit sur stderr part au journal : sans son jeton.
+    let result = result.map_err(|error| crate::python::bridge::redact_error(error, bridge.token()));
     drop(bridge);
     let duration = Some(started.elapsed().as_millis() as u64);
     match &result {

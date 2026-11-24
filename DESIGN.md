@@ -80,6 +80,7 @@ import { Notice, Row, Stack, Text } from "@alfred/kit";       // écart et texte
 
 - **`socle-ui`** : tous les composants et gabarits. Avant d’employer un composant, relire ses options dans ce document ; un nom ou une option absente n’existe pas.
 - **`@alfred/sdk`** : base, fonctions, fichiers, coquille, état retenu (`usePageState`), chargement (`useAsync`) et moteurs (`loadTerminal`, `loadPdf`). Référence : SDK.md.
+- **Code Python du module** (`import alfred`) : il ne dessine rien. Une page qui lance un travail Python long montre sa progression en lisant le canal que le code publie (`alfred.channels.open("nom")` → `useChannel("<module>:nom")`), par exemple dans une `ProgressBar` ; la fin se dit par une notification (`alfred.notify`). Référence : SDK.md, section 2, « SDK Python ».
 - **`@alfred/kit`** : quatre petits composants d’Alfred, là où socle-ui n’a rien :
   - `Stack` (`gap` : `none`, `xs`, `sm`, `md`, `lg`) empile des blocs ;
   - `Row` (`gap`, `wrap`, `justify` : `start`, `between`, `end`) aligne sur une ligne ;

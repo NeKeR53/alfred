@@ -43,7 +43,7 @@ Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichi
 - **Sortie** : stdout. S’il contient du JSON, c’est la valeur rendue ; sinon, le texte sans ses blancs finaux ; vide, `null`. Au plus 1 Mo.
 - **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
 - **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER`, `ALFRED_SPACE`, et le pont du SDK (`ALFRED_SDK_URL`, `ALFRED_SDK_TOKEN`, ci-dessous). Jamais de secret : un service passe par `clients.request`. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
-- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
+- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `channels.open` (`name`), `channels.publish` (`channel`, `text` ou `data`), `channels.close`, `notify` (`title`, `description`, `tone`), `log` (`level`, `message`, `data`), `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
 - **Interpréteur** : cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
 
 ```bash
@@ -67,27 +67,7 @@ if not entree.get("nombres"):
 print(json.dumps({"somme": sum(entree["nombres"])}))
 ```
 
-```python
-# functions/importer.py : lit un CSV du module et remplit sa table par le pont du SDK.
-import csv, io, json, os, sys, urllib.error, urllib.request
-
-def alfred(methode, **parametres):
-    requete = urllib.request.Request(
-        f"{os.environ['ALFRED_SDK_URL']}/{methode}",
-        data=json.dumps(parametres).encode(),
-        headers={"Authorization": f"Bearer {os.environ['ALFRED_SDK_TOKEN']}", "Content-Type": "application/json"},
-    )
-    try:
-        return json.load(urllib.request.urlopen(requete))["ok"]
-    except urllib.error.HTTPError as erreur:
-        sys.exit(json.load(erreur)["error"]["message"])
-
-entree = json.load(sys.stdin)
-texte = alfred("files.readText", id=entree["fichier"])
-for ligne in csv.DictReader(io.StringIO(texte), delimiter=";"):
-    alfred("db.execute", sql="INSERT INTO compta_lignes (libelle, montant) VALUES (?, ?)", params=[ligne["libelle"], float(ligne["montant"])])
-print(json.dumps({"ok": True}))
-```
+Une fonction Python passe par le SDK Python (`import alfred`, ci-dessous) plutôt que par le pont à la main.
 
 ```bash
 # Le même pont en bash, avec curl.
@@ -96,6 +76,56 @@ alfred db.query '{"sql":"SELECT count(*) AS n FROM compta_lignes"}'
 ```
 
 Sans `jq` ni Python, un script bash peut lire un champ simple avec `sed`. Sous Windows PowerShell 5.1, écrire d’abord `[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8` pour les accents.
+
+### SDK Python : `import alfred`
+
+Le code Python d’un module importe `alfred` sans rien installer : Alfred met le paquet sur le `PYTHONPATH` de chaque fonction en `runtime: "python"` (et du noyau Python du module). Bibliothèque standard seulement, Python 3.8 ou plus. Le code a les mêmes accès que le code TypeScript de son module, ni plus ni moins : ses tables, ses fichiers, ses comptes, ses accords. Tout appel est synchrone ; un échec lève `alfred.AlfredError` (`message` en français, `status`, `method`, `detail`).
+
+| API | Ce qu’elle fait |
+| --- | --- |
+| `alfred.db.query(sql, params=[])` | Lignes de la base de l’espace, en dictionnaires. Tables du module seulement (`<module>_…`). |
+| `alfred.db.execute(sql, params=[])` | Écriture ; rend `{"changes", "lastInsertId"}`. |
+| `alfred.client("jira", instance=None)` | Compte d’un service déclaré dans `uses.clients` de la fonction. `.get(path, query)`, `.post(path, body)`, `.put`, `.patch`, `.delete`, `.request(method, path, query=, headers=, body=, form=, multipart=, file=, response_type=, cache=, sealed=)` rendent un `alfred.Response` (`status`, `ok`, `headers`, `body`, `raise_for_status()`). Aussi `.download(path, name=)`, `.stream(path)`, `.instances()`, `.params()`, `.clear_cache()`. Alfred ajoute l’authentification : le code ne voit jamais le secret. |
+| `alfred.secrets` | `is_ref(valeur)`, `PREFIX`. Un champ secret arrive en référence opaque ; `reveal` et `write_env_file` lèvent toujours une erreur : c’est la page qui les appelle. |
+| `alfred.files` | `save(name, text=… ou data=b"…", mime=)`, `list(prefix, limit)`, `get(id)`, `read(id)` (octets), `read_text(id)`, `remove(id)`. |
+| `alfred.notify(title, description=None, tone="info")` | Notification dans Alfred (et au système quand Alfred est en arrière-plan). `tone` : `info`, `success`, `warning`, `error`. |
+| `alfred.events.publish(event, payload, occurrence=None)` | Événement du module (section 13). |
+| `alfred.channels.open(name=None)` | Canal de progression vers la page : `canal.publish({...})` ou `canal.publish("texte")`, `canal.close()` (ou `with`). Avec `name`, l’identifiant est connu d’avance : `"<module>:<name>"`. La page le lit avec `useChannel("<module>:<name>")`, même avant son ouverture ; chaque événement `data` porte le texte publié (du JSON pour un dictionnaire). `publish` rend `False` quand plus personne ne lit. |
+| `alfred.log(msg, **données)`, `alfred.log.info`, `.warning`, `.error` | Ligne au journal de l’espace (Réglages › Journal, type « Message ») et sur stderr. Le jeton du pont en est effacé ; n’y mets pas de secret. |
+| `alfred.functions.call(nom, input)`, `alfred.jobs.start/get/list/cancel` | Autres fonctions et tâches de fond du module. |
+| `alfred.call("méthode", **paramètres)` | Toute autre méthode du pont (liste ci-dessus). |
+| `alfred.module`, `alfred.examples` | Le module appelant ; vrai en mode données d’exemple. |
+
+Exemple : une fonction Python qui lit des tickets Jira et les écrit dans la base du module. `module.json` déclare la fonction avec `"runtime": "python"` et `"uses": { "clients": ["jira"] }` ; la migration crée `suivi_tickets (cle TEXT PRIMARY KEY, titre TEXT, etat TEXT)`.
+
+```python
+# functions/synchroniser.py
+import json, sys
+import alfred
+
+entree = json.load(sys.stdin)
+jira = alfred.client("jira")
+reponse = jira.get("/rest/api/3/search", {"jql": entree.get("jql", "assignee = currentUser()"), "maxResults": 100})
+reponse.raise_for_status()
+tickets = reponse.body["issues"]
+
+with alfred.channels.open("synchro") as canal:  # la page lit useChannel("suivi:synchro")
+    for rang, ticket in enumerate(tickets, start=1):
+        alfred.db.execute(
+            "INSERT INTO suivi_tickets (cle, titre, etat) VALUES (?, ?, ?) "
+            "ON CONFLICT (cle) DO UPDATE SET titre = excluded.titre, etat = excluded.etat",
+            [ticket["key"], ticket["fields"]["summary"], ticket["fields"]["status"]["name"]],
+        )
+        canal.publish({"fait": rang, "total": len(tickets)})
+
+alfred.log.info("Synchronisation Jira finie", tickets=len(tickets))
+alfred.notify("Tickets à jour", f"{len(tickets)} tickets lus dans Jira.", tone="success")
+print(json.dumps({"tickets": len(tickets)}))
+```
+
+Une erreur non rattrapée (`AlfredError` comprise) termine le script avec un code non nul : son message devient l’erreur de la fonction. Pour un cas attendu, rattrape-la : `except alfred.AlfredError as erreur: sys.exit(erreur.message)`.
+
+**Sécurité du pont.** Le pont n’écoute que sur 127.0.0.1. Chaque processus reçoit son propre jeton (`ALFRED_SDK_TOKEN`), lié à un seul module et qui cesse de valoir à la fin du processus ; une demande sans jeton, avec un jeton expiré, avec le jeton d’un autre module (`X-Alfred-Module`) ou venue d’un navigateur (en-tête `Origin`) est refusée. N’écris jamais le jeton ni l’environnement dans un fichier, la sortie ou le journal.
 
 ## 3. Charger des données : `useAsync` et les gabarits
 

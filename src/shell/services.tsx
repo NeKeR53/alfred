@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { Button, Modal } from "socle-ui";
 import { SecretRevealHost } from "../features/vault/SecretReveal";
-import { invoke, onNativeEvent } from "../lib/native";
+import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
 import { callFunction } from "./functionHost";
@@ -88,6 +88,19 @@ function bind() {
   onNativeEvent("agent:notice", (payload) => {
     const notice = payload as { title: string; description?: string };
     notify({ title: notice.title, description: notice.description, tone: "info", source: "Agent" });
+  });
+  // Notification venue du code d’un module hors page (`alfred.notify` en Python, script) : comme `shell.notify`.
+  onNativeEvent("module:notify", (payload) => {
+    const message = payload as {
+      module: string;
+      title: string;
+      description?: string | null;
+      tone?: "info" | "success" | "warning" | "error";
+    };
+    const module = useShell.getState().snapshot?.modules.find((candidate) => candidate.id === message.module)?.name;
+    const description = message.description ?? undefined;
+    notify({ title: message.title, description, tone: message.tone ?? "info", source: module ?? message.module });
+    void notifySystem(message.title, description).catch(() => false);
   });
   // Une tâche de fond se termine pendant que l’utilisateur fait autre chose : il en est prévenu.
   onNativeEvent("jobs:finished", (payload) => {

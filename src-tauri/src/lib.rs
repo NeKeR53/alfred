@@ -42,6 +42,7 @@ mod page_windows;
 mod pages;
 mod permissions;
 mod process_tree;
+mod python;
 mod reorganize;
 mod schedules;
 mod script_sdk;

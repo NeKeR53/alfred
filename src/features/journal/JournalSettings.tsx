@@ -29,6 +29,7 @@ export const JOURNAL_KINDS = [
   { value: "event", label: "Événements" },
   { value: "command", label: "Commandes" },
   { value: "agent", label: "Agents" },
+  { value: "log", label: "Messages" },
 ] as const;
 
 type KindFilter = (typeof JOURNAL_KINDS)[number]["value"];
@@ -45,6 +46,7 @@ const KIND_LABEL: Record<string, string> = {
   command: "Commande",
   agent: "Agent",
   module: "Module",
+  log: "Message",
 };
 
 const LIMIT = 200;

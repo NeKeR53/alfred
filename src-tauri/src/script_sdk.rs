@@ -69,6 +69,8 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     ("channels.read", "frame.channels.read", &["channel", "after", "wait"]),
     ("channels.write", "frame.channels.write", &["channel", "text", "data"]),
     ("channels.close", "frame.channels.close", &["channel"]),
+    ("channels.open", "frame.channels.open", &["name"]),
+    ("channels.publish", "frame.channels.publish", &["channel", "text", "data"]),
     ("clients.instances", "frame.clients.instances", &["client"]),
     ("clients.params", "frame.clients.params", &["client", "instance"]),
     ("folders.list", "frame.folders.list", &[]),
@@ -121,20 +123,31 @@ impl Drop for Grant {
 /// Ouvre le pont pour un appel de la fonction `module/fonction` ; `examples` : l’appel montre des données d’exemple,
 /// et ce que le script demande par le pont aussi (aucune requête vers un service).
 pub fn grant(module: &str, function: &str, examples: bool) -> Grant {
-    use rand::Rng;
-    let token: String = rand::rng().sample_iter(rand::distr::Alphanumeric).take(48).map(char::from).collect();
-    let subject = Subject {
+    grant_subject(Subject {
         kind: "function".into(),
         module: module.to_string(),
         reference: format!("{module}/{function}"),
         instance: None,
         accounts: Default::default(),
         examples,
-    };
+    })
+}
+
+/// Ouvre le pont pour un demandeur : un jeton aléatoire de 48 caractères, valable tant que `Grant` vit.
+pub fn grant_subject(subject: Subject) -> Grant {
+    use rand::Rng;
+    let token: String = rand::rng().sample_iter(rand::distr::Alphanumeric).take(48).map(char::from).collect();
     if let Ok(mut all) = tokens().lock() {
         all.insert(token.clone(), subject);
     }
     Grant { token }
+}
+
+/// Remplace dans `text` tout jeton du pont encore valable par « [jeton] » : rien de ce qui part au journal ne
+/// le porte en clair.
+pub fn redact(text: &str) -> String {
+    let Ok(all) = tokens().lock() else { return text.to_string() };
+    all.keys().fold(text.to_string(), |text, token| if text.contains(token.as_str()) { text.replace(token.as_str(), "[jeton]") } else { text })
 }
 
 /// Adresse du pont, à passer au script.
@@ -142,13 +155,19 @@ pub fn url(state: &AppState) -> Option<String> {
     state.server().ok().map(|server| format!("http://127.0.0.1:{}/sdk", server.port))
 }
 
-fn subject_of(headers: &HeaderMap) -> Option<Subject> {
+/// En-tête du module appelant, envoyé par le SDK Python (`ALFRED_MODULE`).
+pub const MODULE_HEADER: &str = "x-alfred-module";
+
+pub(crate) fn subject_of(headers: &HeaderMap) -> Option<Subject> {
     let token = headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ")?.trim();
     tokens().lock().ok()?.get(token).cloned()
 }
 
 /// Traite une méthode pour le module du jeton.
 pub async fn call(state: &Shared, subject: &Subject, method: &str, params: &Value) -> AppResult<Value> {
+    if let Some(result) = crate::python::bridge::handle(state, subject, method, params) {
+        return result;
+    }
     if method == "functions.call" {
         let name = params.get("function").and_then(Value::as_str).unwrap_or_default();
         let reference = if name.contains('/') { name.to_string() } else { format!("{}/{name}", subject.module) };
@@ -188,6 +207,16 @@ async fn serve(State(state): State<Shared>, headers: HeaderMap, Path(method): Pa
         )
             .into_response();
     };
+    // Le SDK Python dit de quel module il croit venir : un jeton pris à un autre module est refusé.
+    if let Some(claimed) = headers.get(MODULE_HEADER) {
+        if claimed.to_str().ok() != Some(subject.module.as_str()) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": { "message": "Ce jeton appartient à un autre module : chaque module a le sien." } })),
+            )
+                .into_response();
+        }
+    }
     let params = body.map(|Json(value)| value).unwrap_or(json!({}));
     match call(&state, &subject, &method, &params).await {
         Ok(value) => Json(json!({ "ok": value })).into_response(),

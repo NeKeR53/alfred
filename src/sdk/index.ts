@@ -848,7 +848,8 @@ export interface ChannelRead {
   reason: string | null;
   /** Événements oubliés faute de lecture (au-delà de 5 000 ou 4 Mo gardés). */
   dropped: number;
-  kind: "stream" | "socket";
+  /** `progress` : canal ouvert par le code du module (`alfred.channels.open` en Python). */
+  kind: "stream" | "socket" | "progress";
 }
 
 /**

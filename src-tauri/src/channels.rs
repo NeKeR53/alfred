@@ -219,6 +219,17 @@ fn owned<'a>(
 pub async fn read(space: &str, subject: &Subject, holder: Option<&str>, id: &str, after: u64, wait: u64) -> AppResult<Value> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(wait.min(MAX_WAIT));
     loop {
+        let pending = !lock()?.contains_key(id) && is_named_of(&subject.module, id);
+        if pending {
+            // Canal nommé pas encore ouvert : la page attend un peu, puis relit.
+            tokio::time::sleep(Duration::from_secs(wait.min(2))).await;
+            if lock()?.contains_key(id) {
+                continue;
+            }
+            return Ok(json!({
+                "events": [], "next": after, "closed": false, "reason": null, "dropped": 0, "kind": "progress", "client": "",
+            }));
+        }
         let notify = {
             let mut channels = lock()?;
             let channel = owned(&mut channels, space, subject, id)?;
@@ -297,8 +308,74 @@ pub fn write(space: &str, subject: &Subject, id: &str, text: Option<String>, dat
 pub fn close(space: &str, subject: &Subject, id: &str) -> AppResult<()> {
     let mut channels = lock()?;
     let channel = owned(&mut channels, space, subject, id)?;
-    shut(channel, "fermé par la page");
+    shut(channel, if subject.kind == "function" { "fermé par le module" } else { "fermé par la page" });
     Ok(())
+}
+
+/// Identifiant d’un canal nommé : `module:nom`. Un identifiant ordinaire (uuid) n’a pas de deux-points.
+fn named_id(module: &str, name: &str) -> AppResult<String> {
+    let valid = !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return Err(AppError::new("Nom de canal invalide : 64 caractères au plus, lettres, chiffres, « - », « _ » ou « . »."));
+    }
+    Ok(format!("{module}:{name}"))
+}
+
+fn is_named_of(module: &str, id: &str) -> bool {
+    id.strip_prefix(module).and_then(|rest| rest.strip_prefix(':')).is_some_and(|name| named_id(module, name).is_ok())
+}
+
+/// Canal de progression : le code du module (fonction en script, objet Python) l’ouvre et y publie, sa page le lit
+/// par `useChannel(id)`. Avec `name`, l’identifiant est connu d’avance (`module:nom`) : la page peut le lire avant
+/// qu’il soit ouvert, et le rouvrir reprend à son dernier rang.
+pub fn open_progress(space: &str, module: &str, name: Option<&str>) -> AppResult<String> {
+    let Some(name) = name else {
+        return open(space, module, "", "progress", None);
+    };
+    let id = named_id(module, name)?;
+    {
+        let mut channels = lock()?;
+        if let Some(channel) = channels.get_mut(&id).filter(|channel| channel.space == space) {
+            if channel.closed.is_some() {
+                channel.closed = None;
+                channel.closed_at = None;
+                channel.opened = Instant::now();
+                channel.last_read = None;
+            }
+            return Ok(id);
+        }
+    }
+    let fresh = open(space, module, "", "progress", None)?;
+    let mut channels = lock()?;
+    if let Some(channel) = channels.remove(&fresh) {
+        channels.insert(id.clone(), channel);
+    }
+    Ok(id)
+}
+
+/// Publie dans un canal de progression : du texte, ou une valeur JSON (envoyée en texte JSON). Rend `false` sans
+/// erreur si le canal est fermé (la page est partie) : le travail continue sans lecteur.
+pub fn publish(space: &str, subject: &Subject, id: &str, text: Option<String>, data: Option<Value>) -> AppResult<bool> {
+    let text = match (text, data) {
+        (Some(text), None) => text,
+        (None, Some(data)) => serde_json::to_string(&data)?,
+        _ => return Err(AppError::new("Fournir `text` ou `data` pour publier dans le canal.")),
+    };
+    if text.len() > MAX_WRITE {
+        return Err(AppError::new("Publication trop longue : 64 Kio au plus par appel."));
+    }
+    let mut channels = lock()?;
+    let channel = owned(&mut channels, space, subject, id)?;
+    if channel.kind != "progress" {
+        return Err(AppError::new("Seul un canal ouvert par `channels.open` reçoit des publications."));
+    }
+    if channel.closed.is_some() {
+        return Ok(false);
+    }
+    record(channel, json!({ "type": "data", "data": text }));
+    Ok(true)
 }
 
 /// Le demandeur d’une lecture, d’une écriture ou d’une fermeture : un cadre d’un module qui dépend du module qui a
@@ -392,6 +469,13 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         }
         let open_space = state.space()?;
         let space = open_space.root.to_string_lossy().to_string();
+        if command == "frame.channels.open" {
+            if subject.kind != "function" {
+                return Err(AppError::new("Une page lit un canal ; c’est le code du module (fonction, Python) qui l’ouvre."));
+            }
+            let name: Option<String> = opt_arg(args, "name")?;
+            return Ok(json!({ "channel": open_progress(&space, &subject.module, name.as_deref())? }));
+        }
         let id: String = arg(args, "channel")?;
         // Un canal ouvert par un connecteur dont le module dépend (`requires`) se lit comme le sien.
         let module = subject.module.clone();
@@ -409,6 +493,10 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             "frame.channels.close" => {
                 close(&space, &subject, &id)?;
                 Ok(Value::Null)
+            }
+            "frame.channels.publish" => {
+                let open = publish(&space, &subject, &id, opt_arg(args, "text")?, args.get("data").cloned().filter(|data| !data.is_null()))?;
+                Ok(json!({ "open": open }))
             }
             _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
         }
