@@ -392,6 +392,10 @@ pub struct FunctionDecl {
     /// Langage : TypeScript (par défaut, exécuté dans l’interface) ou un script (bash, pwsh, python) lancé par Rust.
     #[serde(skip_serializing_if = "Runtime::is_ts")]
     pub runtime: Runtime,
+    /// Python seulement : la fonction tourne dans le noyau Python du module (`def main(input)` de son fichier, état
+    /// gardé entre deux appels) au lieu d’un processus neuf par appel (stdin et stdout JSON).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub kernel: bool,
     /// Ce que fait la fonction chez le service : lire (`read`) ou modifier (`write`). Absent, elle compte comme
     /// une écriture : ses tests ne se lancent jamais d’office.
     #[serde(skip_serializing_if = "Option::is_none")]

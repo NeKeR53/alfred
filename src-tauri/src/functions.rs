@@ -75,6 +75,16 @@ async fn call_script(
 ) -> AppResult<Value> {
     let reference = format!("{}/{}", manifest.id, declared.id);
     let started = std::time::Instant::now();
+    if declared.runtime == Runtime::Python && declared.kernel {
+        // Le noyau note lui-même au journal ses échecs et ce que le code écrit.
+        let file = space.function_path(&manifest.id, declared);
+        let result = crate::python::objects::run_function(state, &manifest.id, &file, input).await;
+        let duration = Some(started.elapsed().as_millis() as u64);
+        if result.is_ok() {
+            journal(state, "function", &reference, true, duration, &format!("Appelée par {caller} (noyau Python)"), Some(&json!({ "caller": caller })));
+        }
+        return result;
+    }
     // Pont du SDK : un jeton propre à cet appel, qui cesse de valoir à la fin du script ; `PYTHONPATH` donne
     // `import alfred` à une fonction Python.
     let bridge = crate::python::bridge::env(state, &manifest.id, Some(&declared.id), examples)?;
@@ -168,6 +178,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 runtime: opt_arg::<Runtime>(args, "runtime")
                     .map_err(|_| AppError::new("Langage inconnu : `runtime` vaut ts, bash, pwsh ou python."))?
                     .unwrap_or_default(),
+                kernel: opt_arg::<bool>(args, "kernel")?.unwrap_or(false),
                 effect: opt_arg::<crate::space::Effect>(args, "effect")
                     .map_err(|_| AppError::new("Effet inconnu : `effect` vaut read ou write."))?,
                 tests: opt_arg::<Vec<crate::space::FunctionTest>>(args, "tests")

@@ -1007,6 +1007,216 @@ export const functions = {
   },
 };
 
+// --- Python (noyau du module) ---------------------------------------------------------------------------------
+
+/** Options d’un appel au noyau Python. */
+export interface PythonCallOptions {
+  /** Délai en secondes (120 par défaut, une heure au plus). Dépassé, le noyau est arrêté et ses objets perdus. */
+  timeout?: number;
+  /** Canal d’avancement (`python.channel()`), qui reçoit `progress`, `emit` et chaque `yield` de l’appel. */
+  channel?: string;
+}
+
+/** Un appel lancé avec son canal d’avancement : lire `channel` par `usePythonChannel`, attendre `result`. */
+export interface PythonRun<Result = unknown> {
+  channel: string;
+  result: Promise<Result>;
+}
+
+/** Objet Python créé dans le noyau du module ; libéré par `dispose()` ou à la fermeture de la page. */
+export interface PythonObject {
+  readonly handle: string;
+  /** `fichier.Classe` (`analyse.Graphe`). */
+  readonly class: string;
+  /** Appelle une méthode : un objet devient des arguments nommés, une liste des arguments positionnels. */
+  call<Result = unknown>(method: string, args?: unknown, options?: PythonCallOptions): Promise<Result>;
+  /** Comme `call`, avec un canal d’avancement ouvert pour l’occasion. */
+  start<Result = unknown>(
+    method: string,
+    args?: unknown,
+    options?: Omit<PythonCallOptions, "channel">,
+  ): Promise<PythonRun<Result>>;
+  dispose(): Promise<void>;
+}
+
+export interface PythonStatus {
+  running: boolean;
+  python?: string;
+  pid?: number;
+  interpreter?: string;
+  uptimeSeconds?: number;
+  idleSeconds?: number;
+  /** Appels en cours. */
+  busy?: number;
+  objects?: { handle: string; class: string; holder: string }[];
+  /** Sans appel pendant ce temps, le noyau s’arrête (600 s). */
+  idleLimitSeconds: number;
+}
+
+function callArgs(args: unknown): unknown {
+  return args === undefined ? null : args;
+}
+
+function pythonObject(handle: string, className: string): PythonObject {
+  const object: PythonObject = {
+    handle,
+    class: className,
+    call: <Result>(method: string, args?: unknown, options: PythonCallOptions = {}) =>
+      request<Result>("python.call", { handle, method, args: callArgs(args), ...options }),
+    start: async <Result>(method: string, args?: unknown, options: Omit<PythonCallOptions, "channel"> = {}) => {
+      const channel = await python.channel();
+      return { channel, result: object.call<Result>(method, args, { ...options, channel }) };
+    },
+    dispose: async () => {
+      await request("python.dispose", { handle });
+    },
+  };
+  return object;
+}
+
+/**
+ * Noyau Python du module : un processus qui garde ses objets entre deux appels. Les classes et fonctions sont dans
+ * `python/` du module (`python/analyse.py` → `analyse.Graphe`). Arguments : un objet devient des arguments nommés,
+ * une liste des arguments positionnels. Une erreur Python rejette la promesse (`detail.python.trace`).
+ */
+export const python = {
+  /** Crée un objet d’une classe de `python/` et rend sa poignée. */
+  async create(
+    className: string,
+    args?: unknown,
+    options: Omit<PythonCallOptions, "channel"> = {},
+  ): Promise<PythonObject> {
+    const created = await request<{ handle: string; class: string }>("python.create", {
+      class: className,
+      args: callArgs(args),
+      ...options,
+    });
+    return pythonObject(created.handle, created.class);
+  },
+  /** Appelle une fonction libre de `python/` (`analyse.resumer`). */
+  run<Result = unknown>(functionName: string, args?: unknown, options: PythonCallOptions = {}): Promise<Result> {
+    return request<Result>("python.run", { function: functionName, args: callArgs(args), ...options });
+  },
+  /** Comme `run`, avec un canal d’avancement ouvert pour l’occasion. */
+  async start<Result = unknown>(
+    functionName: string,
+    args?: unknown,
+    options: Omit<PythonCallOptions, "channel"> = {},
+  ): Promise<PythonRun<Result>> {
+    const channel = await python.channel();
+    return { channel, result: python.run<Result>(functionName, args, { ...options, channel }) };
+  },
+  /** Ouvre un canal d’avancement pour un appel ; il se ferme à la fin de cet appel. */
+  async channel(): Promise<string> {
+    return (await request<{ channel: string }>("python.channel")).channel;
+  },
+  status(): Promise<PythonStatus> {
+    return request("python.status");
+  },
+};
+
+/** Erreur d’un objet perdu (noyau redémarré : fichier changé, inactivité, délai dépassé) : le recréer. */
+export function isPythonObjectLost(error: unknown): boolean {
+  return (
+    error instanceof AlfredSdkError &&
+    typeof error.detail === "object" &&
+    error.detail !== null &&
+    (error.detail as { code?: unknown }).code === "objectLost"
+  );
+}
+
+export interface PythonObjectState {
+  object: PythonObject | null;
+  loading: boolean;
+  error: Error | undefined;
+  /** Recrée l’objet (après un `isPythonObjectLost`, par exemple). */
+  recreate: () => void;
+}
+
+/**
+ * Crée un objet Python pour la page et le libère quand la page se ferme ou que `deps` changent :
+ * `const { object } = usePythonObject("analyse.Graphe", { source }, [source])`.
+ */
+export function usePythonObject(
+  className: string,
+  args: unknown,
+  deps: ReadonlyArray<unknown> = [],
+): PythonObjectState {
+  const [state, setState] = useState<{ object: PythonObject | null; loading: boolean; error?: Error }>({
+    object: null,
+    loading: true,
+  });
+  const [round, setRound] = useState(0);
+  const argsRef = useRef(args);
+  argsRef.current = args;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `deps` décide de la recréation, comme `useAsync`.
+  useEffect(() => {
+    let active = true;
+    let created: PythonObject | null = null;
+    setState({ object: null, loading: true });
+    python.create(className, argsRef.current).then(
+      (object) => {
+        created = object;
+        if (active) setState({ object, loading: false });
+        else void object.dispose().catch(() => undefined);
+      },
+      (error: unknown) => {
+        if (active)
+          setState({ object: null, loading: false, error: error instanceof Error ? error : new Error(String(error)) });
+      },
+    );
+    return () => {
+      active = false;
+      if (created) void created.dispose().catch(() => undefined);
+    };
+  }, [className, round, ...deps]);
+  const recreate = useCallback(() => setRound((value) => value + 1), []);
+  return { object: state.object, loading: state.loading, error: state.error, recreate };
+}
+
+export interface PythonProgress {
+  /** Entre 0 et 1, si le code l’a donné. */
+  fraction?: number;
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface PythonChannelState {
+  /** Dernier avancement annoncé (`progress`). */
+  progress: PythonProgress | null;
+  /** Valeurs envoyées par `emit` ou `yield`, dans l’ordre. */
+  data: unknown[];
+  /** L’appel est fini (avec succès ou non). */
+  closed: boolean;
+  error: Error | undefined;
+}
+
+function parsePythonData(text: string | undefined): unknown {
+  if (text === undefined) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Lit le canal d’avancement d’un appel Python (`start`) : avancement et valeurs reçues, au fil de l’eau. */
+export function usePythonChannel(
+  channel: string | null | undefined,
+  options: { keep?: number } = {},
+): PythonChannelState {
+  const read = useChannel(channel, options);
+  return useMemo(() => {
+    let progress: PythonProgress | null = null;
+    const data: unknown[] = [];
+    for (const event of read.events) {
+      if (event.event === "progress") progress = parsePythonData(event.data) as PythonProgress;
+      else data.push(parsePythonData(event.data));
+    }
+    return { progress, data, closed: read.closed, error: read.error };
+  }, [read.events, read.closed, read.error]);
+}
+
 // --- IA --------------------------------------------------------------------------------------------------------
 
 export interface OneShotOptions {

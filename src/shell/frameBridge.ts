@@ -321,6 +321,8 @@ export function releaseFrame(identity: FrameIdentity) {
   void handleFrameRequest(identity, "voice.cancelListening", {}).catch(() => undefined);
   // Les flux et WebSocket que ce cadre était seul à lire se ferment avec lui.
   if (identity.kind !== "function") void handleFrameRequest(identity, "channels.release", {}).catch(() => undefined);
+  // Les objets Python que ce cadre a créés sont libérés avec lui.
+  if (identity.kind !== "function") void handleFrameRequest(identity, "python.release", {}).catch(() => undefined);
 }
 
 const BADGE_TARGET = {
@@ -613,6 +615,28 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       return invoke("frame.channels.write", { ...pick(params, ["channel", "text", "data"]), subject });
     case "channels.close":
       return invoke("frame.channels.close", { ...pick(params, ["channel"]), subject });
+    // Noyau Python du module : objets créés et appelés par la page, libérés quand son cadre se ferme (`holder`).
+    case "python.create":
+      return invoke("frame.python.create", {
+        ...pick(params, ["class", "args", "timeout"]),
+        holder: `${identity.kind}:${identity.reference}`,
+        subject,
+      });
+    case "python.call":
+      return invoke("frame.python.call", {
+        ...pick(params, ["handle", "method", "args", "timeout", "channel"]),
+        subject,
+      });
+    case "python.run":
+      return invoke("frame.python.run", { ...pick(params, ["function", "args", "timeout", "channel"]), subject });
+    case "python.dispose":
+      return invoke("frame.python.dispose", { ...pick(params, ["handle"]), subject });
+    case "python.channel":
+      return invoke("frame.python.channel", { subject });
+    case "python.status":
+      return invoke("frame.python.status", { subject });
+    case "python.release":
+      return invoke("frame.python.release", { holder: `${identity.kind}:${identity.reference}`, subject });
     case "files.save":
       return invoke("frame.files.save", { ...pick(params, ["name", "data", "text", "mime"]), subject });
     case "files.list":

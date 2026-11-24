@@ -29,6 +29,9 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
+    if let Some(result) = crate::python::objects::handle(&state, command, &args).await {
+        return result;
+    }
     delegate!(vault, agent_workspace, examples, clients, space_db, function_tests, backups, module_files, folders, folder_git, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, model_files, commands, functions, agents, conversations, mcp, webhooks, schedules, marketplace, permissions, pages, reorganize, composer, voice, badges, menu_sections, menu_zones, setup, team_sync, spaces);
     match command {
         "app.info" => {
@@ -370,6 +373,8 @@ fn open_space(state: &Arc<AppState>, path: &std::path::Path, name: Option<&str>)
         if matches!(event.kind, notify::EventKind::Access(_)) {
             return;
         }
+        // Un fichier `.py` d’un module a changé : son noyau Python redémarre.
+        crate::python::kernel::kernels().files_changed(&event.paths);
         let relevant = event.paths.iter().any(|path| {
             path.strip_prefix(&watch_root).is_ok_and(|relative| {
                 !relative.starts_with(".git") && !relative.starts_with(crate::space::LOCAL_DIR)

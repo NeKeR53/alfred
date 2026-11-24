@@ -1455,3 +1455,127 @@ export async function renommerProduit(depot: string, id: string, nom: string) {
   void shell.notify({ title: "Produit renommé", description: "Partagé avec l’équipe.", tone: "success" });
 }
 ```
+
+## 19. Noyau Python : `python`
+
+Le **noyau Python** du module est un processus Python qui reste vivant : un objet créé par une page garde son état d’un appel à l’autre (un graphe chargé, un modèle, une connexion locale). Un noyau par module de l’espace ouvert. Il démarre au premier appel, s’arrête après 10 minutes sans appel, redémarre quand un fichier `.py` du module change, s’arrête quand l’espace se ferme ou qu’Alfred quitte.
+
+Les classes et les fonctions sont dans `python/` du module : `python/analyse.py` définit `Graphe`, la page l’appelle `analyse.Graphe`. Un sous-dossier est un paquet (`python/outils/texte.py` → `outils.texte.f`).
+
+```ts
+python.create(classe: string, args?: unknown, options?: { timeout?: number }): Promise<PythonObject>;
+objet.call<R>(methode: string, args?: unknown, options?: { timeout?: number; channel?: string }): Promise<R>;
+objet.start<R>(methode: string, args?: unknown, options?: { timeout?: number }): Promise<{ channel: string; result: Promise<R> }>;
+objet.dispose(): Promise<void>;
+python.run<R>(fonction: string, args?: unknown, options?: { timeout?: number; channel?: string }): Promise<R>;
+python.start<R>(fonction: string, args?: unknown, options?): Promise<{ channel: string; result: Promise<R> }>;
+python.status(): Promise<PythonStatus>;
+usePythonObject(classe, args, deps): { object, loading, error, recreate };
+usePythonChannel(channel): { progress, data, closed, error };
+isPythonObjectLost(erreur): boolean;
+```
+
+- **Arguments** : un objet JSON devient des arguments nommés (`{ seuil: 3 }` → `filtrer(seuil=3)`), une liste des arguments positionnels, rien aucun argument, une autre valeur un seul argument. Le résultat est du JSON : dict, list, str, nombres, booléens, `None` ; aussi les dataclasses, ensembles, dates (ISO), chemins, et tout objet qui a `to_json()`, `tolist()` (numpy) ou `to_dict()` (pandas). `NaN` et l’infini sont refusés.
+- **Noms appelables** : seulement ce qui est **défini** dans un fichier de `python/` du module, et dont le nom ne commence pas par `_`. Un nom importé d’ailleurs (`from os import system`) ou de la bibliothèque standard est refusé.
+- **Erreur** : une exception rejette la promesse. `error.message` vaut `ValueError: montant négatif` ; `error.detail.python` porte `type` et `trace`, la trace courte du code du module. Le noyau continue.
+- **`print`** ne casse rien : sa sortie va au journal du module (`kind: "python"`, avec les échecs et les démarrages du noyau). L’entrée standard est fermée.
+- **Un appel à la fois** : le noyau traite les appels dans l’ordre d’arrivée. Un calcul long fait attendre les autres pages du module.
+- **Délai** : `timeout` en secondes, 120 par défaut, une heure au plus. Dépassé, le noyau est arrêté (Python ne sait pas interrompre un calcul) et ses objets sont perdus.
+- **Objets perdus** : après un redémarrage (fichier `.py` changé, 10 minutes sans appel, délai dépassé), un appel sur une ancienne poignée échoue et `isPythonObjectLost(erreur)` est vrai : recréer l’objet (`recreate()` de `usePythonObject`). Un appel en cours au moment du redémarrage reçoit une erreur qui en dit la raison.
+- **Libération** : les objets d’une page sont libérés quand la page se ferme ; `usePythonObject` libère aussi l’ancien objet quand ses `deps` changent. Une méthode `close()` de l’objet est appelée à sa libération. 500 objets vivants au plus par module.
+- **Cadre** : dossier courant = dossier du module ; droits de l’utilisateur, sans bac à sable ; environnement réduit des scripts plus `ALFRED_SPACE` et `ALFRED_KERNEL=1`. Le code du noyau a le SDK Python (`import alfred`, section « SDK Python ») avec les accès de son module ; son jeton vaut tant que le noyau vit. Interpréteur : celui des fonctions en script (section 2). Les fichiers du module seuls s’importent, avec les bibliothèques installées pour cet interpréteur.
+
+**Avancement et flux.** `start` ouvre un canal pour l’appel ; le code Python y écrit par `alfred_kernel` :
+
+```python
+from alfred_kernel import emit, progress
+
+progress(0.4, "Lecture du fichier")   # fraction entre 0 et 1, message lisible
+emit({"ligne": 12})                    # une valeur du flux (texte ou JSON)
+```
+
+Une méthode génératrice envoie chaque `yield` comme `emit`, et son `return` est le résultat. Sans canal, `progress` et `emit` ne font rien. La page lit le canal par `usePythonChannel(channel)` (dernier `progress`, valeurs `data` dans l’ordre) ; le canal se ferme à la fin de l’appel. Bas niveau : ce sont des événements `data` de `useChannel`, avec `event` à `"progress"` ou `"data"` et `data` en JSON.
+
+**Exemple complet.** `python/analyse.py` garde un graphe chargé une fois ; la page le crée, le filtre à chaque changement du seuil et lance un calcul long avec son avancement.
+
+```python
+# modules/reseau/python/analyse.py
+import csv
+import io
+
+from alfred_kernel import progress
+
+
+class Graphe:
+    def __init__(self, source: str):
+        self.aretes = [(ligne["de"], ligne["vers"], float(ligne["poids"])) for ligne in csv.DictReader(io.StringIO(source))]
+        print(f"{len(self.aretes)} arêtes chargées")  # au journal du module
+
+    def filtrer(self, seuil: float = 0):
+        gardees = [{"de": de, "vers": vers, "poids": poids} for de, vers, poids in self.aretes if poids >= seuil]
+        return {"aretes": gardees, "total": len(self.aretes)}
+
+    def degres(self):
+        noeuds = sorted({n for de, vers, _ in self.aretes for n in (de, vers)})
+        resultat = {}
+        for rang, noeud in enumerate(noeuds, start=1):
+            resultat[noeud] = sum(1 for de, vers, _ in self.aretes if noeud in (de, vers))
+            progress(rang / len(noeuds), f"Nœud {rang} sur {len(noeuds)}")
+        return resultat
+
+
+def resumer(source: str):
+    return {"lignes": source.count("\n")}
+```
+
+```tsx
+// modules/reseau/pages/graphe.tsx
+import { isPythonObjectLost, python, usePythonChannel, usePythonObject } from "@alfred/sdk";
+import { useEffect, useState } from "react";
+import { Page, PageSection, ProgressBar, Select, Table } from "socle-ui";
+
+const SOURCE = "de,vers,poids\na,b,1\nb,c,4\na,c,6\n";
+const SEUILS = [0, 2, 5].map((n) => ({ id: String(n), label: `${n} et plus` }));
+
+export default function GraphePage() {
+  const { object: graphe, error, recreate } = usePythonObject("analyse.Graphe", { source: SOURCE }, []);
+  const [seuil, setSeuil] = useState(0);
+  const [aretes, setAretes] = useState<{ de: string; vers: string; poids: number }[]>([]);
+  const [canal, setCanal] = useState<string | null>(null);
+  const suivi = usePythonChannel(canal);
+
+  useEffect(() => {
+    if (!graphe) return;
+    graphe
+      .call<{ aretes: typeof aretes }>("filtrer", { seuil })
+      .then((reponse) => setAretes(reponse.aretes))
+      .catch((erreur) => (isPythonObjectLost(erreur) ? recreate() : undefined));
+  }, [graphe, seuil, recreate]);
+
+  async function calculerDegres() {
+    if (!graphe) return;
+    const appel = await graphe.start<Record<string, number>>("degres", undefined, { timeout: 600 });
+    setCanal(appel.channel);
+    await appel.result;
+  }
+
+  return (
+    <Page
+      toolbar={<Select label="Poids minimal" options={SEUILS} value={String(seuil)} onChange={(id) => setSeuil(Number(id ?? 0))} />}
+      actions={[{ id: "degres", label: "Calculer les degrés", onPress: calculerDegres }]}
+    >
+      <PageSection title="Arêtes" state={error ? "error" : graphe ? undefined : "loading"}>
+        {suivi.progress && !suivi.closed && (
+          <ProgressBar label={suivi.progress.message ?? "Calcul"} value={(suivi.progress.fraction ?? 0) * 100} />
+        )}
+        <Table
+          columns={[{ id: "de", label: "De" }, { id: "vers", label: "Vers" }, { id: "poids", label: "Poids", align: "end" }]}
+          rows={aretes.map((arete) => ({ id: `${arete.de}-${arete.vers}`, ...arete }))}
+        />
+      </PageSection>
+    </Page>
+  );
+}
+```
+
+**Une fonction du module par le noyau (facultatif).** Une fonction `runtime: "python"` reste un processus neuf par appel (section 2). Déclarée avec `kernel: true`, elle tourne dans le noyau : son fichier `functions/<id>.py` définit `def main(input):`, qui rend la sortie, et garde son état entre deux appels (un modèle chargé une fois). Elle n’a alors ni stdin ni stdout, ni `ALFRED_FUNCTION` ni jeton du pont propre à l’appel ; elle partage l’ordre des appels du noyau.

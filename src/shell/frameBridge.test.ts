@@ -14,7 +14,7 @@ vi.mock("../lib/native", async (importOriginal) => ({
   pickSaveFile: native.pickSaveFile,
 }));
 
-import { type FrameIdentity, handleFrameRequest } from "./frameBridge";
+import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
 
 const page: FrameIdentity = { kind: "page", module: "notes", reference: "notes/liste" };
 const own = { kind: "page", module: "notes", reference: "notes/liste" };
@@ -322,6 +322,45 @@ describe("transport des comptes et canaux", () => {
       ["frame.channels.read", { subject: own, channel: "c1", after: 3, wait: 20, holder: "page:notes/liste@recette" }],
       ["frame.channels.write", { subject: own, channel: "c1", text: "ls" }],
       ["frame.channels.release", { subject: own, holder: "page:notes/liste@recette" }],
+    ]);
+  });
+
+  it("crée et appelle des objets Python au nom du cadre, et les libère avec lui", async () => {
+    const copy: FrameIdentity = { kind: "page", module: "notes", reference: "notes/liste@recette" };
+    await handleFrameRequest(copy, "python.create", {
+      class: "analyse.Graphe",
+      args: { n: 1 },
+      holder: "forgé",
+      subject: {},
+    });
+    await handleFrameRequest(copy, "python.call", {
+      handle: "py_1",
+      method: "filtrer",
+      args: [3],
+      channel: "c1",
+      timeout: 5,
+    });
+    await handleFrameRequest(copy, "python.run", { function: "analyse.resumer", args: null, module: "autre" });
+    await handleFrameRequest(copy, "python.dispose", { handle: "py_1" });
+    await handleFrameRequest(copy, "python.channel", {});
+    await handleFrameRequest(copy, "python.status", {});
+    expect(native.invoke.mock.calls).toEqual([
+      [
+        "frame.python.create",
+        { subject: own, class: "analyse.Graphe", args: { n: 1 }, holder: "page:notes/liste@recette" },
+      ],
+      ["frame.python.call", { subject: own, handle: "py_1", method: "filtrer", args: [3], channel: "c1", timeout: 5 }],
+      ["frame.python.run", { subject: own, function: "analyse.resumer", args: null }],
+      ["frame.python.dispose", { subject: own, handle: "py_1" }],
+      ["frame.python.channel", { subject: own }],
+      ["frame.python.status", { subject: own }],
+    ]);
+    native.invoke.mockClear();
+    releaseFrame(copy);
+    await Promise.resolve();
+    expect(native.invoke.mock.calls).toContainEqual([
+      "frame.python.release",
+      { subject: own, holder: "page:notes/liste@recette" },
     ]);
   });
 });

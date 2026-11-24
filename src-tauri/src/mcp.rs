@@ -353,6 +353,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "output": { "type": "object", "description": "Schéma JSON de la sortie." },
                 "tool": { "type": "boolean", "description": "Proposer la fonction aux agents comme outil." },
                 "runtime": { "enum": ["ts", "bash", "pwsh", "python"], "description": "Langage : `ts` (par défaut), ou un script `bash` (.sh), `pwsh` (.ps1) ou `python` (.py)." },
+                "kernel": { "type": "boolean", "description": "Python seulement : la fonction tourne dans le noyau Python du module (`def main(input):` dans son fichier, état gardé entre deux appels) au lieu d’un processus neuf par appel. Facultatif (SDK.md, § 19)." },
                 "uses": { "type": "object", "properties": { "clients": { "type": "array", "items": { "type": "string" } } } },
                 "effect": { "enum": ["read", "write"], "description": "`read` : la fonction ne fait que lire (ses tests se lancent d’office, dans `check` et « Tout vérifier ») ; `write` : elle crée, modifie, envoie ou supprime (ses tests attendent l’accord de l’utilisateur). Toujours le préciser ; omis, gardé à la redéclaration." },
                 "tests": {
@@ -1141,7 +1142,9 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "function": declared["reference"],
                 "file": declared["file"],
                 "runtime": runtime,
-                "next": if runtime.is_script() {
+                "next": if runtime == crate::space::Runtime::Python && opt_arg::<bool>(args, "kernel").ok().flatten() == Some(true) {
+                    "Écrire dans `file` une fonction `def main(input):` qui rend la sortie (du JSON) et lève une exception en cas d’erreur ; elle tourne dans le noyau Python du module et garde son état entre deux appels. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
+                } else if runtime.is_script() {
                     "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
                 } else {
                     "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."

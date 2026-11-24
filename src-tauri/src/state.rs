@@ -87,6 +87,13 @@ impl AppState {
     }
 
     pub fn set_space(&self, space: Option<Space>) {
+        // Un autre espace (ou aucun) : les noyaux Python des modules de l’ancien s’arrêtent.
+        if let Some(previous) = self.try_space().map(|current| current.root) {
+            if space.as_ref().is_none_or(|space| space.root != previous) {
+                crate::python::kernel::kernels()
+                    .stop_under(&previous, "L’espace de travail a été fermé : le noyau Python s’est arrêté.");
+            }
+        }
         if let Ok(mut current) = self.space.write() {
             *current = space;
         }

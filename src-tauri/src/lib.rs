@@ -239,6 +239,7 @@ pub fn run() {
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
                 agents::shutdown();
+                python::kernel::kernels().stop_all("Alfred se ferme.");
             }
         });
 }

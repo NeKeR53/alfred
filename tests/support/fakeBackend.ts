@@ -507,6 +507,7 @@ export class FakeBackend {
     "frame.voice.speak.stop": () => null,
     // Canaux (flux, WebSocket) : aucun n’est ouvert dans les parcours ; un cadre qui disparaît en ferme zéro.
     "frame.channels.release": () => ({ closed: 0 }),
+    "frame.python.release": () => ({ released: 0 }),
     "settings.get": (args) => this.settings.get(String(args.key)) ?? null,
     "settings.set": (args) => {
       this.settings.set(String(args.key), args.value);
