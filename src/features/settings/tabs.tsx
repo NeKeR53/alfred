@@ -57,7 +57,7 @@ export const settingsTabs: BuiltInTab[] = [
     icon: icon(ListOrdered),
     useSections: useNavigationSections,
   },
-  { id: "journal", label: "Journal", group: "avancé", icon: icon(ScrollText), useSections: useJournalSections },
+  { id: "journal", label: "Journal", group: "espace", icon: icon(ScrollText), useSections: useJournalSections },
   {
     id: "agents",
     label: "Agent",
