@@ -10,9 +10,9 @@ vi.hoisted(() => {
   })) as unknown as typeof window.matchMedia;
 });
 
-import { activitySummary } from "./Activities";
+import { activityItem } from "./Activities";
 import type { Turn } from "./model";
-import { turnSummary } from "./Transcript";
+import { turnToolCount } from "./Transcript";
 
 const turn = (items: Turn["items"], endedAt?: number): Turn => ({
   id: "t",
@@ -23,9 +23,9 @@ const turn = (items: Turn["items"], endedAt?: number): Turn => ({
   endedAt,
 });
 
-test("le résumé d’un tour compte les outils, sans la réflexion, et sa durée", () => {
+test("un tour compte ses outils, sans la réflexion", () => {
   expect(
-    turnSummary(
+    turnToolCount(
       turn(
         [
           { kind: "activity", id: "a", activityKind: "analysis", title: "Analyse", status: "completed" },
@@ -35,16 +35,46 @@ test("le résumé d’un tour compte les outils, sans la réflexion, et sa duré
         80_000,
       ),
     ),
-  ).toBe("A travaillé pendant 1 min 20 s · 1 outil appelé");
-  expect(turnSummary(turn([]))).toBe("Travail terminé · 0 outils appelés");
+  ).toBe(1);
+  expect(turnToolCount(turn([]))).toBe(0);
 });
 
-test("une suite d’activités se résume comme dans OneApp", () => {
+test("une activité devient une ligne Socle : type, verbe, objet, état et sortie", () => {
   expect(
-    activitySummary([
-      { kind: "activity", id: "a", activityKind: "command", title: "ls", status: "completed" },
-      { kind: "activity", id: "b", activityKind: "file", title: "page.tsx", status: "running" },
-      { kind: "activity", id: "c", activityKind: "tool", title: "check", status: "failed" },
-    ]),
-  ).toBe("3 outils · 1 en cours · 1 en échec");
+    activityItem({
+      kind: "activity",
+      id: "a",
+      activityKind: "command",
+      title: "Commande",
+      detail: '{"command":"ls -la"}',
+      status: "completed",
+      content: "total 0",
+    }),
+  ).toEqual({
+    id: "a",
+    kind: "command",
+    verb: "Exécuté",
+    object: "ls -la",
+    status: "done",
+    detail: '{"command":"ls -la"}\ntotal 0',
+  });
+  expect(
+    activityItem({ kind: "activity", id: "b", activityKind: "file", title: "page.tsx", status: "running" }),
+  ).toMatchObject({
+    kind: "edit",
+    verb: "page.tsx",
+    status: "running",
+  });
+  expect(
+    activityItem({ kind: "activity", id: "c", activityKind: "tool", title: "check", status: "failed" }),
+  ).toMatchObject({
+    kind: "other",
+    status: "error",
+  });
+  expect(
+    activityItem({ kind: "activity", id: "d", activityKind: "analysis", title: "Réflexion", status: "completed" }),
+  ).toMatchObject({ kind: "think", verb: "Réflexion" });
+  expect(
+    activityItem({ kind: "activity", id: "e", activityKind: "command", title: "ls", status: "cancelled" as never }),
+  ).toMatchObject({ verb: "ls · Arrêté", status: "done" });
 });

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, LoaderCircle, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Undo2 } from "lucide-react";
 import { memo, type ReactNode, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -9,11 +9,12 @@ import {
   ChatMessage,
   ChatTranscript,
   DiffStat,
-  Disclosure,
   Link,
   MentionText,
   MessageActions,
   useConfirm,
+  WorkStatus,
+  WorkSummary,
 } from "socle-ui";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -89,31 +90,9 @@ function blocksOf(items: readonly TurnItem[]): Block[] {
   return result;
 }
 
-function duration(milliseconds: number): string {
-  const seconds = Math.max(0, Math.round(milliseconds / 1000));
-  return seconds < 60
-    ? `${seconds} s`
-    : seconds < 3600
-      ? `${Math.floor(seconds / 60)} min ${seconds % 60} s`
-      : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
-}
-
-/** Temps écoulé d’un tour en cours, repris de `elapsedWorkTime` de OneApp : à la seconde, même au-delà d’une heure. */
-export function elapsedWorkTime(startedAt: number, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
-  return seconds < 60
-    ? `${seconds} s`
-    : seconds < 3600
-      ? `${Math.floor(seconds / 60)} min ${seconds % 60} s`
-      : `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min ${seconds % 60} s`;
-}
-
-/** Résumé d’un tour terminé, repris de `workSummary` de OneApp (« 0 outils appelés » compris). */
-export function turnSummary(turn: Turn): string {
-  const count = turn.items.filter((item) => item.kind === "activity" && item.activityKind !== "analysis").length;
-  const worked =
-    turn.endedAt !== undefined ? `A travaillé pendant ${duration(turn.endedAt - turn.startedAt)}` : "Travail terminé";
-  return `${worked} · ${count} outil${count === 1 ? " appelé" : "s appelés"}`;
+/** Outils appelés pendant un tour, sans la réflexion (« 0 outils appelés » compris), comme `workSummary` de OneApp. */
+export function turnToolCount(turn: Turn): number {
+  return turn.items.filter((item) => item.kind === "activity" && item.activityKind !== "analysis").length;
 }
 
 /**
@@ -244,29 +223,6 @@ const Entries = memo(function Entries({
     ),
   );
 });
-
-function RunningWork({ startedAt, label }: { startedAt: number; label: string }) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return (
-    <div className="agent-chat__running-work">
-      <span className="agent-chat__running-state" role="status">
-        <LoaderCircle size={14} className="is-spinning" aria-hidden="true" />
-        {label}
-      </span>
-      <span role="timer">Depuis {elapsedWorkTime(startedAt, now)}</span>
-      <span>
-        Début à{" "}
-        <time dateTime={new Date(startedAt).toISOString()}>
-          {new Date(startedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-        </time>
-      </span>
-    </div>
-  );
-}
 
 /** État du travail en cours, repris de `currentWorkActivity` de OneApp. */
 export function runningLabel(turn: Turn, runtime: ConversationRuntime): string {
@@ -571,18 +527,14 @@ const TurnView = memo(function TurnView({
           <Entries blocks={blocks} {...entryProps} />
           <PageCaptures captures={captures} />
           {working && turn.status === "running" && turn.endedAt === undefined ? (
-            <RunningWork startedAt={turn.startedAt} label={working} />
+            <WorkStatus startedAt={turn.startedAt} label={working} />
           ) : null}
         </>
       ) : (
         <>
-          {blocks.length ? (
-            <Disclosure title={turnSummary(turn)}>
-              <Entries blocks={blocks} {...entryProps} />
-            </Disclosure>
-          ) : (
-            <div className="agent-chat__work-summary">{turnSummary(turn)}</div>
-          )}
+          <WorkSummary durationMs={(turn.endedAt ?? turn.startedAt) - turn.startedAt} toolCount={turnToolCount(turn)}>
+            {blocks.length ? <Entries blocks={blocks} {...entryProps} /> : null}
+          </WorkSummary>
           <PageCaptures captures={captures} />
           {final ? <Entries blocks={finalBlocks} timestamp={turn.endedAt} {...entryProps} /> : null}
           <ConversationImages images={images} label="Images du tour" />

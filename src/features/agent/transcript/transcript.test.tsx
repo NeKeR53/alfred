@@ -29,7 +29,6 @@ import {
   ConversationQuestion,
   changedFilesOf,
   conversationModelLabel,
-  elapsedWorkTime,
   finalMessage,
   isLongChatText,
   producedFiles,
@@ -548,13 +547,12 @@ describe("activités", () => {
         ]}
       />,
     );
-    // La suite d’activités est repliée derrière son résumé.
-    fireEvent.click(screen.getByRole("button", { name: /^3 activités|^3 outils/ }));
+    // Les chemins s’ouvrent d’un clic ; la commande arrêtée garde son état écrit.
     fireEvent.click(screen.getByRole("button", { name: "page.tsx" }));
     expect(open).toHaveBeenCalledWith("src/page.tsx");
     fireEvent.click(screen.getByRole("button", { name: "notes/plan.md" }));
     expect(open).toHaveBeenCalledWith("notes/plan.md");
-    expect(screen.getByText("Arrêté")).toBeInTheDocument();
+    expect(screen.getByText(/· Arrêté/)).toBeInTheDocument();
   });
 });
 
@@ -600,22 +598,39 @@ describe("parité avec OneApp", () => {
         ]}
       />,
     );
-    fireEvent.click(screen.getByText("4 outils exécutés"));
-    expect(screen.getByText("Exécuté git status --short")).toBeInTheDocument();
-    expect(screen.getByText("Exécuté ls -la")).toBeInTheDocument();
+    // Plus de 3 outils : un résumé repliable (ActivityGroup), replié quand rien ne tourne.
+    const summary = screen.getByRole("button", { name: /^4 outils exécutés/ });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(summary);
+    expect(screen.getAllByText("Exécuté")).toHaveLength(2);
+    expect(screen.getByText("git status --short")).toBeInTheDocument();
+    expect(screen.getByText("ls -la")).toBeInTheDocument();
     // Le détail d’une recherche web s’ouvre comme celui d’un outil.
-    fireEvent.click(screen.getByText("Recherche web"));
-    expect(screen.getByRole("textbox", { name: "Détail de Recherche web" })).toHaveValue("météo Lyon");
-    // Les lignes d’une modification restent du texte, sans couleur.
-    expect(screen.getByText(/Modifié/)).toHaveTextContent("Modifié a.ts +2 −1");
-    expect(document.querySelector(".agent-chat__tool-list .agent-chat__change-added")).toBeNull();
+    const search = screen.getByRole("button", { name: /Recherche web/ });
+    fireEvent.click(search);
+    expect(search).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("météo Lyon")).toBeInTheDocument();
+    // Les lignes d’une modification restent du texte, sans chemin à ouvrir.
+    expect(screen.getByText("a.ts +2 −1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "a.ts" })).toBeNull();
   });
 
   it("résume un tour sans outil par « 0 outils appelés » et mesure le temps écoulé à la seconde", () => {
     render(<Transcript conversation={conversation([turn("t1")])} runtime={idle} />);
     expect(screen.getByText("A travaillé pendant 4 s · 0 outils appelés")).toBeInTheDocument();
-    expect(elapsedWorkTime(0, 3_723_900)).toBe("1 h 2 min 3 s");
-    expect(elapsedWorkTime(0, 59_900)).toBe("59 s");
+    // Pendant le travail, l’étape et le temps écoulé (WorkStatus), à la seconde.
+    vi.useFakeTimers({ now: 10_000 });
+    render(
+      <Transcript
+        conversation={conversation([
+          turn("t2", { status: "running", endedAt: undefined, startedAt: 10_000 - 3_723_000, items: [] }),
+        ])}
+        runtime={{ ...idle, status: "responding" }}
+      />,
+    );
+    expect(screen.getByText("Travail en cours")).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toHaveTextContent("1 h 2 min 3 s");
+    vi.useRealTimers();
   });
 
   it("garde visible la dernière réponse d’un tour terminé, même suivie d’activités", () => {

@@ -249,16 +249,6 @@
     color: HighlightText;
   }
 }
-.agent-chat__activity-file {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--fg-2);
-  font: inherit;
-  text-decoration: underline dotted;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
 /* Images jointes à un message envoyé : vignettes carrées de 160 px. */
 .agent-chat__message-attachments .image-preview--message {
   width: 160px;

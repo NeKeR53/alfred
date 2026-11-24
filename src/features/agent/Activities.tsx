@@ -1,6 +1,6 @@
-import { BookOpen, Brain, FolderOpen, LoaderCircle, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
+import { BookOpen, FolderOpen, Pencil, Search, TerminalSquare, Wrench } from "lucide-react";
 import { useMemo } from "react";
-import { Disclosure } from "socle-ui";
+import { Accordion, ActivityGroup, type ActivityItem, type ActivityKind, Link, TextArea } from "socle-ui";
 import type { ActivityAction } from "./harness";
 import { isAgentFileReference } from "./lib/agentFileLinks";
 import { activityImageOutput } from "./lib/chatImages";
@@ -10,8 +10,10 @@ import { ConversationImages } from "./transcript/ConversationImages";
 import { ImagePreview } from "./transcript/ImagePreview";
 
 /**
- * Activités de l’agent, reprises de `ChatActivities` de OneApp : une activité seule s’affiche sur sa ligne, une suite
- * d’activités se replie derrière un résumé (« 3 outils exécutés »), le détail de chacune s’ouvre à la demande.
+ * Activités de l’agent, en `ActivityGroup` de Socle (D-376) : une ligne par outil, un résumé au-delà de 3, la sortie
+ * ouverte à la demande. Deux cas restent en ligne locale, faute d’équivalent dans Socle 1.4 (voir
+ * docs/socle-propositions.md, « Manques vus en 1.4 ») : un chemin de fichier lu ou modifié, qui s’ouvre d’un clic, et une
+ * sortie qui contient des images ou des fichiers.
  */
 export type Activity = Extract<TurnItem, { kind: "activity" }>;
 
@@ -71,27 +73,43 @@ function isRunning(activity: Activity): boolean {
   return !["completed", "failed", "cancelled", "stopped"].includes(activity.status);
 }
 
-/** Titre texte d’une activité, pour le titre d’un `Disclosure` : son statut s’y ajoute s’il n’est pas « Terminé ». */
-function activityLabelText(activity: Activity): string {
-  const title = activityTitle(activity).replace(/\s*\n\s*/g, " ");
-  return activity.status === "completed" ? title : `${title} · ${activityStatusLabel(activity.status)}`;
+/** Type Socle d’une activité, qui choisit son icône. */
+function activityKind(activity: Activity): ActivityKind {
+  if (activity.activityKind === "analysis") return "think";
+  const Icon = activityIcon(activity);
+  return Icon === TerminalSquare
+    ? "command"
+    : Icon === Pencil
+      ? "edit"
+      : Icon === Search
+        ? "search"
+        : Icon === BookOpen
+          ? "read"
+          : "other";
 }
 
-function ActivityLabel({ activity }: { activity: Activity }) {
-  const running = isRunning(activity);
-  const Icon = running ? LoaderCircle : activity.activityKind === "analysis" ? Brain : activityIcon(activity);
-  const title = activityTitle(activity);
-  return (
-    <>
-      <Icon size={15} className={running ? "is-spinning" : undefined} aria-hidden="true" />
-      <span className="agent-chat__tool-title" title={title}>
-        {title.replace(/\s*\n\s*/g, " ")}
-      </span>
-      <span className={activity.status === "failed" ? "agent-chat__tool-status is-failed" : "sr-only"}>
-        {activityStatusLabel(activity.status)}
-      </span>
-    </>
-  );
+/** Verbe en tête d’un titre (« Exécuté npm test », « Read src/a.ts ») : il se sépare de l’objet, en chasse fixe. */
+const LEADING_VERB =
+  /^(Exécuté|Lu|Lire|Read|Modifié|Modified|Edited|Écrit|Recherché|Searched|Listé|Ran|Run)\s+([\s\S]+)$/i;
+
+/** Ligne Socle d’une activité : verbe, objet, état ; « Arrêté » s’ajoute au verbe, Socle n’ayant pas cet état. */
+export function activityItem(activity: Activity): ActivityItem {
+  const title =
+    activityTitle(activity)
+      .replace(/\s*\n\s*/g, " ")
+      .trim() || "Outil";
+  const split = LEADING_VERB.exec(title);
+  const stopped = ["cancelled", "stopped"].includes(activity.status as string);
+  const output = activityImageOutput(activity.content ?? "").text;
+  const detail = [activity.detail, output].filter((value) => value?.trim()).join("\n");
+  return {
+    id: activity.id,
+    kind: activityKind(activity),
+    verb: `${split ? split[1] : title}${stopped ? ` · ${activityStatusLabel(activity.status)}` : ""}`,
+    object: split?.[2],
+    status: activity.status === "failed" ? "error" : isRunning(activity) ? "running" : "done",
+    detail: detail || undefined,
+  };
 }
 
 function contentKey(content: string): string {
@@ -100,7 +118,7 @@ function contentKey(content: string): string {
   return `${content.length}:${hash >>> 0}`;
 }
 
-/** Détail d’une activité : sa sortie en lecture seule, puis ses images et fichiers, comme dans OneApp. */
+/** Détail d’une activité locale : sa sortie en lecture seule, puis ses images et fichiers, comme dans OneApp. */
 function ActivityOutput({ activity }: { activity: Activity }) {
   const output = useMemo(() => activityImageOutput(activity.content ?? ""), [activity.content]);
   const images = useMemo(() => {
@@ -116,12 +134,13 @@ function ActivityOutput({ activity }: { activity: Activity }) {
   return (
     <>
       {text ? (
-        <textarea
-          className="agent-chat__tool-output"
-          aria-label={`Détail de ${title}`}
-          readOnly
-          rows={Math.min(12, Math.max(2, text.split("\n").length))}
+        <TextArea
+          label={`Détail de ${title}`}
+          hideLabel
+          isReadOnly
           value={text}
+          minRows={Math.min(12, Math.max(2, text.split("\n").length))}
+          maxRows={12}
         />
       ) : null}
       {activity.images?.length ? (
@@ -139,8 +158,9 @@ function ActivityOutput({ activity }: { activity: Activity }) {
   );
 }
 
-function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile?: (path: string) => void }) {
-  const edits: ActivityAction[] = activity.actions?.length
+/** Fichiers lus ou modifiés par une activité : ses actions, ou les chemins du détail d’une modification. */
+function fileActions(activity: Activity): ActivityAction[] {
+  const actions: ActivityAction[] = activity.actions?.length
     ? activity.actions
     : activity.activityKind === "file" && activity.detail
       ? activity.detail
@@ -148,94 +168,104 @@ function ActivityLine({ activity, onOpenFile }: { activity: Activity; onOpenFile
           .filter(Boolean)
           .map((path) => ({ type: "edit" as const, path }))
       : [];
-  if (edits.length)
-    return (
-      <>
-        {Array.from(new Map(edits.map((action) => [JSON.stringify(action), action])).values()).map((action) => {
-          const path = action.path;
-          const fileLabel =
-            action.type === "read" || action.type === "edit" ? path?.split(/[\\/]/).pop() || path : path;
-          const Icon =
-            action.type === "read"
-              ? BookOpen
-              : action.type === "edit"
-                ? Pencil
-                : action.type === "search"
-                  ? Search
-                  : FolderOpen;
-          const label =
-            action.type === "read"
-              ? "Lu"
-              : action.type === "edit"
-                ? "Modifié"
-                : action.type === "search"
-                  ? "Recherché"
-                  : "Listé";
-          return (
-            <div className="agent-chat__activity-status" key={JSON.stringify(action)}>
-              <Icon size={15} aria-hidden="true" />
-              <span
-                className="agent-chat__tool-title"
-                title={[label, action.query, action.path].filter(Boolean).join(" ")}
-              >
-                {label} {action.query ? `${action.query} ` : ""}
-                {path && onOpenFile && (action.type === "read" || action.type === "edit") ? (
-                  <button type="button" className="agent-chat__activity-file" onClick={() => onOpenFile(path)}>
-                    {fileLabel}
-                  </button>
-                ) : (
-                  fileLabel
-                )}
-                {action.added !== undefined && action.removed !== undefined
-                  ? ` +${action.added} −${action.removed}`
-                  : ""}
-              </span>
-            </div>
-          );
-        })}
-      </>
-    );
-  // « Read src/page.tsx », « Modifié notes.md » : le chemin du titre s’ouvre d’un clic.
-  const fileAction = /^(Read|Lire|Lecture de|Edited|Modified|Modifié)\s+(\S+)(.*)$/i.exec(activity.title ?? "");
-  const FileIcon = activityIcon(activity);
-  if (fileAction && onOpenFile && isAgentFileReference(fileAction[2]))
+  return Array.from(new Map(actions.map((action) => [JSON.stringify(action), action])).values());
+}
+
+const ACTION_VERB = { read: "Lu", edit: "Modifié", search: "Recherché" } as const;
+const actionVerb = (action: ActivityAction) => ACTION_VERB[action.type as keyof typeof ACTION_VERB] ?? "Listé";
+const actionFile = (action: ActivityAction) =>
+  action.type === "read" || action.type === "edit" ? action.path?.split(/[\\/]/).pop() || action.path : action.path;
+const actionLines = (action: ActivityAction) =>
+  action.added !== undefined && action.removed !== undefined ? ` +${action.added} −${action.removed}` : "";
+
+/** « Read src/page.tsx », « Modifié notes.md » : le chemin du titre s’ouvre d’un clic. */
+const FILE_TITLE = /^(Read|Lire|Lecture de|Edited|Modified|Modifié)\s+(\S+)(.*)$/i;
+
+/** Lignes Socle d’une activité : une par fichier touché, sinon une seule. */
+function activityItems(activity: Activity): ActivityItem[] {
+  const actions = fileActions(activity);
+  if (!actions.length) return [activityItem(activity)];
+  return actions.map((action, index) => ({
+    id: `${activity.id}:${index}`,
+    kind: action.type === "read" ? "read" : action.type === "search" ? "search" : "edit",
+    verb: actionVerb(action),
+    object: [action.query, actionFile(action)].filter(Boolean).join(" ") + actionLines(action),
+  }));
+}
+
+/** L’activité a besoin de sa ligne locale : un chemin à ouvrir, ou des images et fichiers dans sa sortie. */
+function needsLocalLine(activity: Activity, onOpenFile?: (path: string) => void): boolean {
+  if (activity.images?.length || activity.files?.length) return true;
+  if (activityImageOutput(activity.content ?? "").images.length) return true;
+  if (!onOpenFile) return false;
+  if (fileActions(activity).some((action) => action.path && (action.type === "read" || action.type === "edit")))
+    return true;
+  const fileTitle = FILE_TITLE.exec(activity.title ?? "");
+  return Boolean(fileTitle && isAgentFileReference(fileTitle[2]));
+}
+
+/** Ligne locale (Hors design en 1.4) : chemins cliquables, ou sortie avec images et fichiers. */
+function LocalActivity({ activity, onOpenFile }: { activity: Activity; onOpenFile?: (path: string) => void }) {
+  const actions = fileActions(activity);
+  if (actions.length && onOpenFile)
+    return actions.map((action) => {
+      const path = action.path;
+      const Icon =
+        action.type === "read"
+          ? BookOpen
+          : action.type === "edit"
+            ? Pencil
+            : action.type === "search"
+              ? Search
+              : FolderOpen;
+      return (
+        <div className="agent-chat__activity-status" key={JSON.stringify(action)}>
+          <Icon size={15} aria-hidden="true" />
+          <span className="agent-chat__tool-title">
+            {actionVerb(action)} {action.query ? `${action.query} ` : ""}
+            {path && (action.type === "read" || action.type === "edit") ? (
+              <Link onPress={() => onOpenFile(path)}>{actionFile(action) ?? path}</Link>
+            ) : (
+              actionFile(action)
+            )}
+            {actionLines(action)}
+          </span>
+        </div>
+      );
+    });
+  const fileTitle = FILE_TITLE.exec(activity.title ?? "");
+  if (fileTitle && onOpenFile && isAgentFileReference(fileTitle[2])) {
+    const Icon = activityIcon(activity);
     return (
       <div className="agent-chat__activity-status">
-        <FileIcon size={15} aria-hidden="true" />
+        <Icon size={15} aria-hidden="true" />
         <span>
-          {fileAction[1]}{" "}
-          <button type="button" className="agent-chat__activity-file" onClick={() => onOpenFile(fileAction[2])}>
-            {fileAction[2]}
-          </button>
-          {fileAction[3]}
+          {fileTitle[1]} <Link onPress={() => onOpenFile(fileTitle[2])}>{fileTitle[2]}</Link>
+          {fileTitle[3]}
         </span>
       </div>
     );
-  if (!hasActivityOutput(activity))
-    return (
-      <div className="agent-chat__activity-status">
-        <ActivityLabel activity={activity} />
-      </div>
-    );
+  }
+  const item = activityItem(activity);
   return (
-    <Disclosure title={activityLabelText(activity)}>
+    <Accordion title={[item.verb, item.object].filter(Boolean).join(" ")}>
       <ActivityOutput activity={activity} />
-    </Disclosure>
+    </Accordion>
   );
 }
 
-export function activitySummary(activities: readonly Activity[]): string {
-  const failed = activities.filter((activity) => activity.status === "failed").length;
-  const running = activities.filter(isRunning).length;
-  const hasAnalysis = activities.some((activity) => activity.activityKind === "analysis");
-  const count = `${activities.length} ${hasAnalysis ? "activité" : "outil"}${activities.length > 1 ? "s" : ""}`;
-  return [
-    running || failed || hasAnalysis ? count : `${count} exécuté${activities.length > 1 ? "s" : ""}`,
-    running ? `${running} en cours` : "",
-    failed ? `${failed} en échec` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+type Run = { key: string; items: Activity[] } | { key: string; local: Activity };
+
+/** Suite d’activités découpée en groupes Socle, entre lesquels s’intercalent les lignes locales, dans l’ordre. */
+function runsOf(activities: readonly Activity[], onOpenFile?: (path: string) => void): Run[] {
+  const runs: Run[] = [];
+  for (const activity of activities) {
+    const last = runs.at(-1);
+    if (needsLocalLine(activity, onOpenFile)) runs.push({ key: activity.id, local: activity });
+    else if (last && "items" in last) last.items.push(activity);
+    else runs.push({ key: activity.id, items: [activity] });
+  }
+  return runs;
 }
 
 export function Activities({
@@ -246,24 +276,11 @@ export function Activities({
   /** Ouvre un fichier lu ou modifié par l’agent ; sans lui, les chemins restent du texte. */
   onOpenFile?: (path: string) => void;
 }) {
-  if (activities.length === 1)
-    return (
-      <div className="agent-chat__activity-group">
-        <ActivityLine activity={activities[0]} onOpenFile={onOpenFile} />
-      </div>
-    );
-  const failed = activities.some((activity) => activity.status === "failed");
-  return (
-    <div className={`agent-chat__activity-group${failed ? " is-failed" : ""}`}>
-      <Disclosure title={activitySummary(activities)}>
-        <ol className="agent-chat__tool-list">
-          {activities.map((activity) => (
-            <li key={activity.id}>
-              <ActivityLine activity={activity} onOpenFile={onOpenFile} />
-            </li>
-          ))}
-        </ol>
-      </Disclosure>
-    </div>
+  return runsOf(activities, onOpenFile).map((run) =>
+    "local" in run ? (
+      <LocalActivity key={run.key} activity={run.local} onOpenFile={onOpenFile} />
+    ) : (
+      <ActivityGroup key={run.key} items={run.items.flatMap(activityItems)} />
+    ),
   );
 }
