@@ -10,7 +10,7 @@
  *   haut de la page (D-253).
  * - Panneau de droite : le panneau déclaré par la page, ou la conversation d’agent qu’elle a lancée.
  */
-import { AppWindow, Bot, MoreHorizontal } from "lucide-react";
+import { AppWindow, Bot, MoreHorizontal, Plus } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import {
   type Action,
@@ -659,7 +659,23 @@ export function AppShell({
         createdSectionNode(created, zones[sectionZone(created.module, created.id)], editor.rename),
       )}
       {agentAvailable === true && agentZone?.rows.length ? (
-        <Sidebar.Section id="agent-conversations" title="Conversations" limit={agentZone.visible}>
+        <Sidebar.Section
+          id="agent-conversations"
+          title="Conversations"
+          limit={agentZone.visible}
+          // « + » au survol du titre : nouvelle conversation, comme Ctrl+N (D-392).
+          actions={
+            agentZone.onNew
+              ? [
+                  {
+                    icon: <Plus size={14} aria-hidden="true" />,
+                    label: "Nouvelle conversation",
+                    onPress: agentZone.onNew,
+                  },
+                ]
+              : undefined
+          }
+        >
           {agentZone.rows.map((row) => (
             <Sidebar.TreeItem
               key={row.id}

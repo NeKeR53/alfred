@@ -11,6 +11,7 @@ import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } f
 import type { ZoneRow } from "./MenuZone";
 import type { MenuEntryStatus } from "./menuZones";
 import { notify } from "./notifications";
+import { useShell } from "./store";
 import type { AgentZone } from "./types";
 
 /** État d’une conversation rendu par la pastille d’une entrée du menu ; une conversation en veille n’en a pas. */
@@ -69,6 +70,13 @@ export function useAgentZone(openWindow?: (conversation: string) => void): Agent
         else if (action === "archive")
           void agents.archive(id).catch(failed("La conversation n’a pas pu être archivée"));
         else if (action === "window") openWindow?.(id);
+      },
+      onNew: () => {
+        const agents = useAgents.getState();
+        const open = agents.activeId ? agents.loaded[agents.activeId] : undefined;
+        const id = open && !open.started ? open.id : agents.create().id;
+        void agents.open(id).catch(failed("La conversation n’a pas pu s’ouvrir"));
+        useShell.getState().setView({ kind: "agent" });
       },
     }),
     [headers, runtime, activeId, openWindow],

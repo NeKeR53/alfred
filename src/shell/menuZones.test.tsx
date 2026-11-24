@@ -226,6 +226,35 @@ describe("zone dans le menu de gauche", () => {
     expect(within(idle).queryByRole("img")).toBeNull();
   });
 
+  it("conversations : le « + » du titre de la section lance une nouvelle conversation", async () => {
+    const user = userEvent.setup();
+    const onNew = vi.fn();
+    const rows = agentZoneRows(
+      [
+        {
+          id: "c1",
+          title: "Factures",
+          updatedAt: "2026-11-24T08:00:00Z",
+          archived: false,
+          started: true,
+        } as unknown as ConversationHeader,
+      ],
+      () => "idle",
+      false,
+    );
+    render(
+      <AppShell
+        agent={<div>Agent</div>}
+        settingsTabs={[]}
+        agentAvailable
+        agentZone={{ rows, onOpen: vi.fn(), onAction: vi.fn(), onNew }}
+      />,
+    );
+    const header = await screen.findByRole("row", { name: /^Conversations/ });
+    await user.click(within(header).getByRole("button", { name: "Nouvelle conversation", hidden: true }));
+    expect(onNew).toHaveBeenCalledTimes(1);
+  });
+
   it("conversation : « Archiver » est un bouton-icône au survol, absent du menu « … »", async () => {
     const user = userEvent.setup();
     const onAction = vi.fn();

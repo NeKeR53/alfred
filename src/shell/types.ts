@@ -49,4 +49,6 @@ export interface AgentZone {
   visible?: number;
   onOpen: (id: string) => void;
   onAction: (id: string, action: string, value?: string) => void;
+  /** Nouvelle conversation, comme Ctrl+N et la palette : un brouillon vide ouvert est repris plutôt que doublé. */
+  onNew?: () => void;
 }
