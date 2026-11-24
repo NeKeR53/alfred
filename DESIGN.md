@@ -193,13 +193,38 @@ return (
 );
 ```
 
-- `header` : `{ title, subtitle, status: { label, tone }, actions }` (zone `section`).
+- `header` : `{ title, subtitle, status: { label, tone }, actions }` (zone `section`). `title` est le nom de l’objet (« ALF-12 · Export en échec »), jamais « Détails · … » : le panneau porte déjà « Détail ». `subtitle` est une ligne de contexte (« Bug · Projet Alfred »), jamais une phrase d’aide (« Chaque changement est enregistré aussitôt. ») ; `check` en avertit.
 - `sections` : `{ id, title, fields, content, empty, actions, summary, defaultCollapsed }`. `id` est stable : il mémorise le repli. `summary` dit l’état d’un mot, lisible replié : « 2 en retard ».
-- `fields` : `{ label, value, type, statuses, hideEmpty, icon, action }`. La valeur est brute ; le `type` la met en forme (section 11). Une valeur modifiable sur place est un `InlineEdit` en `value`.
+- `fields` : `{ label, value, type, statuses, hideEmpty, icon, action }`. La valeur est brute ; le `type` la met en forme (section 11). Jamais un élément React en `value` : il s’afficherait « [object Object] » (`check` le refuse).
 - `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`). Un texte devient un paragraphe. Ce qui n’est pas une propriété (une liste, un relevé) va dans le `content` d’une section, pas à côté du `Drawer`.
 - L’ordre des sections est fixe : l’utilisateur les replie, il ne les déplace pas (D-185).
 - Après une écriture dans le panneau, `announceChange()` de `@alfred/sdk` prévient la page : ses `useAsync` se relancent. Dans l’autre sens, la page fait de même.
-- Pas de champ de saisie dans une ligne : une modification passe par une action (menu, interrupteur, `useOpenForm`) ou par `InlineEdit`.
+- **Pas de champ de saisie dans une ligne ni dans une section.** Ni `Select`, `ComboBox`, `TextField`/`TextInput`, `TextArea`, `NumberField`, `DatePicker`, `Checkbox`, `RadioGroup`, `SegmentedControl`, `Slider`… dans `value` d’un champ, dans `PropertyRow`, dans `Drawer.Section` ou dans `content`, écrits là ou rendus par un composant du module. `check` le refuse, en suivant les composants et les fonctions du module importés par `./…`. La valeur se lit en texte (valeur brute et son `type`) ; on la modifie par **l’action de la ligne** : un menu de choix (`action: { type: "icon", icon, label, menu }`, avec un `DropdownMenu.Section` `selectionMode`), un interrupteur (`type: "switch"`), ou un bouton qui ouvre `useOpenForm` pour une saisie (texte, date, personne). `InlineEdit` (texte modifiable sur place) n’existe que dans `PropertyRow`, la forme à composants, sans en-tête : dans `fields`, un texte se modifie par la fenêtre. Une modification s’enregistre tout de suite ; un échec garde l’ancienne valeur et notifie.
+
+```tsx
+import { ChevronDown, Pencil } from "lucide-react";
+import { DropdownMenu, useOpenForm } from "socle-ui";
+
+fields: [
+  // Un choix : la valeur en texte, le menu dans l’action de la ligne.
+  { label: "Priorité", value: t.priorite, type: "status", statuses: PRIORITES,
+    action: { type: "icon", icon: <ChevronDown size={16} />, label: "Changer la priorité", menu: (
+      <DropdownMenu.Section selectionMode="single" selectedKeys={[t.priorite]}
+        onSelectionChange={(cles) => void enregistrer({ priorite: String([...cles][0]) })}>
+        {PRIORITES_LISTE.map((p) => <DropdownMenu.Item key={p.id} id={p.id} label={p.label} />)}
+      </DropdownMenu.Section>
+    ) } },
+  // Une saisie (texte, date, personne) : la valeur en texte, une fenêtre ouverte par l’action.
+  { label: "Responsable", value: t.responsable,
+    action: { type: "icon", icon: <Pencil size={16} />, label: "Changer le responsable", onPress: () =>
+      openForm({ title: "Responsable", fields: [{ type: "combobox", name: "responsable", label: "Responsable", loadItems: chercher }],
+        initialValues: { responsable: t.responsableId }, submitLabel: "Enregistrer",
+        onSubmit: (v) => enregistrer({ responsable: v.responsable }) }) } },
+  // Un oui ou non : l’interrupteur de la ligne.
+  { label: "Suivie", value: t.suivie, type: "boolean",
+    action: { type: "switch", isSelected: t.suivie, onChange: (suivie) => void enregistrer({ suivie }) } },
+]
+```
 
 ## 7. Une page des Réglages
 

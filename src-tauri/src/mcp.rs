@@ -1323,6 +1323,8 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let snapshot = space.snapshot()?;
             let keep = |owner: &str| module.as_deref().is_none_or(|wanted| wanted == owner);
             let mut pages = Vec::new();
+            // Avertissements de design : à corriger aussi, mais ils n’empêchent pas `ok`.
+            let mut design_warnings = Vec::new();
             let mut collect = |page: &crate::space::ResolvedPage, placement: crate::design_lint::Placement| {
                 if !keep(&page.module) {
                     return;
@@ -1335,10 +1337,14 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     pages.push(json!({ "page": page.reference, "errors": page.errors }));
                 } else if !page.read_only {
                     // Une page qui compile est relue contre DESIGN.md : chaque remarque est à corriger.
-                    let source = std::fs::read_to_string(space.page_file(&page.module, &page.id)).unwrap_or_default();
-                    let design = crate::design_lint::lint(&source, placement);
+                    let found = crate::design_lint::lint_file(&space.page_file(&page.module, &page.id), placement);
+                    let (warnings, design): (Vec<_>, Vec<_>) =
+                        found.into_iter().partition(|found| crate::design_lint::is_warning(&found.message));
                     if !design.is_empty() {
                         pages.push(json!({ "page": page.reference, "design": design }));
+                    }
+                    if !warnings.is_empty() {
+                        design_warnings.push(json!({ "page": page.reference, "warnings": warnings }));
                     }
                 }
             };
@@ -1406,6 +1412,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             Ok(json!({
                 "ok": clean,
                 "pages": pages,
+                "designWarnings": design_warnings,
                 "functions": functions,
                 "files": files,
                 "tests": tests,

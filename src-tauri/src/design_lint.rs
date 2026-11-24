@@ -2,10 +2,15 @@
 //! le JSX sans exécuter la page. Imports depuis `socle-ui` seulement (ni chemin interne, ni librairie que Socle
 //! couvre déjà, ni l’ancienne `@alfred/ui`), ni `style` ni `className`, ni balise HTML stylée, ni couleur en dur, des
 //! actions décrites par des données, et les noms accessibles des composants qui en demandent un. Une page placée
-//! dans les Réglages a ses règles propres ; une page placée en panneau rend un `Drawer` à sa racine. Chaque remarque
-//! dit quoi écrire à la place.
+//! dans les Réglages a ses règles propres ; une page placée en panneau rend un `Drawer` à sa racine, sans champ de
+//! saisie dans ses lignes ni en-tête détourné (`rows`). Chaque remarque dit quoi écrire à la place.
+
+mod rows;
 
 use std::collections::BTreeMap;
+use std::path::Path;
+
+pub use rows::is_warning;
 
 use oxc::allocator::Allocator;
 use oxc::ast::ast::{
@@ -413,8 +418,22 @@ fn matches_library(source: &str, library: &str) -> bool {
 }
 
 /// Remarques de design sur le fichier d’une page ; vide si la page ne se lit pas (ses erreurs sont dites ailleurs).
-/// `placement` : où la page est placée (zone principale, Réglages ou panneau de droite).
+/// `placement` : où la page est placée (zone principale, Réglages ou panneau de droite). Sans le chemin du fichier,
+/// les composants importés d’un autre fichier du module ne sont pas suivis : voir `lint_file`.
+#[cfg(test)]
 pub fn lint(source: &str, placement: Placement) -> Vec<Diagnostic> {
+    let none = |_: &Path| None;
+    lint_with(source, placement, Path::new("page.tsx"), &rows::Sources::new(&none))
+}
+
+/// Remarques de design sur le fichier d’une page, en suivant les composants qu’elle importe du module (`./…`).
+pub fn lint_file(path: &Path, placement: Placement) -> Vec<Diagnostic> {
+    let Ok(source) = std::fs::read_to_string(path) else { return Vec::new() };
+    let read = |file: &Path| std::fs::read_to_string(file).ok();
+    lint_with(&source, placement, path, &rows::Sources::new(&read))
+}
+
+fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::Sources) -> Vec<Diagnostic> {
     let settings = placement == Placement::Settings;
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::tsx()).parse();
@@ -505,6 +524,9 @@ pub fn lint(source: &str, placement: Placement) -> Vec<Diagnostic> {
         }
     }
     lint.visit_program(&parsed.program);
+    for (offset, message) in rows::check(&parsed.program, path, sources, placement == Placement::Panel) {
+        lint.report(offset, message);
+    }
     if placement == Placement::Panel {
         if let Some((offset, message)) = panel_root_problem(&parsed.program.body, &lint.socle) {
             lint.report(offset, message);
@@ -738,6 +760,166 @@ mod tests {
 
     fn settings_messages(source: &str) -> Vec<String> {
         lint(source, Placement::Settings).into_iter().map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message)).collect()
+    }
+
+    fn module_messages(files: &[(&str, &str)], page: &str) -> Vec<String> {
+        let map: std::collections::HashMap<std::path::PathBuf, String> =
+            files.iter().map(|(path, source)| (std::path::PathBuf::from(path), source.to_string())).collect();
+        let read = |path: &Path| map.get(path).cloned();
+        let source = map.get(Path::new(page)).cloned().unwrap_or_default();
+        lint_with(&source, Placement::Panel, Path::new(page), &rows::Sources::new(&read))
+            .into_iter()
+            .map(|found| format!("{}: {}", found.line.unwrap_or(0), found.message))
+            .collect()
+    }
+
+    #[test]
+    fn un_champ_de_saisie_dans_une_ligne_de_drawer_est_refuse() {
+        let page = r#"
+import { Drawer, InlineEdit, PropertyRow, Select, TextField as Saisie } from "socle-ui";
+export default function Fiche() {
+  return (
+    <Drawer
+      sections={[
+        { id: "a", title: "Suivi", fields: [
+          { label: "État", value: <Select label="État" options={[]} /> },
+          { label: "Titre", value: <InlineEdit label="Titre" value={t} onSave={enregistrer} /> },
+          { label: "Échéance", value: t.echeance, type: "date" },
+        ] },
+        { id: "b", title: "Notes", content: <Saisie label="Note" /> },
+      ]}
+    />
+  );
+}
+function Lignes() {
+  return <PropertyRow label="Priorité" value={<Select label="Priorité" options={[]} />} />;
+}
+function Texte() {
+  return <PropertyRow label="Titre" value={<InlineEdit label="Titre" value={t} onSave={enregistrer} />} />;
+}
+"#;
+        let found = panel_messages(page);
+        assert!(found.iter().any(|m| m.starts_with("8: Champ de saisie `<Select>` dans une ligne de `Drawer` (`value` d’un champ de `fields`)") && m.contains("DESIGN.md, section 6") && m.contains("spec Drawer")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("12: Champ de saisie `<TextField>` dans une section de `Drawer` (`content`)")), "ancien nom, renommé à l’import : {found:?}");
+        assert!(found.iter().any(|m| m.starts_with("18: Champ de saisie `<Select>` dans une ligne de `Drawer` (`value` de `PropertyRow`)")), "{found:?}");
+        // Forme déclarative : la valeur est brute ; un élément, même un InlineEdit, s’y affiche « [object Object] ».
+        assert!(found.iter().any(|m| m.starts_with("9: Élément React en `value` d’un champ de `fields`")), "{found:?}");
+        assert!(!found.iter().any(|m| m.starts_with("10:") || m.starts_with("21:")), "valeur typée, InlineEdit de PropertyRow : {found:?}");
+        assert_eq!(found.len(), 4, "{found:?}");
+    }
+
+    #[test]
+    fn un_composant_du_module_qui_rend_un_champ_est_suivi() {
+        let page = r#"
+import { Drawer, PropertyRow } from "socle-ui";
+import { ChampDirect } from "../lib/champ-direct";
+import Bloc from "../lib/bloc";
+export default function Details() {
+  const champs = (liste) => liste.map((c) => <PropertyRow key={c.id} label={c.nom} value={<ChampDirect champ={c} />} />);
+  return <Drawer sections={[{ id: "champs", title: "Champs", content: champs(liste) }, { id: "x", title: "X", content: <Bloc /> }]} />;
+}
+"#;
+        let champ = r#"
+import { ComboBox, InlineEdit } from "socle-ui";
+import { Choix } from "./choix";
+export function ChampDirect({ champ }) {
+  if (champ.texte) return <InlineEdit label={champ.nom} value={champ.valeur} onSave={enregistrer} />;
+  return champ.multiple ? <ComboBox label={champ.nom} /> : <Choix champ={champ} />;
+}
+"#;
+        let choix = r#"export { Liste as Choix } from "./liste";"#;
+        let liste = r#"
+import { RadioGroup } from "socle-ui";
+export const Liste = ({ champ }) => <RadioGroup label={champ.nom} />;
+"#;
+        let bloc = r#"
+import { Dialog, IconButton, TextField } from "socle-ui";
+export default function Bloc() {
+  return (
+    <>
+      <IconButton label="Modifier" onPress={() => ouvrir(<TextField label="Nom" />)} />
+      <Dialog isOpen={ouvert} title="Modifier"><TextField label="Nom" /></Dialog>
+    </>
+  );
+}
+"#;
+        let files = [
+            ("m/pages/details.tsx", page),
+            ("m/lib/champ-direct.tsx", champ),
+            ("m/lib/choix.ts", choix),
+            ("m/lib/liste.tsx", liste),
+            ("m/lib/bloc.tsx", bloc),
+        ];
+        let found = module_messages(&files, "m/pages/details.tsx");
+        assert!(found.iter().any(|m| m.starts_with("6: `ChampDirect` (de `../lib/champ-direct`) rend un champ de saisie (`<ComboBox>`) dans une ligne de `Drawer` (`value` de `PropertyRow`)")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: `champs` rend un champ de saisie")), "{found:?}");
+        assert!(!found.iter().any(|m| m.contains("`Bloc`")), "une fenêtre et un gestionnaire ne sont pas des lignes : {found:?}");
+
+        // Seule la liste de choix, reprise d’un autre fichier, rend un champ : elle est trouvée à travers l’export.
+        let champ_radio = champ.replace("<ComboBox label={champ.nom} />", "null");
+        let files = [("m/pages/details.tsx", page), ("m/lib/champ-direct.tsx", champ_radio.as_str()), ("m/lib/choix.ts", choix), ("m/lib/liste.tsx", liste), ("m/lib/bloc.tsx", bloc)];
+        let found = module_messages(&files, "m/pages/details.tsx");
+        assert!(found.iter().any(|m| m.contains("`ChampDirect` (de `../lib/champ-direct`) rend un champ de saisie (`<RadioGroup>`)")), "{found:?}");
+
+        // Sans les fichiers du module, la page seule ne dit rien de ses composants.
+        assert!(!panel_messages(page).iter().any(|m| m.contains("ChampDirect")), "{:?}", panel_messages(page));
+    }
+
+    #[test]
+    fn les_lignes_de_drawer_section_et_les_actions_de_ligne() {
+        let page = r#"
+import { Drawer, DropdownMenu, PropertyRow, Checkbox } from "socle-ui";
+import { Pencil } from "lucide-react";
+export default function Fiche() {
+  return (
+    <Drawer>
+      <Drawer.Section id="a" title="Accès">
+        <PropertyRow
+          label="Profil"
+          value={profil.nom}
+          action={{ type: "icon", icon: <Pencil size={16} />, label: "Changer le profil", menu: (
+            <DropdownMenu.Section selectionMode="single" selectedKeys={[profil.id]} onSelectionChange={choisir}>
+              <DropdownMenu.Item id="a" label="Admin" />
+            </DropdownMenu.Section>
+          ) }}
+        />
+        <Checkbox isSelected={coche}>Appliquer</Checkbox>
+      </Drawer.Section>
+    </Drawer>
+  );
+}
+"#;
+        let found = panel_messages(page);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("17: Champ de saisie `<Checkbox>` dans une section de `Drawer` (enfants de `Drawer.Section`)"), "{found:?}");
+    }
+
+    #[test]
+    fn l_en_tete_du_drawer_nomme_l_objet() {
+        let page = r#"
+import { Drawer } from "socle-ui";
+export default function Details() {
+  return (
+    <Drawer
+      header={ticket ? { title: `Détails · ${ticket.cle}`, subtitle: "Chaque changement est enregistré aussitôt." } : undefined}
+      sections={[]}
+    />
+  );
+}
+"#;
+        let found = lint(page, Placement::Panel);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|f| is_warning(&f.message) && f.line == Some(6)), "{found:?}");
+        assert!(found[0].message.contains("commence par « Détail »") && found[0].message.contains("DESIGN.md, section 6"), "{found:?}");
+        assert!(found[1].message.contains("phrase d’aide (« Chaque changement est enregistré aussitôt. »)"), "{found:?}");
+
+        let bon = r#"
+import { Drawer } from "socle-ui";
+export default function Details() {
+  return <Drawer header={{ title: `${ticket.cle} · ${ticket.titre}`, subtitle: "Bug · Projet Alfred" }} sections={[]} />;
+}
+"#;
+        assert!(panel_messages(bon).is_empty(), "{:?}", panel_messages(bon));
     }
 
     #[test]
