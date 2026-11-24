@@ -285,7 +285,7 @@ describe("page Agent", () => {
     expect(screen.queryByRole("button", { name: "Supprimer la conversation" })).toBeNull();
     expect(screen.getByText(/^Depuis Factures du mois · /)).toHaveClass("agents-page__context");
     const pill = await findGitPill();
-    expect(pill.closest(".agent-composer__options")).not.toBeNull();
+    expect(pill.closest('[role="group"][aria-label="Réglages de la conversation"]')).not.toBeNull();
   });
 
   it("le suivi liste toutes les conversations comme OneApp : pastille d’état, heure, archiver au survol", async () => {

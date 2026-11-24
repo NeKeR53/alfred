@@ -275,15 +275,6 @@ button.agent-chat__attachment-file:hover {
   display: none;
 }
 
-/* Carte d’un texte replié (collage long, long message). */
-.chat-text-preview {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-}
-
 /* Nom de la conversation, modifiable sur place, en tête de la barre d’outils de la page. */
 .agents-page__title {
   min-width: 0;

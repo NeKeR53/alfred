@@ -1,32 +1,29 @@
-import { AtSign, FolderOpen, Paperclip, Plus, Slash, Square, X } from "lucide-react";
-import {
-  type ClipboardEvent,
-  type DragEvent,
-  type KeyboardEvent,
-  type ReactNode,
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { BookMarked, File, Folder, FolderOpen, Terminal } from "lucide-react";
+import { type ReactNode, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Button, IconButton, Menu } from "socle-ui";
-import { Notice, Row } from "../../kit";
+import {
+  Alert,
+  AttachmentChip,
+  AttachmentList,
+  ChatComposer,
+  type ChatComposerHandle,
+  ChatOptionButton,
+  ChatOptions,
+  Link,
+  type MentionReference,
+  type MentionTrigger,
+} from "socle-ui";
 import { inTauri, pickFolder } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { DictationButton } from "../voice/DictationButton";
 import { useVoice } from "../voice/store";
-import { AgentSendButton } from "./AgentSendButton";
-import { ComposerEditor, composerSelectionRange, setComposerSelection } from "./ComposerEditor";
 import { blankDraft, type ComposerDraft, hasDraft, useComposerDrafts } from "./drafts";
 import {
   attachmentsFromPaths,
   isImage,
   MAX_ATTACHMENTS,
   type PreparedAttachment,
-  pickAttachments,
   prepareAttachments,
   saveBlobs,
 } from "./files";
@@ -34,7 +31,10 @@ import type { Autonomy } from "./harness";
 import {
   type ComposerReference,
   type ComposerReferenceMention,
-  replaceComposerRange,
+  loadComposerReferences,
+  REFERENCE_TRIGGER,
+  type ReferenceKind,
+  referenceDisplayName,
   trimComposerReferences,
 } from "./lib/composerReferences";
 import type { Conversation, QueuedMessage, UserMessage } from "./model";
@@ -42,10 +42,8 @@ import { ChoicePicker } from "./panel/ChoicePicker";
 import { ModelPicker } from "./panel/ModelPicker";
 import { QueueList, queuedEditable } from "./QueueList";
 import { useAgents } from "./store";
-import { TextPreview } from "./TextPreview";
 import { QUOTE_EVENT } from "./Transcript";
 import { WatchLines } from "./watches";
-import "./agent-composer.css";
 
 const AUTONOMY_LABEL: Record<Autonomy, string> = {
   ask: "Libre dans ses dossiers",
@@ -82,9 +80,7 @@ function ConversationOptions({
       ? "Dossier de l’espace de travail"
       : (conversation.cwd.split(/[\\/]/).pop() ?? conversation.cwd);
   return (
-    <div className="agent-composer__options">
-      {status}
-      <span className="agent-composer__options-spacer" />
+    <ChatOptions label="Réglages de la conversation" start={status}>
       <ModelPicker
         value={{ provider: conversation.provider, model: conversation.model, effort: conversation.effort }}
         cwd={conversation.cwd || spaceDir}
@@ -108,35 +104,18 @@ function ConversationOptions({
         align="end"
         onChange={(value) => update(conversation.id, { autonomy: value as Autonomy })}
       />
-      <Button
-        size="sm"
-        variant="subtle"
+      <ChatOptionButton
         icon={<FolderOpen size={13} />}
+        label={folder}
         aria-label={`${folder} : dossier de travail ${conversation.cwd}`}
         isDisabled={locked || responding || !inTauri || started}
         onPress={async () => {
           const selected = await pickFolder("Dossier de travail de la conversation");
           if (selected) update(conversation.id, { cwd: selected });
         }}
-      >
-        {folder}
-      </Button>
-    </div>
+      />
+    </ChatOptions>
   );
-}
-
-/** Comme OneApp : un collage d’au moins 2 000 caractères ou 20 lignes devient une carte « Texte collé N ». */
-export function isLongChatText(text: string): boolean {
-  return text.length >= 2000 || text.split(/\r\n|\r|\n/, 20).length >= 20;
-}
-
-/** Images du presse-papiers, comme `clipboardImages` de OneApp : certains presse-papiers ne les exposent que par `items`. */
-export function clipboardImages(data: Pick<DataTransfer, "items" | "files">): File[] {
-  const images = [...data.items]
-    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => file !== null);
-  return images.length ? images : [...data.files].filter((file) => file.type.startsWith("image/"));
 }
 
 /** Les collages se numérotent dans l’ordre, comme les cartes « Texte collé N » de OneApp : en retirer un renumérote les suivants. */
@@ -184,10 +163,53 @@ export function mergeIntoDraft(message: UserMessage | ComposerDraft, current: Co
   };
 }
 
+/** Déclencheurs de la saisie : `/` commandes et skills, `$` skills, `@` fichiers du dossier de travail. */
+const TRIGGERS: { char: string; label: string; kind: ReferenceKind }[] = [
+  { char: "/", label: "Skill ou commande", kind: "command" },
+  { char: "$", label: "Skill", kind: "skill" },
+  { char: "@", label: "Fichier du dossier", kind: "file" },
+];
+
+const referenceId = (reference: ComposerReference) => `${reference.kind}:${reference.path}`;
+
+function referenceIcon(item: ComposerReference) {
+  if (item.kind === "skill") return <BookMarked size={14} aria-hidden="true" />;
+  if (item.kind === "command") return <Terminal size={14} aria-hidden="true" />;
+  return item.name.endsWith("/") ? <Folder size={14} aria-hidden="true" /> : <File size={14} aria-hidden="true" />;
+}
+
+/** Détail à droite de la suggestion, comme dans OneApp : le dossier du fichier, sinon « Skill » ou « Commande ». */
+function referenceDetail(item: ComposerReference) {
+  if (item.kind === "file") return item.name.replace(/\/$/, "").split(/[\\/]/).slice(0, -1).join("/") || ".";
+  return item.kind === "skill" ? "Skill" : "Commande";
+}
+
+/** Pastille de `MentionInput` d’une référence du brouillon ; la clé de la pastille est l’identifiant de la référence. */
+function toMention(reference: ComposerReferenceMention): MentionReference {
+  return {
+    key: reference.id,
+    trigger: REFERENCE_TRIGGER[reference.kind],
+    id: referenceId(reference),
+    label: referenceDisplayName(reference),
+    offset: reference.offset,
+  };
+}
+
+/** Les pastilles de la saisie sont celles du brouillon : mêmes clés, mêmes places. */
+function samePlaces(references: readonly ComposerReferenceMention[], mentions: readonly MentionReference[]): boolean {
+  return (
+    references.length === mentions.length &&
+    references.every(
+      (reference, index) => reference.id === mentions[index].key && reference.offset === mentions[index].offset,
+    )
+  );
+}
+
 /**
- * Saisie d’un message, reprise de `AgentComposer` de OneApp : texte et pastilles de références (`/`, `$`, `@`),
- * fichiers joints (menu, dépôt, collage d’image) avec vignettes, collages longs repliés en cartes, brouillon gardé
- * par conversation. Entrée envoie, Maj+Entrée va à la ligne ; pendant une réponse, Ctrl/⌘+Entrée met en file.
+ * Saisie d’un message : `ChatComposer` et `ChatOptions` de Socle (D-371 à D-374). Texte et pastilles de références
+ * (`/`, `$`, `@`), fichiers joints (menu « + », dépôt, collage d’image), collages longs en « Texte collé N »,
+ * brouillon gardé par conversation. Entrée envoie, Maj+Entrée va à la ligne ; pendant une réponse, ⌘/Ctrl+Entrée met
+ * en file et Échap arrête l’agent.
  */
 export function Composer({
   conversation,
@@ -224,6 +246,8 @@ export function Composer({
   // que rien ne marque une fin entre deux messages qui s’enchaînent.
   const shownStatus = responding || lastStatus === "running" || queued.length ? undefined : status;
   const conversationId = conversation.id;
+  const spaceDir = useShell((state) => state.snapshot?.path ?? "");
+  const cwd = conversation.cwd || spaceDir;
   const draft = useComposerDrafts((state) => state.drafts[conversationId] ?? blankDraft);
   const draftsReady = useComposerDrafts((state) => state.ready);
   const draftsLoadError = useComposerDrafts((state) => state.loadError);
@@ -231,25 +255,21 @@ export function Composer({
   const { update, patch, clear, read, retry: retryDrafts, discardUnreadable } = useComposerDrafts.getState();
   // Comme OneApp : rien ne se saisit tant que les conversations et les brouillons ne sont pas prêts.
   const locked = !agentsReady || !draftsReady || draftUnreadable;
-  const [dragging, setDraggingState] = useState(false);
   const draggingChange = useRef(onDraggingChange);
   draggingChange.current = onDraggingChange;
-  const setDragging = useCallback((next: boolean) => {
-    setDraggingState(next);
-    draggingChange.current?.(next);
-  }, []);
+  const setDragging = useCallback((next: boolean) => draggingChange.current?.(next), []);
   const [pendingAttachments, setPendingAttachments] = useState(0);
   const attaching = pendingAttachments > 0;
   const dictation = useVoice((state) => state.dictation);
   const partial = useVoice((state) => state.partial);
-  const editor = useRef<HTMLDivElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const composer = useRef<ChatComposerHandle>(null);
   /** Verrou immédiat : plusieurs Entrée avant le rendu suivant n’envoient qu’un message. */
   const sending = useRef(false);
+  /** Le texte du champ est déjà parti : jusqu’à la frappe suivante, il n’est pas renvoyé. */
+  const sentText = useRef(false);
   const previewed = useRef(new Set<string>());
-  /** Sélection du champ au moment où il a perdu le focus : le menu « + » insère là où était le curseur. */
-  const lastSelection = useRef<{ start: number; end: number } | undefined>(undefined);
-  const spaceDir = useShell((state) => state.snapshot?.path ?? "");
+  /** Références proposées par les suggestions, par identifiant de pastille : la pastille choisie retrouve son chemin. */
+  const catalog = useRef(new Map<string, ComposerReference>());
 
   useEffect(() => {
     void useComposerDrafts.getState().load();
@@ -257,26 +277,44 @@ export function Composer({
 
   // Pendant qu’un agent écrit, la page se redessine plusieurs fois par seconde : le texte et les pastilles tapés
   // vivent donc ici, appliqués tout de suite (`flushSync`), et le brouillon partagé suit en transition.
-  const [live, setLive] = useState({ text: draft.text, references: draft.references });
+  const [live, setLive] = useState(() => ({ text: draft.text, mentions: draft.references.map(toMention) }));
   const [seen, setSeen] = useState(draft);
   if (draft !== seen) {
     setSeen(draft);
-    if (draft.text !== live.text || draft.references !== live.references)
-      setLive({ text: draft.text, references: draft.references });
+    if (draft.text !== live.text || !samePlaces(draft.references, live.mentions)) {
+      sentText.current = false;
+      setLive({ text: draft.text, mentions: draft.references.map(toMention) });
+    }
   }
-  const typeText = (text: string) => {
-    flushSync(() => setLive((current) => ({ ...current, text })));
-    startTransition(() => patch(conversationId, { text }));
+  /** Références du brouillon pour les pastilles de la saisie : celles déjà connues gardent leur chemin. */
+  const fromMentions = (mentions: readonly MentionReference[]): ComposerReferenceMention[] => {
+    const known = new Map(read(conversationId).references.map((reference) => [reference.id, reference]));
+    return mentions.flatMap((mention) => {
+      const reference = known.get(mention.key) ?? catalog.current.get(mention.id);
+      return reference
+        ? [
+            {
+              name: reference.name,
+              path: reference.path,
+              kind: reference.kind,
+              ...(reference.description ? { description: reference.description } : {}),
+              id: mention.key,
+              offset: mention.offset,
+            },
+          ]
+        : [];
+    });
   };
-  const typeReferences = (references: ComposerReferenceMention[]) => {
-    flushSync(() => setLive((current) => ({ ...current, references })));
-    startTransition(() => patch(conversationId, { references }));
+  const type = (text: string, mentions: MentionReference[]) => {
+    sentText.current = false;
+    flushSync(() => setLive({ text, mentions }));
+    const references = fromMentions(mentions);
+    startTransition(() => patch(conversationId, { text, references }));
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus voulu au changement de conversation.
   useEffect(() => {
-    lastSelection.current = undefined;
-    editor.current?.focus();
+    composer.current?.focus();
   }, [conversationId]);
 
   // Une image jointe sans vignette (brouillon relu, capture déposée) reçoit la sienne.
@@ -298,7 +336,7 @@ export function Composer({
     });
   }, [draft.attachments, conversationId, update]);
 
-  // « Citer dans la réponse » ajoute le passage en citation Markdown à la fin de la saisie, puis y place le curseur.
+  // « Citer dans la réponse » ajoute le passage en citation Markdown à la fin de la saisie, puis lui rend le focus.
   useEffect(() => {
     const quote = (event: Event) => {
       const { conversationId: target, text: quoted } = (event as CustomEvent<{ conversationId: string; text: string }>)
@@ -313,16 +351,11 @@ export function Composer({
         const before = current.text.replace(/\s*$/, "");
         return { ...current, text: before ? `${before}\n\n${block}` : block };
       });
-      requestAnimationFrame(() => {
-        const input = editor.current;
-        if (!input) return;
-        input.focus();
-        setComposerSelection(input, read(conversationId).text.length);
-      });
+      requestAnimationFrame(() => composer.current?.focus());
     };
     window.addEventListener(QUOTE_EVENT, quote);
     return () => window.removeEventListener(QUOTE_EVENT, quote);
-  }, [conversationId, update, read]);
+  }, [conversationId, update]);
 
   /** Prépare des pièces jointes (copie, vignettes) ; l’envoi attend qu’elles soient prêtes. */
   const attach = useCallback(
@@ -375,89 +408,59 @@ export function Composer({
     };
   }, [attach, setDragging]);
 
-  const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
-    const files = clipboardImages(event.clipboardData);
-    if (files.length) {
-      event.preventDefault();
-      attach(() => saveBlobs(conversationId, files));
-      return;
-    }
-    const pasted = event.clipboardData.getData("text/plain");
-    if (!pasted.trim() || !isLongChatText(pasted)) return;
-    event.preventDefault();
-    const input = event.currentTarget;
-    const { start, end } = composerSelectionRange(input);
-    update(conversationId, (previous) => ({
-      ...previous,
-      text: previous.text.slice(0, start) + previous.text.slice(end),
-      references: replaceComposerRange(previous.references, start, end),
-      pastes: [
-        ...previous.pastes,
-        {
-          id: crypto.randomUUID(),
-          title: `Texte collé ${previous.pastes.filter((item) => item.title.startsWith("Texte collé")).length + 1}`,
-          text: pasted,
+  const triggers = useMemo<MentionTrigger[]>(
+    () =>
+      TRIGGERS.map(({ char, label, kind }) => ({
+        char,
+        label,
+        load: async (query) => {
+          try {
+            const found = await loadComposerReferences(cwd, conversation.provider, kind, query);
+            return found.map((item) => {
+              catalog.current.set(referenceId(item), item);
+              return {
+                id: referenceId(item),
+                label: referenceDisplayName(item),
+                description: referenceDetail(item),
+                icon: referenceIcon(item),
+              };
+            });
+          } catch (error) {
+            // Comme dans OneApp, la cause de l’échec part en notification ; la liste dit seulement de réessayer.
+            failure("Recherche de ressources", error);
+            throw error;
+          }
         },
-      ],
-    }));
-    requestAnimationFrame(() => setComposerSelection(input, start));
-  };
+      })),
+    [cwd, conversation.provider],
+  );
 
-  const onDrop = (event: DragEvent<HTMLFormElement>) => {
-    if (inTauri) return;
-    event.preventDefault();
-    setDragging(false);
-    const files = [...event.dataTransfer.files];
-    if (!locked && files.length) attach(() => saveBlobs(conversationId, files));
-  };
-
-  /** Insère « / » ou « @ » au curseur pour ouvrir la liste des skills ou des fichiers. */
-  const insertTrigger = (character: "/" | "@") => {
-    const input = editor.current;
-    if (!input || locked) return;
-    const length = live.text.length;
-    const saved = document.activeElement === input ? undefined : lastSelection.current;
-    input.focus();
-    const range = saved ?? composerSelectionRange(input);
-    const start = Math.min(range.start, length);
-    const end = Math.min(range.end, length);
-    const before = live.text.slice(0, start);
-    const inserted = `${before && !/\s$/.test(before) ? " " : ""}${character}`;
-    update(conversationId, (previous) => ({
-      ...previous,
-      text: previous.text.slice(0, start) + inserted + previous.text.slice(end),
-      references: replaceComposerRange(previous.references, start, end, inserted.length),
-    }));
-    requestAnimationFrame(() => {
-      setComposerSelection(input, start + inserted.length);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  };
-
-  // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, Ctrl/⌘+Entrée met le message en file (onKeyDown).
-  const filled = hasDraft(draft);
+  // Pendant une réponse, comme dans OneApp : Entrée envoie tout de suite, ⌘/Ctrl+Entrée met le message en file.
+  const pieces = draft.attachments.length + draft.pastes.length;
   // Comme dans OneApp : après une erreur ou une interruption, envoyer sans rien écrire relance le dernier message.
   const canResume = !responding && (lastStatus === "error" || lastStatus === "cancelled");
 
-  /** Envoie la saisie ; une dictée y ajoute sa transcription et demande que la réponse soit lue. */
-  const submit = async (dictated?: string, queue = false) => {
-    if (locked || attaching || sending.current) return;
-    // La frappe suit en transition : l’envoi lit le brouillon à cet instant, pas celui du dernier rendu.
+  /**
+   * Envoie la saisie (texte et pastilles lus dans le champ, pièces jointes dans le brouillon) ; une dictée y ajoute sa
+   * transcription et demande que la réponse soit lue.
+   */
+  const submit = async (typed?: { text: string; mentions: MentionReference[] }, dictated?: string, queue = false) => {
+    if (locked || attaching || sending.current || (typed && sentText.current)) return;
     const current = read(conversationId);
-    if (!dictated && !hasDraft(current)) {
-      if (canResume) void retry(conversationId).catch((error) => failure("Message non envoyé", error));
-      return;
-    }
-    const full = dictated ? [current.text.trim(), dictated].filter(Boolean).join(" ") : current.text;
+    const text = typed ? typed.text : current.text;
+    const references = typed ? fromMentions(typed.mentions) : current.references;
+    if (!dictated && !text.trim() && !current.attachments.length && !current.pastes.length) return;
+    const full = dictated ? [text.trim(), dictated].filter(Boolean).join(" ") : text;
     const message: UserMessage = {
       text: full.trim(),
       attachments: current.attachments.map(({ preview: _preview, ...attachment }) => attachment),
       contexts: current.pastes,
-      ...(current.references.length ? { references: trimComposerReferences(full, current.references) } : {}),
+      ...(references.length ? { references: trimComposerReferences(full, references) } : {}),
       ...(dictated ? { spoken: true } : {}),
     };
     // La saisie se vide dès l’envoi ; le message y revient si l’envoi échoue.
     sending.current = true;
+    sentText.current = true;
     let delivery: Promise<void>;
     try {
       clear(conversationId);
@@ -465,28 +468,12 @@ export function Composer({
     } finally {
       sending.current = false;
     }
-    editor.current?.focus();
+    composer.current?.focus();
     try {
       await delivery;
     } catch (error) {
-      update(conversationId, (now) => mergeIntoDraft(current, now));
+      update(conversationId, (now) => mergeIntoDraft({ ...current, text, references }, now));
       failure("Message non envoyé", error);
-    }
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      if (!attaching) void submit(undefined, event.ctrlKey || event.metaKey);
-    }
-    if (event.key === "Escape" && dictation === "listening") {
-      event.preventDefault();
-      void useVoice.getState().cancelDictation();
-      return;
-    }
-    if (event.key === "Escape" && responding) {
-      event.preventDefault();
-      void cancel(conversationId);
     }
   };
 
@@ -499,195 +486,117 @@ export function Composer({
     const message = unqueue(conversationId, item.id);
     if (!message) return;
     patch(conversationId, { text: message.text, references: (message.references ?? []).filter(isMention) });
-    requestAnimationFrame(() => editor.current?.focus());
+    requestAnimationFrame(() => composer.current?.focus());
   };
 
-  const pick = () => {
-    if (!inTauri) {
-      fileInput.current?.click();
-      return;
-    }
-    attach(pickAttachments);
-  };
+  const removePaste = (id: string) =>
+    patch(conversationId, { pastes: numberPastes(draft.pastes.filter((item) => item.id !== id)) });
+  const removeAttachment = (path: string) =>
+    patch(conversationId, { attachments: draft.attachments.filter((item) => item.path !== path) });
+  const dictating =
+    dictation === "listening"
+      ? partial || "Je vous écoute…"
+      : dictation === "transcribing"
+        ? "Transcription…"
+        : undefined;
 
-  const sendLabel = canResume && !filled ? "Relancer l’exécution" : responding ? "Envoyer maintenant" : "Envoyer";
   return (
-    <div className="agent-composer">
+    <>
       {draftsLoadError ? (
-        <Notice tone="danger" action={<Button onPress={() => void retryDrafts()}>Réessayer</Button>}>
+        <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void retryDrafts() }}>
           Les brouillons n’ont pas pu être chargés. Réessayez avant de saisir un message.
-        </Notice>
+        </Alert>
       ) : draftUnreadable ? (
-        <Notice
-          tone="danger"
-          action={
-            <Row gap="sm">
-              <Button onPress={() => void retryDrafts()}>Réessayer</Button>
-              <Button
-                onPress={() =>
-                  void discardUnreadable(conversationId).catch((error) => failure("Brouillon non supprimé", error))
-                }
-              >
-                Supprimer le brouillon
-              </Button>
-            </Row>
-          }
-        >
-          Le brouillon enregistré de cette conversation est illisible.
-        </Notice>
-      ) : null}
-      <form
-        className={`agent-composer__box${dragging ? " is-dragging" : ""}`}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-        onDragOver={(event) => {
-          if (inTauri || locked) return;
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => !inTauri && setDragging(false)}
-        onDrop={onDrop}
-      >
-        <WatchLines conversationId={conversationId} />
-        <QueueList
-          queue={queued}
-          disabled={locked}
-          onEdit={edit}
-          onRemove={(item) => unqueue(conversationId, item.id)}
-          onSendNow={(item) =>
-            void sendQueuedNow(conversationId, item.id).catch((error) => failure("Message non envoyé", error))
-          }
-          onReorder={reorderQueued ? (ids) => reorderQueued(conversationId, ids) : undefined}
-        />
-        {draft.attachments.length || draft.pastes.length ? (
-          <ul className="agent-composer__attachments">
-            {draft.pastes.map((context) => (
-              <li key={context.id}>
-                <TextPreview
-                  text={context.text}
-                  label={context.title}
-                  onRemove={() =>
-                    patch(conversationId, {
-                      pastes: numberPastes(draft.pastes.filter((item) => item.id !== context.id)),
-                    })
-                  }
-                />
-              </li>
-            ))}
-            {draft.attachments.map((attachment) => (
-              <li
-                key={attachment.path}
-                className={attachment.preview ? "agent-composer__thumb" : "agent-composer__file"}
-                title={attachment.name}
-              >
-                {attachment.preview ? (
-                  <img src={attachment.preview} alt={attachment.name} className="agent-composer__thumb-image" />
-                ) : (
-                  <>
-                    <Paperclip size={13} aria-hidden="true" />
-                    <span>{attachment.name}</span>
-                  </>
-                )}
-                <span className="agent-composer__remove">
-                  <IconButton
-                    icon={<X size={12} />}
-                    label={`Retirer ${attachment.name}`}
-                    onPress={() =>
-                      patch(conversationId, {
-                        attachments: draft.attachments.filter((item) => item.path !== attachment.path),
-                      })
-                    }
-                  />
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className="agent-composer__row">
-          <Menu
-            label="Ajouter au message"
-            placement="top start"
-            trigger={<IconButton icon={<Plus size={16} />} label="Ajouter au message" isDisabled={locked} />}
-          >
-            <Menu.Item
-              label="Joindre des fichiers…"
-              icon={<Paperclip size={14} />}
-              isDisabled={attaching}
-              onAction={pick}
-            />
-            <Menu.Item label="Skill ou commande · /" icon={<Slash size={14} />} onAction={() => insertTrigger("/")} />
-            <Menu.Item label="Fichier du dossier · @" icon={<AtSign size={14} />} onAction={() => insertTrigger("@")} />
-          </Menu>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              const files = [...(event.target.files ?? [])].slice(0, MAX_ATTACHMENTS);
-              event.target.value = "";
-              if (files.length) attach(() => saveBlobs(conversationId, files));
-            }}
-          />
-          <ComposerEditor
-            key={conversationId}
-            ref={editor}
-            className="agent-composer__input"
-            // Exclu du soulignement des champs nus (styles.css) : le cadre du compositeur porte bordure et focus.
-            data-slot="composer-input"
-            aria-label={`Message à ${conversation.title}`}
-            cwd={conversation.cwd || spaceDir}
-            provider={conversation.provider}
-            disabled={locked}
-            placeholder={
-              dictation === "listening"
-                ? partial || "Je vous écoute…"
-                : dictation === "transcribing"
-                  ? "Transcription…"
-                  : dragging
-                    ? "Déposez vos fichiers ici"
-                    : responding
-                      ? "Ajouter un message à la file…"
-                      : conversation.turns.length
-                        ? "Répondre à l’agent…"
-                        : "Que puis-je mettre en place pour vous ?"
+        <Alert tone="danger" action={{ label: "Réessayer", onPress: () => void retryDrafts() }}>
+          Le brouillon enregistré de cette conversation est illisible.{" "}
+          <Link
+            onPress={() =>
+              void discardUnreadable(conversationId).catch((error) => failure("Brouillon non supprimé", error))
             }
-            value={live.text}
-            onValueChange={typeText}
-            references={live.references}
-            onReferencesChange={typeReferences}
-            onKeyDown={onKeyDown}
-            onBlur={(event) => {
-              lastSelection.current = composerSelectionRange(event.currentTarget);
-            }}
-            onPaste={onPaste}
+          >
+            Supprimer le brouillon
+          </Link>
+        </Alert>
+      ) : null}
+      <WatchLines conversationId={conversationId} />
+      <ChatComposer
+        ref={composer}
+        label={`Message à ${conversation.title}`}
+        value={live.text}
+        references={live.mentions}
+        onChange={type}
+        onSubmit={(text, mode, mentions) => void submit({ text, mentions }, undefined, mode === "queue")}
+        placeholder={
+          dictating ?? (conversation.turns.length ? "Répondre à l’agent…" : "Que puis-je mettre en place pour vous ?")
+        }
+        runningPlaceholder={dictating}
+        triggers={triggers}
+        isRunning={responding}
+        onStop={() => void cancel(conversationId)}
+        canResume={canResume}
+        onResume={() => void retry(conversationId).catch((error) => failure("Message non envoyé", error))}
+        isPending={attaching}
+        isDisabled={locked}
+        hasAttachments={pieces > 0}
+        onAddFiles={(files) => attach(() => saveBlobs(conversationId, files.slice(0, MAX_ATTACHMENTS)))}
+        onPasteLongText={(pasted) =>
+          update(conversationId, (previous) => ({
+            ...previous,
+            pastes: [
+              ...previous.pastes,
+              {
+                id: crypto.randomUUID(),
+                title: `Texte collé ${previous.pastes.filter((item) => item.title.startsWith("Texte collé")).length + 1}`,
+                text: pasted,
+              },
+            ],
+          }))
+        }
+        queue={
+          <QueueList
+            queue={queued}
+            disabled={locked}
+            onEdit={edit}
+            onRemove={(item) => unqueue(conversationId, item.id)}
+            onSendNow={(item) =>
+              void sendQueuedNow(conversationId, item.id).catch((error) => failure("Message non envoyé", error))
+            }
+            onReorder={reorderQueued ? (ids) => reorderQueued(conversationId, ids) : undefined}
           />
-          <DictationButton onTranscript={(dictated) => void submit(dictated)} />
-          {responding ? (
-            <IconButton
-              icon={<Square size={13} />}
-              label="Arrêter l’agent"
-              shortcut="Escape"
-              onPress={() => void cancel(conversationId)}
-            />
-          ) : null}
-          <AgentSendButton
-            label={sendLabel}
-            isDisabled={locked || attaching || (!filled && !canResume)}
-            isPending={attaching}
-            onPress={() => void submit()}
-          />
-        </div>
-      </form>
+        }
+        attachments={
+          pieces ? (
+            <AttachmentList>
+              {draft.pastes.map((paste) => (
+                <AttachmentChip
+                  key={paste.id}
+                  kind="text"
+                  name={paste.title}
+                  text={paste.text}
+                  onRemove={() => removePaste(paste.id)}
+                />
+              ))}
+              {draft.attachments.map((attachment) => (
+                <AttachmentChip
+                  key={attachment.path}
+                  kind={attachment.preview || isImage(attachment.path) ? "image" : "file"}
+                  name={attachment.name}
+                  src={attachment.preview}
+                  onRemove={() => removeAttachment(attachment.path)}
+                />
+              ))}
+            </AttachmentList>
+          ) : null
+        }
+        trailing={<DictationButton onTranscript={(dictated) => void submit(undefined, dictated)} />}
+      />
       {compact ? (
         shownStatus ? (
-          <div className="agent-composer__options">{shownStatus}</div>
+          <ChatOptions start={shownStatus} />
         ) : null
       ) : (
         <ConversationOptions conversation={conversation} locked={locked} responding={responding} status={shownStatus} />
       )}
-    </div>
+    </>
   );
 }

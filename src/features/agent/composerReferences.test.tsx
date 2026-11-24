@@ -98,7 +98,7 @@ describe("références de la saisie", () => {
 
     await user.click(input);
     await user.keyboard("/rel");
-    const listed = await screen.findByRole("listbox", { name: "Commandes et skills" });
+    const listed = await screen.findByRole("listbox", { name: "Suggestions : Skill ou commande" });
     await within(listed).findByRole("option", { name: /relire-page/ });
     expect(native.invoke).toHaveBeenCalledWith("composer.references", {
       cwd: "/projet",
@@ -114,23 +114,23 @@ describe("références de la saisie", () => {
     });
     await user.keyboard("{Enter}");
     // La mention tapée laisse place à une pastille non éditable, avec son « × ».
-    const pill = await within(input).findByText("relire-page");
-    expect(pill.closest(".reference-pill")).toHaveAttribute("contenteditable", "false");
-    expect(within(input).getByRole("button", { name: "Retirer relire-page" })).toBeInTheDocument();
+    const pill = await within(input).findByText("/relire-page");
+    expect(pill.closest('[contenteditable="false"]')).not.toBeNull();
+    expect(within(input).getByRole("button", { name: "Retirer /relire-page" })).toBeInTheDocument();
     expect(screen.queryByRole("listbox")).toBeNull();
 
     await user.keyboard(" puis vérifie @liste");
-    const found = await screen.findByRole("listbox", { name: "Fichiers du dossier de travail" });
+    const found = await screen.findByRole("listbox", { name: "Suggestions : Fichier du dossier" });
     fireEvent.mouseDown(await within(found).findByRole("option", { name: /liste\.tsx/ }));
-    await within(input).findByText("liste.tsx");
+    await within(input).findByText("@liste.tsx");
 
     // Une pastille retirée par son « × » ne part pas.
     await user.keyboard(" /pub");
     await within(await screen.findByRole("listbox")).findByRole("option", { name: /publier/ });
     await user.keyboard("{Tab}");
-    await within(input).findByText("publier");
-    await user.click(within(input).getByRole("button", { name: "Retirer publier" }));
-    await waitFor(() => expect(within(input).queryByText("publier")).toBeNull());
+    await within(input).findByText("/publier");
+    await user.click(within(input).getByRole("button", { name: "Retirer /publier" }));
+    await waitFor(() => expect(within(input).queryByText("/publier")).toBeNull());
 
     await user.click(screen.getByRole("button", { name: "Envoyer" }));
     await waitFor(() => expect(sent).toHaveLength(1));
@@ -152,7 +152,7 @@ describe("références de la saisie", () => {
     const input = await editor();
     await user.click(input);
     await user.keyboard("$re");
-    const listed = await screen.findByRole("listbox", { name: "Skills" });
+    const listed = await screen.findByRole("listbox", { name: "Suggestions : Skill" });
     await within(listed).findByRole("option", { name: /relire-page/ });
     expect(within(listed).queryByRole("option", { name: /publier/ })).toBeNull();
   });
@@ -163,7 +163,7 @@ describe("références de la saisie", () => {
     const input = await editor();
     await user.click(input);
     await user.keyboard("@notes");
-    await screen.findByRole("listbox", { name: "Fichiers du dossier de travail" });
+    await screen.findByRole("listbox", { name: "Suggestions : Fichier du dossier" });
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(input).toHaveTextContent("@notes");
@@ -177,10 +177,10 @@ describe("références de la saisie", () => {
     await user.keyboard("Regarde");
     await user.click(screen.getByRole("button", { name: "Ajouter au message" }));
     expect(screen.getByRole("menuitem", { name: "Joindre des fichiers…" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Skill ou commande · /" })).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: "Fichier du dossier · @" }));
+    expect(screen.getByRole("menuitem", { name: /^Skill ou commande/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: /^Fichier du dossier/ }));
     await waitFor(() => expect(input).toHaveTextContent("Regarde @"));
-    await screen.findByRole("listbox", { name: "Fichiers du dossier de travail" });
+    await screen.findByRole("listbox", { name: "Suggestions : Fichier du dossier" });
   });
 });
 

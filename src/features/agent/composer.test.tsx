@@ -5,10 +5,11 @@
  */
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { clipboardImages, isLongPaste as isLongChatText } from "socle-ui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useShell } from "../../shell/store";
-import { Composer, clipboardImages, isLongChatText, mergeIntoDraft, numberPastes } from "./Composer";
+import { Composer, mergeIntoDraft, numberPastes } from "./Composer";
 import {
   blankDraft,
   DRAFTS_KEY,
@@ -295,7 +296,52 @@ describe("envoi", () => {
 
   it("pendant une réponse, l’indication propose de mettre en file", async () => {
     render(<Composer conversation={conversation("a", { turns: [] })} responding />);
-    expect(await editor()).toHaveAttribute("aria-placeholder", "Ajouter un message à la file…");
+    expect(await editor()).toHaveAttribute("aria-placeholder", expect.stringMatching(/↩ pour mettre en file$/));
+  });
+
+  it("pendant une réponse : Échap arrête l’agent, Entrée envoie maintenant, Ctrl+Entrée met en file", async () => {
+    const cancel = vi.fn(async () => undefined);
+    const send = vi.fn(async () => undefined);
+    useAgents.setState({ cancel, send } as never);
+    const user = userEvent.setup();
+    render(<Composer conversation={conversation("a")} responding />);
+    const input = await editor();
+    await user.click(input);
+    await user.keyboard("{Escape}");
+    expect(cancel).toHaveBeenCalledWith("a");
+    await user.keyboard("Tout de suite{Enter}");
+    await waitFor(() =>
+      expect(send).toHaveBeenLastCalledWith("a", expect.objectContaining({ text: "Tout de suite" }), { now: true }),
+    );
+    await user.keyboard("Plus tard{Control>}{Enter}{/Control}");
+    await waitFor(() =>
+      expect(send).toHaveBeenLastCalledWith("a", expect.objectContaining({ text: "Plus tard" }), { now: false }),
+    );
+  });
+
+  it("après un échec, la saisie vide propose « Relancer », qui relance le dernier message", async () => {
+    const retry = vi.fn(async () => undefined);
+    useAgents.setState({
+      retry,
+      loaded: {
+        a: conversation("a", {
+          turns: [
+            {
+              id: "t1",
+              user: { text: "Bonjour", attachments: [], contexts: [] },
+              items: [],
+              status: "error",
+              startedAt: 1,
+            },
+          ],
+        }),
+      },
+    } as never);
+    const user = userEvent.setup();
+    render(<Composer conversation={conversation("a")} responding={false} />);
+    await editor();
+    await user.click(screen.getByRole("button", { name: "Relancer" }));
+    expect(retry).toHaveBeenCalledWith("a");
   });
 
   it("un message déjà commencé garde sa place quand un autre revient dans la saisie", () => {
@@ -415,13 +461,16 @@ describe("file d’attente", () => {
     });
     render(<Composer conversation={conversation("a")} responding />);
     const queue = screen.getByRole("region", { name: /en file/ });
-    expect(queue.closest("form")).toHaveClass("agent-composer__box");
+    // La file est dans le cadre de ChatComposer, au-dessus du champ.
+    const input = screen.getByRole("textbox", { name: /^Message à / });
+    let frame = queue.parentElement;
+    while (frame && !frame.contains(input)) frame = frame.parentElement;
+    expect(frame?.contains(screen.getByRole("button", { name: "Envoyer maintenant" }))).toBe(true);
+    expect(queue.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(queue).toHaveClass("agent-queue");
     const sendNow = within(queue).getByRole("button", { name: "Envoyer le message 1 maintenant" });
     // Même bouton d’envoi que la saisie, la flèche inclinée.
     expect(sendNow.querySelector(".lucide-arrow-up-right")).not.toBeNull();
-    const send = screen.getByRole("button", { name: "Envoyer maintenant" });
-    expect(send.querySelector(".lucide-arrow-up")).not.toBeNull();
   });
 
   it("modifier reprend le texte et les pastilles à la place de la saisie ; pas pour un message avec pièces jointes", async () => {
@@ -458,7 +507,7 @@ describe("file d’attente", () => {
 
   it("pendant une réponse : « Arrêter l’agent », pas d’aide des raccourcis sous la barre, modèle modifiable", async () => {
     render(<Composer conversation={conversation("a")} responding status={<span>3 fichiers modifiés</span>} />);
-    expect(screen.getByRole("button", { name: "Arrêter l’agent" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Arrêter" })).toHaveAttribute("aria-keyshortcuts", "Escape");
     expect(screen.queryByText(/pour envoyer, .* pour mettre en file/)).toBeNull();
     // Le résumé des fichiers modifiés attend la fin : pendant la réponse, il ne laisse pas croire qu’elle est finie.
     expect(screen.queryByText("3 fichiers modifiés")).toBeNull();
@@ -492,7 +541,9 @@ describe("résumé des fichiers modifiés sous la saisie", () => {
 
   it("ne paraît qu’une fois l’agent arrêté et la file vide", () => {
     const view = render(<Composer conversation={conversation("a")} responding={false} status={pill} />);
-    expect(screen.getByText("2 fichiers modifiés").closest(".agent-composer__options")).not.toBeNull();
+    expect(
+      within(screen.getByRole("group", { name: "Réglages de la conversation" })).getByText("2 fichiers modifiés"),
+    ).toBeInTheDocument();
 
     // Un message attend encore dans la file : la suite n’est pas finie.
     act(() =>

@@ -9,6 +9,7 @@ import {
   ChatMessage,
   ChatTranscript,
   DiffStat,
+  isLongPaste,
   Link,
   MentionText,
   MessageActions,
@@ -57,10 +58,8 @@ export const QUOTE_EVENT = "alfred:agent-quote";
 /** Tours affichés dès l’ouverture d’une conversation (les 12 derniers blocs de OneApp : message et travail). */
 export const RECENT_TURNS = 6;
 
-/** Un message de l’utilisateur long (2 000 caractères ou 20 lignes) s’affiche en carte, comme dans OneApp. */
-export function isLongChatText(text: string): boolean {
-  return text.length >= 2000 || text.split(/\r\n|\r|\n/, 20).length >= 20;
-}
+/** Un message de l’utilisateur long (2 000 caractères ou 20 lignes) s’affiche en pièce « Message », comme un collage. */
+export const isLongChatText = isLongPaste;
 
 /** Actions du store ajoutées par le moteur des conversations ; le relevé ne montre leurs boutons que si elles existent. */
 type TurnActions = {
