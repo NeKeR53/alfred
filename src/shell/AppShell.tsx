@@ -540,18 +540,28 @@ export function AppShell({
               subtitle={row.details}
               status={row.status === "error" || row.status === "warning" ? "warning" : undefined}
               unread={Boolean(row.badge)}
+              // « Archiver » : un bouton-icône au survol, pas une entrée du menu « … » (D-381).
+              quickActions={row.actions
+                ?.filter((action) => action.id === "archive")
+                .map((action) => ({
+                  icon: <NamedIcon name={action.icon} size={14} />,
+                  label: `${action.label} ${row.label}`,
+                  onPress: () => agentZone.onAction(row.id, action.id),
+                }))}
               actions={
-                row.actions?.length
-                  ? row.actions.map((action) => (
-                      <DropdownMenu.Item
-                        key={action.id}
-                        label={action.label}
-                        icon={<NamedIcon name={action.icon} size={16} />}
-                        onAction={() =>
-                          action.id === "rename" ? renameConversation(row) : agentZone.onAction(row.id, action.id)
-                        }
-                      />
-                    ))
+                row.actions?.some((action) => action.id !== "archive")
+                  ? row.actions
+                      .filter((action) => action.id !== "archive")
+                      .map((action) => (
+                        <DropdownMenu.Item
+                          key={action.id}
+                          label={action.label}
+                          icon={<NamedIcon name={action.icon} size={16} />}
+                          onAction={() =>
+                            action.id === "rename" ? renameConversation(row) : agentZone.onAction(row.id, action.id)
+                          }
+                        />
+                      ))
                   : undefined
               }
             />

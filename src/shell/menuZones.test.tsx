@@ -188,6 +188,40 @@ describe("zone dans le menu de gauche", () => {
   const navigation = () => screen.getAllByRole("treegrid", { name: "Navigation principale" })[0];
   const row = (name: string) => within(navigation()).getByRole("row", { name });
 
+  it("conversation : « Archiver » est un bouton-icône au survol, absent du menu « … »", async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    const rows = agentZoneRows(
+      [
+        {
+          id: "c1",
+          title: "Factures",
+          updatedAt: "2026-11-24T08:00:00Z",
+          archived: false,
+          started: true,
+          unread: false,
+        } as unknown as ConversationHeader,
+      ],
+      () => "idle",
+      false,
+    );
+    render(
+      <AppShell
+        agent={<div>Agent</div>}
+        settingsTabs={[]}
+        agentAvailable
+        agentZone={{ rows, onOpen: vi.fn(), onAction }}
+      />,
+    );
+    const conversations = await screen.findByRole("row", { name: /^Factures/ });
+    const archive = within(conversations).getByRole("button", { name: "Archiver Factures", hidden: true });
+    await user.click(archive);
+    expect(onAction).toHaveBeenCalledWith("c1", "archive");
+    await user.click(within(conversations).getByRole("button", { name: /^Actions sur Factures/, hidden: true }));
+    expect(await screen.findByRole("menuitem", { name: /Renommer/ })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /Archiver/ })).toBeNull();
+  });
+
   it("range les entrées en sous-pages de la section, et ouvre la page avec l’entrée", async () => {
     const user = userEvent.setup();
     renderShell();
