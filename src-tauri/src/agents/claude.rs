@@ -609,6 +609,33 @@ impl Claude {
         written
     }
 
+    /// Message envoyé pendant que Claude Code travaille : il est écrit tout de suite dans le flux, sans arrêter le
+    /// tour. Claude Code le prend entre deux étapes (après l’outil en cours), répond et poursuit sa tâche, et le tour
+    /// se termine par un seul résultat (essai réel du 2026-11-24, `claude` 2.1 en `stream-json`). Hors réponse, c’est
+    /// un envoi ordinaire.
+    pub fn steer(&self, text: &str, files: &[InputFile]) -> AppResult<()> {
+        let body = message_text(text, files);
+        if body.is_empty() {
+            return Ok(());
+        }
+        {
+            let state = self.inner.state.lock().map_err(|_| unavailable())?;
+            if state.closed {
+                return Err(AppError::new("La conversation Claude Code est fermée."));
+            }
+            if !state.responding {
+                drop(state);
+                return self.send(text, files);
+            }
+        }
+        let attached = attached_list(&files.iter().collect::<Vec<_>>());
+        self.process.write(&json!({
+            "type": "user",
+            "message": { "role": "user", "content": [{ "type": "text", "text": format!("{body}{attached}") }] },
+            "parent_tool_use_id": null,
+        }))
+    }
+
     pub fn answer(&self, approval: &str, option: &str) -> AppResult<()> {
         let pending = self
             .inner

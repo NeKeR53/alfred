@@ -158,8 +158,9 @@ export async function createSession(options: NativeSessionOptions): Promise<Harn
         files: files(attachments),
         ...(clientId ? { clientId } : {}),
       }),
-    // Seul Codex sait orienter une réponse en cours ; ailleurs, l’appelant interrompt puis renvoie.
-    ...(options.provider === "codex"
+    // Codex et Claude Code savent orienter une réponse en cours (Claude Code prend le message entre deux étapes et
+    // poursuit sa tâche) ; ailleurs, l’appelant interrompt puis renvoie.
+    ...(options.provider === "codex" || options.provider === "claude"
       ? {
           steer: (message: string, attachments?: readonly InputFile[], clientId?: string) =>
             invoke<void>("agents.steer", {

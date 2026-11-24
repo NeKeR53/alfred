@@ -321,8 +321,10 @@ async fn send(args: &Value, steer: bool) -> AppResult<Value> {
         (Driver::Claude(claude), false) => claude.send(&text, &files),
         (Driver::Codex(codex), false) => codex.send(&text, &files, client_id.as_deref()).await,
         (Driver::Codex(codex), true) => codex.steer(&text, &files, client_id.as_deref()).await,
+        // Claude Code prend le message entre deux étapes et poursuit sa tâche (voir `Claude::steer`).
+        (Driver::Claude(claude), true) => claude.steer(&text, &files),
         (Driver::Opencode(opencode), false) => opencode.send(&text, &files, client_id.as_deref()).await,
-        // OpenCode fusionnerait le message avec l’exécution en cours ; Claude Code n’oriente pas une réponse.
+        // OpenCode fusionnerait le message avec l’exécution en cours.
         (_, true) => Err(AppError::new("Cet agent ne peut pas orienter la réponse en cours.")),
     }?;
     Ok(Value::Null)

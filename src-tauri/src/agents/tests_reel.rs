@@ -119,6 +119,35 @@ async fn workspace(provider: &str) {
     run.close().await;
 }
 
+/// Un message envoyé pendant le travail (`agents.steer`) est pris entre deux étapes : l’agent y répond et finit sa
+/// tâche, dans le même tour, sans être arrêté.
+async fn steering(provider: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut extra = model(provider);
+    extra["autonomy"] = json!("auto");
+    let mut run = start(provider, dir.path().to_str().unwrap(), extra).await;
+    run.send(
+        "Lance successivement ces deux commandes shell, une par une : `sleep 5; echo UN`, puis `sleep 5; echo DEUX`. \
+         Après la dernière, réponds « tâche finie ».",
+    )
+    .await;
+    // Dès que la première commande est lancée, la question arrive.
+    run.until(|event| event["type"] == "activity").await;
+    session::handle(
+        &run.state,
+        "agents.steer",
+        &json!({ "handle": run.handle, "text": "Question en passant : combien font 7 fois 8 ? Réponds, puis continue." }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let events = run.until(idle).await;
+    let text = answer(&events);
+    assert!(text.contains("56"), "{provider} : la question n’a pas reçu de réponse : {text}");
+    assert!(text.to_lowercase().contains("finie"), "{provider} : la tâche n’a pas été finie : {text}");
+    run.close().await;
+}
+
 macro_rules! reel {
     ($name:ident, $provider:literal, $scenario:ident) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -130,6 +159,7 @@ macro_rules! reel {
 }
 
 reel!(claude_conversation, "claude", conversation);
+reel!(claude_message_pendant_le_travail, "claude", steering);
 reel!(codex_conversation, "codex", conversation);
 reel!(opencode_conversation, "opencode", conversation);
 reel!(claude_espace_de_travail, "claude", workspace);

@@ -206,6 +206,27 @@ describe("conversation d’agent · un tour", () => {
     expect(sessions[0].session.cancel).not.toHaveBeenCalled();
   });
 
+  it("Claude Code : un message envoyé pendant le travail est glissé dans la réponse, sans l’arrêter", async () => {
+    const id = start({ provider: "claude", model: "opus" });
+    await useAgents.getState().send(id, message("Lance les trois commandes"));
+    sessions[0].emit({ type: "status", status: "responding" });
+    // Même avec une pièce jointe : Claude Code la reçoit comme un chemin dans le texte.
+    await useAgents
+      .getState()
+      .send(
+        id,
+        { text: "Et regarde ça", attachments: [{ path: "/a.png", name: "a.png" }], contexts: [] },
+        { now: true },
+      );
+    expect(sessions[0].session.steer).toHaveBeenCalledWith(
+      expect.stringContaining("Et regarde ça"),
+      [{ path: "/a.png", name: "a.png" }],
+      expect.any(String),
+    );
+    expect(sessions[0].session.cancel).not.toHaveBeenCalled();
+    expect(conversation(id).turns.map((turn) => turn.status)).toEqual(["done", "running"]);
+  });
+
   it("interrompt la réponse puis envoie le message quand l’agent ne sait pas l’orienter", async () => {
     const id = start();
     await useAgents.getState().send(id, message("Un"));

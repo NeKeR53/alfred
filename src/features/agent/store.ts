@@ -806,8 +806,10 @@ export const useAgents = create<AgentState>((set, get) => {
     const state = get().runtime[id];
     // Comme OneApp : seul un message de texte se glisse dans une réponse qui s’écrit ; des pièces jointes, des
     // collages ou des références (contexte de session dans OneApp) font interrompre la réponse.
+    // Claude Code reçoit pièces jointes et contextes comme du texte (des chemins) : tout message peut orienter sa réponse.
     const plain =
-      !queued.message.attachments.length && !queued.message.contexts.length && !queued.message.references?.length;
+      current(id)?.provider === "claude" ||
+      (!queued.message.attachments.length && !queued.message.contexts.length && !queued.message.references?.length);
     if (
       running &&
       live?.steer &&
