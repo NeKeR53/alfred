@@ -8,8 +8,9 @@ import { ConversationFiles } from "./transcript/ConversationFiles";
 import { ConversationImages } from "./transcript/ConversationImages";
 
 /**
- * Activités de l’agent, en un seul `ActivityGroup` de Socle (D-376, D-384) : une ligne par outil, un résumé au-delà
- * de 3, la sortie ouverte à la demande avec ses images et ses fichiers ; un chemin lu ou modifié s’ouvre d’un clic.
+ * Activités de l’agent, en un seul `ActivityGroup` de Socle (D-376, D-384, D-390) : dès deux outils, une ligne repliée
+ * avec le nombre d’appels et le nombre en cours ; dépliée, une ligne par outil, la sortie ouverte à la demande avec ses
+ * images et ses fichiers ; un chemin lu ou modifié s’ouvre d’un clic.
  */
 export type Activity = Extract<TurnItem, { kind: "activity" }>;
 
@@ -162,5 +163,13 @@ export function Activities({
   /** Ouvre un fichier lu ou modifié par l’agent ; sans lui, les chemins restent du texte. */
   onOpenFile?: (path: string) => void;
 }) {
-  return <ActivityGroup items={activities.flatMap((activity) => activityItems(activity, onOpenFile))} />;
+  // Les appels qui se suivent forment une seule ligne repliée, même pendant le travail : « 7 outils · 2 en cours »
+  // (D-390). Dépliée, elle montre une ligne par appel.
+  return (
+    <ActivityGroup
+      items={activities.flatMap((activity) => activityItems(activity, onOpenFile))}
+      groupAbove={1}
+      defaultExpanded={false}
+    />
+  );
 }

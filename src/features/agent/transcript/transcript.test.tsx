@@ -556,12 +556,35 @@ describe("activités", () => {
         ]}
       />,
     );
-    // Un seul ActivityGroup ; les chemins s’ouvrent d’un clic (onObjectPress) ; la commande arrêtée le dit.
+    // Une seule ligne repliée (D-390) : le nombre d’appels, puis, dépliée, une ligne par appel.
+    const summary = screen.getByRole("button", { name: "3 outils exécutés · 1 arrêté" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(summary);
+    // Les chemins s’ouvrent d’un clic (onObjectPress) ; la commande arrêtée le dit.
     fireEvent.click(screen.getByRole("button", { name: /^page\.tsx/ }));
     expect(open).toHaveBeenCalledWith("src/page.tsx");
     fireEvent.click(screen.getByRole("button", { name: "notes/plan.md" }));
     expect(open).toHaveBeenCalledWith("notes/plan.md");
     expect(screen.getByText("Arrêté")).toBeInTheDocument();
+  });
+});
+
+describe("outils groupés", () => {
+  it("les appels qui se suivent forment une ligne repliée qui compte les appels et ceux en cours, à jour en direct", () => {
+    const tool = (id: string, status: string) =>
+      ({ kind: "activity", id, activityKind: "command", title: `Exécuté commande ${id}`, status }) as never;
+    const { rerender } = render(<Activities activities={[tool("a", "completed"), tool("b", "running")]} />);
+    const line = screen.getByRole("button", { name: "2 outils · 1 en cours" });
+    // Repliée même pendant le travail : les lignes ne s’affichent pas.
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("commande a")).toBeNull();
+    rerender(<Activities activities={[tool("a", "completed"), tool("b", "running"), tool("c", "running")]} />);
+    expect(screen.getByRole("button", { name: "3 outils · 2 en cours" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "3 outils · 2 en cours" }));
+    expect(screen.getByText("commande a")).toBeInTheDocument();
+    expect(screen.getByText("commande c")).toBeInTheDocument();
+    rerender(<Activities activities={[tool("a", "completed"), tool("b", "completed"), tool("c", "completed")]} />);
+    expect(screen.getByRole("button", { name: "3 outils exécutés" })).toBeInTheDocument();
   });
 });
 
