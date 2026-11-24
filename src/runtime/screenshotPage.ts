@@ -225,7 +225,11 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   page.setAttribute(
     "style",
     `${styleText(root, null)};width:${width}px;height:${options.fullPage ? height : fullHeight}px;overflow:hidden;` +
-      `translate:${-window.scrollX}px ${-offsetY}px`,
+      `translate:${-window.scrollX}px ${-offsetY}px` +
+      // À la densité de l’écran : `zoom` agrandit la mise en page et le texte se dessine net. Pas de `viewBox` sur le
+      // SVG : WebKit (la fenêtre d’Alfred) ne l’applique pas au contenu d’un `foreignObject`, qui restait à 1 pixel
+      // par pixel CSS dans le coin haut gauche de l’image.
+      (scale !== 1 ? `;zoom:${scale}` : ""),
   );
   if (body) page.appendChild(body);
   if (state.pseudoRules.length > 0) {
@@ -235,8 +239,7 @@ export async function screenshotPage(options: ScreenshotOptions = {}): Promise<P
   }
   const markup = xmlSafe(new XMLSerializer().serializeToString(page));
   const svg =
-    // Taille de l’image en pixels, contenu en pixels CSS (viewBox) : le navigateur dessine le texte à la bonne densité.
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}" viewBox="0 0 ${width} ${height}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${pixelWidth}" height="${pixelHeight}">` +
     `<foreignObject x="0" y="0" width="100%" height="100%">${markup}</foreignObject></svg>`;
   const image = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
   const canvas = document.createElement("canvas");
