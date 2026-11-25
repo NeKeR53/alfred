@@ -136,7 +136,9 @@ export function PageFrame({
       if (message.kind !== "request") return;
       const params = (message.params ?? {}) as Record<string, unknown>;
       const started = Date.now();
-      handleFrameRequest(identity, message.method, params).then(
+      handleFrameRequest(identity, message.method, params, (name, payload) =>
+        post({ alfred: ALFRED_MESSAGE, kind: "event", name, payload }),
+      ).then(
         (result) => {
           // Les échanges internes de la coquille (contexte, sélection) ne disent rien de la page.
           if (!message.method.startsWith("shell."))

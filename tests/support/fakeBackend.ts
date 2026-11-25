@@ -657,6 +657,8 @@ export class FakeBackend {
     },
     "journal.list": (args) =>
       this.journal.filter((line) => !args.kind || line.kind === args.kind).slice(0, Number(args.limit ?? 200)),
+    // Réponse d’une fonction annoncée aux autres fenêtres (lectures partagées) : une seule fenêtre ici.
+    "functions.shareResult": () => null,
     "journal.record": (args) => {
       this.journal.unshift({
         id: this.journal.length + 1,

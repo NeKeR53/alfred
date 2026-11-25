@@ -2206,6 +2206,132 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
   return { data: state.data, error: state.error, loading: state.loading, reload };
 }
 
+// --- Lectures partagées ----------------------------------------------------------------------------------------
+
+export interface QueryOptions {
+  /**
+   * Âge (secondes) jusqu’auquel la dernière réponse gardée par Alfred s’affiche sans relire. Par défaut 30 ; plus
+   * vieille, elle s’affiche tout de suite et se relit en fond. 0 : relire à chaque affichage.
+   */
+  staleAfter?: number;
+  /** Relit toutes les `refreshEvery` secondes (5 au moins), une seule fois pour toutes les pages qui la montrent. */
+  refreshEvery?: number;
+}
+
+export interface QueryResult<Data> {
+  /** Dernière réponse, gardée pendant une relecture ou après une erreur. */
+  data: Data | undefined;
+  /** La dernière lecture a échoué (la donnée précédente reste dans `data`). */
+  error: Error | undefined;
+  /** Aucune donnée encore : premier chargement. */
+  loading: boolean;
+  /** Une lecture est en cours, premier chargement compris. */
+  refreshing: boolean;
+  /** Heure de la dernière réponse. */
+  updatedAt: Date | undefined;
+  /** Relit maintenant, même si la donnée est fraîche. */
+  refresh: () => Promise<void>;
+}
+
+interface SharedQueryState {
+  data?: unknown;
+  error?: { message: string; detail?: unknown };
+  loading: boolean;
+  fetching: boolean;
+  updatedAt?: number;
+}
+
+function stableInput(value: unknown): string {
+  if (value === undefined || value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableInput).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, field]) => `${JSON.stringify(name)}:${stableInput(field)}`)
+    .join(",")}}`;
+}
+
+let watchSequence = 0;
+
+/**
+ * Lit une fonction de lecture (`effect: "read"`) d’un connecteur et suit sa réponse, partagée par toute
+ * l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, voient la
+ * même donnée. Une seule requête part, même si dix pages la montrent ; la page affiche tout de suite la dernière
+ * réponse connue ; chaque nouvelle réponse (lue par une autre page, une fonction, un agent) la met à jour d’elle-même ;
+ * une écriture du connecteur (`effect: "write"`) la fait relire. `reference` à `null` : rien n’est lu.
+ *
+ * ```tsx
+ * const tickets = useQuery<{ tickets: Ticket[] }>("jira/lister-tickets", { jql: "assignee = currentUser()" });
+ * ```
+ */
+export function useQuery<Data = unknown>(
+  reference: string | null | undefined,
+  input: unknown = {},
+  options: QueryOptions = {},
+): QueryResult<Data> {
+  const inputKey = stableInput(input);
+  const [state, setState] = useState<SharedQueryState & { key?: string }>({ loading: true, fetching: true });
+  const watch = useRef<string | undefined>(undefined);
+  const latestInput = useRef(input);
+  latestInput.current = input;
+  const { staleAfter, refreshEvery } = options;
+  const key = `${reference ?? ""}|${inputKey}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: l’entrée est suivie par sa forme stable (`inputKey`).
+  useEffect(() => {
+    if (!reference) {
+      setState({ loading: false, fetching: false, key });
+      return;
+    }
+    watchSequence += 1;
+    const id = `w${watchSequence}`;
+    watch.current = id;
+    setState({ loading: true, fetching: true, key });
+    const stop = onShellEvent("query", (payload) => {
+      const message = payload as { watch?: string; state?: SharedQueryState } | null;
+      if (message?.watch === id && message.state) setState({ ...message.state, key });
+    });
+    request("functions.watch", {
+      watch: id,
+      function: reference,
+      input: latestInput.current,
+      ...(staleAfter !== undefined ? { staleAfter } : {}),
+      ...(refreshEvery !== undefined ? { refreshEvery } : {}),
+    }).catch((error: unknown) =>
+      setState({
+        loading: false,
+        fetching: false,
+        error: { message: error instanceof Error ? error.message : String(error) },
+        key,
+      }),
+    );
+    return () => {
+      stop();
+      if (watch.current === id) watch.current = undefined;
+      void request("functions.unwatch", { watch: id }).catch(() => undefined);
+    };
+  }, [reference, inputKey, staleAfter, refreshEvery]);
+  const refresh = useCallback(async () => {
+    if (watch.current) await request("functions.refresh", { watch: watch.current }).catch(() => undefined);
+  }, []);
+  // Données du module changées ailleurs, ou écriture annoncée par l’autre cadre de la page : la lecture se relit.
+  useEffect(() => onShellEvent("dataChanged", () => void refresh()), [refresh]);
+  useEffect(() => onShellEvent("peer", (message) => isChangeMessage(message) && void refresh()), [refresh]);
+  // Tant que l’état reçu est celui d’une autre clé (entrée changée), la page montre un chargement.
+  const current = state.key === key ? state : { loading: Boolean(reference), fetching: Boolean(reference) };
+  const error = useMemo(
+    () => (current.error ? new AlfredSdkError(current.error.message, current.error.detail) : undefined),
+    [current.error],
+  );
+  return {
+    data: current.data as Data | undefined,
+    error,
+    loading: current.loading,
+    refreshing: current.fetching,
+    updatedAt: current.updatedAt !== undefined ? new Date(current.updatedAt) : undefined,
+    refresh,
+  };
+}
+
 // --- Entre la page et son panneau ------------------------------------------------------------------------------
 
 const CHANGED = { alfred: "changed" } as const;

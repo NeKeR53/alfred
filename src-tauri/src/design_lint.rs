@@ -123,7 +123,7 @@ const COVERED_LIBRARIES: [(&str, &str); 44] = [
     ("react-toastify", "`useNotify()` de `socle-ui` ou `shell.notify`"),
     ("react-select", "`<Select>` ou `<ComboBox>` de `socle-ui`"),
     ("react-modal", "`<Modal>` de `socle-ui`"),
-    ("@tanstack/react-query", "`useAsync` de `@alfred/sdk`, et les états `loading`/`error` des gabarits"),
+    ("@tanstack/react-query", "`useQuery` de `@alfred/sdk` pour lire un connecteur (lecture partagée entre les pages), `useAsync` sinon, et les états `loading`/`error` des gabarits"),
 ];
 
 /// Librairies de composants « sans style » : socle-ui les enveloppe déjà, une page ne les prend pas.

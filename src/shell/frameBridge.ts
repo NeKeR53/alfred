@@ -273,8 +273,21 @@ function pick(params: Params, names: readonly string[]): Params {
 }
 
 /** Appels que d’autres parties de la coquille fournissent (exécution des fonctions, agents). */
+/** Abonnement d’une page à une lecture partagée (`useQuery`) : voir `sharedQueries.ts`. */
+export interface FunctionWatch {
+  unsubscribe: () => void;
+  refresh: () => Promise<unknown>;
+}
+
 export const frameServices: {
   callFunction?: (identity: FrameIdentity, reference: string, input: unknown) => Promise<unknown>;
+  watchFunction?: (
+    identity: FrameIdentity,
+    reference: string,
+    input: unknown,
+    options: { staleAfter?: number; refreshEvery?: number },
+    listener: (state: unknown) => void,
+  ) => FunctionWatch;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   sendToAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;
@@ -297,8 +310,18 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
   };
 }
 
+/** Lectures suivies par chaque cadre (`useQuery`), par identifiant choisi par le cadre. */
+const watches = new WeakMap<FrameIdentity, Map<string, FunctionWatch>>();
+const MAX_WATCHES = 200;
+
+/** Événement poussé de la coquille vers le cadre qui a fait la demande. */
+export type FramePush = (name: string, payload: unknown) => void;
+
 /** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
 export function releaseFrame(identity: FrameIdentity) {
+  // Ses abonnements aux lectures partagées se ferment avec lui.
+  for (const watch of watches.get(identity)?.values() ?? []) watch.unsubscribe();
+  watches.delete(identity);
   if (identity.kind === "page" && !identity.capture) {
     removeTopBarSearch(identity.reference);
     setTopBarActions(identity.reference, []);
@@ -363,7 +386,13 @@ function pageTitle(identity: FrameIdentity): string {
   return `La page « ${title ?? reference} »`;
 }
 
-export async function handleFrameRequest(identity: FrameIdentity, method: string, params: Params): Promise<unknown> {
+export async function handleFrameRequest(
+  identity: FrameIdentity,
+  method: string,
+  params: Params,
+  /** Pousse un événement vers ce cadre (lectures partagées) ; absent, ces demandes sont refusées. */
+  push?: FramePush,
+): Promise<unknown> {
   // Le backend reçoit la page déclarée (les accords valent pour toutes ses instances) et, à part, son instance.
   const subject = {
     kind: identity.kind,
@@ -534,6 +563,46 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
       // Une fonction d’un autre module demande l’accord de l’utilisateur, mémorisé ensuite.
       await invoke("frame.functions.authorize", { subject, function: reference });
       return frameServices.callFunction(identity, reference, params.input ?? {});
+    }
+    // Lecture partagée (`useQuery`) : la page reçoit l’état tout de suite, puis chaque nouvelle réponse.
+    case "functions.watch": {
+      if (!frameServices.watchFunction || !push)
+        throw new AlfredError({ message: "Les lectures partagées ne sont pas prêtes." });
+      const watch = String(params.watch ?? "");
+      if (!watch) throw new AlfredError({ message: "Abonnement sans identifiant." });
+      const name = String(params.function ?? "");
+      const reference = name.includes("/") ? name : `${identity.module}/${name}`;
+      await invoke("frame.functions.authorize", { subject, function: reference });
+      const held = watches.get(identity) ?? new Map<string, FunctionWatch>();
+      if (!held.has(watch) && held.size >= MAX_WATCHES)
+        throw new AlfredError({ message: `Une page suit au plus ${MAX_WATCHES} lectures à la fois.` });
+      held.get(watch)?.unsubscribe();
+      watches.set(identity, held);
+      const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+      held.set(
+        watch,
+        frameServices.watchFunction(
+          identity,
+          reference,
+          params.input ?? {},
+          { staleAfter: number(params.staleAfter), refreshEvery: number(params.refreshEvery) },
+          (state) => push("query", { watch, state }),
+        ),
+      );
+      return null;
+    }
+    case "functions.refresh": {
+      const held = watches.get(identity)?.get(String(params.watch ?? ""));
+      if (!held) return null;
+      await held.refresh().catch(() => undefined);
+      return null;
+    }
+    case "functions.unwatch": {
+      const held = watches.get(identity);
+      const watch = String(params.watch ?? "");
+      held?.get(watch)?.unsubscribe();
+      held?.delete(watch);
+      return null;
     }
     case "ai.oneShot":
       if (!frameServices.oneShot) throw new AlfredError({ message: "L’IA n’est pas prête." });

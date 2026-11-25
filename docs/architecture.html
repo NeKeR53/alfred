@@ -870,6 +870,16 @@ modules passent par ces fonctions (<code>"jira/lister-tickets"</code>). Chaque f
 (<code>read</code> ou <code>write</code>) et ses cas de test.</figcaption>
 </figure>
 
+<h3>Lectures partagées entre les pages</h3>
+<p>Chaque appel d’une fonction de lecture (<code>effect: "read"</code>) passe par un magasin en mémoire de la coquille,
+quel que soit l’appelant. La clé : fonction, entrée normalisée, comptes de l’appel, mode « données d’exemple ». Deux
+appels identiques en cours n’en font qu’un, et chaque réponse est publiée à toutes les pages abonnées
+(<code>useQuery</code> du SDK). Une page qui s’ouvre reçoit tout de suite la dernière réponse ; plus vieille que 30 s,
+elle se relit en fond. Une écriture du même module rend caduques ses lectures, et celles des modules qui en dépendent,
+pour les mêmes comptes. Les autres fenêtres reçoivent les réponses par l’événement <code>functions:result</code>, que le
+cœur émet aussi pour une fonction qu’il lance lui-même (<code>function_results::publish</code>). Décisions :
+<code>docs/lectures-partagees.md</code>.</p>
+
 <h3>Événements entre modules</h3>
 <p>Un module publie un événement qu’il a déclaré ; ceux qui s’y abonnent le reçoivent dans une de leurs fonctions. Le module
 qui publie ne connaît pas ses abonnés : c’est ce qui remplace l’appel direct à un autre module.</p>
@@ -1222,7 +1232,7 @@ précédente.</p>
 <table class="ref">
   <thead><tr><th>Couche</th><th>Dossier</th><th>À retenir</th></tr></thead>
   <tbody>
-    <tr><td>Coquille</td><td><code>src/shell/</code>, <code>src/features/</code></td><td><code>AppShell.tsx</code>, <code>PageFrame.tsx</code> (le cadre d’une page), <code>frameBridge.ts</code> (le pont), <code>pageMemory.ts</code> ; une fonctionnalité par dossier de <code>features/</code> (agent, modules, clients, setup, vault…).</td></tr>
+    <tr><td>Coquille</td><td><code>src/shell/</code>, <code>src/features/</code></td><td><code>AppShell.tsx</code>, <code>PageFrame.tsx</code> (le cadre d’une page), <code>frameBridge.ts</code> (le pont), <code>pageMemory.ts</code>, <code>sharedQueries.ts</code> (lectures partagées) ; une fonctionnalité par dossier de <code>features/</code> (agent, modules, clients, setup, vault…).</td></tr>
     <tr><td>Bibliothèque d’interface</td><td><code>src/ui/</code></td><td><code>components/</code>, <code>templates/</code> (gabarits), <code>primitives/</code> ; exportée par <code>index.ts</code> sous <code>@alfred/ui</code>.</td></tr>
     <tr><td>Pont des pages</td><td><code>src/sdk/</code></td><td><code>@alfred/sdk</code> : <code>request(méthode)</code> et les espaces <code>db</code>, <code>files</code>, <code>client</code>, <code>ai</code>, <code>shell</code>…</td></tr>
     <tr><td>Environnement du cadre</td><td><code>src/runtime/</code></td><td><code>pageHost.tsx</code>, <code>functionHost.ts</code>, <code>sealNetwork.ts</code> ; compilé par <code>pnpm build:runtime</code> dans <code>src-tauri/runtime/</code>.</td></tr>

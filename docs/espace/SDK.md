@@ -161,7 +161,7 @@ Une erreur non rattrapée (`AlfredError` comprise) termine le script avec un cod
 
 **Sécurité du pont.** Le pont n’écoute que sur 127.0.0.1. Chaque processus reçoit son propre jeton (`ALFRED_SDK_TOKEN`), lié à un seul module et qui cesse de valoir à la fin du processus ; une demande sans jeton, avec un jeton expiré, avec le jeton d’un autre module (`X-Alfred-Module`) ou venue d’un navigateur (en-tête `Origin`) est refusée. N’écris jamais le jeton ni l’environnement dans un fichier, la sortie ou le journal.
 
-## 3. Charger des données : `useAsync` et les gabarits
+## 3. Charger des données : `useAsync`, `useQuery` et les gabarits
 
 Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `Drawer`, `Page`), qui affiche chargement, erreur et absence :
 
@@ -226,6 +226,64 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 ```
 
 `load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
+
+### Lire un service : `useQuery`
+
+**Une page lit toujours une fonction de lecture d’un connecteur (`effect: "read"`) avec `useQuery`, jamais avec `useAsync(() => functions.call(…))`.** La réponse est partagée par toute l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, montrent la même donnée.
+
+```tsx
+import { useQuery } from "@alfred/sdk";
+import { ListPage } from "socle-ui";
+
+// Module « sprint », avec `"requires": [{ "module": "jira" }]`.
+export default function MesTickets() {
+  const tickets = useQuery<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", {
+    jql: "assignee = currentUser()",
+  });
+  return (
+    <ListPage
+      title="Mes tickets"
+      rows={tickets.data?.tickets}
+      columns={[{ id: "cle", label: "Clé" }, { id: "titre", label: "Titre" }]}
+      empty={{ title: "Aucun ticket" }}
+      isLoading={tickets.loading}
+      hasError={Boolean(tickets.error) && !tickets.data}
+      onRetry={() => void tickets.refresh()}
+    />
+  );
+}
+```
+
+```ts
+function useQuery<Data>(
+  reference: string | null | undefined, // « fonction » du module, ou « module/fonction » ; null : rien n’est lu
+  input?: unknown,
+  options?: { staleAfter?: number; refreshEvery?: number }, // secondes
+): {
+  data: Data | undefined;     // dernière réponse, gardée pendant une relecture et après une erreur
+  error: Error | undefined;   // la dernière lecture a échoué
+  loading: boolean;           // aucune donnée encore
+  refreshing: boolean;        // une lecture est en cours
+  updatedAt: Date | undefined;
+  refresh: () => Promise<void>;
+};
+```
+
+Ce qu’Alfred fait, sans rien à écrire de plus :
+
+- **Une seule requête.** Dix pages ouvertes sur la même lecture ne font qu’un appel. Deux appels identiques en cours n’en font qu’un.
+- **Tout de suite.** Une page qui s’ouvre reçoit la dernière réponse connue. Si elle a moins de `staleAfter` secondes (30 par défaut), rien n’est relu. Plus vieille, elle s’affiche et se relit en fond (`refreshing`).
+- **À jour partout.** Chaque nouvelle réponse de cette lecture met à jour toutes les pages qui la montrent, d’où qu’elle vienne : une autre page, un `functions.call`, un agent, une planification, une autre fenêtre.
+- **Après une écriture.** Une fonction d’écriture du même connecteur (`effect: "write"`, ou sans `effect`) fait relire ses lectures affichées, et celles des modules qui en dépendent, pour le même compte. Ne relance rien toi-même après `functions.call("jira/commenter-ticket", …)`.
+- **Suivi en direct.** `refreshEvery: 15` relit toutes les 15 secondes (5 au moins) tant qu’une page montre la donnée, une seule fois pour toutes ces pages : l’état d’un CI, une file d’attente. La relecture s’arrête quand plus aucune page ne la montre.
+- **Comptes séparés.** La clé comprend les comptes de la page (`usePageContext().accounts`) et le mode « données d’exemple » : deux comptes ne voient jamais la réponse l’un de l’autre. L’accord de l’utilisateur pour la fonction est demandé comme pour `functions.call`.
+
+Règles :
+
+- `useQuery` refuse une fonction qui n’est pas déclarée `effect: "read"` : une écriture s’appelle avec `functions.call`, dans une action.
+- L’entrée identifie la donnée : passe les mêmes champs, dans n’importe quel ordre, pour partager la lecture (`{ jql }` partout, pas `{ jql }` ici et `{ requete }` ailleurs). N’y mets ni date courante ni nombre au hasard.
+- `hasError` du gabarit : `Boolean(q.error) && !q.data` ; une donnée déjà affichée reste montrée quand une relecture échoue.
+- `useAsync` reste pour ce qui n’est pas un connecteur : `db.query`, `files`, `search`, `history`.
 
 ## 4. Base de données : `db`
 
@@ -293,13 +351,10 @@ export async function compter() {
 Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires` s’il en est un autre), jamais `client()` directement. **Une page ne peut pas appeler un client** : Alfred refuse la requête, même accordée, et `check` signale l’import de `client` dans une page. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
 
 ```tsx
-import { functions, useAsync } from "@alfred/sdk";
+import { useQuery } from "@alfred/sdk";
 
-// Module « sprint », avec `"requires": [{ "module": "jira" }]`.
-const tickets = useAsync(
-  () => functions.call<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", { projet: "ALF" }),
-  [],
-);
+// Module « sprint », avec `"requires": [{ "module": "jira" }]`. Lecture partagée : voir section 3, « useQuery ».
+const tickets = useQuery<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", { projet: "ALF" });
 ```
 
 Seules les fonctions du connecteur écrivent `client("jira")`. Un module qui utilise plusieurs services déclare plusieurs clients dans `clients`, chacun avec ses fonctions. **Une fonction, une responsabilité** : chacune touche un seul service et y fait une seule opération (`lister-tickets`, `lire-ticket`, `commenter-ticket`), et son entrée en porte les données (`projet`, `ticket`, `texte`). Jamais de fonction relais qui reçoit un chemin, une méthode ou une adresse et transmet n’importe quel appel (`requete({ path, method })`) : `check` la signale. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect`, ses tests (AGENTS.md, « Tests d’une fonction ») et ses données d’exemple, puis la page l’appelle.
@@ -347,7 +402,7 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 **Un statut HTTP d’erreur ne rejette pas la promesse** : teste `ok` ou `status`. Le rejet signifie que la requête n’a pas abouti : client inconnu ou à valider, secret manquant, accès refusé, chemin refusé, erreur réseau. La première requête d’une page vers un client (et, séparément, de son panneau, ou des fonctions d’un module) demande l’accord de l’utilisateur.
 
-**Cache des lectures** : `cache: 300` (secondes, un jour au plus) sur un `GET` ou un `HEAD` fait garder la réponse réussie (statut 2xx) et la resservir sans rappeler le service, avec `cached: true` et `cacheAge`. Pour tout le module, donne `cache` au besoin dans `module.json` (`"clients": [{ "id": "jira", "label": "Jira", "cache": 300 }]`) ; la requête peut le changer (`cache: 0` pour relire). Le cache est propre au module et à la requête exacte (chemin, paramètres, en-têtes, instance) ; une modification du client le rend caduc ; `clearCache()` l’oublie après une écriture. Réserve-le aux lectures qui changent peu (projets, profils, référentiels) pour ménager les quotas du service, jamais à une donnée que l’utilisateur attend à jour.
+**Cache des lectures** : `cache: 300` (secondes, un jour au plus) sur un `GET` ou un `HEAD` fait garder la réponse réussie (statut 2xx) et la resservir sans rappeler le service, avec `cached: true` et `cacheAge`. Pour tout le module, donne `cache` au besoin dans `module.json` (`"clients": [{ "id": "jira", "label": "Jira", "cache": 300 }]`) ; la requête peut le changer (`cache: 0` pour relire). Le cache est propre au module et à la requête exacte (chemin, paramètres, en-têtes, instance) ; une modification du client le rend caduc ; `clearCache()` l’oublie après une écriture. Réserve-le aux lectures qui changent peu (projets, profils, référentiels) pour ménager les quotas du service, jamais à une donnée que l’utilisateur attend à jour. Ce cache, durable et propre au module, est distinct des lectures partagées entre les pages (`useQuery`, section 3), qui vivent en mémoire et sont faites pour une donnée à jour.
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
@@ -967,15 +1022,15 @@ Ouvrir un élément (un ticket, un client, un document) ajoute un **onglet ferma
 ```tsx
 // pages/tickets.tsx (module jira) : la liste ouvre chaque ticket dans un onglet ; l’onglet montre le ticket.
 import { ListPage } from "socle-ui";
-import { functions, useAsync, usePageContext, views } from "@alfred/sdk";
+import { functions, usePageContext, useQuery, views } from "@alfred/sdk";
 
 export default function Tickets() {
   const view = usePageContext()?.view ?? null;
-  if (view) return <Ticket cle={String(view.params?.key ?? view.id)} />;
-  const tickets = useAsync(
-    () => functions.call<{ id: string; key: string; summary: string }[]>("rechercher", { jql: "assignee = currentUser()" }),
-    [],
-  );
+  return view ? <Ticket cle={String(view.params?.key ?? view.id)} /> : <Liste />;
+}
+
+function Liste() {
+  const tickets = useQuery<{ id: string; key: string; summary: string }[]>("rechercher", { jql: "assignee = currentUser()" });
   return (
     <ListPage
       title="Mes tickets"
@@ -989,8 +1044,8 @@ export default function Tickets() {
 }
 
 function Ticket({ cle }: { cle: string }) {
-  const ticket = useAsync(() => functions.call("ticket", { key: cle }), [cle]);
-  // Le ticket supprimé : son onglet se ferme, la liste revient.
+  const ticket = useQuery("ticket", { key: cle });
+  // Le ticket supprimé : son onglet se ferme, la liste revient (et se relit d’elle-même : `supprimer` est une écriture).
   const supprimer = async () => { await functions.call("supprimer", { key: cle }); await views.close(); };
   …
 }

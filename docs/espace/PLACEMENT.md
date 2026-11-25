@@ -231,11 +231,13 @@ Demande : « Je veux suivre mes tickets Jira. »
 - **Panneau de droite** de « Mes tickets » : un `Drawer` sur le ticket sélectionné. En-tête : « ALF-12 · Export en échec », état, actions « Ouvrir dans Jira » et « Commenter ». Sections « Suivi » (état et priorité, modifiables par le menu de leur ligne ; responsable, modifiable par une fenêtre) et « Dates ».
 - **Onglet ouvert** sur un ticket : double-clic → `views.open({ id: ticket.key, label: \`${ticket.key} ${ticket.summary}\`, params: { key: ticket.key } })`. La même page rend une `DetailPage` : description en `Markdown`, commentaires dans une section, action `primary` « Commenter », action `danger` « Supprimer » qui ferme l’onglet (`views.close()`).
 - **Actions** : « Nouveau ticket » (`primary`, en-tête de la liste) ouvre `useOpenForm` (projet, type, résumé, priorité) ; « Actualiser » (icône `RefreshCw`) en en-tête, car les tickets changent hors d’Alfred ; « Ouvrir dans Jira » en action de ligne.
+- **Données** : la liste, le panneau et l’onglet lisent les fonctions de lecture du connecteur avec `useQuery` (SDK.md, section 3) : la liste et un tableau de bord qui montrent les mêmes tickets partagent une seule requête et changent ensemble ; « Commenter » (`functions.call` d’une écriture) les fait relire d’eux-mêmes.
 - **Messages** : une fonction planifiée relève les tickets assignés ; un nouveau ticket → `shell.notify` (au centre de notifications) et `badge.set` sur l’entrée.
 - **Réglages** : « Projet par défaut » dans une page des Réglages du module.
 
 ```tsx
 // pages/tickets.tsx : la liste, ou le ticket ouvert dans un onglet.
+const tickets = useQuery<Ticket[]>("lister-tickets", { jql: "assignee = currentUser()" });
 const view = usePageContext()?.view ?? null;
 if (view) return <Ticket cle={String(view.params?.key ?? view.id)} />;
 return (
@@ -246,13 +248,13 @@ return (
       { id: "status", label: "État", type: "status", statuses: ETATS }, { id: "updated", label: "Mis à jour", type: "relative" }]}
     empty={{ title: "Aucun ticket", description: "Les tickets qui vous sont assignés s’affichent ici." }}
     actions={[{ id: "nouveau", label: "Nouveau ticket", icon: <Plus size={16} />, primary: true, onPress: creer },
-      { id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: tickets.reload }]}
+      { id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: tickets.refresh }]}
     rowActions={(t) => [{ id: "jira", label: "Ouvrir dans Jira", icon: <ExternalLink size={16} />, onPress: () => shell.openExternal(t.url) }]}
     selectedId={choisi}
     onSelect={(row) => { setChoisi(row?.id ?? null); void shell.publish(row?.key ?? null); }}
     onOpen={(t) => void views.open({ id: t.key, label: `${t.key} ${t.summary}`, params: { key: t.key } })}
-    isLoading={tickets.loading} hasError={Boolean(tickets.error)} onRetry={tickets.reload}
-    onActionError={notifyActionError} onActionDone={tickets.reload}
+    isLoading={tickets.loading} hasError={Boolean(tickets.error) && !tickets.data} onRetry={tickets.refresh}
+    onActionError={notifyActionError}
   />
 );
 ```

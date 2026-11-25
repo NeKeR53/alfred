@@ -21,6 +21,7 @@ mod events;
 mod examples;
 mod folder_git;
 mod folders;
+mod function_results;
 mod function_tests;
 mod functions;
 mod git;

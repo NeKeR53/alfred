@@ -39,7 +39,8 @@ it("confie un script à Alfred, sans cadre, avec son appelant", async () => {
   await expect(callFunction("outils/saluer", { nom: "Zoé" }, "outils/accueil")).resolves.toEqual({
     message: "Bonjour Zoé",
   });
-  expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1);
+  // Seul autre appel : l’écriture annoncée aux autres fenêtres (magasin des lectures partagées).
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["functions.call", "functions.shareResult"]);
   expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.call", {
     function: "outils/saluer",
     input: { nom: "Zoé" },
@@ -72,7 +73,7 @@ it("en données d’exemple, une fonction de connecteur rend son exemple sans ê
   // Un appelant en mode exemple y entraîne la fonction d’un module qui n’y est pas (dépendance).
   useShell.setState({ snapshot: { functions: [connector], examples: [] } as unknown as Snapshot });
   await callFunction("jira/lister", {}, "sprint/tableau", true);
-  expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("functions.example", {
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.example", {
     function: "jira/lister",
     input: {},
     caller: "sprint/tableau",

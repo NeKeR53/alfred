@@ -8,6 +8,7 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protoc
 import { inExampleMode } from "./examples";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
 import { frameKey } from "./frameKeys";
+import { createQueryStore, inputInstance, type QueryCall } from "./sharedQueries";
 import { useShell } from "./store";
 
 interface Host {
@@ -142,6 +143,7 @@ function hostFor(module: string, examples: boolean, accounts: Record<string, str
 
 /** Ferme les cadres de fonctions : à appeler quand l’espace change ou se ferme. */
 export function resetFunctionHosts() {
+  sharedQueries.clear();
   for (const host of hosts.values()) {
     for (const settle of host.pending.values())
       settle.reject(new AlfredError({ message: "L’espace de travail a été fermé." }));
@@ -151,9 +153,100 @@ export function resetFunctionHosts() {
 }
 
 /**
- * Appelle `module/fonction` avec `input`. `caller` dit qui appelle (page, agent, webhook, planification) : il est
- * noté au journal avec la durée et l’erreur éventuelle. `examples` : l’appelant montre des données d’exemple ;
- * l’appel les suit aussi quand le module de la fonction est réglé en mode exemple.
+ * Lectures partagées : toute fonction `effect: "read"` passe par ce magasin, qui dédoublonne les appels identiques
+ * en vol et publie chaque réponse aux pages abonnées (`useQuery`). Voir `sharedQueries.ts`.
+ */
+export const sharedQueries = createQueryStore({
+  execute: (call) => executeRead(call),
+});
+
+/** Identifiant de cette coquille : une réponse qu’elle a diffusée ne lui revient pas. */
+const ORIGIN = `shell-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+
+/** Modules dont les lectures dépendent de `module` : lui-même et ceux qui en dépendent (`requires`), de proche en proche. */
+export function dependentModules(module: string): string[] {
+  const modules = useShell.getState().snapshot?.modules ?? [];
+  const found = new Set([module]);
+  const queue = [module];
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const candidate of modules)
+      if (!found.has(candidate.id) && candidate.requires.some((need) => need.module === current)) {
+        found.add(candidate.id);
+        queue.push(candidate.id);
+      }
+  }
+  return [...found];
+}
+
+async function executeRead(call: QueryCall): Promise<unknown> {
+  const output = await executeFunction(
+    call.reference,
+    call.input,
+    call.caller ?? "partage",
+    call.examples === true,
+    call.accounts ?? {},
+  );
+  shareResult(call, true, output);
+  return output;
+}
+
+/** Une écriture rend caduques les lectures du module et des modules qui en dépendent, pour les mêmes comptes. */
+function invalidateAfterWrite(call: QueryCall) {
+  sharedQueries.invalidate({
+    modules: dependentModules(call.reference.split("/")[0] ?? ""),
+    accounts: call.accounts,
+    instance: inputInstance(call.input),
+    examples: call.examples === true,
+  });
+}
+
+/** Les autres fenêtres d’Alfred reçoivent la réponse (ou l’écriture) par le cœur : `functions:result`. */
+function shareResult(call: QueryCall, read: boolean, output: unknown) {
+  void invoke("functions.shareResult", {
+    origin: ORIGIN,
+    function: call.reference,
+    input: call.input ?? {},
+    accounts: call.accounts ?? {},
+    examples: call.examples === true,
+    ...(read ? { output } : {}),
+    at: Date.now(),
+  }).catch(() => undefined);
+}
+
+/**
+ * Point d’entrée des réponses venues d’ailleurs : une autre fenêtre, ou une automatisation que le cœur a lancée
+ * lui-même (`function_results::publish` en Rust). Une lecture est publiée aux abonnés ; une écriture rend caduques
+ * les lectures qu’elle touche.
+ */
+export function receiveSharedResult(payload: unknown) {
+  const result = payload as {
+    origin?: string;
+    function?: string;
+    input?: unknown;
+    accounts?: Record<string, string>;
+    examples?: boolean;
+    output?: unknown;
+    at?: number;
+  } | null;
+  if (!result?.function || result.origin === ORIGIN) return;
+  const declared = useShell.getState().snapshot?.functions.find((fn) => fn.reference === result.function);
+  if (!declared) return;
+  const call: QueryCall = {
+    reference: result.function,
+    input: result.input ?? {},
+    accounts: result.accounts ?? {},
+    examples: result.examples === true,
+  };
+  if (declared.effect === "read") {
+    if ("output" in result) sharedQueries.publish(call, result.output ?? null, result.at);
+  } else invalidateAfterWrite(call);
+}
+
+/**
+ * Appelle `module/fonction` avec `input`. Une lecture (`effect: "read"`) passe par le magasin partagé : un appel
+ * identique déjà en cours est rejoint, et la réponse est publiée à toutes les pages qui la montrent. Une écriture
+ * rend ensuite caduques les lectures de son module.
  */
 export async function callFunction(
   reference: string,
@@ -162,6 +255,35 @@ export async function callFunction(
   examples = false,
   /** Comptes de la page qui appelle, par besoin du module de la fonction. */
   accounts: Record<string, string> = {},
+): Promise<unknown> {
+  const [module] = reference.split("/");
+  const { snapshot } = useShell.getState();
+  const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
+  const sample = examples || (module ? inExampleMode(snapshot, module) : false);
+  const call: QueryCall = { reference, input, accounts, examples: sample, caller };
+  if (declared?.effect === "read") return sharedQueries.run(call);
+  try {
+    return await executeFunction(reference, input, caller, examples, accounts);
+  } finally {
+    // Réussie ou non, l’écriture a pu changer le service : ses lectures se relisent.
+    if (declared && !declared.missing) {
+      invalidateAfterWrite(call);
+      shareResult(call, false, undefined);
+    }
+  }
+}
+
+/**
+ * Exécute `module/fonction` avec `input`. `caller` dit qui appelle (page, agent, webhook, planification) : il est
+ * noté au journal avec la durée et l’erreur éventuelle. `examples` : l’appelant montre des données d’exemple ;
+ * l’appel les suit aussi quand le module de la fonction est réglé en mode exemple.
+ */
+async function executeFunction(
+  reference: string,
+  input: unknown,
+  caller: string,
+  examples: boolean,
+  accounts: Record<string, string>,
 ): Promise<unknown> {
   const [module, name] = reference.split("/");
   const { snapshot } = useShell.getState();
@@ -215,6 +337,33 @@ export async function callFunction(
     active -= 1;
   }
 }
+
+// Le code d’un module a changé : ses lectures gardées sont caduques (les abonnées se relisent).
+useShell.subscribe((state, previous) => {
+  if (state.revision !== previous.revision) sharedQueries.invalidate();
+});
+
+frameServices.watchFunction = (identity, reference, input, options, listener) => {
+  const [module = ""] = reference.split("/");
+  const { snapshot } = useShell.getState();
+  const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
+  if (!declared) throw new AlfredError({ message: `La fonction « ${reference} » n’existe pas.` });
+  if (declared.effect !== "read")
+    throw new AlfredError({
+      message: `useQuery suit une lecture : « ${reference} » n’est pas déclarée \`effect: "read"\`. Pour une écriture, functions.call.`,
+    });
+  const call: QueryCall = {
+    reference,
+    input,
+    accounts: accountsFor(module, identity.module, identity.accounts),
+    examples: identity.examples === true || inExampleMode(snapshot, module),
+    caller: identity.reference,
+  };
+  return {
+    unsubscribe: sharedQueries.subscribe(call, listener, options),
+    refresh: () => sharedQueries.refresh(call),
+  };
+};
 
 frameServices.callFunction = (identity, reference, input) =>
   callFunction(

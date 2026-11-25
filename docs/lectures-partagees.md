@@ -1,0 +1,140 @@
+# Lectures partagées entre les pages et les modules
+
+Date : 2026-11-25. État : en place (code, tests, guide de l’agent). À relire par Alexandre.
+
+## Le besoin
+
+Deux modules montrent les mêmes données d’un service. Exemple : « mes tickets attribués » dans Jira, ou l’état
+d’un CI dans Jenkins. Un seul module déclare le client. Quand une page lit la donnée, toutes les pages qui la
+montrent se mettent à jour, sans nouvelle requête, que la donnée soit en cache ou non.
+
+## Comment ça marche
+
+1. Une page lit avec `useQuery("jira/lister-tickets", { jql })`.
+2. La coquille d’Alfred tient un magasin en mémoire. La clé : la fonction, son entrée, les comptes, le mode exemple.
+3. Si la donnée est dans le magasin, la page la reçoit tout de suite.
+4. Sinon, Alfred appelle la fonction une seule fois, même si dix pages la demandent.
+5. La réponse part à toutes les pages abonnées. Leurs contrôles se mettent à jour d’eux-mêmes.
+6. Une écriture du même connecteur (« commenter un ticket ») rend la lecture caduque. Les pages abonnées la
+   relisent, une seule fois pour toutes.
+
+## Décisions
+
+### D1. Le partage se fait au niveau des fonctions de lecture du connecteur, pas des requêtes HTTP
+
+Une page n’appelle jamais un client (règle existante). Elle appelle une fonction du connecteur, qui appelle le
+client. La donnée qu’une page montre est donc la sortie d’une fonction, déjà mise en forme. C’est elle qu’on partage.
+
+- Les fonctions déclarent déjà `effect: "read"` ou `"write"`. Le magasin s’appuie sur cet effet.
+- Partager au niveau HTTP n’aurait pas suffi : la page attend la sortie de la fonction, pas la réponse brute. Et deux
+  pages qui lisent la même fonction font bien la même requête.
+- Le cache HTTP existant (`client(...).get(path, query, { cache })`, `client_cache.rs`) reste inchangé. Il est
+  durable, propre au module, et sert à ménager les quotas. Le magasin partagé est en mémoire et sert à la fraîcheur.
+
+### D2. La règle est systématique pour les lectures
+
+Tout appel d’une fonction `effect: "read"` passe par le magasin, quel que soit l’appelant : `useQuery`,
+`functions.call` d’une page, agent, webhook, planification, palette. Le module n’a rien à faire.
+
+- Deux appels identiques en cours n’en font qu’un (dédoublonnage en vol).
+- Chaque réponse est publiée à tous les abonnés.
+- `functions.call` exécute toujours la fonction (ou rejoint l’appel identique en cours). Il ne sert jamais une valeur
+  gardée : l’appelant explicite veut une donnée fraîche. Seul `useQuery` sert la valeur gardée.
+
+### D3. La clé
+
+`module/fonction` + entrée normalisée (ordre des champs indifférent, champs `undefined` ignorés) + comptes de l’appel
+(par besoin du module de la fonction, comme `accountsFor` les calcule) + mode « données d’exemple ».
+
+- Deux comptes différents (deux instances Jira) ont deux clés. Ils ne partagent jamais une réponse.
+- Les données d’exemple ne se mêlent jamais aux vraies.
+- Le module qui appelle n’est pas dans la clé : c’est ce qui permet le partage entre modules (« sprint » et « suivi »
+  lisent tous deux `jira/lister-tickets`). La sortie d’une fonction ne dépend que de son entrée et de ses comptes.
+- Limite acceptée : une page sans compte choisi (compte par défaut) et une page qui nomme ce même compte ont deux
+  clés. Les deux restent justes ; elles ne partagent pas la requête.
+
+### D4. Durée de vie
+
+- `staleAfter` : 30 s par défaut. Une page qui s’ouvre sur une valeur plus jeune ne relit pas. Plus vieille, la page
+  l’affiche tout de suite et la relit en fond (`refreshing`).
+- `refreshEvery` (option) : relecture périodique, 5 s au moins, une seule par clé pour toutes les pages. Elle s’arrête
+  quand plus aucune page n’est abonnée. Pour l’état d’un CI, une file d’attente.
+- Une valeur sans abonné est oubliée après 10 minutes ; 500 valeurs au plus.
+- En cas d’erreur, la dernière valeur reste montrée, avec l’erreur.
+
+### D5. Portée
+
+- Le magasin vit en mémoire dans la coquille, par espace : il se vide quand l’espace change
+  (`resetFunctionHosts`). Rien n’est écrit sur le disque.
+- Chaque fenêtre d’Alfred (fenêtre principale, fenêtres de page) a son magasin. Les fenêtres s’échangent les
+  réponses par l’événement `functions:result` du cœur (`functions.shareResult`, `function_results.rs`). Une réponse
+  de plus de 1 Mio n’est pas diffusée : l’autre fenêtre la relira elle-même.
+- Quand le code d’un module change (révision), toutes les valeurs deviennent caduques.
+
+### D6. Invalidation après une écriture
+
+Une fonction `effect: "write"` (ou sans `effect`, qui compte comme une écriture) rend caduques, à la fin de son
+appel, réussi ou non :
+
+- les lectures de son module et des modules qui en dépendent (`requires`, de proche en proche) ;
+- pour les mêmes comptes seulement : une lecture d’un autre compte du même besoin reste valable ;
+- si l’écriture nomme une instance dans son entrée (`{ instance: "acme" }`), pas les lectures d’une autre instance ;
+- dans le même mode (exemple ou réel).
+
+Les lectures caduques qui ont des abonnés se relisent tout de suite, une fois chacune. Les autres se relisent au
+prochain abonnement. Une réponse partie avant l’écriture n’est pas montrée comme à jour : la lecture repart.
+
+Choix : l’invalidation se fait par module, pas par ressource (méthode + chemin). La coquille ne voit pas les requêtes
+HTTP d’un script, et deviner la ressource d’une fonction serait fragile. Relire toutes les lectures affichées d’un
+module après une écriture coûte peu : seules celles qui ont des abonnés partent.
+
+### D7. Accord de l’utilisateur et isolement
+
+- `useQuery` demande l’accord pour la fonction comme `functions.call` (`frame.functions.authorize`) : accordé d’office
+  dans le même module ou pour une dépendance (`requires`), demandé sinon. Le magasin ne sert jamais une valeur à une
+  page avant cet accord.
+- Une page ne voit que les valeurs de ses propres comptes (D3).
+- `useQuery` refuse une fonction qui n’est pas `effect: "read"`.
+- Une page suit au plus 200 lectures ; ses abonnements se ferment avec son cadre (`releaseFrame`).
+- `functions.shareResult` n’est pas accessible aux cadres : le pont ne le transmet pas.
+
+### D8. API
+
+- Pages : `useQuery(reference, input?, { staleAfter?, refreshEvery? })` rend `{ data, error, loading, refreshing,
+  updatedAt, refresh }`. `reference` à `null` : rien n’est lu. Il se relit aussi sur `dataChanged` et
+  `announceChange()`, comme `useAsync`.
+- Scripts : pas d’API nouvelle. Une fonction en script appelée par Alfred passe par le même magasin. Un script n’a
+  pas d’abonnés à servir.
+- Guide de l’agent : SDK.md (section 3, « useQuery »), AGENTS.md (connecteur, 2 bis), PLACEMENT.md (11.1). L’agent lit
+  toute fonction de lecture d’un connecteur avec `useQuery`.
+
+## Point d’entrée pour les automatisations
+
+Une fonction que le cœur lance lui-même (webhook, planification ou automatisation d’un script, sans passer par la
+coquille) doit alimenter le magasin. Après l’exécution, appeler :
+
+```rust
+crate::function_results::publish(&state, &crate::function_results::FunctionResult {
+    function: "jira/lister-tickets",
+    input: &input,
+    accounts: None,           // ou Some(&comptes) : { "jira": "acme" }
+    examples: false,
+    output: Some(&output),    // None pour une écriture ou un échec
+    origin: None,
+});
+```
+
+La coquille regarde l’effet déclaré : une lecture est publiée aux pages abonnées, une écriture rend caduques les
+lectures qu’elle touche. Le cœur n’a pas à connaître l’effet. Les appels qui passent déjà par la coquille
+(`function:call`, donc `callFunction`) sont couverts sans rien faire.
+
+## Fichiers
+
+- `src/shell/sharedQueries.ts` : le magasin (clé, dédoublonnage, abonnés, fraîcheur, relecture, invalidation).
+- `src/shell/functionHost.ts` : `callFunction` passe les lectures par le magasin et invalide après une écriture ;
+  `receiveSharedResult` reçoit les réponses venues d’ailleurs.
+- `src/shell/frameBridge.ts` : `functions.watch`, `functions.refresh`, `functions.unwatch`.
+- `src/sdk/index.ts` : `useQuery`.
+- `src-tauri/src/function_results.rs` : `functions.shareResult` et `publish`.
+- Tests : `sharedQueries.test.ts`, `sharedQueries.pages.test.ts` (deux pages, une requête), `useQuery.test.tsx`,
+  `function_results.rs`.
