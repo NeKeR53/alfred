@@ -10,6 +10,7 @@ const loaded: Record<string, { archived: boolean; turns: Array<{ id: string }> }
 const listeners = new Set<(state: { loaded: typeof loaded }) => void>();
 const queued: string[] = [];
 let sentOptions: unknown;
+const runtime: Record<string, { status: string; queued: unknown[] }> = {};
 
 vi.mock("../agent/store", () => ({
   useAgents: {
@@ -19,6 +20,7 @@ vi.mock("../agent/store", () => ({
     },
     getState: () => ({
       loaded,
+      runtime,
       ensureLoaded: async () => undefined,
       unqueue: (_id: string, queuedId: string) => {
         const index = queued.indexOf(queuedId);
@@ -55,7 +57,7 @@ vi.mock("../agent/model", () => ({
 }));
 
 import { invoke } from "../../lib/native";
-import { type AgentRunRequest, runAgentRequest } from "./agentRuns";
+import { type AgentRunRequest, runAgentRequest, runsHere } from "./agentRuns";
 
 const request: AgentRunRequest = {
   requestId: "r1",
@@ -168,4 +170,15 @@ it("échoue clairement sur une conversation archivée ou supprimée", async () =
   delete loaded["conv-test"];
   expect((await runAgentRequest(existing)).error).toContain("a été supprimée");
   expect(sent).toHaveLength(0);
+});
+
+it("reconnaît la fenêtre où la conversation tourne", () => {
+  // Un tour enregistré « en cours » ne suffit pas : il peut tourner dans une autre fenêtre.
+  loaded["conv-test"] = { archived: false, turns: [{ id: "t1", status: "running" } as { id: string }] };
+  expect(runsHere("conv-test")).toBe(false);
+  runtime["conv-test"] = { status: "running", queued: [] };
+  expect(runsHere("conv-test")).toBe(true);
+  runtime["conv-test"] = { status: "idle", queued: [{}] };
+  expect(runsHere("conv-test")).toBe(true);
+  delete runtime["conv-test"];
 });

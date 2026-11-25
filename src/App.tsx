@@ -28,8 +28,9 @@ export function App() {
   const welcoming = useWelcome((state) => state.active);
   useEffect(() => {
     bindPageAi();
-    // Les passages agentiques des automatisations partent de la fenêtre principale seulement.
-    if (!pageWindowReference() && !isAgentsWindow()) bindAutomationAgents();
+    // Les passages agentiques des automatisations partent des fenêtres qui font tourner les conversations : la
+    // fenêtre principale et celle des agents (jamais une fenêtre de page).
+    if (!pageWindowReference()) bindAutomationAgents();
     void start();
     // Quels agents sont installés : un agent absent n’est proposé nulle part.
     void checkHarnesses();

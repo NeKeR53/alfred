@@ -154,9 +154,26 @@ export async function runAgentRequest(request: AgentRunRequest, wait: Wait = sle
   };
 }
 
+/**
+ * La conversation tourne-t-elle dans cette interface : un tour suivi ici, ou une file ici ? Seul l’état vivant de la
+ * fenêtre compte : le dernier tour enregistré est « en cours » pour toutes les fenêtres, quelle que soit celle qui
+ * le fait tourner.
+ */
+export function runsHere(id: string): boolean {
+  const runtime = useAgents.getState().runtime[id];
+  return runtime !== undefined && (runtime.status !== "idle" || runtime.queued.length > 0);
+}
+
+/** Délai laissé à l’interface qui fait tourner une conversation existante pour réserver la demande la première. */
+export const OWNER_FIRST_MS = 1500;
+
 async function handle(request: AgentRunRequest) {
   if (handled.has(request.requestId)) return;
   handled.add(request.requestId);
+  // Une conversation existante ne se suit que là où elle tourne : la fenêtre principale et celle des agents ont
+  // chacune leur copie de la conversation. Celle qui y fait tourner un tour réserve tout de suite ; les autres
+  // attendent, pour ne pas lancer un tour à côté de celui de l’utilisateur.
+  if (request.existing && !runsHere(request.conversation)) await sleep(OWNER_FIRST_MS);
   // Diffusée à toutes les interfaces ouvertes : seule celle qui la réserve lance la conversation.
   const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
   if (!claimed) return;
