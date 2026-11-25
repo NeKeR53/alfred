@@ -12,6 +12,14 @@ const DESIGN: &str = include_str!("../../DESIGN.md");
 const PLACEMENT: &str = include_str!("../../docs/espace/PLACEMENT.md");
 const GUIDE: &str = include_str!("../../docs/espace/AGENTS.md");
 const SDK: &str = include_str!("../../docs/espace/SDK.md");
+/// Parties du guide lues à la demande : `AGENTS.md`, chargé d’office par chaque harnais, reste court et y renvoie.
+const GUIDES: [(&str, &str); 5] = [
+    ("page.md", include_str!("../../docs/espace/guides/page.md")),
+    ("service.md", include_str!("../../docs/espace/guides/service.md")),
+    ("fonction.md", include_str!("../../docs/espace/guides/fonction.md")),
+    ("donnees.md", include_str!("../../docs/espace/guides/donnees.md")),
+    ("module-json.md", include_str!("../../docs/espace/guides/module-json.md")),
+];
 
 fn write_if_changed(path: &Path, content: &str) -> AppResult<()> {
     if fs::read_to_string(path).is_ok_and(|current| current == content) {
@@ -48,6 +56,12 @@ pub fn materialize(space: &Space) -> AppResult<()> {
     write_if_changed(&space.root.join("docs/alfred/PLACEMENT.md"), PLACEMENT)?;
     write_if_changed(&space.root.join("docs/alfred/DESIGN.md"), DESIGN)?;
     write_if_changed(&space.root.join("docs/alfred/SDK.md"), SDK)?;
+    let guides = space.root.join("docs/alfred/guides");
+    for (name, content) in GUIDES {
+        write_if_changed(&guides.join(name), content)?;
+    }
+    let names: Vec<&str> = GUIDES.iter().map(|(name, _)| *name).collect();
+    remove_stale(&guides, &guides, &names);
     let socle = space.root.join("docs/alfred/socle");
     for (relative, content) in crate::socle_ui::DOCS {
         write_if_changed(&socle.join(relative), content)?;
@@ -109,5 +123,11 @@ mod tests {
             assert!(!guide.contains(removed), "le guide a encore « {removed} »");
         }
         assert_eq!(fs::read_to_string(space.root.join("CLAUDE.md")).unwrap(), "@AGENTS.md\n");
+        // Le guide chargé d’office reste court ; ses parties sont lues à la demande, et chacune est citée.
+        assert!(guide.len() < 24_000, "AGENTS.md fait {} octets", guide.len());
+        for (name, _) in GUIDES {
+            assert!(space.root.join("docs/alfred/guides").join(name).is_file(), "{name}");
+            assert!(guide.contains(&format!("`{name}`")), "AGENTS.md ne cite pas {name}");
+        }
     }
 }
