@@ -309,6 +309,8 @@ export function ConversationList({
       <Drawer
         header={{ title: "Détails de la conversation" }}
         sections={detailSections}
+        reorderable
+        orderKey="agent-conversation"
         emptyMessage="Aucune conversation ouverte."
       />
     );
@@ -318,6 +320,8 @@ export function ConversationList({
     <Drawer
       header={{ title: "Suivi des conversations" }}
       sections={conversations.length ? [...listSection, ...detailSections] : []}
+      reorderable
+      orderKey="agent-suivi"
       emptyMessage="Aucune conversation."
     />
   );
