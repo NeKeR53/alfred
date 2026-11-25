@@ -205,11 +205,14 @@ fn owner_of(args: &Value) -> String {
     args.get("name").and_then(Value::as_str).and_then(|name| name.split_once('/')).map(|(owner, _)| owner.to_string()).unwrap_or_default()
 }
 
-/// Entrée de la lecture : les paramètres de l’état, et le compte.
-fn input_for(target: &StateTarget) -> Map<String, Value> {
-    let mut input = match crate::states::params_of(&target.sub) {
-        Value::Object(fields) => fields,
-        _ => Map::new(),
+/// Entrée de la lecture : les paramètres de l’état (ou l’identifiant d’une entité, dans son `param`), et le compte.
+fn input_for(target: &StateTarget, param: Option<&str>) -> Map<String, Value> {
+    let mut input = match (&target.entity, param) {
+        (Some(_), Some(param)) => Map::from_iter([(param.to_string(), json!(target.sub))]),
+        _ => match crate::states::params_of(&target.sub) {
+            Value::Object(fields) => fields,
+            _ => Map::new(),
+        },
     };
     if !target.scope.instance.is_empty() {
         input.insert("instance".into(), json!(target.scope.instance));
@@ -223,10 +226,10 @@ pub fn tick(state: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
     let targets = watched(state, &space);
     let mut handles = Vec::new();
     let mut registry = registry();
-    // Le dernier abonné est parti : la cible s’arrête (seules celles de l’espace ouvert sont en jeu).
-    let prefix = format!("etat\u{1f}{}\u{1f}", space.root.to_string_lossy());
-    registry.statuses.retain(|key, status| !key.starts_with(&prefix) || targets.contains_key(key) || status.running);
-    let mut running = registry.statuses.iter().filter(|(key, status)| key.starts_with(&prefix) && status.running).count();
+    // Le dernier abonné est parti : la cible s’arrête (seules celles de l’espace ouvert sont en jeu : états et entités).
+    let marker = format!("\u{1f}{}\u{1f}", space.root.to_string_lossy());
+    registry.statuses.retain(|key, status| !key.contains(&marker) || targets.contains_key(key) || status.running);
+    let mut running = registry.statuses.iter().filter(|(key, status)| key.contains(&marker) && status.running).count();
     for (key, watched) in targets {
         let status = registry.statuses.entry(key.clone()).or_insert_with(Status::new).clone();
         let now = Instant::now();
@@ -247,7 +250,7 @@ pub fn tick(state: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
         }
         let Some(function) = policy
             .as_ref()
-            .map(|refresh| refresh.function.clone())
+            .map(|refresh| (refresh.function.clone(), None))
             .or_else(|| feeder(&watched.target))
         else {
             continue;
@@ -262,37 +265,46 @@ pub fn tick(state: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
         let state = state.clone();
         let space = space.clone();
         handles.push(tokio::spawn(async move {
-            run(&state, &space, &watched.target, &function).await;
+            run(&state, &space, &watched.target, &function.0, function.1.as_deref()).await;
         }));
     }
     handles
 }
 
-/// Fonction de lecture qui alimente un état sans politique : la première qui le déclare.
-fn feeder(target: &StateTarget) -> Option<String> {
+/// Fonction de lecture qui alimente un état sans politique (la première qui le déclare), ou une entité suivie seule
+/// (la première qui la déclare avec `param`), avec ce `param`.
+fn feeder(target: &StateTarget) -> Option<(String, Option<String>)> {
     target
         .manifest
         .functions
         .iter()
-        .find(|function| {
-            function.state.as_deref() == Some(target.declared.id.as_str())
-                && function.effect == Some(crate::space::Effect::Read)
+        .filter(|function| function.effect == Some(crate::space::Effect::Read))
+        .find(|function| match &target.entity {
+            Some(entity) => function.entity.as_deref() == Some(entity.id.as_str()) && function.param.is_some(),
+            None => function.state.as_deref() == Some(target.declared.id.as_str()),
         })
-        .map(|function| function.id.clone())
+        .map(|function| (function.id.clone(), function.param.clone()))
 }
 
 /// Une lecture du fournisseur : elle fusionne (incrémentale) ou remplace l’état, puis note son issue.
-async fn run(state: &Arc<AppState>, space: &Space, target: &StateTarget, function: &str) {
+async fn run(state: &Arc<AppState>, space: &Space, target: &StateTarget, function: &str, param: Option<&str>) {
     let reference = format!("{}/{function}", target.manifest.id);
     let policy = target.declared.refresh.clone();
     let incremental = policy.as_ref().is_some_and(|refresh| refresh.incremental);
-    let mut input = input_for(target);
+    let mut input = input_for(target, param);
     let since = registry().statuses.get(&target.key).and_then(|status| status.last_ok_at);
     if incremental {
         input.insert("current".into(), crate::states::current_value(&target.manifest, &target.scope, &target.declared, &target.sub));
         input.insert("since".into(), json!(since));
     }
     let started = now_ms();
+    // Sans politique (lecture au premier abonnement, « Actualiser ») : la fonction range elle-même sa sortie, selon ce
+    // qu’elle déclare (`state` ou `entity`).
+    if policy.is_none() {
+        let result = crate::functions::call_in(state, &reference, Value::Object(input), "abonnement", target.scope.examples).await;
+        finish(state, target, &reference, started, None, result.map(|_| ()));
+        return;
+    }
     let result = crate::functions::call_unfed(state, &reference, Value::Object(input), "rafraîchissement", target.scope.examples).await;
     let outcome = result.and_then(|output| {
         let mut changes = crate::states::Changes::default();
@@ -305,6 +317,11 @@ async fn run(state: &Arc<AppState>, space: &Space, target: &StateTarget, functio
         Ok(())
     });
     let every = policy.as_ref().map(|refresh| Duration::from_secs(refresh.every).max(MIN_EVERY));
+    finish(state, target, &reference, started, every, outcome);
+}
+
+/// Note l’issue d’une lecture (heure, erreur, prochain passage, recul après un échec) et prévient les abonnés.
+fn finish(state: &Arc<AppState>, target: &StateTarget, reference: &str, started: u64, every: Option<Duration>, outcome: AppResult<()>) {
     {
         let mut registry = registry();
         if let Some(status) = registry.statuses.get_mut(&target.key) {
@@ -329,7 +346,7 @@ async fn run(state: &Arc<AppState>, space: &Space, target: &StateTarget, functio
         }
     }
     if let Err(error) = &outcome {
-        crate::functions::journal(state, "function", &reference, false, None, &format!("Rafraîchissement de {} en échec : {}", target.name(), error.message), None);
+        crate::functions::journal(state, "function", reference, false, None, &format!("Rafraîchissement de {} en échec : {}", target.name(), error.message), None);
     }
     // Les abonnés relisent la valeur et l’état du rafraîchissement (heure, erreur).
     state.emit(CHANGED, json!({ "keys": [target.key] }));
@@ -493,6 +510,14 @@ mod tests {
             ..Default::default()
         });
         jira.functions.push(FunctionDecl { id: "noter".into(), runtime: Runtime::Bash, ..Default::default() });
+        jira.functions.push(FunctionDecl {
+            id: "lire-ticket".into(),
+            runtime: Runtime::Bash,
+            effect: Some(crate::space::Effect::Read),
+            entity: Some("ticket".into()),
+            param: Some("cle".into()),
+            ..Default::default()
+        });
         space.write_module(&jira).unwrap();
         let sprint = ModuleManifest {
             id: "sprint".into(),
@@ -512,6 +537,12 @@ mod tests {
         )
         .unwrap();
         std::fs::write(functions.join("noter.sh"), "cat > recu.json\necho '{}'\n").unwrap();
+        // Lit un ticket seul : rend l’objet de la clé reçue dans `cle`.
+        std::fs::write(
+            functions.join("lire-ticket.sh"),
+            "entree=$(cat)\ncle=$(printf '%s' \"$entree\" | sed 's/.*\"cle\":\"\\([^\"]*\\)\".*/\\1/')\nprintf '{\"cle\":\"%s\",\"etat\":\"lu seul\"}' \"$cle\"\n",
+        )
+        .unwrap();
         state.set_space(Some(space.clone()));
         (state, space)
     }
@@ -574,6 +605,34 @@ mod tests {
         passage(&state).await;
         assert_eq!(passages(&space), "2");
         assert_eq!(overview(&state).unwrap()["refreshers"], json!([]));
+    }
+
+    /// Une page suit un objet seul (`useAlfredState("jira/ticket", { key })`) : au premier abonnement, la fonction
+    /// qui déclare l’entité avec `param` le lit et le range ; ensuite, il ne change que si quelqu’un le relit.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_page_follows_a_single_entity_read_once_by_its_function() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _space) = setup(dir.path());
+        let subject = page("sprint", "ticket");
+        let subscribed = handle(&state, "frame.states.subscribe", &json!({ "subject": subject, "name": "jira/ticket", "key": "ALF-9" })).unwrap().unwrap();
+        let key = subscribed["key"].as_str().unwrap().to_string();
+        let empty = crate::states::read_for_tests(&state, &json!({ "subject": subject, "name": "jira/ticket", "key": "ALF-9" }));
+        assert_eq!(empty["empty"], json!(true));
+
+        assert_eq!(passage(&state).await, 1, "lu au premier abonnement");
+        let read = crate::states::read_for_tests(&state, &json!({ "subject": subject, "name": "jira/ticket", "key": "ALF-9" }));
+        assert_eq!(read["value"], json!({ "cle": "ALF-9", "etat": "lu seul" }));
+        assert_eq!(passage(&state).await, 0, "sans politique : pas de relecture");
+
+        // « Actualiser » le relit ; le dernier abonné parti, rien ne tourne plus.
+        assert!(refresh_now(&key));
+        assert_eq!(passage(&state).await, 1);
+        handle(&state, "states.unsubscribe", &json!({ "id": subscribed["id"] })).unwrap().unwrap();
+        passage(&state).await;
+        assert!(!is_tracked(&key));
+        // Une entité sans identifiant est refusée.
+        let refused = handle(&state, "frame.states.subscribe", &json!({ "subject": subject, "name": "jira/ticket" })).unwrap();
+        assert!(refused.unwrap_err().message.contains("identifiant"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

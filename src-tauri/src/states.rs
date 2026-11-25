@@ -513,10 +513,15 @@ pub(crate) fn current_value(manifest: &ModuleManifest, scope: &Scope, declared: 
 #[derive(Debug, Clone)]
 pub(crate) struct StateTarget {
     pub manifest: ModuleManifest,
+    /// L’état ; pour une entité suivie seule, un état sans politique au nom de l’entité.
     pub declared: StateDecl,
     pub scope: Scope,
+    /// Paramètres normalisés ; pour une entité, son identifiant.
     pub sub: String,
     pub key: String,
+    /// Entité suivie seule (`useAlfredState("jira/ticket", { key })`) : lue par la fonction qui la déclare avec
+    /// `param`, au premier abonnement et sur « Actualiser ».
+    pub entity: Option<EntityDecl>,
 }
 
 impl StateTarget {
@@ -530,14 +535,26 @@ impl StateTarget {
 pub(crate) fn state_target(state: &AppState, space: &Space, subject: &Subject, args: &Value) -> AppResult<StateTarget> {
     let name: String = arg(args, "name")?;
     let (manifest, id) = visible(space, subject, &name)?;
-    let Some(Target::State(declared)) = target(&manifest, &id) else {
-        return Err(AppError::new(format!("« {name} » est une entité : on s’abonne à un état (une liste, une valeur).")));
-    };
-    let declared = declared.clone();
-    let scope = subject_scope(state, space, subject, &manifest, declared.client.as_deref(), args)?;
-    let sub = request_sub(&declared, args);
-    let key = state_key(&scope, &manifest.id, &declared.id, &sub);
-    Ok(StateTarget { manifest, declared, scope, sub, key })
+    match target(&manifest, &id) {
+        Some(Target::State(declared)) => {
+            let declared = declared.clone();
+            let scope = subject_scope(state, space, subject, &manifest, declared.client.as_deref(), args)?;
+            let sub = request_sub(&declared, args);
+            let key = state_key(&scope, &manifest.id, &declared.id, &sub);
+            Ok(StateTarget { manifest, declared, scope, sub, key, entity: None })
+        }
+        Some(Target::Entity(entity)) => {
+            let entity = entity.clone();
+            let Some(sub) = args.get("key").and_then(id_text) else {
+                return Err(AppError::new(format!("« {name} » est une entité : donne son identifiant dans `key`.")));
+            };
+            let scope = subject_scope(state, space, subject, &manifest, entity.client.as_deref(), args)?;
+            let key = entity_key(&scope, &manifest.id, &entity.id, &sub);
+            let declared = StateDecl { id: entity.id.clone(), description: entity.description.clone(), ..Default::default() };
+            Ok(StateTarget { manifest, declared, scope, sub, key, entity: Some(entity) })
+        }
+        None => Err(AppError::new("État inconnu.")),
+    }
 }
 
 /// États et entités de l’espace, pour l’agent (`space_overview`) : de quoi s’abonner sans lire les manifestes. Pour
@@ -550,17 +567,23 @@ pub fn agent_overview(space: &Space) -> Value {
         let Ok(manifest) = space.module(&module) else { continue };
         for declared in &manifest.states {
             let name = format!("{module}/{}", declared.id);
-            let example: Map<String, Value> = declared
+            // L’appel montre les paramètres qui ont un exemple ; un paramètre facultatif sans exemple n’y figure pas.
+            // Aucun exemple : chaque paramètre apparaît avec « … », à remplir d’après sa description.
+            let exemplified: Map<String, Value> = declared
                 .params
                 .iter()
-                .map(|param| {
-                    let value = match param {
-                        crate::space::StateParam::Described(described) => described.example.clone(),
-                        crate::space::StateParam::Name(_) => None,
-                    };
-                    (param.id().to_string(), value.unwrap_or_else(|| json!("…")))
+                .filter_map(|param| match param {
+                    crate::space::StateParam::Described(described) => {
+                        described.example.clone().map(|value| (param.id().to_string(), value))
+                    }
+                    crate::space::StateParam::Name(_) => None,
                 })
                 .collect();
+            let example: Map<String, Value> = if exemplified.is_empty() {
+                declared.params.iter().map(|param| (param.id().to_string(), json!("…"))).collect()
+            } else {
+                exemplified
+            };
             let call = if example.is_empty() {
                 format!("useAlfredState(\"{name}\")")
             } else {
@@ -688,11 +711,19 @@ mod tests {
             id: "tickets-du-filtre".into(),
             description: "Les tickets d’un filtre JQL.".into(),
             entity: Some("ticket".into()),
-            params: vec![crate::space::StateParam::Described(crate::space::ParamDecl {
-                id: "jql".into(),
-                description: "Filtre JQL des tickets".into(),
-                example: Some(json!("assignee = currentUser()")),
-            })],
+            params: vec![
+                crate::space::StateParam::Described(crate::space::ParamDecl {
+                    id: "jql".into(),
+                    description: "Filtre JQL des tickets".into(),
+                    example: Some(json!("assignee = currentUser()")),
+                }),
+                // Facultatif, sans exemple : décrit, mais absent de l’appel proposé.
+                crate::space::StateParam::Described(crate::space::ParamDecl {
+                    id: "page".into(),
+                    description: "Page de résultats".into(),
+                    example: None,
+                }),
+            ],
             ..Default::default()
         });
         manifest.states.push(StateDecl { id: "ci".into(), params: vec!["job".into()], ..Default::default() });
@@ -702,7 +733,10 @@ mod tests {
         let filter = &view["states"][0];
         assert_eq!(filter["state"], json!("jira/tickets-du-filtre"));
         assert_eq!(filter["provider"], json!("jira"));
-        assert_eq!(filter["params"], json!([{ "id": "jql", "description": "Filtre JQL des tickets" }]));
+        assert_eq!(
+            filter["params"],
+            json!([{ "id": "jql", "description": "Filtre JQL des tickets" }, { "id": "page", "description": "Page de résultats" }])
+        );
         assert_eq!(filter["entity"], json!("jira/ticket"));
         assert_eq!(
             filter["subscribe"],

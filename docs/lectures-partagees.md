@@ -147,7 +147,9 @@ compte + mode exemple. Elle a des abonnés : pages (abonnement renouvelé par la
 90 s sans renouvellement : une fenêtre fermée ou plantée ne laisse rien tourner), fonctions et scripts
 (`states.subscribe`, 10 minutes par défaut, un jour au plus), automatisations actives déclenchées par l’état, et `always`.
 Le premier abonné lance la première lecture ; ensuite une lecture par période ; le dernier parti, la cible s’arrête
-(son état reste dans le magasin, sans être tenu à jour). Les coquilles ne relisent plus rien (le bail `states.lease` et
+(son état reste dans le magasin, sans être tenu à jour). Une **entité suivie seule** (`useAlfredState("jira/ticket", { key })`) est une cible
+aussi : sans politique, elle est lue au premier abonnement par la fonction qui déclare l’entité avec `param`, puis sur
+« Actualiser » ; elle change aussi dès qu’une liste ou une écriture rend cet objet. Les coquilles ne relisent plus rien (le bail `states.lease` et
 la lecture par la coquille sont retirés).
 
 ### F4. Lecture incrémentale

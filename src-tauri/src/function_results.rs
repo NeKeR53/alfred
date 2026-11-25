@@ -150,7 +150,12 @@ pub fn function_problem(space: &crate::space::Space, function: &crate::space::Re
         );
     }
     let manifest = space.module(&function.module).ok()?;
-    if function.effect == Some(crate::space::Effect::Read) && function.state.is_none() && function.entity.is_none() {
+    // Seule une lecture qui joint un service (`uses.clients`) alimente un état : un calcul sans service n’en a pas.
+    if function.effect == Some(crate::space::Effect::Read)
+        && !function.uses.clients.is_empty()
+        && function.state.is_none()
+        && function.entity.is_none()
+    {
         return Some(
             "Toute lecture d’un service alimente un état nommé : déclare l’état (`states` du module.json) ou le type \
              d’entité (`entities`) que la fonction alimente, puis redéclare-la avec `state` (une liste, une valeur) ou \
