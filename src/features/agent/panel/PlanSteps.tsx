@@ -10,8 +10,8 @@ const STEP_STATE: Record<PlanStep["status"], { label: string; icon: typeof Circl
 
 /**
  * Étapes du plan de l’agent, rendues par `List` de socle-ui (la spec de `ProgressIndicator` renvoie à `List` pour une
- * liste de tâches), une ligne par étape : une icône d’état à gauche, le texte de l’étape en titre, son état en méta.
- * Le `status` (`Badge`) de `List` n’est rendu que sur la ligne 2, avec un sous-titre : les étapes n’en ont pas.
+ * liste de tâches), une ligne par étape : l’icône à gauche porte seule l’état (à faire, en cours, faite), nommé pour les
+ * lecteurs d’écran ; le texte de l’étape en titre. Sans trait entre les étapes (`dividers={false}`, D-400).
  */
 function PlanSteps({ steps }: { steps: readonly PlanStep[] }) {
   const items: ListItemData[] = steps.map((step, index) => {
@@ -20,11 +20,10 @@ function PlanSteps({ steps }: { steps: readonly PlanStep[] }) {
     return {
       id: String(index),
       title: step.text,
-      meta: state.label,
-      visual: <Icon size={16} aria-hidden />,
+      visual: <Icon size={16} role="img" aria-label={state.label} />,
     };
   });
-  return <List label="Étapes du plan" items={items} selectionMode="none" leading="icon" />;
+  return <List label="Étapes du plan" items={items} selectionMode="none" leading="icon" dividers={false} />;
 }
 
 /** Section « Plan » du panneau de la conversation, avec le compte des étapes faites ; rien sans plan. */
