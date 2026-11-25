@@ -149,6 +149,17 @@ pub fn respond(state: &AppState, path: &str, prefix: &str, origin: &str) -> Page
         "/host/functions" => return host_document("function-host", prefix, origin),
         _ => {}
     }
+    // `/code/<clé>/<exécution>` : le code d’une exécution de Code Mode, pour son seul cadre (`code_mode.rs`).
+    if let Some(rest) = path.strip_prefix("/code/") {
+        if let Some((key, run)) = rest.split_once('/') {
+            if crate::webhooks::same(key.as_bytes(), crate::code_mode::frame_key(state).as_bytes()) {
+                if let Some(js) = crate::code_mode::script(run) {
+                    return PageResponse::new(200, "text/javascript; charset=utf-8", js);
+                }
+            }
+        }
+        return PageResponse::not_found();
+    }
     // `/m/<module>/<clé>/<fichier>` : sans la clé de ce module, pas de code. Tous les cadres ont la même origine
     // opaque, le serveur ne sait pas lequel demande ; seule la coquille connaît les clés, et ne remet à chaque cadre
     // que celle de son module. Une page ne charge donc pas le code d’un autre module.

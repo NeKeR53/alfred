@@ -395,7 +395,11 @@ fn command_help(state: &AppState, conversation: &str, command: &str) -> AppResul
     let required = required(tool);
     let mut usage = format!("alfred {command}");
     for property in &order {
-        usage.push_str(&format!(" <{}>", kebab(property)));
+        if required.contains(property) {
+            usage.push_str(&format!(" <{}>", kebab(property)));
+        } else {
+            usage.push_str(&format!(" [{}]", kebab(property)));
+        }
     }
     let mut options = Vec::new();
     for (property, schema) in &properties {

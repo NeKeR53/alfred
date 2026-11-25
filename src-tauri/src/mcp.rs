@@ -27,13 +27,13 @@ pub fn routes() -> Router<Shared> {
 
 /// Périmètre de la conversation : `None` pour une conversation ouverte par l’utilisateur, sinon le module de la page
 /// ou des fonctions qui l’ont lancée. Il est gardé dans la base d’Alfred, hors de portée de l’agent.
-fn scope_of(state: &AppState, conversation: &str) -> Option<AgentScope> {
+pub(crate) fn scope_of(state: &AppState, conversation: &str) -> Option<AgentScope> {
     state.app_db.lock().ok().and_then(|db| app_db::agent_scope(&db, conversation).ok().flatten())
 }
 
 /// Une conversation lancée par un module ne touche qu’à ce module, et aux fonctions d’autres modules que
 /// l’utilisateur a accordées au demandeur.
-fn reaches(scope: Option<&AgentScope>, reference: &str) -> bool {
+pub(crate) fn reaches(scope: Option<&AgentScope>, reference: &str) -> bool {
     scope.is_none_or(|scope| {
         reference.split_once('/').is_some_and(|(module, _)| module == scope.module)
             || scope.functions.iter().any(|allowed| allowed == reference)
@@ -126,7 +126,7 @@ async fn authorize_agent(state: &Shared, args: &Value) -> AppResult<Value> {
 }
 
 /// Entrée d’une fonction appelée par l’agent : les entrées imposées par le demandeur l’emportent sur les siennes.
-fn with_fixed_input(scope: Option<&AgentScope>, reference: &str, input: Value) -> Value {
+pub(crate) fn with_fixed_input(scope: Option<&AgentScope>, reference: &str, input: Value) -> Value {
     let Some(fixed) = scope.and_then(|scope| scope.inputs.get(reference)).and_then(Value::as_object) else {
         return input;
     };

@@ -29,6 +29,9 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
             })*
         };
     }
+    if let Some(result) = crate::code_mode::handle_command(&state, command, &args).await {
+        return result;
+    }
     if let Some(result) = crate::python::env::handle(&state, command, &args).await {
         return result;
     }

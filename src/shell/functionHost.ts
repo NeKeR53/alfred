@@ -362,3 +362,71 @@ function record(reference: string, caller: string, started: number, ok: boolean,
     detail: { caller, ...(message ? { error: message, diagnostics: (error as { detail?: unknown })?.detail } : {}) },
   }).catch(() => undefined);
 }
+
+/** Résultat d’une exécution de Code Mode, rendu au cœur tel quel. */
+export interface AgentCodeResult {
+  output?: unknown;
+  logs: { level: string; text: string }[];
+  error?: { message: string; stack?: unknown };
+}
+
+/** Requêtes que le code d’un agent peut faire : appeler une fonction, lire un état. Le cœur vérifie chacune. */
+const AGENT_CODE_METHODS = new Set(["agentCode.call", "agentCode.state"]);
+
+/**
+ * Code Mode (`alfred run`) : un cadre neuf, isolé comme celui des fonctions, charge le code de l’exécution `run` et
+ * le lance. Ses seules requêtes passent au cœur avec l’identifiant de l’exécution ; le cadre est retiré à la fin.
+ */
+export function runAgentCode(request: { run: string; key: string; input: unknown; timeoutMs: number }) {
+  const { info, theme } = useShell.getState();
+  if (!info) return Promise.reject(new AlfredError({ message: "Alfred n’a pas fini de démarrer." }));
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("aria-hidden", "true");
+  frame.tabIndex = -1;
+  frame.style.display = "none";
+  frame.src = `${frameBase(info.pageBase)}/host/functions?${new URLSearchParams({ code: request.key, theme })}`;
+  const post = (message: FrameMessage) => frame.contentWindow?.postMessage(message, "*");
+  return new Promise<AgentCodeResult>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: AgentCodeResult) => {
+      clearTimeout(timer);
+      window.removeEventListener("message", listen);
+      frame.remove();
+      resolve(result);
+    };
+    const listen = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow || !isFrameMessage(event.data)) return;
+      const message = event.data;
+      if (message.kind === "event") {
+        if (message.name === "ready")
+          post({ alfred: ALFRED_MESSAGE, kind: "event", name: "run", payload: { run: request.run, input: request.input } });
+        if (message.name === "result") finish(message.payload as AgentCodeResult);
+        return;
+      }
+      if (message.kind !== "request") return;
+      const answer = AGENT_CODE_METHODS.has(message.method)
+        ? invoke(message.method, { ...((message.params ?? {}) as Record<string, unknown>), run: request.run })
+        : Promise.reject(new Error("Code Mode : seulement api.module.fonction(…), api.call(…) et api.states.get(…)."));
+      answer.then(
+        (result) => post({ alfred: ALFRED_MESSAGE, kind: "response", id: message.id, result }),
+        (error: unknown) =>
+          post({
+            alfred: ALFRED_MESSAGE,
+            kind: "response",
+            id: message.id,
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+              detail: (error as { detail?: unknown })?.detail,
+            },
+          }),
+      );
+    };
+    window.addEventListener("message", listen);
+    timer = setTimeout(
+      () => finish({ logs: [], error: { message: `Durée maximale dépassée (${request.timeoutMs / 1000} s).` } }),
+      request.timeoutMs,
+    );
+    document.body.append(frame);
+  });
+}

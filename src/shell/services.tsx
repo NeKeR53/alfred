@@ -9,7 +9,7 @@ import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
-import { callFunction, receiveStatesChanged } from "./functionHost";
+import { callFunction, receiveStatesChanged, runAgentCode } from "./functionHost";
 import { notify } from "./notifications";
 import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
@@ -54,6 +54,16 @@ function bind() {
     callFunction(call.function, call.input, call.caller, call.examples === true, {}, { fed: call.fed === true }).then(
       (output) => resolve(call.requestId, output),
       (error) => reject(call.requestId, error),
+    );
+  });
+  // Code Mode (`alfred run`) : une seule interface exécute le code de l’agent, dans un cadre neuf.
+  onNativeEvent("agent:code", async (payload) => {
+    const request = payload as { requestId: string; run: string; key: string; input: unknown; timeoutMs: number };
+    const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
+    if (!claimed) return;
+    runAgentCode(request).then(
+      (result) => resolve(request.requestId, result),
+      (error) => reject(request.requestId, error),
     );
   });
   // Un état ou une entité a changé dans le cœur : les pages abonnées qui en dépendent se relisent, sans requête.
