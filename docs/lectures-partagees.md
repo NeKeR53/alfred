@@ -108,6 +108,42 @@ module après une écriture coûte peu : seules celles qui ont des abonnés part
 - Guide de l’agent : SDK.md (section 3, « useQuery »), AGENTS.md (connecteur, 2 bis), PLACEMENT.md (11.1). L’agent lit
   toute fonction de lecture d’un connecteur avec `useQuery`.
 
+### D9. La règle est obligatoire, et l’outillage la garantit (précision d’Alexandre, 2026-11-25)
+
+Quand l’agent développe un module, chaque lecture d’un client passe par le magasin partagé. Aucune page et aucune
+fonction ne lit un client par un autre chemin. Trois verrous :
+
+1. **Le cœur (impossible à éviter).** `client()` n’a qu’un chemin vers le service, dans tous les langages :
+   `clients::frame_request`. Le cadre d’une fonction n’a pas de réseau (`sealNetwork`), un script n’a pas le secret
+   (il reste chez Alfred). Chaque `GET` ou `HEAD` y passe par `client_reads.rs` : deux lectures identiques en cours
+   (même compte, même requête), de n’importe quelles fonctions et de n’importe quels modules, ne font qu’une requête.
+   Chaque autre méthode y est vue comme une écriture : les coquilles font relire les lectures affichées du module
+   (`clients:changed`).
+2. **La coquille (impossible à éviter).** Chaque appel d’une fonction `effect: "read"` passe par le magasin des
+   pages (D2), quel que soit l’appelant. Même un `functions.call` y passe.
+3. **`check` (refuse ce qui priverait les pages des mises à jour).** `check` n’est pas `ok` si :
+   - une page ou un panneau lit une fonction de lecture par `functions.call` au lieu de `useQuery` (`sharedReads`) ;
+   - une fonction qui joint un service n’a pas d’`effect` (ses lectures ne seraient pas partagées) ;
+   - un script appelle le réseau lui-même (`curl`, `wget`, `requests`, `httpx`, `urllib`, `aiohttp`,
+     `Invoke-WebRequest`, `Invoke-RestMethod`).
+
+Choix et limites :
+
+- Le cœur ne garde pas la réponse après l’avoir rendue. Une valeur gardée quelques secondes aurait changé ce que
+  reçoit une fonction qui relit juste après un changement (une tâche qui suit un état, une relecture après une
+  écriture). La valeur gardée et la diffusion aux pages restent le rôle du magasin de la coquille, au niveau des
+  fonctions.
+- `download`, `stream` et `socket` ne passent pas par le magasin : ce sont un fichier et des flux en direct, pas un
+  état à partager.
+- Une écriture faite par une fonction TypeScript est connue de la coquille, qui invalide elle-même à la fin de
+  l’appel. Le cœur ne connaît que `module/*` pour ces fonctions : la coquille ignore donc leur `clients:changed`.
+  Sinon, le `POST` d’une lecture (une recherche Jira en `POST`) relancerait les lectures sans fin. Pour un script, le
+  cœur connaît la fonction et ne prévient jamais pour une lecture.
+- Un script reste un vrai processus, sans bac à sable (décision antérieure). `check` repère les outils de réseau
+  connus ; un script qui le cache autrement n’aurait de toute façon pas le secret du service.
+- Une lecture qui ouvre un canal (journal en direct) se lit avec `useQuery(…, { staleAfter: 0 })` : chaque page qui
+  s’ouvre reçoit un canal ouvert.
+
 ## Point d’entrée pour les automatisations
 
 Une fonction que le cœur lance lui-même (webhook, planification ou automatisation d’un script, sans passer par la
@@ -135,6 +171,9 @@ lectures qu’elle touche. Le cœur n’a pas à connaître l’effet. Les appel
   `receiveSharedResult` reçoit les réponses venues d’ailleurs.
 - `src/shell/frameBridge.ts` : `functions.watch`, `functions.refresh`, `functions.unwatch`.
 - `src/sdk/index.ts` : `useQuery`.
-- `src-tauri/src/function_results.rs` : `functions.shareResult` et `publish`.
+- `src-tauri/src/function_results.rs` : `functions.shareResult`, `publish`, `client_changed` et les contrôles de
+  `check` (`page_read_problems`, `function_problem`).
+- `src-tauri/src/client_reads.rs` : lectures d’un client réunies dans le cœur (branché dans `clients::frame_request`).
 - Tests : `sharedQueries.test.ts`, `sharedQueries.pages.test.ts` (deux pages, une requête), `useQuery.test.tsx`,
-  `function_results.rs`.
+  `function_results.rs`, `client_reads.rs`, `clients.rs` (`identical_reads_in_flight_reach_the_service_once` : deux
+  fonctions de deux modules, un vrai serveur, une seule requête reçue).

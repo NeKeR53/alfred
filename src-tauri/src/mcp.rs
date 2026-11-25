@@ -1364,11 +1364,18 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     pages.push(json!({ "page": page.reference, "errors": page.errors }));
                 } else if !page.read_only {
                     // Une page qui compile est relue contre DESIGN.md : chaque remarque est à corriger.
-                    let found = crate::design_lint::lint_file(&space.page_file(&page.module, &page.id), placement);
+                    let file = space.page_file(&page.module, &page.id);
+                    let found = crate::design_lint::lint_file(&file, placement);
                     let (warnings, design): (Vec<_>, Vec<_>) =
                         found.into_iter().partition(|found| crate::design_lint::is_warning(&found.message));
                     if !design.is_empty() {
                         pages.push(json!({ "page": page.reference, "design": design }));
+                    }
+                    // Lecture partagée obligatoire : une lecture d’un connecteur passe par `useQuery`.
+                    let source = std::fs::read_to_string(&file).unwrap_or_default();
+                    let reads = crate::function_results::page_read_problems(&source, &page.module, &snapshot.functions);
+                    if !reads.is_empty() {
+                        pages.push(json!({ "page": page.reference, "sharedReads": reads }));
                     }
                     if !warnings.is_empty() {
                         design_warnings.push(json!({ "page": page.reference, "warnings": warnings }));
@@ -1402,6 +1409,8 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                         reaches_service
                             .then(|| pass_through_problem(&function.input))
                             .flatten()
+                            // Lecture partagée obligatoire : `effect` déclaré, et le service par le client d’Alfred.
+                            .or_else(|| crate::function_results::function_problem(&space, function))
                             .map(|problem| json!({ "function": function.reference, "problem": problem }))
                     }
                 })

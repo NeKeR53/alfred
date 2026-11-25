@@ -229,7 +229,13 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 
 ### Lire un service : `useQuery`
 
-**Une page lit toujours une fonction de lecture d’un connecteur (`effect: "read"`) avec `useQuery`, jamais avec `useAsync(() => functions.call(…))`.** La réponse est partagée par toute l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, montrent la même donnée.
+**Règle obligatoire : toute lecture d’un service passe par le magasin partagé.** Une page lit une fonction de lecture d’un connecteur (`effect: "read"`) avec `useQuery`, jamais avec `functions.call` (ni dans `useAsync`, ni ailleurs) : `check` refuse la page (`sharedReads`). La réponse est partagée par toute l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, montrent la même donnée.
+
+Comment Alfred le garantit, sans que le module puisse l’éviter :
+
+- **Dans le cœur.** `client()` (TypeScript, Python, bash, PowerShell) n’a qu’un chemin vers le service : Alfred. Le cadre d’une fonction n’a pas de réseau, et un script n’a pas le secret. Chaque `GET` ou `HEAD` y passe par le magasin du cœur : deux lectures identiques en cours (même compte, même requête), venues de n’importe quelles fonctions, n’en font qu’une. Chaque écriture y est vue, et fait relire les lectures affichées du module.
+- **Dans la coquille.** Chaque appel d’une fonction `effect: "read"`, quel que soit l’appelant, passe par le magasin des pages : appels identiques réunis, réponse publiée à toutes les pages abonnées.
+- **Dans `check`.** Une page qui lit une fonction de lecture par `functions.call` est refusée (`sharedReads`). Une fonction qui joint un service sans `effect` est refusée : ses lectures ne seraient pas partagées. Un script qui appelle le réseau lui-même (`curl`, `requests`, `Invoke-RestMethod`…) est refusé : il passe par le client d’Alfred.
 
 ```tsx
 import { useQuery } from "@alfred/sdk";
@@ -283,7 +289,8 @@ Règles :
 - `useQuery` refuse une fonction qui n’est pas déclarée `effect: "read"` : une écriture s’appelle avec `functions.call`, dans une action.
 - L’entrée identifie la donnée : passe les mêmes champs, dans n’importe quel ordre, pour partager la lecture (`{ jql }` partout, pas `{ jql }` ici et `{ requete }` ailleurs). N’y mets ni date courante ni nombre au hasard.
 - `hasError` du gabarit : `Boolean(q.error) && !q.data` ; une donnée déjà affichée reste montrée quand une relecture échoue.
-- `useAsync` reste pour ce qui n’est pas un connecteur : `db.query`, `files`, `search`, `history`.
+- Une lecture qui ouvre un canal (`suivre-journal`) : `useQuery(…, { staleAfter: 0 })`, pour que chaque page reçoive un canal ouvert.
+- `useAsync` reste pour ce qui n’est pas un service : `db.query`, `files`, `search`, `history`.
 
 ## 4. Base de données : `db`
 
@@ -365,7 +372,7 @@ Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }`
 
 ## 6. Clients : `client(id)`
 
-`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, passent par ces fonctions.
+`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, passent par ces fonctions, et les lisent avec `useQuery` (section 3). Chaque `GET` ou `HEAD` d’un client passe par le magasin partagé du cœur : deux lectures identiques en cours n’en font qu’une, quelles que soient les fonctions qui les demandent. Chaque écriture fait relire les lectures affichées du module. Déclare toujours `effect` : `check` refuse une fonction de connecteur sans lui.
 
 ```ts
 client(id: string, options?: { instance?: string }): {
@@ -406,7 +413,7 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
-Le menu appartient à l’utilisateur : il fait ses pages et leurs onglets à partir des pages déclarées par le module (les modèles), et choisit pour chacun le compte de chaque besoin (AGENTS.md, « Modèles de pages et pages de l’utilisateur »). Le même fichier de page sert à toutes ses copies. La page lit ses comptes dans `usePageContext()` : `accounts` (`{ jira: "acme" }`, un compte par besoin) et `instance` (le compte du besoin qu’elle suit par `perInstance`, ou son seul compte), et les passe aux fonctions dans leur `input` (`functions.call("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Une fonction appelée par la page vise aussi d’office les comptes de la page : `client("jira")`, sans instance, y appelle le compte choisi pour `jira` (puis, à défaut, celui par défaut) ; pour une fonction d’un module dont la page dépend, le compte choisi pour `dépendance/besoin`. Le compte d’un autre service du même type, que l’utilisateur a repris pour la page, s’écrit `client/instance` (« bitbucket/equipe ») : passe-le tel quel, `client(id, { instance })` l’accepte et joint ce service-là. Une fonction en script (bash, PowerShell, Python) ne reçoit que son `input`. Une page ne suppose pas qu’une autre page du module existe pour le même compte. Elle peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
+Le menu appartient à l’utilisateur : il fait ses pages et leurs onglets à partir des pages déclarées par le module (les modèles), et choisit pour chacun le compte de chaque besoin (AGENTS.md, « Modèles de pages et pages de l’utilisateur »). Le même fichier de page sert à toutes ses copies. La page lit ses comptes dans `usePageContext()` : `accounts` (`{ jira: "acme" }`, un compte par besoin) et `instance` (le compte du besoin qu’elle suit par `perInstance`, ou son seul compte), et les passe aux fonctions dans leur `input` (`useQuery("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Une fonction appelée par la page vise aussi d’office les comptes de la page : `client("jira")`, sans instance, y appelle le compte choisi pour `jira` (puis, à défaut, celui par défaut) ; pour une fonction d’un module dont la page dépend, le compte choisi pour `dépendance/besoin`. Le compte d’un autre service du même type, que l’utilisateur a repris pour la page, s’écrit `client/instance` (« bitbucket/equipe ») : passe-le tel quel, `client(id, { instance })` l’accepte et joint ce service-là. Une fonction en script (bash, PowerShell, Python) ne reçoit que son `input`. Une page ne suppose pas qu’une autre page du module existe pour le même compte. Elle peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
 
 `client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
 
@@ -595,10 +602,11 @@ export default async function ({ conteneur, environnement }: { conteneur: string
 
 ```tsx
 // pages/journal.tsx
-import { functions, useAsync, useChannel } from "@alfred/sdk";
+import { useChannel, useQuery } from "@alfred/sdk";
 
 export default function Journal() {
-  const ouvert = useAsync(() => functions.call<{ canal: string }>("suivre-journal", { conteneur: "web", environnement: 1 }), []);
+  // Une lecture qui ouvre un canal : `staleAfter: 0`, chaque page qui s’ouvre reçoit un canal ouvert.
+  const ouvert = useQuery<{ canal: string }>("suivre-journal", { conteneur: "web", environnement: 1 }, { staleAfter: 0 });
   const journal = useChannel(ouvert.data?.canal);
   return <pre>{journal.events.map((ligne) => `${ligne.stream === "stderr" ? "! " : ""}${ligne.data}`).join("\n")}</pre>;
 }

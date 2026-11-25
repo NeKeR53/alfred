@@ -7,6 +7,7 @@ mod backups;
 mod badges;
 mod channels;
 mod client_cache;
+mod client_reads;
 mod clients;
 mod commands;
 mod composer;

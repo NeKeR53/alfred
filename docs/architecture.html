@@ -871,6 +871,12 @@ modules passent par ces fonctions (<code>"jira/lister-tickets"</code>). Chaque f
 </figure>
 
 <h3>Lectures partagées entre les pages</h3>
+<p><b>Règle obligatoire : toute lecture d’un service passe par le magasin partagé.</b> Elle tient en trois verrous.
+Dans le cœur, chaque <code>GET</code> ou <code>HEAD</code> d’un client (TypeScript, Python, bash, PowerShell) passe par
+<code>clients::frame_request</code>, seul chemin vers le service : deux lectures identiques en cours n’en font qu’une
+(<code>client_reads.rs</code>), et chaque écriture prévient les coquilles (<code>clients:changed</code>). Dans la coquille,
+le magasin ci-dessous. Dans <code>check</code>, une page qui lit un connecteur par <code>functions.call</code>, une fonction de
+connecteur sans <code>effect</code> et un script qui appelle le réseau lui-même sont refusés.</p>
 <p>Chaque appel d’une fonction de lecture (<code>effect: "read"</code>) passe par un magasin en mémoire de la coquille,
 quel que soit l’appelant. La clé : fonction, entrée normalisée, comptes de l’appel, mode « données d’exemple ». Deux
 appels identiques en cours n’en font qu’un, et chaque réponse est publiée à toutes les pages abonnées

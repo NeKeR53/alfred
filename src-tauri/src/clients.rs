@@ -2186,8 +2186,44 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             return Ok(cached);
         }
     }
-    let result = perform(state, client, call).await;
-    journal(state, space, client, call, requester, started, outcome_of(&result));
+    // Lectures partagées du cœur : une lecture rejoint la même lecture en vol ; une écriture prévient les coquilles
+    // (`clients:changed`), qui font relire les lectures affichées du module.
+    let account = crate::client_reads::Account {
+        space: space.root.to_string_lossy().to_string(),
+        client: client.id.clone(),
+        instance: client.instance.clone(),
+    };
+    let result = if crate::client_reads::is_read(&call.method) && !sealed {
+        let path = match call.response_type {
+            ResponseType::Auto => call.path.clone(),
+            kind => format!("{}#{kind:?}", call.path),
+        };
+        let fingerprint = serde_json::to_string(&client).unwrap_or_default();
+        let shared_key = crate::client_reads::key(
+            &account,
+            &fingerprint,
+            call.method.as_str(),
+            &path,
+            call.query.as_ref(),
+            call.headers.as_ref(),
+        );
+        let (result, source) = crate::client_reads::read(&shared_key, || perform(state, client, call)).await;
+        let outcome = match source {
+            crate::client_reads::Source::Fetched => outcome_of(&result),
+            crate::client_reads::Source::Joined => {
+                (outcome_of(&result).0, "réponse partagée (même lecture en cours)".to_string())
+            }
+        };
+        journal(state, space, client, call, requester, started, outcome);
+        result
+    } else {
+        let result = perform(state, client, call).await;
+        journal(state, space, client, call, requester, started, outcome_of(&result));
+        if !crate::client_reads::is_read(&call.method) {
+            crate::function_results::client_changed(state, space, subject, &account.client, &account.instance);
+        }
+        result
+    };
     if let (Some(key), Ok(response)) = (&cache_key, &result) {
         if let Err(error) = crate::client_cache::put(space, key, &subject.module, &client.id, ttl, response) {
             log::error!("cache du client {} : {}", client.id, error.message);
@@ -3135,6 +3171,8 @@ pub mod testing {
         pub issued: AtomicUsize,
         /// Le serveur de jetons n’accepte l’application que par l’en-tête Basic.
         pub basic_only: AtomicBool,
+        /// Lectures reçues par `/api/lent`, qui répond après 150 ms.
+        pub slow_reads: AtomicUsize,
     }
 
     pub const REMOTE_CLIENT_ID: &str = "alfred-app";
@@ -3293,6 +3331,14 @@ pub mod testing {
             .route("/prive", any(echo))
             .route("/api/protected", get(protected))
             .route("/api/texte", get(|| async { "bonjour" }))
+            .route(
+                "/api/lent",
+                get(|axum::extract::State(remote): axum::extract::State<Arc<RemoteState>>| async move {
+                    remote.slow_reads.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    axum::Json(json!({ "tickets": ["ALF-1"] }))
+                }),
+            )
             .route("/api/enorme", get(|| async { vec![b'x'; MAX_BODY + 1] }))
             .route(
                 "/api/vers-la-meme-origine",
@@ -3484,6 +3530,46 @@ mod tests {
         assert_eq!(cleared["cleared"], json!(2));
         request(&state, &subject, "public", json!({ "path": "/echo", "query": { "q": 1 }, "cache": 60 })).await.unwrap();
         assert_eq!(calls(), 6);
+    }
+
+    /// Deux fonctions de deux modules lisent en même temps la même ressource du même compte : une seule requête part,
+    /// et chacune reçoit la réponse. Une écriture prévient les coquilles (`clients:changed`) ; une écriture faite par
+    /// une fonction déclarée `effect: "read"` (une recherche en POST) ne les prévient pas.
+    #[tokio::test]
+    async fn identical_reads_in_flight_reach_the_service_once() {
+        let (state, _dir) = test_state();
+        let remote = remote().await;
+        let base = format!("{}/api", remote.origin);
+        let crm = function_subject("crm");
+        let suivi = function_subject("suivi");
+        let client = json!({ "id": "public", "label": "Public", "baseUrl": base, "auth": { "type": "none" } });
+        assert_eq!(save_client(&state, client).await["status"], json!("ready"));
+        grant(&state, &crm, "public");
+        grant(&state, &suivi, "public");
+
+        let read = json!({ "path": "/lent", "query": { "jql": "assignee = currentUser()" } });
+        let (first, second) =
+            tokio::join!(request(&state, &crm, "public", read.clone()), request(&state, &suivi, "public", read.clone()));
+        assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 1, "une seule requête");
+        assert_eq!(first.unwrap()["body"], json!({ "tickets": ["ALF-1"] }));
+        assert_eq!(second.unwrap()["body"], json!({ "tickets": ["ALF-1"] }));
+        // Une fois la réponse reçue, rien n’est gardé : la lecture suivante rappelle le service.
+        request(&state, &crm, "public", read).await.unwrap();
+        assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let mut events = state.events.subscribe();
+        request(&state, &crm, "public", json!({ "method": "POST", "path": "/echo", "body": { "texte": "vu" } }))
+            .await
+            .unwrap();
+        let event = loop {
+            let event = events.recv().await.unwrap();
+            if event.name == crate::function_results::CLIENT_CHANGED {
+                break event;
+            }
+        };
+        assert_eq!(event.payload["module"], json!("crm"));
+        assert_eq!(event.payload["client"], json!("public"));
+        assert!(event.payload.get("function").is_none(), "fonction TypeScript : nom inconnu du cœur");
     }
 
     #[tokio::test]

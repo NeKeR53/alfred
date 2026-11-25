@@ -20,7 +20,7 @@ vi.mock("../lib/native", async (importOriginal) => ({
 
 import type { ModuleSummary, ResolvedFunction, Snapshot } from "../lib/types";
 import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
-import { receiveSharedResult, resetFunctionHosts } from "./functionHost";
+import { receiveClientChange, receiveSharedResult, resetFunctionHosts } from "./functionHost";
 import type { QueryState } from "./sharedQueries";
 import { useShell } from "./store";
 
@@ -248,5 +248,28 @@ describe("deux pages sur le même client", () => {
       at: Date.now() + 1,
     });
     expect(page.states).toHaveLength(count);
+  });
+
+  it("une écriture d’un script vue par le cœur fait relire les pages ; celle d’une fonction TypeScript, non", async () => {
+    const page = watcher();
+    await handleFrameRequest(
+      sprint,
+      "functions.watch",
+      { watch: "w1", function: "jira/lister-tickets", input: assigned },
+      page.push,
+    );
+    release();
+    await flush();
+    // Sans nom de fonction (TypeScript) : la coquille d’origine invalide elle-même ; rien ne repart ici.
+    receiveClientChange({ module: "jira", client: "jira", instance: "acme" });
+    await flush();
+    expect(callsOf("functions.call")).toHaveLength(1);
+    // Un script d’écriture lancé par le cœur : la liste se relit une fois.
+    receiveClientChange({ module: "jira", client: "jira", instance: "acme", function: "jira/commenter-ticket" });
+    await flush();
+    expect(callsOf("functions.call")).toHaveLength(2);
+    release();
+    await flush();
+    expect(page.last()?.data).toEqual({ tickets: ["ALF-2"] });
   });
 });

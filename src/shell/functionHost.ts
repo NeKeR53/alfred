@@ -144,6 +144,7 @@ function hostFor(module: string, examples: boolean, accounts: Record<string, str
 /** Ferme les cadres de fonctions : à appeler quand l’espace change ou se ferme. */
 export function resetFunctionHosts() {
   sharedQueries.clear();
+  runningByModule.clear();
   for (const host of hosts.values()) {
     for (const settle of host.pending.values())
       settle.reject(new AlfredError({ message: "L’espace de travail a été fermé." }));
@@ -180,12 +181,8 @@ export function dependentModules(module: string): string[] {
 }
 
 async function executeRead(call: QueryCall): Promise<unknown> {
-  const output = await executeFunction(
-    call.reference,
-    call.input,
-    call.caller ?? "partage",
-    call.examples === true,
-    call.accounts ?? {},
+  const output = await track(call.reference.split("/")[0] ?? "", () =>
+    executeFunction(call.reference, call.input, call.caller ?? "partage", call.examples === true, call.accounts ?? {}),
   );
   shareResult(call, true, output);
   return output;
@@ -243,6 +240,32 @@ export function receiveSharedResult(payload: unknown) {
   } else invalidateAfterWrite(call);
 }
 
+/** Appels de fonctions en cours dans cette coquille, par module. */
+const runningByModule = new Map<string, number>();
+
+function track<T>(module: string, run: () => Promise<T>): Promise<T> {
+  runningByModule.set(module, (runningByModule.get(module) ?? 0) + 1);
+  return run().finally(() => {
+    const left = (runningByModule.get(module) ?? 1) - 1;
+    if (left > 0) runningByModule.set(module, left);
+    else runningByModule.delete(module);
+  });
+}
+
+/**
+ * Une fonction a écrit chez un service (le cœur l’a vu passer, `clients:changed`) : les lectures du module et des
+ * modules qui en dépendent se relisent. Cela couvre les scripts lancés par le cœur lui-même (automatisation,
+ * webhook) : le cœur nomme la fonction et ne prévient jamais pour une lecture. Sans nom de fonction, l’écriture vient
+ * d’une fonction TypeScript, donc d’une coquille, qui invalide elle-même à la fin de l’écriture et prévient les
+ * autres fenêtres (`functions:result`) : rien à faire ici, et surtout pas pour le `POST` d’une lecture (une
+ * recherche), qui relancerait les lectures sans fin. Ignoré aussi tant qu’une fonction du module tourne ici.
+ */
+export function receiveClientChange(payload: unknown) {
+  const change = payload as { module?: string; function?: string } | null;
+  if (!change?.module || !change.function || runningByModule.has(change.module)) return;
+  sharedQueries.invalidate({ modules: dependentModules(change.module), examples: false });
+}
+
 /**
  * Appelle `module/fonction` avec `input`. Une lecture (`effect: "read"`) passe par le magasin partagé : un appel
  * identique déjà en cours est rejoint, et la réponse est publiée à toutes les pages qui la montrent. Une écriture
@@ -263,7 +286,7 @@ export async function callFunction(
   const call: QueryCall = { reference, input, accounts, examples: sample, caller };
   if (declared?.effect === "read") return sharedQueries.run(call);
   try {
-    return await executeFunction(reference, input, caller, examples, accounts);
+    return await track(module ?? "", () => executeFunction(reference, input, caller, examples, accounts));
   } finally {
     // Réussie ou non, l’écriture a pu changer le service : ses lectures se relisent.
     if (declared && !declared.missing) {
