@@ -414,7 +414,12 @@ export function runAgentCode(request: { run: string; key: string; input: unknown
       const message = event.data;
       if (message.kind === "event") {
         if (message.name === "ready")
-          post({ alfred: ALFRED_MESSAGE, kind: "event", name: "run", payload: { run: request.run, input: request.input } });
+          post({
+            alfred: ALFRED_MESSAGE,
+            kind: "event",
+            name: "run",
+            payload: { run: request.run, input: request.input },
+          });
         if (message.name === "result") finish(message.payload as AgentCodeResult);
         return;
       }

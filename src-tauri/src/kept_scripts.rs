@@ -130,9 +130,10 @@ pub fn list(state: &AppState, limit: usize) -> AppResult<Value> {
             let first = run.code.lines().map(str::trim).find(|line| !line.is_empty() && !line.starts_with("//")).unwrap_or("");
             let first: String = first.chars().take(70).collect();
             format!(
-                "{}  {}  {}  {} appel(s)  {}",
+                "{}  {}  conversation {}  {}  {} appel(s)  {}",
                 run.id,
                 run.at.get(..16).unwrap_or(&run.at).replace('T', " "),
+                run.conversation.chars().take(8).collect::<String>(),
                 if run.ok { "réussie" } else { "échec  " },
                 run.calls.len(),
                 first
@@ -241,7 +242,7 @@ pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, descr
     if !run.ok {
         return Err(AppError::new("Seule une exécution réussie se garde : corriger le code, le relancer, puis le garder."));
     }
-    if crate::mcp::scope_of(state, conversation).is_some() {
+    if crate::agent_tools::scope_of(state, conversation).is_some() {
         return Err(AppError::new("Une conversation lancée par une page ne crée pas de fonction."));
     }
     let space = state.space()?;

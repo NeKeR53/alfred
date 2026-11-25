@@ -26,7 +26,7 @@ use super::event::{
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, Autonomy, InputFile, Launch, Model, Sink, StartOptions};
-use super::{command, MCP_TOKEN_ENV};
+use super::command;
 use crate::error::{arg, AppError, AppResult};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -386,7 +386,6 @@ impl Rpc {
 async fn connect(
     program: &Path,
     cwd: &str,
-    token: Option<&str>,
     env: Vec<(&'static str, String)>,
     on_message: impl Fn(&Arc<Rpc>, Value) + Send + Sync + 'static,
     on_exit: impl FnOnce(Option<String>) + Send + 'static,
@@ -394,9 +393,6 @@ async fn connect(
     let rpc = Arc::new(Rpc { process: Mutex::new(None), next: AtomicI64::new(0), pending: Mutex::new(HashMap::new()) });
     let mut command = command(program, Some(cwd));
     command.arg("app-server");
-    if let Some(token) = token {
-        command.env(MCP_TOKEN_ENV, token);
-    }
     command.envs(env);
     let (reader, exiting) = (Arc::downgrade(&rpc), Arc::downgrade(&rpc));
     let process = LineProcess::spawn(
@@ -684,8 +680,8 @@ impl Inner {
     }
 }
 
-/// Configuration propre à la session : les outils d’Alfred, ou aucun outil pour un appel unique.
-fn session_config(options: &StartOptions, tools_url: &str, has_token: bool) -> Value {
+/// Configuration propre à la session : aucun outil pour un appel unique. Alfred passe par la CLI `alfred`.
+fn session_config(options: &StartOptions) -> Value {
     if options.one_shot {
         return json!({
             "features.shell_tool": false,
@@ -701,15 +697,6 @@ fn session_config(options: &StartOptions, tools_url: &str, has_token: bool) -> V
             "project_doc_max_bytes": 0,
         });
     }
-    if has_token {
-        // Le jeton est fourni au CLI par Rust, dans son environnement.
-        return json!({ "mcp_servers.alfred": {
-            "url": tools_url,
-            "enabled": true,
-            "default_tools_approval_mode": "approve",
-            "bearer_token_env_var": MCP_TOKEN_ENV,
-        } });
-    }
     json!({})
 }
 
@@ -722,7 +709,6 @@ impl Codex {
         let rpc = connect(
             &launch.program,
             &launch.options.cwd,
-            launch.token.as_deref(),
             launch
                 .token
                 .as_deref()
@@ -747,7 +733,7 @@ impl Codex {
         let options = &launch.options;
         let (approval, sandbox, _) = self.inner.policy();
         let mut common = json!({ "cwd": options.cwd, "approvalPolicy": approval, "sandbox": sandbox });
-        let config = session_config(options, &launch.tools_url(), launch.token.is_some());
+        let config = session_config(options);
         if config.as_object().is_some_and(|config| !config.is_empty()) {
             common["config"] = config;
         }
@@ -900,7 +886,7 @@ impl Codex {
 
 /// Lance un `codex app-server` de service, sans outils, le temps d’une lecture.
 async fn utility<T>(program: &Path, cwd: &str, work: impl AsyncFnOnce(&Rpc) -> AppResult<T>) -> AppResult<T> {
-    let rpc = connect(program, cwd, None, Vec::new(), |_, _| {}, |_| {}).await?;
+    let rpc = connect(program, cwd, Vec::new(), |_, _| {}, |_| {}).await?;
     let result = work(&rpc).await;
     rpc.terminate();
     result

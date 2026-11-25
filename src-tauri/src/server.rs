@@ -49,7 +49,6 @@ fn router(state: Shared, dev: bool) -> Router {
     }
     router
         .merge(crate::clients::routes())
-        .merge(crate::mcp::routes())
         .merge(crate::webhooks::routes())
         .merge(crate::automations::routes())
         .merge(crate::script_sdk::routes())

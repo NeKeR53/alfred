@@ -53,8 +53,11 @@ function captureDetails(value: unknown, depth = 0): Details | undefined {
   return undefined;
 }
 
+/** Capture par la CLI (`alfred page_screenshot …`, dans une commande du shell) ou par un ancien outil. */
 const isScreenshot = (item: TurnItem): item is Extract<TurnItem, { kind: "activity" }> =>
-  item.kind === "activity" && item.status === "completed" && /page_screenshot\b/.test(item.title);
+  item.kind === "activity" &&
+  item.status === "completed" &&
+  (/page_screenshot\b/.test(item.title) || /\balfred\s+page[_-]screenshot\b/.test(item.detail ?? ""));
 
 /** Captures prises par l’agent dans un tour, dans l’ordre où il les a prises. */
 export function pageCaptures(turn: Pick<Turn, "items">): PageCapture[] {

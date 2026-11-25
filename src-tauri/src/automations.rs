@@ -1001,7 +1001,7 @@ async fn run_steps(state: &Arc<AppState>, automation: &Automation, steps: &[Step
 fn unattended(name: &str, minutes: u32) -> String {
     format!(
         "Tu es lancé par l’automatisation « {name} » d’Alfred. Personne ne regarde : ne pose aucune question et n’attends aucun accord. \
-Tu peux appeler les fonctions de l’espace (outil call_function ou leurs outils fn__) et écrire dans ton dossier de travail, rien d’autre : \
+Tu peux appeler les fonctions de l’espace par la CLI `alfred` (Code Mode : `alfred api` pour leurs types, puis `alfred run` ; écritures comprises) et écrire dans ton dossier de travail, rien d’autre : \
 ni pages, ni modules, ni réglages, ni fichiers hors de ce dossier. Tu as {minutes} minutes au plus. \
 Si tu es bloqué, arrête-toi et dis pourquoi en une phrase. Termine par un compte rendu court de ce que tu as fait."
     )
@@ -1136,7 +1136,7 @@ async fn run_agent_in(
 fn unattended_here(name: &str, minutes: u32) -> String {
     format!(
         "Ce message vient de l’automatisation « {name} » d’Alfred, pas de l’utilisateur. Personne ne regarde : ne pose aucune question et n’attends aucun accord. \
-Pour ce tour, tu peux appeler les fonctions de l’espace (outil call_function ou leurs outils fn__) et écrire dans ton dossier de travail, rien d’autre : \
+Pour ce tour, tu peux appeler les fonctions de l’espace par la CLI `alfred` (Code Mode : `alfred api` pour leurs types, puis `alfred run` ; écritures comprises) et écrire dans ton dossier de travail, rien d’autre : \
 ni pages, ni modules, ni réglages, ni fichiers hors de ce dossier. Tu as {minutes} minutes au plus. \
 Si tu es bloqué, arrête-toi et dis pourquoi en une phrase. Termine par un compte rendu court de ce que tu as fait."
     )

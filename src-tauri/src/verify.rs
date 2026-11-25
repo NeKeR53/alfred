@@ -237,7 +237,7 @@ async fn tool(
         return reply(StatusCode::BAD_REQUEST, json!({ "error": "Préciser `name`." }));
     };
     let arguments = request.get("arguments").cloned().unwrap_or_else(|| json!({}));
-    match crate::mcp::call_tool(&state, "verify-bench", name, &arguments).await {
+    match crate::agent_tools::call_tool(&state, "verify-bench", name, &arguments).await {
         Ok(value) => reply(StatusCode::OK, value),
         Err(error) => reply(StatusCode::OK, json!({ "error": error.message })),
     }

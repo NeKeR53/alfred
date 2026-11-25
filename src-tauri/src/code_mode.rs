@@ -40,8 +40,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "run",
-        "alfred run <fichier.ts | -> [--input '{…}'] [--again <id>] [--save module/nom] [--description …]",
-        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Lecture seule : une fonction qui n’est pas `effect: read` est refusée. Limites : 60 s, 50 appels, 20 000 caractères de sortie. Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction de lecture du module (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
+        "alfred run <fichier.ts | -> [--input '{…}'] [--examples] [--again <id>] [--save module/nom] [--description …]",
+        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Lecture seule : une fonction qui n’est pas `effect: read` est refusée. Limites : 60 s, 50 appels, 20 000 caractères de sortie. `--examples` : les fonctions de connecteur rendent leurs données d’exemple, sans joindre le service. Écrire le code dans un fichier, ou `alfred run - <<'EOF'` … `EOF` (une commande `alfred` seule passe sans demande d’accord). Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction de lecture du module (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
     ),
     ("runs", "alfred runs [--limit n]", "Exécutions de Code Mode gardées 7 jours : id, date, réussite, nombre d’appels, début du code."),
 ];
@@ -53,6 +53,8 @@ struct Run {
     js: String,
     deadline: Instant,
     calls: Mutex<Vec<String>>,
+    /// Les fonctions rendent leurs données d’exemple, sans joindre aucun service.
+    examples: bool,
 }
 
 fn runs() -> &'static Mutex<HashMap<String, Arc<Run>>> {
@@ -103,6 +105,11 @@ pub async fn handle(
 
 /// Options d’une commande de Code Mode : `--nom valeur` et valeurs sans nom.
 fn options(argv: &[String], known: &[&str]) -> AppResult<(Vec<String>, Map<String, Value>)> {
+    options_with(argv, known, &[])
+}
+
+/// Comme `options`, avec des drapeaux sans valeur (`--examples`).
+fn options_with(argv: &[String], known: &[&str], switches: &[&str]) -> AppResult<(Vec<String>, Map<String, Value>)> {
     let mut positional = Vec::new();
     let mut named = Map::new();
     let mut index = 0;
@@ -113,6 +120,10 @@ fn options(argv: &[String], known: &[&str]) -> AppResult<(Vec<String>, Map<Strin
             positional.push(token.clone());
             continue;
         };
+        if switches.contains(&flag) {
+            named.insert(flag.to_string(), Value::Bool(true));
+            continue;
+        }
         let (flag, value) = match flag.split_once('=') {
             Some((flag, value)) => (flag.to_string(), value.to_string()),
             None => {
@@ -122,7 +133,7 @@ fn options(argv: &[String], known: &[&str]) -> AppResult<(Vec<String>, Map<Strin
             }
         };
         if !known.contains(&flag.as_str()) {
-            let list: Vec<String> = known.iter().map(|known| format!("--{known}")).collect();
+            let list: Vec<String> = known.iter().chain(switches).map(|known| format!("--{known}")).collect();
             return Err(AppError::new(format!("Option inconnue : --{flag}. Options : {}.", list.join(", "))));
         }
         named.insert(flag, Value::String(value));
@@ -231,14 +242,15 @@ fn callable<'a>(functions: &'a [ResolvedFunction], scope: Option<&AgentScope>) -
 }
 
 fn allowed(function: &ResolvedFunction, scope: Option<&AgentScope>) -> bool {
-    if !crate::mcp::reaches(scope, &function.reference) {
+    if !crate::agent_tools::reaches(scope, &function.reference) {
         return false;
     }
     function.effect == Some(Effect::Read) || scope.is_some_and(|scope| scope.functions.contains(&function.reference))
 }
 
-fn signature(function: &ResolvedFunction, docs: bool) -> String {
-    let input = ts_type(&function.input, docs);
+fn signature(function: &ResolvedFunction, scope: Option<&AgentScope>, docs: bool) -> String {
+    let schema = crate::agent_tools::without_fixed_fields(scope, &function.reference, function.input.clone());
+    let input = ts_type(&schema, docs);
     let input = if input == "Record<string, unknown>" || input == "unknown" { "input?: Record<string, unknown>".to_string() } else { format!("input: {input}") };
     format!("{}({input}): Promise<{}>", ident(&function.id), ts_type(&function.output, docs))
 }
@@ -247,7 +259,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
     let (positional, _) = options(argv, &[])?;
     let space = state.space()?;
     let snapshot = space.snapshot()?;
-    let scope = crate::mcp::scope_of(state, conversation);
+    let scope = crate::agent_tools::scope_of(state, conversation);
     let functions = callable(&snapshot.functions, scope.as_ref());
     let shared = crate::states::agent_overview(&space);
     let states: Vec<&Value> = shared["states"]
@@ -259,7 +271,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
             scope.as_ref().is_none_or(|scope| scope.module == provider)
         })
         .collect();
-    let write_note = |function: &ResolvedFunction| if function.effect == Some(Effect::Read) { "" } else { " (écriture offerte par la page)" };
+    let write_note = |function: &ResolvedFunction| if function.effect == Some(Effect::Read) { "" } else { " (écriture accordée à cette conversation)" };
     match positional.first() {
         None => {
             let mut lines = vec![
@@ -270,7 +282,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
                 let mut line = format!(
                     "api.{}.{}  {}{}",
                     ident(&function.module),
-                    signature(function, false),
+                    signature(function, scope.as_ref(), false),
                     function.description.split(". ").next().unwrap_or_default().trim_end_matches('.'),
                     write_note(function)
                 );
@@ -313,7 +325,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
                 lines.push(format!(
                     "    {}{};{}",
                     doc(Some(&candidate.description)),
-                    signature(candidate, true),
+                    signature(candidate, scope.as_ref(), true),
                     write_note(candidate)
                 ));
             }
@@ -399,7 +411,7 @@ async fn run_command(
     stdin: Option<&str>,
     cwd: Option<&Path>,
 ) -> AppResult<Value> {
-    let (positional, named) = options(argv, &["input", "again", "save", "description"])?;
+    let (positional, named) = options_with(argv, &["input", "again", "save", "description"], &["examples"])?;
     let text = |name: &str| named.get(name).and_then(Value::as_str).map(str::to_string);
     let input = match text("input") {
         Some(raw) => Some(serde_json::from_str(&raw).map_err(|_| AppError::new("`--input` attend du JSON."))?),
@@ -415,7 +427,8 @@ async fn run_command(
         }
         None => (source(&positional, stdin, cwd)?, input.unwrap_or_else(|| json!({}))),
     };
-    let (outcome, calls) = execute(state, conversation, &code, input.clone()).await;
+    let examples = named.contains_key("examples");
+    let (outcome, calls) = execute(state, conversation, &code, input.clone(), examples).await;
     // Un code qui ne compile pas n’a pas tourné : il n’est pas gardé.
     let compiled = !matches!(&outcome, Err(error) if error.message == "Le code ne se compile pas.");
     let id = if compiled { Some(crate::kept_scripts::record(state, conversation, &code, &input, &outcome, &calls)?) } else { None };
@@ -429,22 +442,23 @@ async fn run_command(
 }
 
 /// Exécute `code` pour la conversation : `{ result, logs, calls, ms }`, et les appels faits.
-pub async fn execute(state: &Arc<AppState>, conversation: &str, code: &str, input: Value) -> (AppResult<Value>, Vec<String>) {
-    match execute_inner(state, conversation, code, input).await {
+pub async fn execute(state: &Arc<AppState>, conversation: &str, code: &str, input: Value, examples: bool) -> (AppResult<Value>, Vec<String>) {
+    match execute_inner(state, conversation, code, input, examples).await {
         Ok((outcome, calls)) => (outcome, calls),
         Err(error) => (Err(error), Vec::new()),
     }
 }
 
-async fn execute_inner(state: &Arc<AppState>, conversation: &str, code: &str, input: Value) -> AppResult<(AppResult<Value>, Vec<String>)> {
+async fn execute_inner(state: &Arc<AppState>, conversation: &str, code: &str, input: Value, examples: bool) -> AppResult<(AppResult<Value>, Vec<String>)> {
     let js = wrap(code)?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     let run = Arc::new(Run {
         conversation: conversation.to_string(),
-        scope: crate::mcp::scope_of(state, conversation),
+        scope: crate::agent_tools::scope_of(state, conversation),
         js,
         deadline: Instant::now() + MAX_DURATION,
         calls: Mutex::new(Vec::new()),
+        examples,
     });
     runs().lock().map_err(|_| AppError::new("Code Mode indisponible."))?.insert(id.clone(), run.clone());
     let _registered = Registered(id.clone());
@@ -563,7 +577,7 @@ async fn call_function(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     let run = active(args)?;
     let snapshot = state.space()?.snapshot()?;
     let function = resolve(&snapshot.functions, args)?;
-    if !crate::mcp::reaches(run.scope.as_ref(), &function.reference) {
+    if !crate::agent_tools::reaches(run.scope.as_ref(), &function.reference) {
         return Err(AppError::new(format!(
             "« {} » est hors du module de cette conversation.",
             function.reference
@@ -577,10 +591,10 @@ async fn call_function(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
     }
     count(&run, function.reference.clone())?;
     let input = args.get("input").cloned().filter(|input| !input.is_null()).unwrap_or_else(|| json!({}));
-    let input = crate::mcp::with_fixed_input(run.scope.as_ref(), &function.reference, input);
+    let input = crate::agent_tools::with_fixed_input(run.scope.as_ref(), &function.reference, input);
     let reference = function.reference.clone();
     let remaining = run.deadline.saturating_duration_since(Instant::now());
-    tokio::time::timeout(remaining, crate::functions::call_in(state, &reference, input, "agent-code", false))
+    tokio::time::timeout(remaining, crate::functions::call_in(state, &reference, input, "agent-code", run.examples))
         .await
         .map_err(|_| AppError::new(format!("Durée maximale dépassée ({} s).", MAX_DURATION.as_secs())))?
 }
@@ -609,6 +623,23 @@ async fn read_state(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     crate::states::handle(state, "frame.states.get", &request)
         .await
         .unwrap_or_else(|| Err(AppError::new("Lecture d’état indisponible.")))
+}
+
+/// Appel d’une fonction comme depuis le code d’un agent (`api.call`), pour les tests du cœur sans interface.
+#[cfg(test)]
+pub async fn call_as_agent(state: &Arc<AppState>, conversation: &str, reference: &str, input: Value) -> AppResult<Value> {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let run = Arc::new(Run {
+        conversation: conversation.to_string(),
+        scope: crate::agent_tools::scope_of(state, conversation),
+        js: String::new(),
+        deadline: Instant::now() + MAX_DURATION,
+        calls: Mutex::new(Vec::new()),
+        examples: false,
+    });
+    runs().lock().unwrap().insert(id.clone(), run);
+    let _registered = Registered(id.clone());
+    call_function(state, &json!({ "run": id, "function": reference, "input": input })).await
 }
 
 #[cfg(test)]

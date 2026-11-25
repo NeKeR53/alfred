@@ -96,23 +96,8 @@ async function acceptKept(fn: ResolvedFunction) {
   }
 }
 
-/** Active ou retire la fonction des outils proposés à l’agent. */
-async function setTool(fn: ResolvedFunction, next: boolean) {
-  try {
-    await invoke("functions.setTool", { reference: fn.reference, tool: next });
-    await useShell.getState().refresh();
-  } catch (failure) {
-    notify({
-      title: "Le réglage de la fonction n’a pas été enregistré",
-      description: errorMessage(failure),
-      tone: "error",
-    });
-  }
-}
-
 /**
- * Une fonction sur une ligne de la fiche d’un module : nom, description, puis ce qui mérite l’attention. Essayer,
- * proposer à l’agent et supprimer sont dans le menu « … » de la ligne ; les erreurs s’ajoutent à la description.
+ * Une fonction sur une ligne de la fiche d’un module : nom, description, puis ce qui mérite l’attention. Accepter (un script gardé), essayer et supprimer sont dans le menu « … » de la ligne ; les erreurs s’ajoutent à la description.
  */
 export function functionRow(
   fn: ResolvedFunction,
@@ -149,12 +134,6 @@ export function functionRow(
         ? [{ id: "accept", label: "Accepter", isDisabled: stateOf(fn) !== "ready", onPress: () => void acceptKept(fn) }]
         : []),
       { id: "try", label: "Essayer…", isDisabled: stateOf(fn) !== "ready", onPress: onTry },
-      {
-        id: "tool",
-        label: fn.tool ? "Ne plus proposer à l’agent" : "Proposer à l’agent",
-        isDisabled: readOnly,
-        onPress: () => setTool(fn, !fn.tool),
-      },
       {
         id: "remove",
         label: "Supprimer la fonction…",

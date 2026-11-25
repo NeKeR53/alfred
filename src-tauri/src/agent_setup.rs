@@ -183,7 +183,7 @@ pub fn grant_access(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
         }
         format!("function:{to}")
     } else {
-        if crate::mcp::find_page(&snapshot, &to).is_none() {
+        if crate::agent_tools::find_page(&snapshot, &to).is_none() {
             return Err(AppError::new(format!("La page « {to} » n’existe pas dans l’espace de travail.")));
         }
         format!("page:{to}")

@@ -14,7 +14,7 @@ use super::event::{
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, write_prompt, Autonomy, InputFile, Launch, Sink};
-use super::{checked_dir, command, simple_value, MCP_TOKEN_ENV};
+use super::{checked_dir, command, simple_value};
 use crate::error::{AppError, AppResult};
 
 const ALFRED_TOOL_PREFIX: &str = "mcp__alfred__";
@@ -74,7 +74,7 @@ pub(super) fn permission_mode(autonomy: Autonomy) -> &'static str {
 
 pub(super) fn claude_arguments(
     options: &ClaudeOptions,
-    mcp_port: Option<u16>,
+    cli_port: Option<u16>,
     prompt_file: Option<&Path>,
 ) -> AppResult<Vec<String>> {
     let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
@@ -130,24 +130,14 @@ pub(super) fn claude_arguments(
         // passent sans demande ; ce qui en sortirait reste refusé. La CLI `alfred` en sort : elle ne fait que
         // parler au cœur, qui applique lui-même le périmètre de la conversation.
         let mut sandbox = json!({ "enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false });
-        if mcp_port.is_some() {
+        if cli_port.is_some() {
             sandbox["excludedCommands"] = json!(["alfred"]);
         }
         args.extend(["--settings".to_string(), json!({ "sandbox": sandbox }).to_string()]);
     }
-    if mcp_port.is_some() {
+    if cli_port.is_some() {
         // La CLI `alfred` passe sans demande : chaque commande est vérifiée par le cœur.
         args.extend(["--allowedTools".to_string(), "Bash(alfred:*)".to_string()]);
-    }
-    if let Some(port) = mcp_port {
-        // Le jeton n’est jamais sur la ligne de commande, lisible par tout processus du poste : Claude Code résout
-        // `${ALFRED_MCP_TOKEN}` depuis son environnement, où il a été placé.
-        let config = json!({ "mcpServers": { "alfred": {
-            "type": "http",
-            "url": format!("http://127.0.0.1:{port}/mcp"),
-            "headers": { "Authorization": format!("Bearer ${{{MCP_TOKEN_ENV}}}") },
-        }}});
-        args.extend(["--mcp-config".to_string(), config.to_string()]);
     }
     Ok(args)
 }
@@ -689,7 +679,6 @@ impl Claude {
         let mut command = command(&launch.program, Some(&options.cwd));
         command.args(claude_arguments(&claude, launch.token.as_ref().map(|_| launch.port), prompt.as_deref())?);
         if let Some(token) = &launch.token {
-            command.env(MCP_TOKEN_ENV, token);
             command.envs(crate::agent_cli::harness_env(&launch.state, launch.port, token));
         }
         if !options.one_shot {
@@ -904,9 +893,8 @@ mod tests {
         )
         .unwrap();
         assert!(session.windows(2).any(|pair| pair == ["--permission-mode", "manual"]));
-        assert!(session
-            .iter()
-            .any(|value| value.contains("http://127.0.0.1:4242/mcp") && value.contains("Bearer ${ALFRED_MCP_TOKEN}")));
+        assert!(session.windows(2).any(|pair| pair == ["--allowedTools", "Bash(alfred:*)"]), "la CLI passe sans demande");
+        assert!(!session.iter().any(|value| value.contains("--mcp-config")), "plus de serveur MCP d’Alfred");
 
         let one_shot = claude_arguments(
             &ClaudeOptions { one_shot: true, json_schema: Some(json!({ "type": "object" })), ..ClaudeOptions::default() },
@@ -919,6 +907,8 @@ mod tests {
 
         let sandboxed = claude_arguments(&ClaudeOptions { sandbox: true, ..ClaudeOptions::default() }, None, None).unwrap();
         assert!(sandboxed.windows(2).any(|pair| pair[0] == "--settings" && pair[1].contains("\"enabled\":true")));
+        let with_cli = claude_arguments(&ClaudeOptions { sandbox: true, ..ClaudeOptions::default() }, Some(1), None).unwrap();
+        assert!(with_cli.iter().any(|value| value.contains("\"excludedCommands\":[\"alfred\"]")), "la CLI sort du bac à sable");
 
         for invalid in [
             ClaudeOptions { model: Some("opus; rm -rf /".into()), ..ClaudeOptions::default() },

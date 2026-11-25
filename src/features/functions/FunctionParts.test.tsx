@@ -89,6 +89,7 @@ beforeEach(() => {
         },
       }),
       fn("ventes/relance", { missing: true }),
+      fn("ventes/cumul", { description: "Cumul gardé par l’agent.", kept: "toValidate" }),
       fn("ventes/export", { errors: [{ message: "Cannot find name 'rows'.", line: 12, column: 3 }] }),
       fn("meteo/prevision", { tool: true, description: "Prévision à trois jours." }),
     ],
@@ -100,11 +101,13 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (command, args = {}) => {
     calls.push({ command, args });
     switch (command) {
-      case "functions.setTool": {
-        const { reference, tool } = args as { reference: string; tool: boolean };
+      case "functions.acceptKept": {
+        const { reference } = args as { reference: string };
         snapshot = {
           ...snapshot,
-          functions: snapshot.functions.map((item) => (item.reference === reference ? { ...item, tool } : item)),
+          functions: snapshot.functions.map((item) =>
+            item.reference === reference ? { ...item, kept: "accepted" as const } : item,
+          ),
         };
         return null;
       }
@@ -158,7 +161,7 @@ async function menuItem(user: ReturnType<typeof userEvent.setup>, name: string, 
 
 const disabled = (element: HTMLElement) => element.getAttribute("aria-disabled") === "true";
 
-it("montre l’état de chaque fonction du module, l’expose aux agents, l’essaie et la supprime", async () => {
+it("montre l’état de chaque fonction du module, accepte un script gardé, l’essaie et la supprime", async () => {
   const user = userEvent.setup();
   renderModule("ventes");
 
@@ -170,12 +173,12 @@ it("montre l’état de chaque fonction du module, l’expose aux agents, l’es
   expect(disabled(await menuItem(user, "relance", "Essayer…"))).toBe(true);
   await user.keyboard("{Escape}");
 
-  // Proposer « total » à l’agent, depuis le menu de la ligne.
-  await user.click(await menuItem(user, "total", "Proposer à l’agent"));
-  await waitFor(() => expect(lastCall("functions.setTool")).toEqual({ reference: "ventes/total", tool: true }));
-  useShell.setState({ snapshot });
-  expect(disabled(await menuItem(user, "total", "Ne plus proposer à l’agent"))).toBe(false);
-  await user.keyboard("{Escape}");
+  // Un script gardé par l’agent attend l’accord : « À valider », puis « Accepter » depuis le menu de la ligne.
+  expect(screen.getByText("À valider")).toBeInTheDocument();
+  expect(screen.getByText(/il ne tourne qu’après votre accord/)).toBeInTheDocument();
+  await user.click(await menuItem(user, "cumul", "Accepter"));
+  await waitFor(() => expect(lastCall("functions.acceptKept")).toEqual({ reference: "ventes/cumul" }));
+  await waitFor(() => expect(screen.queryByText("À valider")).not.toBeInTheDocument());
 
   // Essayer : entrée préremplie, JSON invalide refusé, sortie à chasse fixe.
   await user.click(await menuItem(user, "total", "Essayer…"));
@@ -207,11 +210,11 @@ it("montre l’état de chaque fonction du module, l’expose aux agents, l’es
   await waitFor(() => expect(lastCall("functions.remove")).toEqual({ reference: "ventes/relance" }));
 });
 
-it("dans un module en lecture seule, l’exposition aux agents suit sa version d’origine", async () => {
+it("dans un module en lecture seule, une fonction ne se supprime pas", async () => {
   const user = userEvent.setup();
   renderModule("meteo");
-  expect(disabled(await menuItem(user, "prevision", "Ne plus proposer à l’agent"))).toBe(true);
-  expect(disabled(screen.getByRole("menuitem", { name: "Supprimer la fonction…" }))).toBe(true);
+  expect(disabled(await menuItem(user, "prevision", "Supprimer la fonction…"))).toBe(true);
+  expect(screen.queryByRole("menuitem", { name: /proposer à l’agent/ })).not.toBeInTheDocument();
 });
 
 it("indique le langage d’un script et l’absence de son interpréteur", () => {

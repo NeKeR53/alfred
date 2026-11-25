@@ -45,7 +45,9 @@ function logText(value: unknown): string {
  */
 function codeApi(): unknown {
   const call = (body: Record<string, unknown>) => request("agentCode.call", body);
-  const states = { get: (name: string, options: Record<string, unknown> = {}) => request("agentCode.state", { name, ...options }) };
+  const states = {
+    get: (name: string, options: Record<string, unknown> = {}) => request("agentCode.state", { name, ...options }),
+  };
   return new Proxy(
     {},
     {

@@ -119,9 +119,12 @@ fn print_result(mut value: Value, out: Option<&str>) -> Result<(), String> {
         use base64::Engine;
         let data = image["data"].as_str().unwrap_or_default();
         let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|_| "image illisible".to_string())?;
-        let path = match out {
-            Some(out) => PathBuf::from(out),
-            None => {
+        // Alfred garde déjà la capture pour la conversation (`capture`) : c’est ce fichier qui est rendu.
+        let kept = value["details"]["capture"].as_str().map(PathBuf::from).filter(|path| path.is_file());
+        let path = match (out, kept) {
+            (Some(out), _) => PathBuf::from(out),
+            (None, Some(kept)) => kept,
+            (None, None) => {
                 let dir = std::env::temp_dir().join("alfred-captures");
                 std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
                 let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%3f");
@@ -129,7 +132,9 @@ fn print_result(mut value: Value, out: Option<&str>) -> Result<(), String> {
                 dir.join(format!("{name}-{stamp}.png"))
             }
         };
-        std::fs::write(&path, bytes).map_err(|error| format!("écriture de {} impossible : {error}", path.display()))?;
+        if !path.is_file() || out.is_some() {
+            std::fs::write(&path, bytes).map_err(|error| format!("écriture de {} impossible : {error}", path.display()))?;
+        }
         let mut shown = value.get("details").cloned().unwrap_or_else(|| json!({}));
         if let Some(object) = shown.as_object_mut() {
             object.insert("file".into(), json!(path.to_string_lossy()));
@@ -181,14 +186,14 @@ pub async fn handle(state: &Arc<AppState>, conversation: &str, body: &Value) -> 
     if let Some(result) = crate::code_mode::handle(state, conversation, &command, rest, stdin, cwd.as_deref()).await {
         return result;
     }
-    let tools = crate::mcp::tools(state, conversation);
+    let tools = crate::agent_tools::tools(state, conversation);
     let Some(tool) = tools.iter().find(|tool| tool["name"] == command.as_str()) else {
         return Err(AppError::new(format!(
             "Commande inconnue ou hors de cette conversation : « {command} ». `alfred help` les liste."
         )));
     };
     let args = parse_args(tool, rest, stdin, cwd.as_deref())?;
-    crate::mcp::run_tool(state, conversation, &command, &args).await
+    crate::agent_tools::run_tool(state, conversation, &command, &args).await
 }
 
 /// `place-page` et `place_page` désignent la même commande.
@@ -371,7 +376,7 @@ fn short_help(state: &AppState, conversation: &str) -> String {
         "alfred <commande> [valeurs] [--option valeur]   (alfred help <commande> : le détail ; --json '{…}' accepté)".to_string(),
         String::new(),
     ];
-    for tool in crate::mcp::tools(state, conversation) {
+    for tool in crate::agent_tools::tools(state, conversation) {
         let name = tool["name"].as_str().unwrap_or_default();
         lines.push(format!("  {name:<18} {}", summary(tool["description"].as_str().unwrap_or_default(), 90)));
     }
@@ -385,7 +390,7 @@ fn command_help(state: &AppState, conversation: &str, command: &str) -> AppResul
     if let Some((_, usage, description)) = OWN_COMMANDS.iter().chain(crate::code_mode::COMMANDS).find(|(name, _, _)| *name == command) {
         return Ok(format!("{usage}\n\n{description}"));
     }
-    let tools = crate::mcp::tools(state, conversation);
+    let tools = crate::agent_tools::tools(state, conversation);
     let tool = tools
         .iter()
         .find(|tool| tool["name"] == command)

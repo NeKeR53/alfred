@@ -39,7 +39,7 @@ mod module_files;
 mod module_history;
 mod module_search;
 mod module_semantic;
-mod mcp;
+mod agent_tools;
 mod menu;
 mod menu_sections;
 mod menu_zones;
@@ -302,7 +302,6 @@ pub mod testing {
         let _ = state.server.set(crate::state::ServerInfo { port });
         let router = axum::Router::new()
             .merge(crate::clients::routes())
-            .merge(crate::mcp::routes())
             .merge(crate::webhooks::routes())
             .merge(crate::automations::routes())
             .with_state(state.clone());

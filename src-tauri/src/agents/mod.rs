@@ -26,10 +26,6 @@ use serde_json::{json, Value};
 use crate::error::{arg, AppError, AppResult};
 use crate::state::AppState;
 
-/// Variable d’environnement qui porte le jeton du serveur local à l’agent ; seule sa référence figure dans les
-/// arguments et les configurations.
-pub const MCP_TOKEN_ENV: &str = "ALFRED_MCP_TOKEN";
-
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Provider {

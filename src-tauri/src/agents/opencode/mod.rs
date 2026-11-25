@@ -83,7 +83,6 @@ pub(super) fn permissions(autonomy: Autonomy, one_shot: bool, tools: bool) -> Ve
         }
     };
     if tools {
-        rules.push(rule("alfred_*", "allow"));
         // La CLI `alfred` passe sans demande : chaque commande est vérifiée par le cœur.
         for resource in ["alfred", "alfred *"] {
             rules.push(json!({ "action": "shell", "resource": resource, "effect": "allow" }));
@@ -92,25 +91,6 @@ pub(super) fn permissions(autonomy: Autonomy, one_shot: bool, tools: bool) -> Ve
     rules
 }
 
-/// Configuration du processus, passée par l’environnement : les outils d’Alfred et leur jeton. Rien n’est écrit dans
-/// les fichiers de l’utilisateur.
-pub(super) fn server_config(tools_url: Option<&str>, token: Option<&str>) -> Value {
-    let mut servers = serde_json::Map::new();
-    if let (Some(url), Some(token)) = (tools_url, token) {
-        servers.insert(
-            "alfred".into(),
-            json!({
-                "type": "remote",
-                "url": url,
-                "oauth": false,
-                "codemode": false,
-                "disabled": false,
-                "headers": { "Authorization": format!("Bearer {token}") },
-            }),
-        );
-    }
-    json!({ "mcp": { "servers": servers } })
-}
 
 #[derive(Default)]
 struct State {
@@ -149,9 +129,8 @@ impl OpenCode {
     pub async fn start(launch: Launch) -> AppResult<Arc<Self>> {
         let options = &launch.options;
         launch.sink.emit(HarnessEvent::status(SessionStatus::Connecting));
-        let tools_url = launch.tools_url();
-        let config = server_config(launch.token.as_ref().map(|_| tools_url.as_str()), launch.token.as_deref());
-        let mut env = vec![("OPENCODE_CONFIG_CONTENT", config.to_string())];
+        // La CLI `alfred` et son jeton passent par l’environnement : rien n’est écrit dans les fichiers de l’utilisateur.
+        let mut env = Vec::new();
         if let Some(token) = &launch.token {
             env.extend(crate::agent_cli::harness_env(&launch.state, launch.port, token));
         }
@@ -551,17 +530,10 @@ mod tests {
     #[test]
     fn modes_become_session_rules() {
         assert_eq!(permissions(Autonomy::Auto, false, false), Vec::<Value>::new());
-        assert_eq!(permissions(Autonomy::Workspace, false, true)[..2], [rule("external_directory", "deny"), rule("alfred_*", "allow")]);
+        assert_eq!(permissions(Autonomy::Workspace, false, true)[0], rule("external_directory", "deny"));
         assert!(permissions(Autonomy::Workspace, false, true).iter().any(|rule| rule["resource"] == "alfred *" && rule["effect"] == "allow"));
         assert_eq!(permissions(Autonomy::Ask, false, false), vec![rule("external_directory", "ask")]);
         assert_eq!(permissions(Autonomy::Strict, false, false).len(), 4);
         assert!(permissions(Autonomy::Auto, true, false).iter().all(|rule| rule["effect"] == "deny"));
-    }
-
-    #[test]
-    fn the_tools_token_stays_in_the_process_configuration() {
-        let config = server_config(Some("http://127.0.0.1:9/mcp"), Some("jeton"));
-        assert_eq!(config["mcp"]["servers"]["alfred"]["headers"]["Authorization"], "Bearer jeton");
-        assert_eq!(server_config(None, None), json!({ "mcp": { "servers": {} } }));
     }
 }

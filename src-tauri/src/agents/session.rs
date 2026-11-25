@@ -173,10 +173,6 @@ pub struct Launch {
 }
 
 impl Launch {
-    pub fn tools_url(&self) -> String {
-        format!("http://127.0.0.1:{}/mcp", self.port)
-    }
-
     /// Prévient le registre que le processus s’est arrêté de lui-même.
     pub fn on_exit(&self) -> impl FnOnce() + Send + 'static {
         let (state, handle) = (self.state.clone(), self.handle.clone());

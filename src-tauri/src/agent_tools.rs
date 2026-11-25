@@ -1,15 +1,12 @@
-//! Outils d’Alfred proposés aux agents, par un serveur MCP local (HTTP, JSON-RPC). C’est par eux qu’un agent agit
-//! sur la structure de l’application : placer une page, déclarer une fonction, vérifier que tout compile, interroger
-//! la base. Le contenu des pages, lui, s’écrit comme des fichiers.
+//! Commandes d’Alfred proposées aux agents par la CLI `alfred` (`agent_cli.rs`). C’est par elles qu’un agent agit sur
+//! la structure de l’application : placer une page, déclarer une fonction, vérifier que tout compile, interroger la
+//! base. Le contenu des pages, lui, s’écrit comme des fichiers ; les fonctions se lisent en Code Mode
+//! (`code_mode.rs`). Chaque commande a un schéma d’arguments, d’où la CLI tire son aide et sa lecture des options.
+//! Il n’y a plus de serveur MCP : ces définitions n’entrent jamais dans le contexte d’une conversation neuve.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::post;
-use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use crate::app_db::{self, AgentScope};
@@ -20,10 +17,6 @@ use crate::state::AppState;
 use crate::{functions, space_db};
 
 type Shared = Arc<AppState>;
-
-pub fn routes() -> Router<Shared> {
-    Router::new().route("/mcp", post(serve).get(|| async { StatusCode::METHOD_NOT_ALLOWED }))
-}
 
 /// Périmètre de la conversation : `None` pour une conversation ouverte par l’utilisateur, sinon le module de la page
 /// ou des fonctions qui l’ont lancée. Il est gardé dans la base d’Alfred, hors de portée de l’agent.
@@ -42,10 +35,10 @@ pub(crate) fn reaches(scope: Option<&AgentScope>, reference: &str) -> bool {
 
 /// Outils qu’une conversation lancée par un module peut utiliser : rien qui change la structure de l’espace ni qui
 /// lise au-delà du module.
-/// Clé du résultat d’un outil qui porte une image : `answer` la rend comme contenu `image` du protocole MCP.
+/// Clé du résultat d’un outil qui porte une image : la CLI l’écrit en PNG.
 const IMAGE_KEY: &str = crate::agent_cli::IMAGE_KEY;
 
-const SCOPED_TOOLS: [&str; 6] = ["check", "db_schema", "db_query", "call_function", "wait_for_event", "cancel_wait"];
+const SCOPED_TOOLS: [&str; 5] = ["check", "db_schema", "db_query", "wait_for_event", "cancel_wait"];
 
 /// Fonction offerte à un agent lancé par une page : son nom, et les entrées que le modèle ne peut pas changer.
 #[derive(serde::Deserialize)]
@@ -140,8 +133,8 @@ pub(crate) fn with_fixed_input(scope: Option<&AgentScope>, reference: &str, inpu
     Value::Object(merged)
 }
 
-/// Schéma d’entrée montré au modèle : sans les champs imposés, qu’il n’a pas à fournir.
-fn without_fixed_fields(scope: Option<&AgentScope>, reference: &str, mut schema: Value) -> Value {
+/// Schéma d’entrée montré au modèle (`alfred api`) : sans les champs imposés, qu’il n’a pas à fournir.
+pub(crate) fn without_fixed_fields(scope: Option<&AgentScope>, reference: &str, mut schema: Value) -> Value {
     let Some(fixed) = scope.and_then(|scope| scope.inputs.get(reference)).and_then(Value::as_object) else {
         return schema;
     };
@@ -163,35 +156,6 @@ pub async fn handle(state: &Shared, command: &str, args: &Value) -> Option<AppRe
     Some(authorize_agent(state, args).await)
 }
 
-/// Conversation à laquelle appartient le jeton présenté, ou `None` s’il est inconnu.
-fn conversation_of(state: &AppState, headers: &HeaderMap) -> Option<String> {
-    let token = headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ")?.trim();
-    state.agent_tokens.lock().ok()?.get(token).cloned()
-}
-
-async fn serve(State(state): State<Shared>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
-    let Some(conversation) = conversation_of(&state, &headers) else {
-        return (StatusCode::UNAUTHORIZED, "Jeton d’agent inconnu.").into_response();
-    };
-    if let Some(batch) = body.as_array() {
-        let mut replies = Vec::new();
-        for message in batch {
-            if let Some(reply) = answer(&state, &conversation, message).await {
-                replies.push(reply);
-            }
-        }
-        return if replies.is_empty() {
-            StatusCode::ACCEPTED.into_response()
-        } else {
-            Json(Value::Array(replies)).into_response()
-        };
-    }
-    match answer(&state, &conversation, &body).await {
-        Some(reply) => Json(reply).into_response(),
-        None => StatusCode::ACCEPTED.into_response(),
-    }
-}
-
 /// Outils qui enregistrent un commit dans l’espace.
 const COMMITTING_TOOLS: [&str; 8] = [
     "user_pages",
@@ -207,59 +171,6 @@ const COMMITTING_TOOLS: [&str; 8] = [
 fn commit_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(Default::default)
-}
-
-async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<Value> {
-    let id = message.get("id").cloned()?;
-    let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
-    let params = message.get("params").cloned().unwrap_or(Value::Null);
-    let result = match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-03-26"),
-            "capabilities": { "tools": { "listChanged": false } },
-            "serverInfo": { "name": "alfred", "title": "Alfred", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Outils d’Alfred pour construire l’application de l’utilisateur. Lire AGENTS.md à la racine de l’espace de travail avant de s’en servir, et docs/alfred/PLACEMENT.md avant de placer une page.",
-        })),
-        "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools(state, conversation) })),
-        "tools/call" => {
-            let name = params.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            Ok(match run_tool(state, conversation, &name, &arguments).await {
-                Ok(value) if value.get(IMAGE_KEY).is_some() => {
-                    // Une capture d’écran : l’image elle-même, puis ce qui l’accompagne en texte.
-                    let image = &value[IMAGE_KEY];
-                    json!({
-                        "content": [
-                            { "type": "image", "data": image["data"], "mimeType": image["mimeType"] },
-                            { "type": "text", "text": serde_json::to_string_pretty(&value["details"]).unwrap_or_default() },
-                        ],
-                        "isError": false,
-                    })
-                }
-                Ok(value) => {
-                    let text = match &value {
-                        Value::String(text) => text.clone(),
-                        other => serde_json::to_string_pretty(other).unwrap_or_default(),
-                    };
-                    json!({ "content": [{ "type": "text", "text": text }], "isError": false })
-                }
-                Err(error) => {
-                    let detail = error
-                        .detail
-                        .as_ref()
-                        .map(|detail| format!("\n{}", serde_json::to_string_pretty(detail).unwrap_or_default()))
-                        .unwrap_or_default();
-                    json!({ "content": [{ "type": "text", "text": format!("{}{detail}", error.message) }], "isError": true })
-                }
-            })
-        }
-        _ => Err(json!({ "code": -32601, "message": format!("Méthode inconnue : {method}") })),
-    };
-    Some(match result {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }),
-    })
 }
 
 /// Exécute un outil pour la conversation : ceux qui enregistrent un commit passent un par un, et un échec est noté
@@ -294,11 +205,6 @@ pub(crate) fn find_page<'a>(snapshot: &'a Snapshot, reference: &str) -> Option<&
         .flat_map(|page| std::iter::once(page).chain(page.panel.as_deref()))
         .chain(snapshot.settings_pages.iter())
         .find(|page| page.reference == reference)
-}
-
-/// Nom d’outil d’une fonction de l’espace : `fn__module__fonction`, tirets remplacés.
-fn function_tool_name(reference: &str) -> String {
-    format!("fn__{}", reference.replace('/', "__").replace('-', "_"))
 }
 
 pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
@@ -343,14 +249,13 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "declare_function",
-            "Déclare (ou met à jour) une fonction d’un module et renvoie le fichier à écrire. Une fonction est appelable par les pages, par les agents (`tool: true`), par les webhooks et par la planification. Elle s’écrit en TypeScript (par défaut, sans réseau ni disque, avec `@alfred/sdk`) ou en script bash, PowerShell ou Python (`runtime`) : le script reçoit l’entrée en JSON sur stdin, écrit sa sortie sur stdout (JSON, sinon texte) et tourne avec les droits de l’utilisateur, sans `@alfred/sdk`. Une fonction de connecteur (`uses.clients`) reçoit dès son écriture ses `tests` et deux ou trois `examples` : ses pages s’affichent ainsi en mode « données d’exemple », sans compte.",
+            "Déclare (ou met à jour) une fonction d’un module et renvoie le fichier à écrire. Une fonction est appelable par les pages, par les agents (Code Mode, `alfred run`, pour une lecture), par les webhooks et par la planification. Elle s’écrit en TypeScript (par défaut, sans réseau ni disque, avec `@alfred/sdk`) ou en script bash, PowerShell ou Python (`runtime`) : le script reçoit l’entrée en JSON sur stdin, écrit sa sortie sur stdout (JSON, sinon texte) et tourne avec les droits de l’utilisateur, sans `@alfred/sdk`. Une fonction de connecteur (`uses.clients`) reçoit dès son écriture ses `tests` et deux ou trois `examples` : ses pages s’affichent ainsi en mode « données d’exemple », sans compte.",
             json!({
                 "module": { "type": "string" },
                 "id": { "type": "string", "description": "Identifiant en minuscules et tirets." },
                 "description": { "type": "string", "description": "Ce que fait la fonction : c’est ce que lira un agent pour décider de l’appeler." },
                 "input": { "type": "object", "description": "Schéma JSON de l’entrée." },
                 "output": { "type": "object", "description": "Schéma JSON de la sortie." },
-                "tool": { "type": "boolean", "description": "Proposer la fonction aux agents comme outil." },
                 "runtime": { "enum": ["ts", "bash", "pwsh", "python"], "description": "Langage : `ts` (par défaut), ou un script `bash` (.sh), `pwsh` (.ps1) ou `python` (.py)." },
                 "kernel": { "type": "boolean", "description": "Python seulement : la fonction tourne dans le noyau Python du module (`def main(input):` dans son fichier, état gardé entre deux appels) au lieu d’un processus neuf par appel. Facultatif (SDK.md, § 19)." },
                 "uses": { "type": "object", "properties": { "clients": { "type": "array", "items": { "type": "string" } } } },
@@ -725,16 +630,6 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["module", "sql"],
         ),
         tool(
-            "call_function",
-            "Exécute une fonction de l’espace de travail avec une entrée et renvoie sa sortie. Sert à essayer une fonction qu’on vient d’écrire. `examples: true` essaie ses données d’exemple, sans joindre aucun service.",
-            json!({
-                "function": { "type": "string", "description": "« module/fonction »." },
-                "input": { "type": "object" },
-                "examples": { "type": "boolean", "description": "Appeler en mode « données d’exemple » : une fonction de connecteur rend l’exemple le plus proche de l’entrée, sans joindre le service (ses dépendances aussi). Suivi d’office quand l’utilisateur a réglé le module en mode exemple." },
-            }),
-            &["function"],
-        ),
-        tool(
             "wait_for_event",
             "Attend un événement de module (« module/evenement », par exemple la fin d’une CI) : quand il arrive, ou à l’échéance, Alfred dépose son contenu dans cette conversation et te relance, même après un redémarrage. Termine ton tour après l’avoir posé. `match` filtre le contenu (chaque clé doit valoir la même chose).",
             json!({
@@ -768,28 +663,6 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     // Une coordinatrice répartit son travail entre d’autres agents ; ses délégués n’ont jamais ces outils.
     if crate::agents::delegation::is_coordinator(state, conversation) {
         list.extend(crate::agents::delegation::tools());
-    }
-    // Les fonctions que l’utilisateur propose aux agents deviennent des outils à part entière.
-    if let Some(snapshot) = state.try_space().and_then(|space| space.snapshot().ok()) {
-        for function in
-            snapshot.functions.iter().filter(|function| offered(scope.as_ref(), function) && !function.missing)
-        {
-            let schema = if function.input.get("type").and_then(Value::as_str) == Some("object") {
-                function.input.clone()
-            } else {
-                json!({ "type": "object" })
-            };
-            let schema = without_fixed_fields(scope.as_ref(), &function.reference, schema);
-            list.push(json!({
-                "name": function_tool_name(&function.reference),
-                "description": if function.description.is_empty() {
-                    format!("Fonction {} de l’espace de travail.", function.reference)
-                } else {
-                    function.description.clone()
-                },
-                "inputSchema": schema,
-            }));
-        }
     }
     list
 }
@@ -850,7 +723,7 @@ fn overview(snapshot: &Snapshot, clients: Value) -> Value {
             "directory": format!("{}/modules/{}", snapshot.path, module.id),
         })).collect::<Vec<_>>(),
         "functions": snapshot.functions.iter().map(|function| json!({
-            "function": function.reference, "description": function.description, "tool": function.tool, "runtime": function.runtime,
+            "function": function.reference, "description": function.description, "runtime": function.runtime,
             "written": !function.missing, "errors": function.errors.len(),
         })).collect::<Vec<_>>(),
         "clients": clients,
@@ -1094,15 +967,6 @@ fn client_problems(listed: Value) -> (Vec<Value>, Vec<Value>) {
 
 /// Fonction proposée comme outil : celles que l’utilisateur offre aux agents et, pour une conversation lancée par un
 /// module, seulement celles de ce module ou celles que la page a demandées et que l’utilisateur a accordées.
-fn offered(scope: Option<&AgentScope>, function: &crate::space::ResolvedFunction) -> bool {
-    match scope {
-        None => function.tool,
-        Some(scope) => {
-            scope.functions.contains(&function.reference) || (function.tool && function.module == scope.module)
-        }
-    }
-}
-
 pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
     if let Some(result) = crate::agents::delegation::call(state, conversation, name, args) {
@@ -1124,14 +988,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     return Err(out_of_scope());
                 }
             }
-            "call_function" => {
-                let reference: String = arg(args, "function")?;
-                if !reaches(Some(scope), &reference) {
-                    return Err(out_of_scope());
-                }
-            }
             "wait_for_event" | "cancel_wait" => {}
-            other if other.starts_with("fn__") => {}
             _ => return Err(out_of_scope()),
         }
     }
@@ -1197,11 +1054,11 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "file": declared["file"],
                 "runtime": runtime,
                 "next": if runtime == crate::space::Runtime::Python && opt_arg::<bool>(args, "kernel").ok().flatten() == Some(true) {
-                    "Écrire dans `file` une fonction `def main(input):` qui rend la sortie (du JSON) et lève une exception en cas d’erreur ; elle tourne dans le noyau Python du module et garde son état entre deux appels. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
+                    "Écrire dans `file` une fonction `def main(input):` qui rend la sortie (du JSON) et lève une exception en cas d’erreur ; elle tourne dans le noyau Python du module et garde son état entre deux appels. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `alfred run` (`await api.module.fonction(entrée)` ; `--examples` pour ses données d’exemple ; une écriture ne s’essaie pas en Code Mode)."
                 } else if runtime.is_script() {
-                    "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
+                    "Écrire le script dans `file` : lire l’entrée en JSON sur stdin, écrire la sortie sur stdout (JSON de préférence), sortir avec un code non nul et un message sur stderr en cas d’erreur. Puis appeler `check` (il lance les tests de lecture) et l’essayer avec `alfred run` (`await api.module.fonction(entrée)` ; `--examples` pour ses données d’exemple ; une écriture ne s’essaie pas en Code Mode)."
                 } else {
-                    "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` (il lance les tests de lecture) et l’essayer avec `call_function`."
+                    "Écrire la fonction dans `file` : `export default async function (input) { … }`, puis appeler `check` (il lance les tests de lecture) et l’essayer avec `alfred run` (`await api.module.fonction(entrée)` ; `--examples` pour ses données d’exemple ; une écriture ne s’essaie pas en Code Mode)."
                 },
                 "warning": if args.get("effect").is_none() && declared_effect(&space, &declared).is_none() {
                     Some("`effect` absent : la fonction compte comme une écriture et ses tests ne se lancent pas d’office. Redéclarer avec `effect: \"read\"` si elle ne fait que lire.")
@@ -1608,12 +1465,6 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 .unwrap_or_default();
             space_db::run_as(&space, &module, "agent", &sql, &parameters, true)
         }
-        "call_function" => {
-            let reference: String = arg(args, "function")?;
-            let examples = opt_arg::<bool>(args, "examples")?.unwrap_or(false);
-            let input = with_fixed_input(scope.as_ref(), &reference, args.get("input").cloned().unwrap_or_else(|| json!({})));
-            functions::call_in(state, &reference, input, "agent", examples).await
-        }
         "wait_for_event" => {
             let watch = crate::agents::watches::create(state, conversation, args)?;
             Ok(json!({
@@ -1628,21 +1479,15 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
         "read_journal" => functions::handle(state, "journal.list", args)
             .await
             .unwrap_or_else(|| Err(AppError::new("Journal indisponible."))),
-        other => {
-            let snapshot = space.snapshot()?;
-            let function = snapshot
-                .functions
-                .iter()
-                .find(|function| offered(scope.as_ref(), function) && function_tool_name(&function.reference) == other)
-                .ok_or_else(|| AppError::new(format!("Outil inconnu : {other}")))?;
-            functions::call(state, &function.reference, with_fixed_input(scope.as_ref(), &function.reference, args.clone()), "agent").await
-        }
+        other => Err(AppError::new(format!("Commande inconnue : {other}. `alfred help` les liste."))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::header;
+    use axum::Router;
     use crate::space::{ScheduleDecl, Space, WebhookDecl};
 
     /// Une fonction de connecteur fait une opération : un relais qui reçoit chemin et méthode est signalé.
@@ -1679,6 +1524,29 @@ mod tests {
                 let _ = state.resolve_ui(&id, Ok(answer));
             }
         });
+    }
+
+    /// Ce que l’agent obtient par la CLI, sous la forme des anciennes réponses : la liste des commandes de la
+    /// conversation (`tools/list`) ou le résultat d’une commande (`tools/call`, texte, image, erreur).
+    async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<Value> {
+        let params = &message["params"];
+        let result = match message["method"].as_str() {
+            Some("tools/list") => json!({ "tools": tools(state, conversation) }),
+            _ => {
+                let name = params["name"].as_str().unwrap_or_default();
+                let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                match run_tool(state, conversation, name, &arguments).await {
+                    Ok(value) if value.get(IMAGE_KEY).is_some() => json!({ "isError": false, "content": [
+                        { "type": "image", "data": value[IMAGE_KEY]["data"], "mimeType": value[IMAGE_KEY]["mimeType"] },
+                        { "type": "text", "text": serde_json::to_string_pretty(&value["details"]).unwrap() },
+                    ] }),
+                    Ok(Value::String(text)) => json!({ "isError": false, "content": [{ "type": "text", "text": text }] }),
+                    Ok(value) => json!({ "isError": false, "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value).unwrap() }] }),
+                    Err(error) => json!({ "isError": true, "content": [{ "type": "text", "text": error.message }] }),
+                }
+            }
+        };
+        Some(json!({ "jsonrpc": "2.0", "id": message["id"], "result": result }))
     }
 
     async fn rpc(state: &Shared, method: &str, params: Value) -> Value {
@@ -1874,10 +1742,13 @@ mod tests {
         let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
         assert!(!checked["functions"].to_string().contains("outils/saluer"), "{checked:#}");
 
-        let listed = rpc(&state, "tools/list", json!({})).await;
-        let tool = listed["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "fn__outils__saluer").cloned();
-        assert_eq!(tool.expect("outil proposé")["inputSchema"]["required"], json!(["nom"]));
-        let output = call(&state, "fn__outils__saluer", json!({ "nom": "Zoé" })).await.unwrap();
+        // Sans `effect: read`, Code Mode ne la lance pas ; une lecture, si.
+        let refused = crate::code_mode::call_as_agent(&state, CONVERSATION, "outils/saluer", json!({ "nom": "Zoé" })).await;
+        assert!(refused.unwrap_err().message.contains("effect: read"));
+        let mut manifest = space.module("outils").unwrap();
+        manifest.functions[0].effect = Some(crate::space::Effect::Read);
+        space.write_module(&manifest).unwrap();
+        let output = crate::code_mode::call_as_agent(&state, CONVERSATION, "outils/saluer", json!({ "nom": "Zoé" })).await.unwrap();
         assert_eq!(output, json!({ "message": "Bonjour Zoé" }));
 
         // Sans effet ni test, la déclaration le signale ; un test de lecture en échec empêche `check` d’être propre.
@@ -1910,18 +1781,18 @@ mod tests {
 
         if crate::scripts::interpreter(crate::space::Runtime::Python).is_some() {
             let declared = call(&state, "declare_function", json!({
-                "module": "outils", "id": "somme", "description": "Additionne.", "runtime": "python",
+                "module": "outils", "id": "somme", "description": "Additionne.", "runtime": "python", "effect": "read",
             }))
             .await
             .unwrap();
             let file = declared["file"].as_str().unwrap().to_string();
             assert!(file.ends_with("somme.py"), "{file}");
             std::fs::write(&file, "import json, sys\nprint(json.dumps(sum(json.load(sys.stdin)['n'])))\n").unwrap();
-            let output = call(&state, "call_function", json!({ "function": "outils/somme", "input": { "n": [1, 2] } })).await.unwrap();
+            let output = crate::code_mode::call_as_agent(&state, CONVERSATION, "outils/somme", json!({ "n": [1, 2] })).await.unwrap();
             assert_eq!(output, json!(3));
             std::fs::write(&file, "import sys\nsys.exit('montant négatif')\n").unwrap();
-            let failed = call(&state, "call_function", json!({ "function": "outils/somme", "input": {} })).await.unwrap_err();
-            assert!(failed.contains("montant négatif"), "{failed}");
+            let failed = crate::code_mode::call_as_agent(&state, CONVERSATION, "outils/somme", json!({})).await.unwrap_err();
+            assert!(failed.message.contains("montant négatif"), "{}", failed.message);
         }
 
         let journal = call(&state, "read_journal", json!({ "kind": "function" })).await.unwrap();
@@ -2354,17 +2225,7 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            [
-                "call_function",
-                "cancel_wait",
-                "check",
-                "db_query",
-                "db_schema",
-                "fn__banque__exporter",
-                "fn__notes__exporter",
-                "fn__notes__outil",
-                "wait_for_event"
-            ]
+            ["cancel_wait", "check", "db_query", "db_schema", "wait_for_event"]
         );
 
         let (failed, text) =
@@ -2375,14 +2236,15 @@ mod tests {
         let (failed, text) =
             call("db_query", json!({ "module": "notes", "sql": "SELECT count(*) AS n FROM notes_lignes" })).await;
         assert!(!failed, "{text}");
-        let (failed, _) = call("call_function", json!({ "function": "banque/outil" })).await;
-        assert!(failed, "fonction d’un autre module non accordée");
-        let (failed, _) = call("fn__banque__outil", json!({})).await;
-        assert!(failed, "outil d’un autre module non accordé");
-        let (failed, text) = call("call_function", json!({ "function": "banque/exporter" })).await;
-        assert!(!failed, "{text}");
-        let (failed, text) = call("fn__notes__outil", json!({})).await;
-        assert!(!failed, "{text}");
+        // Code Mode : les fonctions offertes par la page (écritures comprises), rien d’autre.
+        let code = |reference: &'static str| {
+            let state = state.clone();
+            async move { crate::code_mode::call_as_agent(&state, conversation, reference, json!({})).await }
+        };
+        assert!(code("banque/outil").await.unwrap_err().message.contains("hors du module"), "autre module non accordé");
+        assert!(code("notes/outil").await.unwrap_err().message.contains("effect: read"), "écriture non offerte");
+        assert_eq!(code("banque/exporter").await.unwrap(), json!({ "appelée": "banque/exporter" }));
+        assert_eq!(code("notes/exporter").await.unwrap(), json!({ "appelée": "notes/exporter" }));
         for tool in
             ["place_page", "delete_page", "declare_function", "declare_client", "space_overview", "read_journal"]
         {
