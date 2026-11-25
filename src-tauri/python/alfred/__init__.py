@@ -393,15 +393,24 @@ events = _Events()
 
 class _States:
     """États partagés d’Alfred (``states`` et ``entities`` de ``module.json``) : la seule source de vérité des données
-    d’un service. ``name`` vaut ``"etat"`` dans le module, ``"module/etat"`` pour une dépendance."""
+    d’un service, tenue à jour par le module fournisseur. ``name`` vaut ``"etat"`` dans le module, ``"module/etat"``
+    pour une dépendance ; ``params`` choisit le jeu de paramètres (``{"jql": "…"}``)."""
 
-    def get(self, name: str, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
-        """Valeur courante : ``{value, empty, updatedAt, deps, instance}``. Une liste d’entités rend ses objets."""
-        return call("states.get", name=name, key=key, instance=instance)
+    def get(self, name: str, params: Optional[Dict[str, Any]] = None, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
+        """Valeur courante : ``{value, empty, updatedAt, refresh}``. Une liste d’entités rend ses objets."""
+        return call("states.get", name=name, params=params, key=key, instance=instance)
 
-    def publish(self, name: str, value: Any, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
-        """Publie un état ou une entité du module : chaque page abonnée se met à jour. Rend ``{changed}``."""
-        return call("states.publish", name=name, value=value, key=key, instance=instance)
+    def subscribe(self, name: str, params: Optional[Dict[str, Any]] = None, seconds: Optional[int] = None, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
+        """S’abonne pour ``seconds`` secondes (10 minutes par défaut) : le fournisseur rafraîchit l’état pendant ce
+        temps. Les changements arrivent par ``events.subscribes`` (``module/etat.<id>``). Rend ``{id, key}``."""
+        return call("states.subscribe", name=name, params=params, seconds=seconds, key=key, instance=instance)
+
+    def unsubscribe(self, id: str) -> Dict[str, Any]:
+        return call("states.unsubscribe", id=id)
+
+    def publish(self, name: str, value: Any, params: Optional[Dict[str, Any]] = None, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
+        """Publie un état ou une entité du module : chaque abonné se met à jour. Rend ``{changed}``."""
+        return call("states.publish", name=name, value=value, params=params, key=key, instance=instance)
 
 
 states = _States()

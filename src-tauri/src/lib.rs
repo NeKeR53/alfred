@@ -60,6 +60,7 @@ mod space;
 mod space_db;
 mod spaces;
 mod state;
+mod state_refresh;
 mod states;
 mod system_notifications;
 mod team_sync;
@@ -245,6 +246,7 @@ pub fn run() {
             module_semantic::start(state.clone());
             team_sync::start(state.clone());
             automations::start(state.clone());
+            state_refresh::start(state.clone());
             schedules::start(state);
             Ok(())
         })

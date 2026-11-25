@@ -1,7 +1,24 @@
 import { invoke } from "../../lib/native";
 
 /** Déclencheur d’une automatisation (voir docs/automatisations.md). */
-export type AutomationTrigger = { kind: "cron"; cron: string } | { kind: "webhook" } | { kind: "script" };
+export type AutomationTrigger =
+  | { kind: "cron"; cron: string }
+  | { kind: "webhook" }
+  | { kind: "script" }
+  /** Un état partagé change (`docs/lectures-partagees.md`) : « module/etat », ses paramètres, son compte. */
+  | { kind: "state"; state: string; params?: Record<string, unknown>; instance?: string };
+
+/** État déclaré par un module, qu’une automatisation peut suivre (`states.catalog`). */
+export interface DeclaredState {
+  name: string;
+  module: string;
+  description: string;
+  params: string[];
+}
+
+export async function listDeclaredStates(): Promise<DeclaredState[]> {
+  return (await invoke<{ states: DeclaredState[] }>("states.catalog")).states;
+}
 
 export type AutomationStatus = "active" | "paused" | "toValidate" | "invalid";
 
@@ -118,6 +135,12 @@ export function triggerLabel(trigger: AutomationTrigger): string {
       return "Appel HTTP local";
     case "script":
       return "Script";
+    case "state": {
+      const params = Object.entries(trigger.params ?? {})
+        .map(([name, value]) => `${name} = ${typeof value === "string" ? value : JSON.stringify(value)}`)
+        .join(", ");
+      return `Quand ${trigger.state} change${params ? ` (${params})` : ""}`;
+    }
   }
 }
 

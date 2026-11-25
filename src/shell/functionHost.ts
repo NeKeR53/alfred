@@ -8,7 +8,7 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protoc
 import { inExampleMode } from "./examples";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
 import { frameKey } from "./frameKeys";
-import { createStateHub, type StateRead, type StateRequest } from "./sharedStates";
+import { createStateHub, RENEW_EVERY_MS, type StateRead } from "./sharedStates";
 import { useShell } from "./store";
 
 interface Host {
@@ -154,53 +154,21 @@ export function resetFunctionHosts() {
   hosts.clear();
 }
 
-/** Identifiant de cette coquille : le cœur lui attribue une relecture périodique (`states.lease`). */
-const ORIGIN = `shell-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
-
-/** Module qui déclare un état : « module/etat », ou « etat » dans le module du demandeur. */
-function ownerOf(identity: FrameIdentity, name: string): string {
-  return name.includes("/") ? (name.split("/")[0] ?? "") : identity.module;
-}
-
 /**
- * Lit ce qui alimente un état : la fonction de lecture du module déclarant qui porte `state` (ou `entity` avec
- * `param`, pour une entité lue seule), avec les comptes du demandeur. Sa sortie alimente le cœur, qui annonce le
- * changement à toutes les coquilles (`states:changed`).
- */
-async function loadState(identity: FrameIdentity, request: StateRequest): Promise<void> {
-  const owner = ownerOf(identity, request.name);
-  const id = request.name.includes("/") ? request.name.slice(owner.length + 1) : request.name;
-  const functions = useShell.getState().snapshot?.functions ?? [];
-  const reads = functions.filter((fn) => fn.module === owner && fn.effect === "read");
-  const source =
-    reads.find((fn) => fn.state === id && (!request.key || fn.param)) ??
-    reads.find((fn) => fn.entity === id && fn.param && request.key);
-  if (!source)
-    throw new AlfredError({
-      message: `Aucune fonction de lecture n’alimente « ${owner}/${id} » (\`state\` ou \`entity\`).`,
-    });
-  const input: Record<string, unknown> = {};
-  if (source.param && request.key) input[source.param] = request.key;
-  if (request.instance) input.instance = request.instance;
-  await callFunction(
-    source.reference,
-    input,
-    identity.reference,
-    identity.examples === true,
-    accountsFor(owner, identity.module, identity.accounts),
-  );
-}
-
-/**
- * États partagés : la page s’abonne (`useAlfredState`), le cœur tient la valeur ; voir `sharedStates.ts` et
- * `src-tauri/src/states.rs`.
+ * États partagés : la page s’abonne (`useAlfredState`) au cœur, qui tient la valeur et dont le fournisseur rafraîchit
+ * l’état ; voir `sharedStates.ts`, `src-tauri/src/states.rs` et `state_refresh.rs`.
  */
 export const stateHub = createStateHub<FrameIdentity>({
   get: (identity, request) => handleFrameRequest(identity, "states.get", { ...request }) as Promise<StateRead>,
-  load: loadState,
-  lease: (key, seconds) => invoke<boolean>("states.lease", { key, origin: ORIGIN, seconds }),
-  moduleOf: (identity, request) => ownerOf(identity, request.name),
+  subscribe: async (identity, request) =>
+    ((await handleFrameRequest(identity, "states.subscribe", { ...request })) as { id: string }).id,
+  unsubscribe: (id) => invoke("states.unsubscribe", { id }),
+  renew: (ids) => invoke("states.renew", { ids }),
+  refresh: (identity, request) => handleFrameRequest(identity, "states.reload", { ...request }),
 });
+
+// Les abonnements des pages ouvertes sont renouvelés : une coquille fermée laisse expirer les siens.
+setInterval(() => void stateHub.renew(), RENEW_EVERY_MS);
 
 /** Le cœur annonce des clés d’état ou d’entité changées : seuls les abonnements qui en dépendent se relisent. */
 export function receiveStatesChanged(payload: unknown) {
@@ -251,18 +219,6 @@ function track<T>(module: string, run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Une fonction a écrit chez un service (le cœur l’a vu passer, `clients:changed`) : les états affichés du module se
- * relisent. Cela couvre les scripts lancés par le cœur (automatisation, webhook) : le cœur nomme la fonction et ne
- * prévient jamais pour une lecture. Sans nom de fonction, l’écriture vient d’une fonction TypeScript, que la
- * coquille qui l’a lancée traite elle-même à la fin de l’appel (et le `POST` d’une recherche ne relance rien).
- */
-export function receiveClientChange(payload: unknown) {
-  const change = payload as { module?: string; function?: string } | null;
-  if (!change?.module || !change.function || runningByModule.has(change.module)) return;
-  stateHub.refreshModules([change.module]);
-}
-
-/**
  * Appelle `module/fonction` avec `input`. Une lecture identique déjà en cours est rejointe. La sortie d’une fonction
  * TypeScript qui déclare un état ou une entité l’alimente (`states.feed`) ; le cœur alimente lui-même pour un script
  * et pour une fonction qu’il a demandée (`fed`). Une écriture fait ensuite relire les états affichés de son module,
@@ -305,8 +261,9 @@ export async function callFunction(
   try {
     return await run();
   } finally {
-    // Réussie ou non, l’écriture a pu changer le service : les états affichés du module se relisent.
-    if (declared && !declared.missing && !declared.entity) stateHub.refreshModules([module]);
+    // Réussie ou non, l’écriture a pu changer le service : le fournisseur relit ses états suivis.
+    if (declared && !declared.missing && !declared.entity && typescript)
+      void invoke("states.written", { module }).catch(() => undefined);
   }
 }
 

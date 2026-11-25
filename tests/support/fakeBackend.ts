@@ -657,6 +657,9 @@ export class FakeBackend {
     },
     "journal.list": (args) =>
       this.journal.filter((line) => !args.kind || line.kind === args.kind).slice(0, Number(args.limit ?? 200)),
+    // Une écriture : le fournisseur relit ses états suivis (rien à relire ici).
+    "states.written": () => null,
+    "states.overview": () => ({ refreshers: [] }),
     "journal.record": (args) => {
       this.journal.unshift({
         id: this.journal.length + 1,

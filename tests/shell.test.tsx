@@ -104,6 +104,7 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
     "Apparence",
     "Ordre du menu",
     "Automatisations",
+    "États",
     "Journal",
     "Agent",
     "Voix",

@@ -1,4 +1,16 @@
-import { Bot, Boxes, FolderOpen, KeyRound, ListOrdered, Mic, Palette, ScrollText, Store, Workflow } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  Boxes,
+  FolderOpen,
+  KeyRound,
+  ListOrdered,
+  Mic,
+  Palette,
+  ScrollText,
+  Store,
+  Workflow,
+} from "lucide-react";
 import type { BuiltInTab } from "../../shell/types";
 import { useAgentSections } from "../agentSettings/AgentSettings";
 import { useAutomationsSections } from "../automations/AutomationsSettings";
@@ -7,6 +19,7 @@ import { useMarketplaceSections } from "../modules/MarketplaceSettings";
 import { useModulesSections } from "../modules/ModulesSettings";
 import { useNavigationSections } from "../navigation/NavigationSettings";
 import { useAppearanceSections, useSpaceSections } from "../space/SpaceSettings";
+import { useStatesSections } from "../states/StatesSettings";
 import { useVaultSections } from "../vault/VaultSettings";
 import { useVoiceSections } from "../voice/VoiceSettings";
 
@@ -66,6 +79,7 @@ export const settingsTabs: BuiltInTab[] = [
     useSections: useAutomationsSections,
     keywords: ["cron", "planning", "webhook", "déclencheur", "script"],
   },
+  { id: "states", label: "États", group: "espace", icon: icon(Activity), useSections: useStatesSections },
   { id: "journal", label: "Journal", group: "espace", icon: icon(ScrollText), useSections: useJournalSections },
   {
     id: "agents",

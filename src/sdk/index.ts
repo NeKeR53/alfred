@@ -2209,7 +2209,12 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
 // --- États partagés --------------------------------------------------------------------------------------------
 
 export interface AlfredStateOptions<Value, Selected> {
-  /** Sous-clé de l’état (`useAlfredState("jenkins/ci", { key: job })`), ou identifiant d’une entité. */
+  /**
+   * Paramètres de l’état (`useAlfredState("jira/tickets-du-filtre", { params: { jql } })`) : deux abonnés avec les
+   * mêmes paramètres partagent le même état, et le fournisseur ne le rafraîchit qu’une fois.
+   */
+  params?: Record<string, unknown> | null;
+  /** Identifiant d’une entité (`jira/ticket`), ou valeur du seul paramètre d’un état. */
   key?: string | number | null;
   /** Compte visé ; omis : celui de la page pour ce besoin, sinon celui par défaut. */
   instance?: string | null;
@@ -2230,7 +2235,9 @@ export interface AlfredState<Selected> {
   /** La dernière lecture a échoué ; la valeur précédente reste dans `data`. */
   error: Error | undefined;
   updatedAt: Date | undefined;
-  /** Relit l’état chez le service (la fonction qui l’alimente) : toutes les pages abonnées suivent. */
+  /** Dernier rafraîchissement par le fournisseur : heure, erreur, prochain passage. */
+  status: { lastRunAt?: Date; lastError?: string; nextAt?: Date; failures: number } | undefined;
+  /** Demande au fournisseur de relire l’état maintenant : toutes les pages abonnées suivent. */
   refresh: () => Promise<void>;
 }
 
@@ -2240,6 +2247,7 @@ interface SharedStatePush {
   loading: boolean;
   refreshing: boolean;
   updatedAt?: number;
+  status?: { lastRunAt?: number | null; lastError?: string | null; nextAt?: number | null; failures?: number };
 }
 
 /** Égalité structurelle : mêmes valeurs, mêmes champs, quel que soit leur ordre. */
@@ -2259,6 +2267,17 @@ export function sameValue(a: unknown, b: unknown): boolean {
     left.length === right.length &&
     left.every((key) => sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
   );
+}
+
+/** JSON aux clés triées : deux objets de mêmes valeurs donnent la même chaîne. */
+function stableInput(value: unknown): string {
+  if (value === undefined || value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableInput).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, field]) => `${JSON.stringify(name)}:${stableInput(field)}`)
+    .join(",")}}`;
 }
 
 let stateSequence = 0;
@@ -2283,9 +2302,10 @@ export function useAlfredState<Value = unknown, Selected = Value>(
 ): AlfredState<Selected> {
   const key = options.key === null || options.key === undefined ? undefined : String(options.key);
   const instance = options.instance ?? undefined;
+  const paramsKey = options.params ? stableInput(options.params) : "";
   const select = useRef(options.select);
   select.current = options.select;
-  const id = `${name ?? ""}|${key ?? ""}|${instance ?? ""}`;
+  const id = `${name ?? ""}|${key ?? ""}|${instance ?? ""}|${paramsKey}`;
   const [view, setView] = useState<{ id: string; data?: Selected; push: SharedStatePush }>({
     id,
     push: { loading: Boolean(name), refreshing: false },
@@ -2322,25 +2342,30 @@ export function useAlfredState<Value = unknown, Selected = Value>(
       shown.current = { id, data, push };
       setView(shown.current);
     });
-    request("states.watch", { watch: current, name, ...(key ? { key } : {}), ...(instance ? { instance } : {}) }).catch(
-      (error: unknown) => {
-        shown.current = {
-          id,
-          push: {
-            loading: false,
-            refreshing: false,
-            error: { message: error instanceof Error ? error.message : String(error) },
-          },
-        };
-        setView(shown.current);
-      },
-    );
+    const params = paramsKey ? (JSON.parse(paramsKey) as Record<string, unknown>) : undefined;
+    request("states.watch", {
+      watch: current,
+      name,
+      ...(key ? { key } : {}),
+      ...(instance ? { instance } : {}),
+      ...(params ? { params } : {}),
+    }).catch((error: unknown) => {
+      shown.current = {
+        id,
+        push: {
+          loading: false,
+          refreshing: false,
+          error: { message: error instanceof Error ? error.message : String(error) },
+        },
+      };
+      setView(shown.current);
+    });
     return () => {
       stop();
       if (watch.current === current) watch.current = undefined;
       void request("states.unwatch", { watch: current }).catch(() => undefined);
     };
-  }, [id, name, key, instance]);
+  }, [id, name, key, instance, paramsKey]);
   const refresh = useCallback(async () => {
     if (watch.current) await request("states.refresh", { watch: watch.current }).catch(() => undefined);
   }, []);
@@ -2353,21 +2378,45 @@ export function useAlfredState<Value = unknown, Selected = Value>(
     refreshing: current.push.refreshing,
     error,
     updatedAt: current.push.updatedAt !== undefined ? new Date(current.push.updatedAt) : undefined,
+    status: current.push.status
+      ? {
+          ...(current.push.status.lastRunAt ? { lastRunAt: new Date(current.push.status.lastRunAt) } : {}),
+          ...(current.push.status.lastError ? { lastError: current.push.status.lastError } : {}),
+          ...(current.push.status.nextAt ? { nextAt: new Date(current.push.status.nextAt) } : {}),
+          failures: current.push.status.failures ?? 0,
+        }
+      : undefined,
     refresh,
   };
 }
 
-/** États partagés hors d’un composant : lire une fois, ou publier (module déclarant seulement). */
+type StateTarget = { params?: Record<string, unknown>; key?: string | number; instance?: string };
+
+/**
+ * États partagés hors d’un composant (fonctions, et pages pour un geste) : lire une fois, s’abonner pour un temps,
+ * publier (module déclarant seulement).
+ */
 export const states = {
-  /** Valeur courante : `{ value, empty, updatedAt }` ; une liste d’entités rend ses objets. */
+  /** Valeur courante : `{ value, empty, updatedAt, refresh }` ; une liste d’entités rend ses objets. */
   get<Value = unknown>(
     name: string,
-    options: { key?: string | number; instance?: string } = {},
-  ): Promise<{ value: Value | null; empty: boolean; updatedAt?: number | null }> {
+    options: StateTarget = {},
+  ): Promise<{ value: Value | null; empty: boolean; updatedAt?: number | null; refresh?: unknown }> {
     return request("states.get", { name, ...options });
   },
-  /** Publie un état ou une entité du module : chaque page abonnée se met à jour. */
-  publish(name: string, value: unknown, options: { key?: string | number; instance?: string } = {}) {
+  /**
+   * Abonne la fonction à un état pour `seconds` secondes (10 minutes par défaut, un jour au plus) : le fournisseur
+   * le rafraîchit pendant ce temps. Les changements arrivent par le bus d’événements (`events.subscribes` sur
+   * `module/etat.<id>`). Rend `{ id }`, pour `states.unsubscribe(id)`.
+   */
+  subscribe(name: string, options: StateTarget & { seconds?: number } = {}) {
+    return request<{ id: string; key: string }>("states.subscribe", { name, ...options });
+  },
+  unsubscribe(id: string) {
+    return request<{ removed: boolean }>("states.unsubscribe", { id });
+  },
+  /** Publie un état ou une entité du module : chaque abonné se met à jour. */
+  publish(name: string, value: unknown, options: StateTarget = {}) {
     return request<{ changed: number }>("states.publish", { name, value, ...options });
   },
 };

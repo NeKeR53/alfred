@@ -39,6 +39,32 @@ pub async fn call(state: &Arc<AppState>, reference: &str, input: Value, caller: 
 /// du module appelé (une dépendance suit le mode du module qui l’appelle). Une fonction de connecteur rend alors
 /// son exemple sans être lancée ; une autre s’exécute, et ce qu’elle appelle reste en mode exemple.
 pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, caller: &str, examples: bool) -> AppResult<Value> {
+    let fed_input = input.clone();
+    let result = call_unfed(state, reference, input, caller, examples).await;
+    let space = state.space()?;
+    let examples = examples || split(reference).is_ok_and(|(module, _)| crate::examples::is_on(state, module));
+    // La sortie d’une lecture alimente l’état qu’elle déclare (`states.rs`), quel que soit l’appelant.
+    if let Ok(output) = &result {
+        if let Err(error) = crate::states::feed(state, &space, reference, &fed_input, None, examples, output) {
+            log::error!("état alimenté par {reference} : {}", error.message);
+        }
+    }
+    // Une écriture (sans objet rendu) : le fournisseur rafraîchit ses états suivis.
+    if let Ok((module, function)) = split(reference) {
+        let write = space.module(module).ok().and_then(|manifest| {
+            manifest.functions.iter().find(|declared| declared.id == function).map(|declared| {
+                declared.effect != Some(crate::space::Effect::Read) && declared.entity.is_none()
+            })
+        });
+        if write == Some(true) {
+            crate::state_refresh::module_written(state, module);
+        }
+    }
+    result
+}
+
+/// Exécute la fonction sans alimenter les états : le rafraîchissement d’un état fusionne lui-même la sortie.
+pub async fn call_unfed(state: &Arc<AppState>, reference: &str, input: Value, caller: &str, examples: bool) -> AppResult<Value> {
     let (module, function) = split(reference)?;
     let space = state.space()?;
     let manifest = space.module(module)?;
@@ -46,8 +72,7 @@ pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, calle
         return Err(AppError::new(format!("La fonction « {reference} » n’est pas déclarée dans son module.")));
     };
     let examples = examples || crate::examples::is_on(state, module);
-    let fed_input = input.clone();
-    let result = if examples && declared.is_connector() {
+    if examples && declared.is_connector() {
         crate::examples::respond(state, reference, declared, &input, caller)
     } else if declared.runtime.is_script() {
         call_script(state, &space, &manifest, declared, input, caller, examples).await
@@ -56,17 +81,10 @@ pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, calle
         if examples {
             payload["examples"] = json!(true);
         }
-        // La coquille exécute la fonction sans alimenter les états : c’est fait ici, une seule fois.
+        // La coquille exécute la fonction sans alimenter les états : c’est fait par le cœur, une seule fois.
         payload["fed"] = json!(true);
         state.ask_ui("function:call", payload, Duration::from_secs(180)).await
-    };
-    // La sortie d’une lecture alimente l’état qu’elle déclare (`states.rs`), quel que soit l’appelant.
-    if let Ok(output) = &result {
-        if let Err(error) = crate::states::feed(state, &space, reference, &fed_input, None, examples, output) {
-            log::error!("état alimenté par {reference} : {}", error.message);
-        }
     }
-    result
 }
 
 fn declaration_for(manifest: &ModuleManifest, id: &str) -> AppResult<FunctionDecl> {

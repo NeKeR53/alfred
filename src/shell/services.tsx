@@ -9,7 +9,7 @@ import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
-import { callFunction, receiveClientChange, receiveStatesChanged } from "./functionHost";
+import { callFunction, receiveStatesChanged } from "./functionHost";
 import { notify } from "./notifications";
 import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
@@ -58,8 +58,6 @@ function bind() {
   });
   // Un état ou une entité a changé dans le cœur : les pages abonnées qui en dépendent se relisent, sans requête.
   onNativeEvent("states:changed", receiveStatesChanged);
-  // Écriture chez un service vue par le cœur (script, automatisation) : les états affichés du module se relisent.
-  onNativeEvent("clients:changed", receiveClientChange);
   onNativeEvent("agent:frameErrors", (payload) => {
     const request = payload as { requestId: string; module?: string | null };
     const errors = [...frameErrors.entries()]

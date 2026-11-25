@@ -188,19 +188,34 @@ pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
     let Ok(manifest) = space.module(module) else { return Vec::new() };
     let mut problems = Vec::new();
     for state in &manifest.states {
+        let read = |id: &str| {
+            manifest.functions.iter().find(|function| function.id == id && function.effect == Some(crate::space::Effect::Read))
+        };
         let fed = manifest.functions.iter().any(|function| {
             function.state.as_deref() == Some(state.id.as_str()) && function.effect == Some(crate::space::Effect::Read)
         });
-        if !fed {
-            problems.push(json!({ "module": module, "state": state.id, "problem": "Aucune fonction de lecture n’alimente cet état (`state` sur une fonction `effect: \"read\"`) : il resterait vide." }));
+        match &state.refresh {
+            // Un état à rafraîchissement a sa fonction : une lecture du module, appelée avec les paramètres.
+            Some(refresh) => {
+                if refresh.function.is_empty() || read(&refresh.function).is_none() {
+                    problems.push(json!({ "module": module, "state": state.id, "problem": format!("`refresh.function` vaut « {} » : il faut une fonction de lecture du module (`effect: \"read\"`) qui rafraîchit l’état.", refresh.function) }));
+                }
+                if refresh.every < 10 {
+                    problems.push(json!({ "module": module, "state": state.id, "problem": "`refresh.every` vaut 10 secondes au moins : choisis la période la plus longue qui suffit (30 à 300 s pour un service)." }));
+                }
+                if refresh.mode == crate::space::RefreshMode::Always && !state.params.is_empty() {
+                    problems.push(json!({ "module": module, "state": state.id, "problem": "`mode: \"always\"` vaut pour un état sans paramètres : un état à paramètres se rafraîchit tant qu’il a un abonné." }));
+                }
+            }
+            None if !fed => {
+                problems.push(json!({ "module": module, "state": state.id, "problem": "Aucune fonction de lecture n’alimente cet état (`state` sur une fonction `effect: \"read\"`, ou `refresh.function`) : il resterait vide." }));
+            }
+            None => {}
         }
         if let Some(entity) = &state.entity {
             if !manifest.entities.iter().any(|declared| &declared.id == entity) {
                 problems.push(json!({ "module": module, "state": state.id, "problem": format!("L’état liste des « {entity} », type absent de `entities`.") }));
             }
-        }
-        if state.refresh_every.is_some_and(|seconds| seconds < 5) {
-            problems.push(json!({ "module": module, "state": state.id, "problem": "`refreshEvery` vaut 5 secondes au moins." }));
         }
     }
     for entity in &manifest.entities {

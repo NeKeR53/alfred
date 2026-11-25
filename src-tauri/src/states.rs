@@ -16,12 +16,14 @@
 //! - **Portée.** Espace, mode « données d’exemple », compte (instance du client) : deux comptes ne partagent rien.
 //!   Un module lit les états de son module et de ses dépendances (`requires`) seulement ; seul le module déclarant
 //!   publie.
+//! - **Paramètres.** Un état se décline par paramètres (`params` : `jira/tickets-du-filtre` avec `{ jql }`) : chaque
+//!   jeu de valeurs normalisé (clés triées) est un état à part, partagé par tous les abonnés qui le demandent.
+//! - **Fournisseur.** Le module déclarant tient l’état à jour par sa politique de rafraîchissement (`refresh`),
+//!   dans le cœur : voir `state_refresh.rs`.
 //! - **En mémoire.** Le magasin vit le temps du lancement d’Alfred. Sans lecture, un état ne change pas.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
-
 use serde_json::{json, Map, Value};
 
 use crate::error::{arg, opt_arg, AppError, AppResult};
@@ -43,8 +45,6 @@ struct Stored {
 #[derive(Default)]
 struct Store {
     entries: HashMap<String, Stored>,
-    /// Relecture périodique d’un état : la coquille qui la tient, jusqu’à quand.
-    leases: HashMap<String, (String, Instant)>,
 }
 
 fn store() -> std::sync::MutexGuard<'static, Store> {
@@ -64,12 +64,44 @@ pub struct Scope {
     pub instance: String,
 }
 
-fn state_key(scope: &Scope, owner: &str, id: &str, sub: &str) -> String {
+pub(crate) fn state_key(scope: &Scope, owner: &str, id: &str, sub: &str) -> String {
     format!("etat\u{1f}{}\u{1f}{}\u{1f}{owner}/{id}\u{1f}{}\u{1f}{sub}", scope.space, scope.examples, scope.instance)
 }
 
 fn entity_key(scope: &Scope, owner: &str, entity: &str, id: &str) -> String {
     format!("entite\u{1f}{}\u{1f}{}\u{1f}{owner}/{entity}\u{1f}{}\u{1f}{id}", scope.space, scope.examples, scope.instance)
+}
+
+/// Paramètres normalisés d’un état : les seuls paramètres déclarés, non nuls, en JSON aux clés triées (`""` pour un
+/// état sans paramètres). Deux abonnés avec les mêmes valeurs ont la même sous-clé, quel que soit l’ordre.
+pub(crate) fn params_key(declared: &StateDecl, source: &Value) -> String {
+    if declared.params.is_empty() {
+        return String::new();
+    }
+    let mut chosen = Map::new();
+    for name in &declared.params {
+        if let Some(value) = source.get(name).filter(|value| !value.is_null()) {
+            chosen.insert(name.clone(), value.clone());
+        }
+    }
+    // `Map` de serde_json garde ses clés triées : la chaîne est stable.
+    Value::Object(chosen).to_string()
+}
+
+/// Paramètres d’une sous-clé, pour les rendre aux abonnés et à la fonction de rafraîchissement.
+pub(crate) fn params_of(sub: &str) -> Value {
+    serde_json::from_str::<Value>(sub).ok().filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+/// Sous-clé demandée par un abonné : `params`, ou `key` pour un état à un seul paramètre.
+fn request_sub(declared: &StateDecl, args: &Value) -> String {
+    match args.get("params").filter(|params| params.is_object()) {
+        Some(params) => params_key(declared, params),
+        None => match (args.get("key").and_then(id_text), declared.params.as_slice()) {
+            (Some(key), [only]) => params_key(declared, &json!({ only: key })),
+            _ => params_key(declared, &json!({})),
+        },
+    }
 }
 
 /// Texte d’un identifiant ou d’une sous-clé : une chaîne, ou un nombre.
@@ -100,12 +132,12 @@ fn resolve_instance(space: &Space, owner: &str, need: Option<&str>, wanted: Opti
 }
 
 /// Ce que désigne un nom : un état ou un type d’entité du module.
-enum Target<'a> {
+pub(crate) enum Target<'a> {
     State(&'a StateDecl),
     Entity(&'a EntityDecl),
 }
 
-fn target<'a>(manifest: &'a ModuleManifest, id: &str) -> Option<Target<'a>> {
+pub(crate) fn target<'a>(manifest: &'a ModuleManifest, id: &str) -> Option<Target<'a>> {
     if let Some(state) = manifest.states.iter().find(|state| state.id == id) {
         return Some(Target::State(state));
     }
@@ -114,7 +146,7 @@ fn target<'a>(manifest: &'a ModuleManifest, id: &str) -> Option<Target<'a>> {
 
 /// Changements d’une opération : clés touchées, et événements du bus.
 #[derive(Default)]
-struct Changes {
+pub(crate) struct Changes {
     keys: Vec<String>,
     events: Vec<(String, Value)>,
 }
@@ -170,8 +202,67 @@ fn upsert_all(changes: &mut Changes, scope: &Scope, owner: &str, entity: &Entity
     }
 }
 
+/// Fusionne des changements dans un état (lecture incrémentale) : pour une liste d’entités, `changed` (ou la liste
+/// rendue) met à jour les objets et ajoute en tête les identifiants nouveaux, `removed` retire des identifiants ; pour
+/// une valeur objet, les champs rendus remplacent les anciens ; sinon la valeur rendue remplace l’état.
+pub(crate) fn merge_state(
+    changes: &mut Changes,
+    manifest: &ModuleManifest,
+    scope: &Scope,
+    declared: &StateDecl,
+    sub: &str,
+    output: &Value,
+) -> AppResult<()> {
+    let owner = manifest.id.as_str();
+    let key = state_key(scope, owner, &declared.id, sub);
+    let current = store().entries.get(&key).map(|stored| stored.value.clone());
+    let merged = match &declared.entity {
+        Some(entity_id) => {
+            let entity = manifest.entities.iter().find(|entity| &entity.id == entity_id).ok_or_else(|| {
+                AppError::new(format!("L’état « {} » liste des « {entity_id} », type d’entité non déclaré.", declared.id))
+            })?;
+            let (changed, removed) = match output {
+                Value::Array(_) => (output.clone(), Value::Null),
+                Value::Object(fields) if fields.contains_key("changed") || fields.contains_key("removed") => (
+                    fields.get("changed").cloned().unwrap_or_else(|| json!([])),
+                    fields.get("removed").cloned().unwrap_or(Value::Null),
+                ),
+                _ => (declared.items.as_deref().and_then(|field| output.get(field)).cloned().unwrap_or_else(|| json!([])), Value::Null),
+            };
+            let fresh = upsert_all(changes, scope, owner, entity, &changed);
+            let removed: Vec<String> = removed.as_array().into_iter().flatten().filter_map(id_text).collect();
+            let mut ids: Vec<String> = current.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(id_text).collect();
+            let known: std::collections::HashSet<String> = ids.iter().cloned().collect();
+            let added: Vec<String> = fresh.into_iter().filter(|id| !known.contains(id)).collect();
+            ids.retain(|id| !removed.contains(id));
+            let mut next = added;
+            next.extend(ids);
+            Value::Array(next.into_iter().map(Value::String).collect())
+        }
+        None => match (current, output) {
+            (Some(Value::Object(mut old)), Value::Object(fields)) => {
+                for (name, value) in fields {
+                    old.insert(name.clone(), value.clone());
+                }
+                Value::Object(old)
+            }
+            _ => output.clone(),
+        },
+    };
+    let event = state_event(owner, declared, scope, sub);
+    set(changes, key, merged, Some(event));
+    Ok(())
+}
+
+fn state_event(owner: &str, declared: &StateDecl, scope: &Scope, sub: &str) -> (String, Value) {
+    (
+        format!("{owner}/etat.{}", declared.id),
+        json!({ "state": format!("{owner}/{}", declared.id), "params": params_of(sub), "key": sub, "instance": scope.instance, "examples": scope.examples }),
+    )
+}
+
 /// Écrit la valeur d’un état : pour une liste d’entités, les objets vont au magasin et l’état garde leurs identifiants.
-fn write_state(
+pub(crate) fn write_state(
     changes: &mut Changes,
     manifest: &ModuleManifest,
     scope: &Scope,
@@ -200,16 +291,13 @@ fn write_state(
         }
         None => value.clone(),
     };
-    let event = (
-        format!("{owner}/etat.{}", declared.id),
-        json!({ "state": format!("{owner}/{}", declared.id), "key": sub, "instance": scope.instance, "examples": scope.examples }),
-    );
+    let event = state_event(owner, declared, scope, sub);
     set(changes, state_key(scope, owner, &declared.id, sub), stored, Some(event));
     Ok(())
 }
 
-/// Annonce les changements aux coquilles et au bus d’événements.
-fn announce(state: &AppState, space: &Space, changes: Changes) {
+/// Annonce les changements aux coquilles, au bus d’événements et aux automatisations déclenchées par un état.
+pub(crate) fn announce(state: &std::sync::Arc<AppState>, space: &Space, changes: Changes) {
     if changes.keys.is_empty() {
         return;
     }
@@ -217,6 +305,9 @@ fn announce(state: &AppState, space: &Space, changes: Changes) {
     for (event, payload) in changes.events {
         if let Err(error) = crate::module_events::publish_internal(space, &event, &payload) {
             log::error!("bus d’événements, {event} : {}", error.message);
+        }
+        if event.contains("/etat.") {
+            crate::automations::state_changed(state, &payload);
         }
     }
     crate::module_events::kick();
@@ -226,7 +317,7 @@ fn announce(state: &AppState, space: &Space, changes: Changes) {
 /// le cœur après chaque fonction qu’il lance (`functions::call_in`) et par la coquille après une fonction TypeScript
 /// (`states.feed`). Une fonction qui ne déclare rien ne change rien.
 pub fn feed(
-    state: &AppState,
+    state: &std::sync::Arc<AppState>,
     space: &Space,
     reference: &str,
     input: &Value,
@@ -256,13 +347,13 @@ pub fn feed(
             instance: resolve_instance(space, owner, need.as_deref(), wanted(need.as_deref())),
         }
     };
-    let sub = declared.param.as_deref().and_then(|param| input.get(param)).and_then(id_text).unwrap_or_default();
     let mut changes = Changes::default();
     // Une liste (ou une valeur) : seulement une lecture la remplace.
     if let (Some(state_id), Some(crate::space::Effect::Read)) = (&declared.state, declared.effect) {
         let state_decl = manifest.states.iter().find(|candidate| &candidate.id == state_id).ok_or_else(|| {
             AppError::new(format!("La fonction « {reference} » alimente « {state_id} », état non déclaré dans `states`."))
         })?;
+        let sub = params_key(state_decl, input);
         write_state(&mut changes, &manifest, &scope_for(state_decl.client.as_deref()), state_decl, &sub, output)?;
     }
     // Un objet, ou des objets : une lecture d’un seul ticket, ou une écriture qui rend le ticket modifié.
@@ -278,7 +369,7 @@ pub fn feed(
 
 /// Nom d’un état ou d’une entité, vu du module qui le demande : « module/id », ou « id » dans son module. Le
 /// module ne voit que les siens et ceux de ses dépendances (`requires`).
-fn visible(space: &Space, subject: &Subject, name: &str) -> AppResult<(ModuleManifest, String)> {
+pub(crate) fn visible(space: &Space, subject: &Subject, name: &str) -> AppResult<(ModuleManifest, String)> {
     let (owner, id) = match name.split_once('/') {
         Some((owner, id)) => (owner.to_string(), id.to_string()),
         None => (subject.module.clone(), name.to_string()),
@@ -299,7 +390,7 @@ fn visible(space: &Space, subject: &Subject, name: &str) -> AppResult<(ModuleMan
 
 /// Compte visé par un demandeur : celui qu’il nomme, sinon celui choisi pour le besoin (par la page, ou pour
 /// `dépendance/besoin`), sinon celui de sa page, sinon celui par défaut.
-fn subject_scope(state: &AppState, space: &Space, subject: &Subject, manifest: &ModuleManifest, client: Option<&str>, args: &Value) -> AppResult<Scope> {
+pub(crate) fn subject_scope(state: &AppState, space: &Space, subject: &Subject, manifest: &ModuleManifest, client: Option<&str>, args: &Value) -> AppResult<Scope> {
     let need = need_of(manifest, client);
     let wanted = opt_arg::<String>(args, "instance")?.or_else(|| {
         let need = need.as_deref()?;
@@ -328,9 +419,10 @@ fn read(state: &AppState, args: &Value) -> AppResult<Value> {
     match target(&manifest, &id) {
         Some(Target::State(declared)) => {
             let scope = subject_scope(state, &space, &subject, &manifest, declared.client.as_deref(), args)?;
-            let key = state_key(&scope, &owner, &id, &sub);
+            let key = state_key(&scope, &owner, &id, &request_sub(declared, args));
+            let refresh = crate::state_refresh::status_of(&key);
             let Some((stored, at)) = entries(std::slice::from_ref(&key)).remove(0) else {
-                return Ok(json!({ "value": null, "empty": true, "deps": [key], "refreshEvery": declared.refresh_every, "instance": scope.instance }));
+                return Ok(json!({ "value": null, "empty": true, "deps": [key], "refresh": refresh, "instance": scope.instance }));
             };
             let mut deps = vec![key];
             let value = match (&declared.entity, &stored) {
@@ -350,7 +442,7 @@ fn read(state: &AppState, args: &Value) -> AppResult<Value> {
                 }
                 _ => stored,
             };
-            Ok(json!({ "value": value, "empty": false, "updatedAt": at, "deps": deps, "refreshEvery": declared.refresh_every, "instance": scope.instance }))
+            Ok(json!({ "value": value, "empty": false, "updatedAt": at, "deps": deps, "refresh": refresh, "instance": scope.instance }))
         }
         Some(Target::Entity(entity)) => {
             if sub.is_empty() {
@@ -372,11 +464,10 @@ fn read(state: &AppState, args: &Value) -> AppResult<Value> {
 }
 
 /// Publication par le module déclarant (page, fonction, script) : une valeur d’état, ou un ou des objets.
-fn publish(state: &AppState, args: &Value) -> AppResult<Value> {
+fn publish(state: &std::sync::Arc<AppState>, args: &Value) -> AppResult<Value> {
     let subject: Subject = arg(args, "subject")?;
     let name: String = arg(args, "name")?;
     let value = args.get("value").cloned().unwrap_or(Value::Null);
-    let sub = opt_arg::<Value>(args, "key")?.as_ref().and_then(id_text).unwrap_or_default();
     let space = state.space()?;
     let (manifest, id) = visible(&space, &subject, &name)?;
     if manifest.id != subject.module {
@@ -389,7 +480,7 @@ fn publish(state: &AppState, args: &Value) -> AppResult<Value> {
     match target(&manifest, &id) {
         Some(Target::State(declared)) => {
             let scope = subject_scope(state, &space, &subject, &manifest, declared.client.as_deref(), args)?;
-            write_state(&mut changes, &manifest, &scope, declared, &sub, &value)?;
+            write_state(&mut changes, &manifest, &scope, declared, &request_sub(declared, args), &value)?;
         }
         Some(Target::Entity(entity)) => {
             let scope = subject_scope(state, &space, &subject, &manifest, entity.client.as_deref(), args)?;
@@ -402,28 +493,88 @@ fn publish(state: &AppState, args: &Value) -> AppResult<Value> {
     Ok(json!({ "changed": changed }))
 }
 
-/// Relecture périodique : une seule coquille la tient pour un état, renouvelée à chaque passage.
-fn lease(args: &Value) -> AppResult<Value> {
-    let key: String = arg(args, "key")?;
-    let origin: String = arg(args, "origin")?;
-    let seconds = opt_arg::<u64>(args, "seconds")?.unwrap_or(30).clamp(5, 86_400);
-    let mut store = store();
-    let now = Instant::now();
-    let granted = match store.leases.get(&key) {
-        Some((holder, until)) => holder == &origin || *until <= now,
-        None => true,
-    };
-    if granted {
-        store.leases.insert(key, (origin, now + Duration::from_secs(seconds * 2)));
+/// Valeur courante d’un état, telle que la lit un abonné (liste rendue avec ses objets) : la `current` d’une lecture
+/// incrémentale.
+pub(crate) fn current_value(manifest: &ModuleManifest, scope: &Scope, declared: &StateDecl, sub: &str) -> Value {
+    let store = store();
+    let Some(stored) = store.entries.get(&state_key(scope, &manifest.id, &declared.id, sub)) else { return Value::Null };
+    match (&declared.entity, &stored.value) {
+        (Some(entity_id), Value::Array(ids)) => Value::Array(
+            ids.iter()
+                .filter_map(id_text)
+                .filter_map(|id| store.entries.get(&entity_key(scope, &manifest.id, entity_id, &id)).map(|o| o.value.clone()))
+                .collect(),
+        ),
+        (_, value) => value.clone(),
     }
-    Ok(Value::Bool(granted))
 }
 
-pub async fn handle(state: &AppState, command: &str, args: &Value) -> Option<AppResult<Value>> {
+/// Un état visé par un abonné : son module, sa déclaration, sa portée, sa sous-clé et sa clé dans le magasin.
+#[derive(Debug, Clone)]
+pub(crate) struct StateTarget {
+    pub manifest: ModuleManifest,
+    pub declared: StateDecl,
+    pub scope: Scope,
+    pub sub: String,
+    pub key: String,
+}
+
+impl StateTarget {
+    pub fn name(&self) -> String {
+        format!("{}/{}", self.manifest.id, self.declared.id)
+    }
+}
+
+/// L’état que demande un abonné (`name`, `params` ou `key`, `instance`), avec son accord vérifié (module ou
+/// dépendance). Une entité n’est pas un état à rafraîchir : refus.
+pub(crate) fn state_target(state: &AppState, space: &Space, subject: &Subject, args: &Value) -> AppResult<StateTarget> {
+    let name: String = arg(args, "name")?;
+    let (manifest, id) = visible(space, subject, &name)?;
+    let Some(Target::State(declared)) = target(&manifest, &id) else {
+        return Err(AppError::new(format!("« {name} » est une entité : on s’abonne à un état (une liste, une valeur).")));
+    };
+    let declared = declared.clone();
+    let scope = subject_scope(state, space, subject, &manifest, declared.client.as_deref(), args)?;
+    let sub = request_sub(&declared, args);
+    let key = state_key(&scope, &manifest.id, &declared.id, &sub);
+    Ok(StateTarget { manifest, declared, scope, sub, key })
+}
+
+#[cfg(test)]
+pub(crate) fn read_for_tests(state: &AppState, args: &Value) -> Value {
+    read(state, args).unwrap()
+}
+
+/// L’état est-il vide (personne ne l’a encore lu) ?
+pub(crate) fn is_empty(key: &str) -> bool {
+    !store().entries.contains_key(key)
+}
+
+pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
+    if let Some(result) = crate::state_refresh::handle(state, command, args) {
+        return Some(result);
+    }
     match command {
+        // États déclarés par les modules, pour choisir celui qui déclenche une automatisation.
+        "states.catalog" => Some((|| {
+            let space = state.space()?;
+            let mut found = Vec::new();
+            for module in space.module_ids() {
+                let Ok(manifest) = space.module(&module) else { continue };
+                for declared in &manifest.states {
+                    found.push(json!({
+                        "name": format!("{module}/{}", declared.id),
+                        "module": manifest.name,
+                        "description": declared.description,
+                        "params": declared.params,
+                        "refresh": declared.refresh,
+                    }));
+                }
+            }
+            Ok(json!({ "states": found }))
+        })()),
         "frame.states.get" => Some(read(state, args)),
         "frame.states.publish" => Some(publish(state, args)),
-        "states.lease" => Some(lease(args)),
         // La coquille a exécuté une fonction TypeScript : sa sortie alimente l’état qu’elle déclare.
         "states.feed" => Some((|| {
             let function: String = arg(args, "function")?;
@@ -448,12 +599,12 @@ mod tests {
         manifest.entities.push(EntityDecl { id: "ticket".into(), key: Some("cle".into()), version: 1, ..Default::default() });
         manifest.states.push(StateDecl { id: "mes-tickets".into(), entity: Some("ticket".into()), ..Default::default() });
         manifest.states.push(StateDecl { id: "suivis".into(), entity: Some("ticket".into()), items: Some("issues".into()), ..Default::default() });
-        manifest.states.push(StateDecl { id: "ci".into(), ..Default::default() });
+        manifest.states.push(StateDecl { id: "ci".into(), params: vec!["job".into()], ..Default::default() });
         for (id, state, entity, param) in [
             ("mes-tickets", Some("mes-tickets"), None, None),
             ("suivis", Some("suivis"), None, None),
             ("ticket", None, Some("ticket"), Some("cle")),
-            ("ci", Some("ci"), None, Some("job")),
+            ("ci", Some("ci"), None, None),
         ] {
             manifest.functions.push(FunctionDecl {
                 id: id.into(),
@@ -530,13 +681,5 @@ mod tests {
         assert!(refused.unwrap_err().message.contains("Seul le module"));
         publish(&state, &json!({ "subject": page("jira"), "name": "ci", "key": "alfred", "value": { "etat": "rouge" } })).unwrap();
         assert_eq!(get(&state, &page("sprint"), "jira/ci", Some("alfred")).unwrap()["value"]["etat"], json!("rouge"));
-    }
-
-    #[test]
-    fn a_periodic_read_has_one_holder() {
-        let key = json!({ "key": "etat-test", "origin": "a", "seconds": 5 });
-        assert_eq!(lease(&key).unwrap(), json!(true));
-        assert_eq!(lease(&json!({ "key": "etat-test", "origin": "b", "seconds": 5 })).unwrap(), json!(false));
-        assert_eq!(lease(&key).unwrap(), json!(true), "renouvelée par sa coquille");
     }
 }

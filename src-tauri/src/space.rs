@@ -184,10 +184,45 @@ pub struct StateDecl {
     /// Besoin dont le compte entre dans la portée ; omis : le seul besoin du module.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<String>,
-    /// Relecture périodique demandée par le module (secondes, 5 au moins) : une seule pour toutes les pages, tant
-    /// qu’une page montre l’état. Absente : l’état change seulement quand quelqu’un le lit.
+    /// Paramètres de l’état (`["jql"]` pour `jira/tickets-du-filtre`) : chaque jeu de valeurs est un état à part, et
+    /// deux abonnés avec les mêmes paramètres normalisés partagent le même.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
+    /// Politique de rafraîchissement : le module fournisseur tient l’état à jour lui-même, dans le cœur (`states.rs`).
+    /// Absente : l’état change seulement quand quelqu’un le lit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub refresh_every: Option<u64>,
+    pub refresh: Option<RefreshDecl>,
+}
+
+/// Comment le fournisseur tient un état à jour.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RefreshDecl {
+    /// Fonction de lecture du module qui rafraîchit l’état ; elle reçoit les paramètres (et `instance`).
+    pub function: String,
+    /// Période, en secondes (10 au moins).
+    pub every: u64,
+    /// Lecture incrémentale : la fonction reçoit aussi `current` (la valeur courante) et `since` (fin de la dernière
+    /// lecture réussie, ms, ou `null`), et rend les changements à fusionner (`{ changed, removed }` ou une liste).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub incremental: bool,
+    /// `subscribed` (par défaut) : tant qu’il y a un abonné ; `always` : toujours, dès que le module est là.
+    #[serde(skip_serializing_if = "RefreshMode::is_default")]
+    pub mode: RefreshMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RefreshMode {
+    #[default]
+    Subscribed,
+    Always,
+}
+
+impl RefreshMode {
+    fn is_default(&self) -> bool {
+        *self == Self::Subscribed
+    }
 }
 
 /// Dépendances Python d’un module : `requirements` (spécifications pip, « pandas>=2.2 ») et `version` facultative

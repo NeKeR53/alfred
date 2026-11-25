@@ -39,8 +39,10 @@ import {
   automationSecret,
   type ConversationChoice,
   curlCommand,
+  type DeclaredState,
   listAutomations,
   listConversations,
+  listDeclaredStates,
   newAutomationScript,
   removeAutomation,
   rotateAutomationSecret,
@@ -183,6 +185,26 @@ function AutomationForm({
   }, [actionKind, target, conversations]);
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(initial?.trigger.kind ?? "cron");
   const [cron, setCron] = useState(initial?.trigger.kind === "cron" ? initial.trigger.cron : "0 8 * * 1-5");
+  // Déclencheur « un état change » : l’état suivi et ses paramètres (A-19).
+  const [watched, setWatched] = useState<string | null>(
+    initial?.trigger.kind === "state" ? initial.trigger.state : null,
+  );
+  const [watchedParams, setWatchedParams] = useState<Record<string, string>>(
+    initial?.trigger.kind === "state"
+      ? Object.fromEntries(
+          Object.entries(initial.trigger.params ?? {}).map(([name, value]) => [
+            name,
+            typeof value === "string" ? value : JSON.stringify(value),
+          ]),
+        )
+      : {},
+  );
+  const [declaredStates, setDeclaredStates] = useState<DeclaredState[]>();
+  useEffect(() => {
+    if (kind !== "state" || declaredStates) return;
+    listDeclaredStates().then(setDeclaredStates, () => setDeclaredStates([]));
+  }, [kind, declaredStates]);
+  const watchedState = declaredStates?.find((declared) => declared.name === watched);
   const [enabled, setEnabled] = useState(initial ? initial.enabled || initial.status === "toValidate" : true);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState<"python" | "ts">();
@@ -246,7 +268,17 @@ function AutomationForm({
 
   const submit = async () => {
     if (!name.trim() || !built) return;
-    const trigger: AutomationTrigger = kind === "cron" ? { kind, cron: cron.trim() } : { kind };
+    const params = Object.fromEntries(
+      (watchedState?.params ?? [])
+        .map((param) => [param, (watchedParams[param] ?? "").trim()] as const)
+        .filter(([, value]) => value !== ""),
+    );
+    const trigger: AutomationTrigger =
+      kind === "cron"
+        ? { kind, cron: cron.trim() }
+        : kind === "state"
+          ? { kind, state: watched ?? "", ...(Object.keys(params).length > 0 ? { params } : {}) }
+          : { kind };
     const draft: AutomationDraft = {
       ...(initial ? { id: initial.id } : {}),
       name: name.trim(),
@@ -285,7 +317,7 @@ function AutomationForm({
           <Button
             variant="primary"
             isPending={busy}
-            isDisabled={!name.trim() || !built || (kind === "cron" && !cron.trim())}
+            isDisabled={!name.trim() || !built || (kind === "cron" && !cron.trim()) || (kind === "state" && !watched)}
             onPress={() => void submit()}
           >
             Enregistrer
@@ -523,7 +555,44 @@ function AutomationForm({
         >
           Script
         </RadioButtonGroup.Option>
+        <RadioButtonGroup.Option
+          value="state"
+          description="Quand une donnée d’un service change (un nouveau ticket, un CI qui passe au rouge). Active, elle garde cette donnée à jour, même sans page ouverte."
+        >
+          Un état change
+        </RadioButtonGroup.Option>
       </RadioButtonGroup>
+      {kind === "state" ? (
+        <>
+          <Select
+            label="État"
+            isRequired
+            options={(declaredStates ?? []).map((declared) => ({
+              id: declared.name,
+              label: declared.description ? `${declared.name} — ${declared.description}` : declared.name,
+            }))}
+            value={watched}
+            onChange={(id) => {
+              setWatched(id);
+              setWatchedParams({});
+            }}
+            description={
+              declaredStates && declaredStates.length === 0
+                ? "Aucun module ne déclare d’état : un module de service en déclare (demandez-le à l’agent)."
+                : undefined
+            }
+          />
+          {(watchedState?.params ?? []).map((param) => (
+            <TextInput
+              key={param}
+              label={`Paramètre ${param}`}
+              value={watchedParams[param] ?? ""}
+              onChange={(value) => setWatchedParams((current) => ({ ...current, [param]: value }))}
+              description="Vide : l’état sans ce paramètre."
+            />
+          ))}
+        </>
+      ) : null}
       {kind === "cron" ? (
         <TextInput
           label="Planning (cron)"

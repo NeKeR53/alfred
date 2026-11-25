@@ -880,8 +880,12 @@ sortie met à jour le magasin, que le cœur l’ait lancée (<code>functions::ca
 (<code>states.feed</code>). Chaque changement réel émet <code>states:changed</code> avec les clés touchées ; chaque coquille
 relit seulement les abonnements (<code>useAlfredState</code>) qui en dépendent, sans requête au service, et le bus
 d’événements livre <code>module/etat.&lt;id&gt;</code> aux fonctions abonnées. Portée : espace, compte, mode exemple ; un
-module voit ses états et ceux de ses dépendances. Sans lecture, un état ne change pas : la relecture périodique
-(<code>refreshEvery</code>) est un choix explicite par état, tenue par une seule coquille. <code>check</code> refuse une page
+module voit ses états et ceux de ses dépendances. Le module déclarant est le <b>fournisseur</b> : sa politique
+(<code>refresh</code> : fonction, période, lecture incrémentale, mode) tourne dans le cœur (<code>state_refresh.rs</code>),
+même sans page affichée, une seule fois par état et par jeu de paramètres, tant qu’il a un abonné (page, fonction,
+automatisation déclenchée par l’état) ; elle s’arrête avec le dernier. Garde-fous : période minimale, quatre lectures à
+la fois, recul après un échec ; Réglages → États montre ce qui tourne. Alfred fermé, rien ne tourne ; sans lecture, un
+état ne change pas. <code>check</code> refuse une page
 qui lit une fonction de lecture par <code>functions.call</code>, une lecture d’un service sans état, un état sans lecture.
 Dans le cœur, deux <code>GET</code> identiques en cours ne font qu’une requête (<code>client_reads.rs</code>). Décisions :
 <code>docs/lectures-partagees.md</code>.</p>

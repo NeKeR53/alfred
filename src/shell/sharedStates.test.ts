@@ -1,7 +1,8 @@
 /**
  * États partagés, par le vrai chemin de la coquille (pont des cadres, hub, hôte des fonctions) et un faux cœur qui
- * reproduit `states.rs` : il range la sortie des lectures (entités normalisées, listes d’identifiants), rend la
- * valeur avec ses dépendances, et annonce chaque changement (`states:changed`).
+ * reproduit `states.rs` et `state_refresh.rs` : le fournisseur lit l’état au premier abonnement et sur « Actualiser »,
+ * range sa sortie (entités normalisées, listes d’identifiants) et annonce chaque changement (`states:changed`). La
+ * coquille ne lance jamais elle-même une lecture.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,29 +20,11 @@ vi.mock("../lib/native", async (importOriginal) => ({
   invoke: native.invoke,
 }));
 
-import type { ModuleSummary, ResolvedFunction, Snapshot } from "../lib/types";
-import { type FrameIdentity, handleFrameRequest } from "./frameBridge";
-import { receiveStatesChanged, resetFunctionHosts } from "./functionHost";
+import type { ModuleSummary, Snapshot } from "../lib/types";
+import { type FrameIdentity, handleFrameRequest, releaseFrame } from "./frameBridge";
+import { receiveStatesChanged, resetFunctionHosts, stateHub } from "./functionHost";
 import type { StatePush } from "./sharedStates";
 import { useShell } from "./store";
-
-function read(module: string, id: string, fields: Partial<ResolvedFunction>): ResolvedFunction {
-  return {
-    reference: `${module}/${id}`,
-    module,
-    id,
-    description: "",
-    input: null,
-    output: null,
-    tool: false,
-    missing: false,
-    errors: [],
-    uses: { clients: [module] },
-    runtime: "python",
-    effect: "read",
-    ...fields,
-  } as ResolvedFunction;
-}
 
 // --- Faux cœur ---------------------------------------------------------------------------------------------------
 
@@ -50,55 +33,56 @@ type Ticket = { cle: string; etat: string };
 let serverHits = 0;
 let service: { boite: Mail[]; tickets: Record<string, Ticket> } = { boite: [], tickets: {} };
 const stored = new Map<string, unknown>();
+let subscriptionSequence = 0;
 
-const BOITE = "etat mail/boite-de-reception";
-const LISTES = { "jira/mes-tickets": "etat jira/mes-tickets", "jira/suivis": "etat jira/suivis" } as const;
 const ticketKey = (cle: string) => `entite jira/ticket ${cle}`;
 
-function announce(keys: string[]) {
-  receiveStatesChanged({ keys });
+function keyOf(args: Record<string, unknown>): string {
+  const name = String(args.name);
+  const qualified = name.includes("/") ? name : `${String((args.subject as { module: string }).module)}/${name}`;
+  return qualified === "jira/ticket" ? ticketKey(String(args.key)) : `etat ${qualified}`;
 }
 
-/** Ce que fait le cœur après une lecture : il range la sortie et annonce les clés qui ont changé. */
-function feed(reference: string, input: Record<string, unknown>) {
+/** Le fournisseur lit le service (une requête), range la sortie et annonce les clés qui ont changé. */
+function provide(key: string) {
   serverHits += 1;
   const changed: string[] = [];
-  const set = (key: string, value: unknown) => {
-    if (JSON.stringify(stored.get(key)) === JSON.stringify(value)) return;
-    stored.set(key, value);
-    changed.push(key);
+  const set = (target: string, value: unknown) => {
+    if (JSON.stringify(stored.get(target)) === JSON.stringify(value)) return;
+    stored.set(target, value);
+    changed.push(target);
   };
-  if (reference === "mail/lister-boite") set(BOITE, structuredClone(service.boite));
-  if (reference === "jira/mes-tickets" || reference === "jira/suivis") {
+  if (key === "etat mail/boite-de-reception") set(key, structuredClone(service.boite));
+  if (key === "etat jira/mes-tickets" || key === "etat jira/suivis") {
     const tickets = Object.values(service.tickets);
     for (const ticket of tickets) set(ticketKey(ticket.cle), { ...ticket });
     set(
-      LISTES[reference],
+      key,
       tickets.map((ticket) => ticket.cle),
     );
   }
-  if (reference === "jira/lire-ticket") {
-    const ticket = service.tickets[String(input.cle)] as Ticket;
-    set(ticketKey(ticket.cle), { ...ticket });
+  if (key.startsWith("entite jira/ticket ")) {
+    const ticket = service.tickets[key.slice("entite jira/ticket ".length)] as Ticket;
+    set(key, { ...ticket });
   }
-  announce(changed);
-  return {};
+  receiveStatesChanged({ keys: changed });
 }
 
-function get(name: string) {
-  const qualified = name.includes("/") ? name : `jira/${name}`;
-  if (qualified === "mail/boite-de-reception") {
-    const value = stored.get(BOITE);
-    return { value: value ?? null, empty: value === undefined, deps: [BOITE] };
+function get(args: Record<string, unknown>) {
+  const key = keyOf(args);
+  const value = stored.get(key);
+  if (value === undefined) return { value: null, empty: true, deps: [key], refresh: { running: true } };
+  const refresh = { running: false, lastRunAt: 1_000 };
+  if (key === "etat jira/mes-tickets" || key === "etat jira/suivis") {
+    const ids = value as string[];
+    return {
+      value: ids.map((cle) => stored.get(ticketKey(cle))),
+      empty: false,
+      deps: [key, ...ids.map(ticketKey)],
+      refresh,
+    };
   }
-  const listKey = LISTES[qualified as keyof typeof LISTES];
-  const ids = stored.get(listKey) as string[] | undefined;
-  if (!ids) return { value: null, empty: true, deps: [listKey] };
-  return {
-    value: ids.map((cle) => stored.get(ticketKey(cle))),
-    empty: false,
-    deps: [listKey, ...ids.map(ticketKey)],
-  };
+  return { value, empty: false, deps: [key], refresh };
 }
 
 // --- Pages -------------------------------------------------------------------------------------------------------
@@ -120,7 +104,7 @@ const flush = async () => {
   for (let round = 0; round < 8; round += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-const functionCalls = () => native.invoke.mock.calls.filter(([command]) => command === "functions.call");
+const commands = (name: string) => native.invoke.mock.calls.filter(([command]) => command === name);
 
 beforeEach(() => {
   resetFunctionHosts();
@@ -132,27 +116,27 @@ beforeEach(() => {
   };
   useShell.setState({
     snapshot: {
-      functions: [
-        read("mail", "lister-boite", { state: "boite-de-reception" }),
-        read("jira", "mes-tickets", { state: "mes-tickets" }),
-        read("jira", "suivis", { state: "suivis" }),
-        read("jira", "lire-ticket", { entity: "ticket", param: "cle" }),
-      ],
+      functions: [],
       modules: ["mail", "jira", "boite", "tableau", "sprint", "suivi"].map((id) => ({
         id,
-        requires: ["boite", "tableau"].includes(id)
-          ? [{ module: "mail" }]
-          : ["sprint", "suivi"].includes(id)
-            ? [{ module: "jira" }]
-            : [],
+        requires: [],
       })) as unknown as ModuleSummary[],
       examples: [],
     } as unknown as Snapshot,
   });
   native.invoke.mockReset().mockImplementation(async (command: string, args: Record<string, unknown>) => {
-    if (command === "frame.states.get") return get(String(args.name));
-    // Un script : le cœur l’exécute (une requête au service) et alimente l’état lui-même (`functions::call_in`).
-    if (command === "functions.call") return feed(String(args.function), (args.input ?? {}) as Record<string, unknown>);
+    if (command === "frame.states.get") return get(args);
+    if (command === "frame.states.subscribe") {
+      const key = keyOf(args);
+      subscriptionSequence += 1;
+      // Premier abonné d’un état vide : le fournisseur le lit (dans le cœur, juste après).
+      if (!stored.has(key)) setTimeout(() => provide(key), 0);
+      return { id: `abo-${subscriptionSequence}`, key };
+    }
+    if (command === "frame.states.refresh") {
+      provide(keyOf(args));
+      return null;
+    }
     return null;
   });
 });
@@ -163,14 +147,14 @@ describe("états partagés", () => {
     const b = page();
     await handleFrameRequest(boite, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, a.push);
     await flush();
-    // La boîte était vide : la page qui s’ouvre la lit, une fois.
+    // La boîte était vide : le fournisseur la lit, une fois.
     expect(serverHits).toBe(1);
     await handleFrameRequest(tableau, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, b.push);
     await flush();
     expect(serverHits, "la seconde page reçoit la valeur courante, sans lecture").toBe(1);
     expect(b.last()).toMatchObject({ data: [{ id: "m1", sujet: "Bonjour", lu: false }], loading: false });
 
-    // Un mail arrive ; la page A relit la boîte.
+    // Un mail arrive ; la page A demande une relecture au fournisseur.
     service.boite.push({ id: "m2", sujet: "Facture", lu: false });
     await handleFrameRequest(boite, "states.refresh", { watch: "w1" });
     await flush();
@@ -180,6 +164,8 @@ describe("états partagés", () => {
       { id: "m1", sujet: "Bonjour", lu: false },
       { id: "m2", sujet: "Facture", lu: false },
     ]);
+    // La coquille n’a lancé aucune fonction elle-même.
+    expect(commands("functions.call")).toHaveLength(0);
   });
 
   it("un ticket présent dans deux listes de deux modules : on relit ce seul ticket, les deux pages suivent", async () => {
@@ -192,31 +178,40 @@ describe("états partagés", () => {
       { cle: "ALF-1", etat: "ouvert" },
       { cle: "ALF-2", etat: "ouvert" },
     ]);
-    const calls = functionCalls().length;
+    const before = serverHits;
 
     // ALF-1 est fermé chez le service ; une page relit ce seul ticket.
     (service.tickets["ALF-1"] as Ticket).etat = "fermé";
     await handleFrameRequest(sprint, "states.watch", { watch: "w2", name: "jira/ticket", key: "ALF-1" }, () => {});
+    await flush();
     await handleFrameRequest(sprint, "states.refresh", { watch: "w2" });
     await flush();
-    expect(functionCalls().length - calls, "une seule lecture : celle du ticket").toBe(1);
-    expect(functionCalls().at(-1)?.[1]).toMatchObject({ function: "jira/lire-ticket", input: { cle: "ALF-1" } });
+    expect(serverHits - before, "une seule lecture : celle du ticket").toBe(1);
     expect((listeA.last()?.data as Ticket[] | undefined)?.[0]?.etat).toBe("fermé");
     expect((listeB.last()?.data as Ticket[] | undefined)?.[0]?.etat).toBe("fermé");
   });
 
-  it("refuse un abonnement sans nom, et ferme ceux d’un cadre qui disparaît", async () => {
+  it("abonne chaque page au cœur, renouvelle tant qu’elle est ouverte et se désabonne quand elle se ferme", async () => {
     await expect(handleFrameRequest(boite, "states.watch", { watch: "w1" }, () => {})).rejects.toThrow(/nom d’état/);
-    const { releaseFrame } = await import("./frameBridge");
-    const a = page();
-    await handleFrameRequest(boite, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, a.push);
+    await handleFrameRequest(
+      boite,
+      "states.watch",
+      { watch: "w1", name: "jira/tickets-du-filtre", params: { jql: "assignee = moi" } },
+      () => {},
+    );
     await flush();
+    expect(commands("frame.states.subscribe").at(-1)?.[1]).toMatchObject({
+      name: "jira/tickets-du-filtre",
+      params: { jql: "assignee = moi" },
+    });
+    await stateHub.renew();
+    const renewed = commands("states.renew").at(-1)?.[1] as { ids: string[] } | undefined;
+    expect(renewed?.ids).toHaveLength(1);
+    const mine = renewed?.ids[0];
+    expect(mine).toMatch(/^abo-/);
     releaseFrame(boite);
-    const count = a.states.length;
-    service.boite = [];
-    await handleFrameRequest(tableau, "states.watch", { watch: "w9", name: "mail/boite-de-reception" }, () => {});
-    await handleFrameRequest(tableau, "states.refresh", { watch: "w9" });
     await flush();
-    expect(a.states).toHaveLength(count);
+    // Les abonnements des tests d’avant se retirent aussi, plus tard : seul compte celui de cette page.
+    expect(commands("states.unsubscribe").some(([, args]) => (args as { id: string }).id === mine)).toBe(true);
   });
 });

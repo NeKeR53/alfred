@@ -239,8 +239,11 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
     { "id": "ticket", "key": "cle", "version": 1, "description": "Un ticket Jira.", "schema": { "type": "object", "properties": { "cle": { "type": "string" }, "titre": { "type": "string" }, "etat": { "type": "string" } } } }
   ],
   "states": [
-    { "id": "mes-tickets", "entity": "ticket", "items": "issues", "description": "Les tickets qui me sont attribués." },
-    { "id": "ci", "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
+    { "id": "mes-tickets", "entity": "ticket", "items": "issues", "description": "Les tickets qui me sont attribués.",
+      "refresh": { "function": "rafraichir-mes-tickets", "every": 30, "incremental": true } },
+    { "id": "tickets-du-filtre", "entity": "ticket", "params": ["jql"], "description": "Les tickets d’un filtre JQL.",
+      "refresh": { "function": "rafraichir-filtre", "every": 60, "incremental": true } },
+    { "id": "ci", "params": ["job"], "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
   ]
 }
 ```
@@ -248,16 +251,28 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 - **Entité** (`entities`) : un type d’objet du service (ticket, mail, job CI), avec son champ identifiant (`key`, `id` par défaut), sa forme (`schema`) et la `version` du contrat (à monter quand la forme change de façon incompatible). Chaque objet est rangé **une seule fois**, sous sa clé d’entité (`jira/ticket` + `ALF-12`), dans la portée de son compte.
 - **État** (`states`) : une donnée nommée (`jira/mes-tickets`, `jenkins/ci`). Un état de liste (`entity`) garde seulement les identifiants ; la page reçoit la liste avec ses objets. `items` : le champ de la liste quand la fonction rend un objet (`{ "issues": [...] }`). Sans `entity`, l’état garde sa valeur telle quelle.
 - `client` (facultatif, sur une entité ou un état) : le besoin dont le compte entre dans la portée, quand le module en a plusieurs.
-- `refreshEvery` (facultatif, secondes, 5 au moins) : relecture périodique, **seulement si tu la veux** (l’état d’un CI en cours) ; une seule pour toutes les pages, tant qu’une page le montre.
+- `params` (facultatif) : les paramètres de l’état (`["jql"]`). Chaque jeu de valeurs est un état à part ; deux abonnés avec les mêmes paramètres (dans n’importe quel ordre) partagent le même état et un seul rafraîchissement.
+- `refresh` (facultatif) : la politique du **fournisseur**, voir plus bas.
 - Le nom et la forme d’un état ou d’une entité sont **un contrat entre modules** : ne les change pas sans monter la `version`.
 
 **L’alimentation : la sortie d’une lecture suffit.** Une fonction de lecture déclare (`declare_function`) ce qu’elle alimente :
 
 - `state: "mes-tickets"` : sa sortie devient la valeur de l’état ; pour une liste d’entités, chaque objet met à jour son entité ;
 - `entity: "ticket"` et `param: "cle"` : la lecture d’un seul objet (son identifiant dans l’entrée `cle`) met à jour l’entité, donc **chaque liste qui le montre**, quel que soit son module ;
-- `param` sur un état : le champ de l’entrée qui porte la sous-clé (`state: "ci"`, `param: "job"` donne `jenkins/ci` + `<job>`).
+- pour un état à paramètres, la fonction reçoit ces paramètres dans son entrée (`{ jql }`) : c’est eux qui choisissent l’état alimenté.
 
 Une écriture peut aussi déclarer `entity` : elle rend l’objet modifié, qui met à jour l’entité. Sinon, une écriture fait relire les états affichés de son module. Un script, une fonction ou une page du module déclarant peut aussi publier : `states.publish("ci", { etat: "vert" }, { key: job })` (Python : `alfred.states.publish(...)`).
+
+**Le fournisseur.** Le module qui déclare un état en est le fournisseur : c’est lui qui le tient à jour, avec le moins de requêtes. Il le dit par sa politique, `refresh` sur l’état :
+
+- `function` : la fonction de lecture du module qui rafraîchit l’état. Elle reçoit les paramètres de l’état et `instance` (le compte).
+- `every` : la période, en secondes (10 au moins). Choisis la plus longue qui suffit : 30 à 300 s pour un service, jamais moins sans raison.
+- `incremental: true` : la fonction reçoit aussi `current` (la valeur courante) et `since` (fin de la dernière lecture réussie, en ms, `null` la première fois). Elle ne demande que ce qui a changé depuis (`updated >= since` pour Jira) et rend les changements : une liste d’objets, ou `{ "changed": [...], "removed": ["ALF-1"] }`. Alfred les fusionne : un objet nouveau va en tête, un objet modifié est mis à jour partout, un identifiant retiré sort de la liste. La première lecture (`since` nul) rend toute la liste.
+- `mode` : `"subscribed"` (par défaut) tant qu’il y a un abonné ; `"always"` toujours, dès que le module est là (état sans paramètres seulement).
+
+Le rafraîchissement tourne **dans le cœur d’Alfred**, même sans page affichée, tant qu’Alfred est ouvert : **un seul par état et par jeu de paramètres**, quel que soit le nombre d’abonnés. Il s’arrête quand le dernier abonné part. Garde-fous : période minimale, quatre lectures à la fois au plus, un écart entre deux départs, un recul progressif après un échec (période × 2, × 4… jusqu’à 30 minutes). L’heure du dernier passage et son erreur arrivent aux abonnés avec la valeur (`status` de `useAlfredState`) ; Réglages → États montre ce qui tourne. Alfred fermé, rien ne tourne. Un état sans `refresh` est lu une fois au premier abonnement, puis il change seulement quand quelqu’un le lit. `check` refuse un état à rafraîchissement sans sa fonction de lecture, ou une période sous 10 s.
+
+**Les abonnés** : une page (`useAlfredState`), une fonction ou un script (`states.subscribe`), une automatisation déclenchée par un état. Ils ne joignent jamais le service eux-mêmes pour ces données.
 
 **L’abonnement.**
 
@@ -285,7 +300,8 @@ export default function MesTickets() {
 const nonLus = useAlfredState<Mail[], number>("mail/boite-de-reception", {
   select: (boite) => boite.filter((mail) => !mail.lu).length,
 });
-// Un état par sous-clé, et un objet seul :
+// Un état à paramètres, un état à un seul paramètre, et un objet seul :
+const filtre = useAlfredState<Ticket[]>("jira/tickets-du-filtre", { params: { jql } });
 const ci = useAlfredState("jenkins/ci", { key: job });
 const ticket = useAlfredState<Ticket>("jira/ticket", { key: "ALF-12" });
 ```
@@ -294,7 +310,8 @@ const ticket = useAlfredState<Ticket>("jira/ticket", { key: "ALF-12" });
 function useAlfredState<Value, Selected = Value>(
   name: string | null | undefined, // « etat » du module, « module/etat » d’une dépendance ; null : rien n’est suivi
   options?: {
-    key?: string | number;          // sous-clé de l’état, ou identifiant de l’entité
+    params?: Record<string, unknown>; // paramètres de l’état ; mêmes paramètres, même état
+    key?: string | number;          // identifiant de l’entité, ou valeur du seul paramètre de l’état
     instance?: string;              // compte ; omis : celui de la page pour ce besoin, sinon celui par défaut
     select?: (value: Value) => Selected; // partie montrée : redessin seulement si elle change (comparaison structurelle)
   },
@@ -304,23 +321,26 @@ function useAlfredState<Value, Selected = Value>(
   refreshing: boolean;         // une lecture est en cours
   error: Error | undefined;    // la dernière lecture a échoué (la valeur précédente reste)
   updatedAt: Date | undefined;
-  refresh: () => Promise<void>; // relit l’état chez le service : toutes les pages abonnées suivent
+  status: { lastRunAt?: Date; lastError?: string; nextAt?: Date; failures: number } | undefined; // dernier rafraîchissement
+  refresh: () => Promise<void>; // demande au fournisseur de relire maintenant : toutes les pages abonnées suivent
 };
-states.get(name, { key?, instance? }): Promise<{ value, empty, updatedAt }>;   // une fois, hors d’un composant
-states.publish(name, value, { key?, instance? }): Promise<{ changed: number }>; // module déclarant seulement
+states.get(name, { params?, key?, instance? }): Promise<{ value, empty, updatedAt, refresh }>; // une fois
+states.subscribe(name, { params?, key?, instance?, seconds? }): Promise<{ id, key }>; // fonction, script : pour un temps
+states.unsubscribe(id): Promise<{ removed }>;
+states.publish(name, value, { params?, key?, instance? }): Promise<{ changed: number }>; // module déclarant seulement
 ```
 
 Ce qu’Alfred fait :
 
 - La page reçoit la valeur courante tout de suite, puis chaque changement, d’où qu’il vienne : une autre page, une action, une automatisation, une autre fenêtre. Aucune requête ne part pour cela.
-- Un état encore vide est lu une fois, par la page qui s’ouvre (la fonction qui l’alimente), pour toutes les pages.
-- **Sans lecture, un état ne change pas.** Pas de revalidation en fond : il change quand quelqu’un le lit (`refresh`, une action, une automatisation, un webhook du service), ou par `refreshEvery` s’il le déclare.
+- Le fournisseur tient l’état à jour (sa politique), une seule fois pour tous les abonnés ; un état sans politique est lu une fois au premier abonnement.
+- **Sans lecture, un état ne change pas.** Sans politique de rafraîchissement, il change quand quelqu’un le lit (`refresh`, une action, une automatisation, un webhook du service). Les fenêtres ne relisent jamais elles-mêmes.
 - Comptes séparés, données d’exemple séparées. Un module voit les états de son module et de ses dépendances (`requires`) seulement ; seul le module déclarant les publie.
-- Une fonction (TypeScript, Python, bash, PowerShell) s’abonne par le bus d’événements : `events.subscribes` avec `"event": "jira/etat.mes-tickets"` (ou `"jira/entite.ticket"`) ; elle reçoit `{ state, key, instance, examples }` et lit la valeur avec `states.get`.
+- Une fonction (TypeScript, Python, bash, PowerShell) s’abonne par le bus d’événements : `events.subscribes` avec `"event": "jira/etat.mes-tickets"` (ou `"jira/entite.ticket"`) ; elle reçoit `{ state, params, instance, examples }` et lit la valeur avec `states.get`. Pour que le fournisseur rafraîchisse l’état pendant ce temps (sans page ouverte), elle s’y abonne : `states.subscribe("jira/tickets-du-filtre", { params: { jql }, seconds: 3600 })` (Python : `alfred.states.subscribe(...)`). Une automatisation peut aussi partir quand un état change : déclencheur `{ "kind": "state", "state": "jira/tickets-du-filtre", "params": { "jql": "…" } }` ; active, elle compte comme abonnée.
 
 Règles :
 
-- **Une seule fonction de lecture par donnée**, dans le module qui déclare le client ; les autres modules s’abonnent à son état par `requires`, sans écrire la leur.
+- **Un module de service est fournisseur** : il déclare ses états, leurs paramètres et une politique de rafraîchissement optimisée (incrémentale dès que le service sait filtrer par date de modification ; la période la plus longue qui suffit). Un module consommateur s’abonne seulement, par `requires` : il n’écrit pas sa propre lecture.
 - Une liste et le détail d’un objet partagent l’entité : déclare `entity` sur la lecture du détail, avec `param`.
 - `useAsync` reste pour ce qui n’est pas un service : `db.query`, `files`, `search`, `history`.
 - Ouvrir un canal (journal, console) est une action : la fonction est déclarée `effect: "write"`, et la page l’appelle avec `functions.call`.

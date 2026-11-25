@@ -7,7 +7,7 @@ Décidé le 2026-11-25, sans questions à Alexandre (délégation). Chaque déci
 Une automatisation exécute une **action** sans que l’utilisateur la lance lui-même. Elle a :
 
 - un **nom** et un identifiant (tiré du nom) ;
-- un **déclencheur** : planning cron, appel HTTP local, ou script ;
+- un **déclencheur** : planning cron, appel HTTP local, script, ou **un état qui change** (A-19) ;
 - une **action**, parmi trois :
   - **déterministe** : une ou plusieurs fonctions de n’importe quel module, dans l’ordre, chacune avec son entrée fixe, son compte (`input.instance`) et ses conditions ;
   - **script** : une fonction de module qui enchaîne les autres avec sa propre logique ;
@@ -167,6 +167,18 @@ Une action agentique vise soit **une nouvelle conversation à chaque passage** (
 - **Agent** : `create_automation` prend `action.conversation` ; l’agent ne vise une conversation existante que si l’utilisateur le demande.
 
 Raison : l’utilisateur peut vouloir suivre au même endroit le fil d’une tâche récurrente (un suivi quotidien, une conversation de veille), sans qu’une automatisation n’écrive jamais dans une conversation qu’il n’a pas choisie.
+
+### A-19. Déclencheur « un état change »
+
+Quatrième déclencheur : `{ "kind": "state", "state": "jira/tickets-du-filtre", "params": { "jql": "…" }, "instance": "acme" }` (`params` et `instance` facultatifs). Les états partagés sont décrits dans `docs/lectures-partagees.md`.
+
+- **Départ** : quand le cœur range une nouvelle valeur de cet état, avec les mêmes paramètres normalisés (ordre indifférent) et le même compte (tout compte si `instance` est omis), l’automatisation part avec `event` = `{ state, params, instance }`. Une valeur identique ne change rien, donc ne déclenche rien. Les données d’exemple ne déclenchent jamais.
+- **Abonnée** : active (validée et non en pause), elle compte comme abonnée de l’état. Le module fournisseur le rafraîchit donc selon sa politique, dans le cœur, même sans aucune page ouverte. En pause ou supprimée, elle ne l’est plus : si c’était le dernier abonné, le rafraîchissement s’arrête.
+- **Un passage à la fois** (A-8) : un changement qui arrive pendant un passage ne relance pas l’automatisation ; le changement suivant la relancera.
+- **Accord** : l’état, ses paramètres et le compte font partie de l’empreinte validée (ils sont dans le déclencheur). `check` refuse un état non déclaré, ou un paramètre que l’état n’a pas.
+- Rien ne tourne quand Alfred est fermé (A-9) : le fournisseur ne rafraîchit pas, et l’automatisation ne part pas.
+
+Raison : réagir à une donnée d’un service (un nouveau ticket dans un filtre, un CI qui passe au rouge) sans planning qui relit le service de son côté : la lecture est faite une fois, par le fournisseur, pour tous ses abonnés.
 
 ## Suites possibles (non faites)
 

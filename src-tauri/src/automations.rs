@@ -211,6 +211,15 @@ pub enum Trigger {
     Webhook,
     /// Un script ou une fonction de l’espace, par le SDK : `automations.trigger("<id>", event)`.
     Script,
+    /// Un état partagé change (`states.rs`) : « module/etat », avec ses paramètres et son compte. Active, elle compte
+    /// comme abonnée : le fournisseur rafraîchit l’état même sans page ouverte (`state_refresh.rs`).
+    State {
+        state: String,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        params: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instance: Option<String>,
+    },
 }
 
 impl Trigger {
@@ -775,6 +784,20 @@ fn check_input(input: &Value, step_index: usize, label: &str) -> AppResult<()> {
 
 /// Vérifie la définition contre l’espace ouvert.
 fn check(space: &Space, automation: &Automation) -> AppResult<()> {
+    if let Trigger::State { state, params, .. } = &automation.trigger {
+        let declared = state.split_once('/').and_then(|(module, id)| {
+            space.module(module).ok().and_then(|manifest| manifest.states.iter().find(|s| s.id == id).cloned())
+        });
+        let Some(declared) = declared else {
+            return Err(AppError::new(format!("État inconnu : « {state} ». Choisissez un état déclaré par un module (« module/etat »).")));
+        };
+        if !(params.is_null() || params.is_object()) {
+            return Err(AppError::new("Les paramètres de l’état sont un objet : { \"jql\": \"…\" }."));
+        }
+        if let Some(unknown) = params.as_object().and_then(|fields| fields.keys().find(|name| !declared.params.contains(name))) {
+            return Err(AppError::new(format!("L’état « {state} » n’a pas de paramètre « {unknown} ».")));
+        }
+    }
     if !valid_id(&automation.id) {
         return Err(AppError::new("Identifiant invalide : minuscules, chiffres et tirets uniquement."));
     }
@@ -846,6 +869,8 @@ pub enum Origin {
     Http,
     /// Le demandeur : `module/fonction` ou `module/page`.
     Script(String),
+    /// L’état partagé qui a changé : « module/etat ».
+    State(String),
     Manual,
 }
 
@@ -855,6 +880,7 @@ impl Origin {
             Self::Cron => "planning".into(),
             Self::Http => "appel HTTP".into(),
             Self::Script(by) => format!("script {by}"),
+            Self::State(name) => format!("état {name}"),
             Self::Manual => "exécution manuelle".into(),
         }
     }
@@ -1265,6 +1291,58 @@ pub fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
     launched
 }
 
+/// Automatisations actives déclenchées par un état : `(identifiant, { name, params, instance })`. Elles comptent comme
+/// abonnées de cet état (`state_refresh.rs`).
+pub fn state_watchers(state: &AppState) -> Vec<(String, Value)> {
+    let Some(space) = state.try_space() else { return Vec::new() };
+    let Ok(all) = lock_db(state).and_then(|db| load_all(&db, &space_key(&space))) else { return Vec::new() };
+    all.into_iter()
+        .filter(|automation| automation.is_active(&space))
+        .filter_map(|automation| match &automation.trigger {
+            Trigger::State { state, params, instance } => {
+                let mut args = json!({ "name": state, "params": if params.is_null() { json!({}) } else { params.clone() } });
+                if let Some(instance) = instance {
+                    args["instance"] = json!(instance);
+                }
+                Some((automation.id.clone(), args))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Un état a changé (`states::announce`) : chaque automatisation active déclenchée par cet état, avec les mêmes
+/// paramètres normalisés et le même compte, part avec `event` = `{ state, params, instance }`. Une automatisation déjà
+/// en cours ne part pas une seconde fois ; les données d’exemple ne déclenchent rien.
+pub fn state_changed(state: &Arc<AppState>, payload: &Value) {
+    if payload.get("examples").and_then(Value::as_bool) == Some(true) {
+        return;
+    }
+    let Some(name) = payload.get("state").and_then(Value::as_str) else { return };
+    let key = payload.get("key").and_then(Value::as_str).unwrap_or_default();
+    let instance = payload.get("instance").and_then(Value::as_str).unwrap_or_default();
+    let Some(space) = state.try_space() else { return };
+    let declared = name.split_once('/').and_then(|(module, id)| {
+        space.module(module).ok().and_then(|manifest| manifest.states.iter().find(|s| s.id == id).cloned())
+    });
+    let Some(declared) = declared else { return };
+    let space_id = space_key(&space);
+    let Ok(all) = lock_db(state).and_then(|db| load_all(&db, &space_id)) else { return };
+    for automation in all {
+        let Trigger::State { state: watched, params, instance: wanted } = &automation.trigger else { continue };
+        let same_params = crate::states::params_key(&declared, params) == key;
+        let same_account = wanted.as_deref().is_none_or(|wanted| wanted == instance);
+        if watched != name || !same_params || !same_account || !automation.is_active(&space) || is_running(&space_id, &automation.id) {
+            continue;
+        }
+        let event = json!({ "state": name, "params": payload.get("params").cloned().unwrap_or_else(|| json!({})), "instance": instance });
+        let (state, space_id, origin) = (state.clone(), space_id.clone(), Origin::State(name.to_string()));
+        tokio::spawn(async move {
+            let _ = run(&state, &space_id, &automation, origin, Some(event)).await;
+        });
+    }
+}
+
 /// Lance la boucle du planning ; appelée une fois au démarrage d’Alfred, dans le runtime tokio.
 pub fn start(state: Arc<AppState>) {
     // Un tour d’automatisation interrompu par la fermeture d’Alfred a pu laisser le périmètre A-15 sur une
@@ -1493,7 +1571,7 @@ fn from_args(args: &Value, previous: Option<&Automation>, created_by: &str, take
     };
     let trigger: Trigger = match args.get("trigger") {
         Some(value) if !value.is_null() => serde_json::from_value(value.clone()).map_err(|_| {
-            AppError::new("Déclencheur invalide : { \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }, { \"kind\": \"webhook\" } ou { \"kind\": \"script\" }.")
+            AppError::new("Déclencheur invalide : { \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }, { \"kind\": \"webhook\" }, { \"kind\": \"script\" } ou { \"kind\": \"state\", \"state\": \"module/etat\", \"params\": {} }.")
         })?,
         _ => previous.map(|previous| previous.trigger.clone()).ok_or_else(|| AppError::new("Déclencheur absent."))?,
     };

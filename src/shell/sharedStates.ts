@@ -1,24 +1,35 @@
 /**
  * Abonnements des pages aux états partagés (`useAlfredState`). Le cœur tient la seule source de vérité
- * (`src-tauri/src/states.rs`) : états nommés et entités normalisées, par compte et par mode exemple. Ce hub :
+ * (`src-tauri/src/states.rs`) et le fournisseur de chaque état le rafraîchit dans le cœur (`state_refresh.rs`).
+ * Ce hub ne relit jamais le service lui-même :
  *
- * - lit la valeur courante pour chaque abonnement et la pousse à la page tout de suite ;
- * - à chaque changement annoncé par le cœur (`states:changed`, avec les clés touchées), relit seulement les
- *   abonnements qui dépendent de ces clés (l’état, et les entités de sa liste) : une lecture locale, sans requête ;
- * - quand un état est vide (personne ne l’a encore lu), lance sa lecture une fois (la fonction qui l’alimente) ;
- * - `refresh()` relance cette lecture ; une écriture du module relance celles des états affichés ;
- * - une relecture périodique n’a lieu que si l’état la déclare (`refreshEvery`), une seule pour toutes les fenêtres
- *   (le cœur attribue la relecture à une seule coquille).
- *
- * Sans lecture, un état ne change pas : pas de revalidation en fond.
+ * - il abonne chaque page au cœur (`frame.states.subscribe`) et renouvelle ses abonnements tant qu’elle est ouverte ;
+ *   quand elle se ferme, il les retire : le dernier abonné parti, le fournisseur s’arrête ;
+ * - il lit la valeur courante et la pousse à la page tout de suite ;
+ * - à chaque changement annoncé par le cœur (`states:changed`, avec les clés touchées), il relit seulement les
+ *   abonnements qui dépendent de ces clés (l’état, les entités de sa liste) : une lecture locale, sans requête ;
+ * - `refresh()` demande au fournisseur de relire maintenant.
  */
 
-/** Ce qu’une page demande : un état ou une entité, sa sous-clé, son compte. */
+/** Ce qu’une page demande : un état (ou une entité), ses paramètres, son compte. */
 export interface StateRequest {
   /** `module/etat`, ou `etat` dans le module de la page. */
   name: string;
+  /** Paramètres de l’état (`{ jql }`) ; normalisés par le cœur. */
+  params?: Record<string, unknown>;
+  /** Identifiant d’une entité, ou valeur du seul paramètre d’un état. */
   key?: string;
   instance?: string;
+}
+
+/** Dernier rafraîchissement par le fournisseur. */
+export interface RefreshStatus {
+  running?: boolean;
+  lastRunAt?: number | null;
+  lastOkAt?: number | null;
+  lastError?: string | null;
+  failures?: number;
+  nextAt?: number | null;
 }
 
 /** Réponse du cœur (`frame.states.get`). */
@@ -27,7 +38,7 @@ export interface StateRead {
   empty: boolean;
   updatedAt?: number | null;
   deps: string[];
-  refreshEvery?: number | null;
+  refresh?: RefreshStatus | null;
   instance?: string;
 }
 
@@ -37,20 +48,21 @@ export interface StatePush {
   error: { message: string } | undefined;
   /** Aucune valeur encore : la première lecture est en cours. */
   loading: boolean;
-  /** Une lecture de l’état est en cours. */
+  /** Le fournisseur relit l’état en ce moment. */
   refreshing: boolean;
   updatedAt: number | undefined;
+  /** Dernier rafraîchissement : heure, erreur, prochain passage. */
+  status: RefreshStatus | undefined;
 }
 
 export interface HubServices<Owner> {
-  /** Lit l’état pour ce demandeur (accord, comptes et mode exemple vérifiés par le cœur). */
   get(owner: Owner, request: StateRequest): Promise<StateRead>;
-  /** Lance la lecture qui alimente l’état (la fonction qui le déclare). */
-  load(owner: Owner, request: StateRequest): Promise<void>;
-  /** Le cœur confie la relecture périodique de cette clé à cette coquille. */
-  lease?(key: string, seconds: number): Promise<boolean>;
-  /** Module qui déclare l’état (pour relire après une écriture). */
-  moduleOf(owner: Owner, request: StateRequest): string;
+  /** Abonne la page au cœur ; rend l’identifiant de l’abonnement. */
+  subscribe(owner: Owner, request: StateRequest): Promise<string>;
+  unsubscribe(id: string): Promise<unknown>;
+  renew(ids: string[]): Promise<unknown>;
+  /** Demande au fournisseur de relire l’état maintenant. */
+  refresh(owner: Owner, request: StateRequest): Promise<unknown>;
 }
 
 interface Watch<Owner> {
@@ -60,37 +72,26 @@ interface Watch<Owner> {
   push: (state: StatePush) => void;
   deps: Set<string>;
   last: StatePush;
-  /** Clé de l’état lui-même (première dépendance) : sert aux lectures et à la relecture périodique. */
-  stateKey: string | undefined;
-  refreshEvery: number | undefined;
+  subscription: Promise<string | undefined>;
 }
 
 export interface StateHub<Owner> {
   watch(owner: Owner, request: StateRequest, push: (state: StatePush) => void): string;
   unwatch(id: string): void;
-  /** Ferme les abonnements d’un cadre qui disparaît. */
   release(owner: Owner): void;
   refresh(id: string): Promise<void>;
-  /** Le cœur annonce des clés changées. */
   changed(keys: readonly string[]): void;
-  /** Une écriture du module : ses états affichés se relisent (une lecture par état). */
-  refreshModules(modules: readonly string[]): void;
-  /** Abonnements en cours (tests). */
+  /** Renouvelle les abonnements des pages ouvertes (appelé par un minuteur). */
+  renew(): Promise<void>;
   size(): number;
   clear(): void;
 }
 
-const MIN_REFRESH_S = 5;
-
-function stable(request: StateRequest): string {
-  return JSON.stringify([request.name, request.key ?? "", request.instance ?? ""]);
-}
+/** Renouvellement des abonnements : bien avant leur expiration dans le cœur (90 s). */
+export const RENEW_EVERY_MS = 30_000;
 
 export function createStateHub<Owner>(services: HubServices<Owner>): StateHub<Owner> {
   const watches = new Map<string, Watch<Owner>>();
-  /** Lectures en cours, par état visé (et par demandeur, pour ses comptes) : une seule à la fois. */
-  const loading = new Map<string, Promise<void>>();
-  const timers = new Map<string, { every: number; timer: ReturnType<typeof setInterval> }>();
   let sequence = 0;
 
   const send = (watch: Watch<Owner>, next: Partial<StatePush>) => {
@@ -98,76 +99,29 @@ export function createStateHub<Owner>(services: HubServices<Owner>): StateHub<Ow
     watch.push(watch.last);
   };
 
-  const loadKey = (watch: Watch<Owner>) => `${watch.stateKey ?? stable(watch.request)}`;
-
   const reread = async (watch: Watch<Owner>) => {
     try {
       const read = await services.get(watch.owner, watch.request);
-      if (!watches.has(watch.id)) return read;
+      if (!watches.has(watch.id)) return;
       watch.deps = new Set(read.deps);
-      watch.stateKey = read.deps[0];
-      watch.refreshEvery = read.refreshEvery ?? undefined;
-      schedule();
-      if (!read.empty || !loading.has(loadKey(watch)))
-        send(watch, {
-          data: read.empty ? undefined : read.value,
-          loading: read.empty && loading.has(loadKey(watch)),
-          updatedAt: read.updatedAt ?? undefined,
-          error: undefined,
-        });
-      return read;
+      const status = read.refresh ?? undefined;
+      send(watch, {
+        data: read.empty ? undefined : read.value,
+        // Vide et pas encore lu (premier abonnement, lecture à venir ou en cours) : chargement.
+        loading: read.empty && (status === undefined || status.running === true || !status.lastRunAt),
+        refreshing: status?.running === true,
+        updatedAt: read.updatedAt ?? undefined,
+        error: status?.lastError ? { message: status.lastError } : undefined,
+        status,
+      });
     } catch (error) {
       send(watch, { error: { message: error instanceof Error ? error.message : String(error) }, loading: false });
-      return undefined;
     }
   };
 
-  /** Lance la lecture qui alimente l’état, une seule par état visé ; son résultat arrive par `changed`. */
-  const load = (watch: Watch<Owner>): Promise<void> => {
-    const key = loadKey(watch);
-    const running = loading.get(key);
-    if (running) return running;
-    const peers = () => [...watches.values()].filter((candidate) => loadKey(candidate) === key);
-    for (const peer of peers()) send(peer, { refreshing: true, loading: peer.last.data === undefined });
-    const run = services.load(watch.owner, watch.request).then(
-      () => {
-        loading.delete(key);
-        for (const peer of peers()) send(peer, { refreshing: false, loading: false, error: undefined });
-        // Une lecture qui ne change rien n’annonce rien : la valeur affichée est déjà la bonne. Un état encore vide
-        // (la lecture n’a rien rangé) est relu pour sortir du chargement.
-        for (const peer of peers()) if (peer.last.data === undefined) void reread(peer);
-      },
-      (error: unknown) => {
-        loading.delete(key);
-        const message = error instanceof Error ? error.message : String(error);
-        for (const peer of peers()) send(peer, { refreshing: false, loading: false, error: { message } });
-      },
-    );
-    loading.set(key, run);
-    return run;
-  };
-
-  /** Relecture périodique déclarée par l’état : un minuteur par clé, tant qu’un abonnement la montre. */
-  const schedule = () => {
-    const wanted = new Map<string, { every: number; watch: Watch<Owner> }>();
-    for (const watch of watches.values())
-      if (watch.stateKey && watch.refreshEvery && watch.refreshEvery > 0)
-        wanted.set(watch.stateKey, { every: Math.max(MIN_REFRESH_S, watch.refreshEvery), watch });
-    for (const [key, timer] of timers)
-      if (wanted.get(key)?.every !== timer.every) {
-        clearInterval(timer.timer);
-        timers.delete(key);
-      }
-    for (const [key, { every }] of wanted) {
-      if (timers.has(key)) continue;
-      const timer = setInterval(async () => {
-        const watch = [...watches.values()].find((candidate) => candidate.stateKey === key);
-        if (!watch) return;
-        const granted = services.lease ? await services.lease(key, every).catch(() => false) : true;
-        if (granted) void load(watch).catch(() => undefined);
-      }, every * 1000);
-      timers.set(key, { every, timer });
-    }
+  const drop = (watch: Watch<Owner>) => {
+    watches.delete(watch.id);
+    void watch.subscription.then((id) => (id ? services.unsubscribe(id) : undefined)).catch(() => undefined);
   };
 
   return {
@@ -180,52 +134,52 @@ export function createStateHub<Owner>(services: HubServices<Owner>): StateHub<Ow
         request,
         push,
         deps: new Set(),
-        last: { data: undefined, error: undefined, loading: true, refreshing: false, updatedAt: undefined },
-        stateKey: undefined,
-        refreshEvery: undefined,
+        last: {
+          data: undefined,
+          error: undefined,
+          loading: true,
+          refreshing: false,
+          updatedAt: undefined,
+          status: undefined,
+        },
+        // L’abonnement au cœur : le fournisseur rafraîchit l’état tant qu’il a un abonné.
+        subscription: services.subscribe(owner, request).catch((error: unknown) => {
+          send(watch, { error: { message: error instanceof Error ? error.message : String(error) }, loading: false });
+          return undefined;
+        }),
       };
       watches.set(id, watch);
-      void reread(watch).then((read) => {
-        // Personne n’a encore lu cet état : cette page qui s’ouvre le lit, une fois pour toutes les pages.
-        if (read?.empty && watches.has(id)) void load(watch).catch(() => undefined);
-      });
+      void watch.subscription.then(() => reread(watch));
       return id;
     },
     unwatch(id) {
-      watches.delete(id);
-      schedule();
+      const watch = watches.get(id);
+      if (watch) drop(watch);
     },
     release(owner) {
-      for (const [id, watch] of watches) if (watch.owner === owner) watches.delete(id);
-      schedule();
+      for (const watch of [...watches.values()]) if (watch.owner === owner) drop(watch);
     },
-    refresh(id) {
+    async refresh(id) {
       const watch = watches.get(id);
-      return watch ? load(watch) : Promise.resolve();
+      if (!watch) return;
+      send(watch, { refreshing: true });
+      await services.refresh(watch.owner, watch.request).catch(() => undefined);
     },
     changed(keys) {
       const touched = new Set(keys);
-      for (const watch of watches.values())
-        if ([...watch.deps].some((dep) => touched.has(dep)) || watch.deps.size === 0) void reread(watch);
+      for (const watch of watches.values()) if ([...watch.deps].some((dep) => touched.has(dep))) void reread(watch);
     },
-    refreshModules(modules) {
-      const targets = new Set(modules);
-      const done = new Set<string>();
-      for (const watch of watches.values()) {
-        const key = loadKey(watch);
-        if (done.has(key) || !targets.has(services.moduleOf(watch.owner, watch.request))) continue;
-        done.add(key);
-        void load(watch).catch(() => undefined);
-      }
+    async renew() {
+      const ids = (await Promise.all([...watches.values()].map((watch) => watch.subscription))).filter(
+        (id): id is string => Boolean(id),
+      );
+      if (ids.length > 0) await services.renew(ids).catch(() => undefined);
     },
     size() {
       return watches.size;
     },
     clear() {
-      watches.clear();
-      loading.clear();
-      for (const timer of timers.values()) clearInterval(timer.timer);
-      timers.clear();
+      for (const watch of [...watches.values()]) drop(watch);
     },
   };
 }

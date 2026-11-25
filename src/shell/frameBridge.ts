@@ -283,7 +283,7 @@ export const frameServices: {
   callFunction?: (identity: FrameIdentity, reference: string, input: unknown) => Promise<unknown>;
   watchState?: (
     identity: FrameIdentity,
-    request: { name: string; key?: string; instance?: string },
+    request: { name: string; key?: string; params?: Record<string, unknown>; instance?: string },
     listener: (state: unknown) => void,
   ) => StateWatch;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
@@ -306,6 +306,13 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
   return () => {
     frames.delete(frame);
   };
+}
+
+/** Paramètres d’un état passés par le cadre : un objet, sinon rien. */
+function objectParams(value: unknown): { params?: Record<string, unknown> } {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? { params: value as Record<string, unknown> }
+    : {};
 }
 
 /** États suivis par chaque cadre (`useAlfredState`), par identifiant choisi par le cadre. */
@@ -578,8 +585,10 @@ export async function handleFrameRequest(
         typeof value === "string" || typeof value === "number" ? String(value) : undefined;
       held.set(
         watch,
-        frameServices.watchState(identity, { name, key: text(params.key), instance: text(params.instance) }, (state) =>
-          push("state", { watch, state }),
+        frameServices.watchState(
+          identity,
+          { name, key: text(params.key), instance: text(params.instance), ...objectParams(params.params) },
+          (state) => push("state", { watch, state }),
         ),
       );
       return null;
@@ -599,9 +608,24 @@ export async function handleFrameRequest(
     }
     // Le cœur vérifie que l’état est celui du module ou d’une dépendance, et le compte du demandeur.
     case "states.get":
-      return invoke("frame.states.get", { ...pick(params, ["name", "key", "instance"]), subject });
+      return invoke("frame.states.get", { ...pick(params, ["name", "key", "params", "instance"]), subject });
     case "states.publish":
-      return invoke("frame.states.publish", { ...pick(params, ["name", "key", "instance", "value"]), subject });
+      return invoke("frame.states.publish", {
+        ...pick(params, ["name", "key", "params", "instance", "value"]),
+        subject,
+      });
+    // Abonnement au cœur : le fournisseur tient l’état à jour tant qu’il a un abonné (une page : renouvelé par la
+    // coquille ; une fonction : pour `seconds` secondes).
+    case "states.subscribe":
+      return invoke("frame.states.subscribe", {
+        ...pick(params, ["name", "key", "params", "instance", "seconds"]),
+        subject,
+      });
+    case "states.unsubscribe":
+      return invoke("frame.states.unsubscribe", { ...pick(params, ["id"]) });
+    // « Actualiser » : le fournisseur relit l’état maintenant.
+    case "states.reload":
+      return invoke("frame.states.refresh", { ...pick(params, ["name", "key", "params", "instance"]), subject });
     case "ai.oneShot":
       if (!frameServices.oneShot) throw new AlfredError({ message: "L’IA n’est pas prête." });
       return frameServices.oneShot(identity, params);

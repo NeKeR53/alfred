@@ -589,7 +589,13 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "instance": { "type": ["string", "null"], "description": "Forme courte : compte du client que vise la fonction (`input.instance`)." },
                 "trigger": {
                     "type": "object",
-                    "properties": { "kind": { "enum": ["cron", "webhook", "script"] }, "cron": { "type": "string", "description": "Cinq champs : minute heure jour mois jour-de-semaine." } },
+                    "properties": {
+                        "kind": { "enum": ["cron", "webhook", "script", "state"] },
+                        "cron": { "type": "string", "description": "Cinq champs : minute heure jour mois jour-de-semaine." },
+                        "state": { "type": "string", "description": "`state` : « module/etat » d’un état partagé ; l’automatisation part quand il change, et compte comme abonnée (le fournisseur le rafraîchit sans page ouverte)." },
+                        "params": { "type": "object", "description": "`state` : paramètres de l’état ({ \"jql\": \"…\" })." },
+                        "instance": { "type": "string", "description": "`state` : compte suivi ; omis, tout compte." },
+                    },
                     "required": ["kind"],
                 },
             }),
