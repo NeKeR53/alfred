@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use super::event::{
     with_reason, ActionType, Activity, ActivityAction, ActivityKind, ActivityStatus, ApprovalOption, ApprovalRequest,
-    plan_from_todos, HarnessEvent, OptionKind, SessionStatus,
+    now_ms, plan_from_todos, AgentTask, HarnessEvent, OptionKind, SessionStatus, TaskKind, TaskStatus,
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, write_prompt, Autonomy, InputFile, Launch, Sink};
@@ -249,6 +249,75 @@ struct State {
     approvals: HashMap<String, Pending>,
     /// Motif d’un message d’erreur synthétique du CLI (non connecté, quota).
     cli_error: Option<String>,
+    /// Tâches de l’agent en cours (`task_started`), par identifiant de tâche du CLI.
+    tasks: HashMap<String, AgentTask>,
+    /// Requêtes de contrôle d’Alfred (`stop_task`) qui attendent leur réponse.
+    controls: HashMap<String, tokio::sync::oneshot::Sender<Result<(), String>>>,
+}
+
+/// État d’une tâche lu dans Claude Code : `completed`, `failed`, `stopped` (ou `killed` dans un `task_updated`).
+fn task_status(status: &str) -> Option<TaskStatus> {
+    match status {
+        "running" | "pending" => Some(TaskStatus::Running),
+        "completed" => Some(TaskStatus::Completed),
+        "failed" => Some(TaskStatus::Failed),
+        "stopped" | "killed" => Some(TaskStatus::Stopped),
+        _ => None,
+    }
+}
+
+/// Suit les tâches de Claude Code 2.1 (`system` : `task_started`, `task_updated`, `task_notification`) et rend la tâche
+/// changée. Une commande lancée avec `run_in_background`, un sous-agent (`Agent`) et toute commande Bash sont des
+/// tâches ; celles d’un sous-agent (`parent_task_id`) restent avec lui et ne sont pas suivies. Format relevé le
+/// 2026-11-25 avec `claude` 2.1.323 (`tests_reel::claude_taches_de_fond`).
+pub(super) fn track_task(tasks: &mut HashMap<String, AgentTask>, message: &Value) -> Option<AgentTask> {
+    let id = message["task_id"].as_str()?;
+    match message["subtype"].as_str()? {
+        "task_started" => {
+            if message["parent_task_id"].is_string() || message["owned_by_subagent"] == true {
+                return None;
+            }
+            let kind = if message["task_type"] == "local_agent" { TaskKind::Agent } else { TaskKind::Command };
+            let title = message["description"].as_str().map(str::trim).filter(|text| !text.is_empty()).unwrap_or("Tâche");
+            let task = AgentTask {
+                task_id: id.to_owned(),
+                kind,
+                title: title.to_owned(),
+                background: message["is_backgrounded"] == true,
+                status: TaskStatus::Running,
+                started_at: now_ms(),
+                ended_at: None,
+                stoppable: true,
+            };
+            tasks.insert(id.to_owned(), task.clone());
+            Some(task)
+        }
+        "task_updated" => {
+            let patch = &message["patch"];
+            let task = tasks.get_mut(id)?;
+            let before = task.clone();
+            if let Some(background) = patch["is_backgrounded"].as_bool() {
+                task.background = background;
+            }
+            if let Some(status) = patch["status"].as_str().and_then(task_status).filter(|status| status.finished()) {
+                task.finish(status, patch["end_time"].as_u64());
+            }
+            let task = task.clone();
+            if task.status.finished() {
+                tasks.remove(id);
+            }
+            (task != before).then_some(task)
+        }
+        "task_notification" => {
+            let mut task = tasks.remove(id)?;
+            let status = message["status"].as_str().and_then(task_status).unwrap_or(TaskStatus::Completed);
+            if !task.status.finished() {
+                task.finish(if status.finished() { status } else { TaskStatus::Completed }, None);
+            }
+            Some(task)
+        }
+        _ => None,
+    }
 }
 
 /// Décision de Rust sur une demande d’autorisation, avant toute carte.
@@ -313,6 +382,25 @@ impl Inner {
             return;
         };
         match message["type"].as_str() {
+            Some("system") if message["task_id"].is_string() => {
+                let task = self.state.lock().ok().and_then(|mut state| track_task(&mut state.tasks, &message));
+                if let Some(task) = task {
+                    self.emit(HarnessEvent::Task(task));
+                }
+            }
+            Some("control_response") => {
+                let response = &message["response"];
+                let Some(id) = response["request_id"].as_str() else { return };
+                let waiting = self.state.lock().ok().and_then(|mut state| state.controls.remove(id));
+                if let Some(waiting) = waiting {
+                    let outcome = if response["subtype"] == "success" {
+                        Ok(())
+                    } else {
+                        Err(response["error"].as_str().unwrap_or("refus du CLI").to_owned())
+                    };
+                    let _ = waiting.send(outcome);
+                }
+            }
             Some("system") => {
                 let id = message["session_id"].as_str();
                 if message["subtype"] == "init" {
@@ -545,7 +633,14 @@ impl Inner {
                 return;
             }
             state.closed = true;
-            Self::settle(&mut state)
+            let mut out = Self::settle(&mut state);
+            // Les tâches de fond meurent avec le CLI.
+            out.extend(state.tasks.drain().map(|(_, mut task)| {
+                task.finish(TaskStatus::Stopped, None);
+                HarnessEvent::Task(task)
+            }));
+            state.controls.clear();
+            out
         };
         for event in out {
             self.emit(event);
@@ -715,6 +810,51 @@ impl Claude {
         self.process.write(&json!({ "type": "control_request", "request_id": format!("alfred-{sequence}"), "request": { "subtype": "interrupt" } }))
     }
 
+    /// Arrête une seule tâche de l’agent (commande de fond, sous-agent) par la requête de contrôle `stop_task` de
+    /// Claude Code, celle de son bouton d’arrêt : le CLI tue la tâche, puis annonce sa fin (`task_notification`,
+    /// `stopped`) et la signale à l’agent. Essai réel : `tests_reel::claude_taches_de_fond`.
+    pub async fn stop_task(&self, task_id: &str) -> AppResult<()> {
+        let (request_id, receiver) = {
+            let mut state = self.inner.state.lock().map_err(|_| unavailable())?;
+            if state.closed {
+                return Err(AppError::new("La conversation Claude Code est fermée."));
+            }
+            if !state.tasks.contains_key(task_id) {
+                return Err(AppError::new("Cette tâche est déjà terminée."));
+            }
+            state.sequence += 1;
+            let request_id = format!("alfred-stop-{}", state.sequence);
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            state.controls.insert(request_id.clone(), sender);
+            (request_id, receiver)
+        };
+        let written = self.inner.write(&json!({
+            "type": "control_request",
+            "request_id": request_id,
+            "request": { "subtype": "stop_task", "task_id": task_id },
+        }));
+        if let Err(error) = written {
+            if let Ok(mut state) = self.inner.state.lock() {
+                state.controls.remove(&request_id);
+            }
+            return Err(error);
+        }
+        match tokio::time::timeout(std::time::Duration::from_secs(10), receiver).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(reason))) => Err(AppError::new(with_reason(
+                "Claude Code n’a pas arrêté la tâche",
+                Some(&super::event::redacted(&reason)),
+            ))),
+            Ok(Err(_)) => Err(AppError::new("Claude Code s’est arrêté.")),
+            Err(_) => {
+                if let Ok(mut state) = self.inner.state.lock() {
+                    state.controls.remove(&request_id);
+                }
+                Err(AppError::new("Claude Code n’a pas répondu à la demande d’arrêt."))
+            }
+        }
+    }
+
     pub fn close(&self) {
         let first = self.inner.state.lock().is_ok_and(|mut state| !std::mem::replace(&mut state.closed, true));
         self.process.terminate();
@@ -840,5 +980,36 @@ mod tests {
         assert_eq!(card.title, "Exécuter une commande");
         assert_eq!(card.detail.as_deref(), Some("rm -rf build"));
         assert_eq!(card.options.len(), 2);
+    }
+
+    /// Lignes relevées avec `claude` 2.1.323 le 2026-11-25 (commande de fond, sous-agent et sa commande).
+    #[test]
+    fn background_tasks_are_followed_until_they_end() {
+        let mut tasks = HashMap::new();
+        let started = json!({ "type": "system", "subtype": "task_started", "task_id": "bau40v0zv", "tool_use_id": "toolu_1",
+            "description": "Sleep 40 seconds then echo fini", "is_backgrounded": true, "task_type": "local_bash" });
+        let task = track_task(&mut tasks, &started).unwrap();
+        assert_eq!((task.kind, task.background, task.status, task.stoppable), (TaskKind::Command, true, TaskStatus::Running, true));
+        assert_eq!(task.title, "Sleep 40 seconds then echo fini");
+        let agent = json!({ "type": "system", "subtype": "task_started", "task_id": "a9c5", "description": "Sleep 20 then reply ok",
+            "subagent_type": "general-purpose", "is_backgrounded": true, "spawn_depth": 1, "task_type": "local_agent" });
+        assert_eq!(track_task(&mut tasks, &agent).unwrap().kind, TaskKind::Agent);
+        // La commande du sous-agent reste avec lui.
+        let nested = json!({ "type": "system", "subtype": "task_started", "task_id": "bd42", "owned_by_subagent": true,
+            "description": "Wait 20 seconds", "is_backgrounded": false, "parent_task_id": "a9c5", "task_type": "local_bash" });
+        assert_eq!(track_task(&mut tasks, &nested), None);
+        assert_eq!(track_task(&mut tasks, &json!({ "subtype": "task_notification", "task_id": "bd42", "status": "completed" })), None);
+        let updated = json!({ "subtype": "task_updated", "task_id": "a9c5", "patch": { "status": "completed", "end_time": 1795596763579u64 } });
+        let done = track_task(&mut tasks, &updated).unwrap();
+        assert_eq!((done.status, done.ended_at), (TaskStatus::Completed, Some(1795596763579)));
+        // La notification qui suit ne répète pas une fin déjà annoncée.
+        assert_eq!(track_task(&mut tasks, &json!({ "subtype": "task_notification", "task_id": "a9c5", "status": "completed" })), None);
+        let stopped = track_task(&mut tasks, &json!({ "subtype": "task_notification", "task_id": "bau40v0zv", "status": "stopped" })).unwrap();
+        assert_eq!(stopped.status, TaskStatus::Stopped);
+        assert!(tasks.is_empty());
+        let foreground = json!({ "subtype": "task_started", "task_id": "f1", "description": "Build", "is_backgrounded": false, "task_type": "local_bash" });
+        assert!(!track_task(&mut tasks, &foreground).unwrap().background);
+        let moved = track_task(&mut tasks, &json!({ "subtype": "task_updated", "task_id": "f1", "patch": { "is_backgrounded": true } })).unwrap();
+        assert!(moved.background && moved.status == TaskStatus::Running);
     }
 }

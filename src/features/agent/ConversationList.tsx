@@ -7,6 +7,7 @@ import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
 import { InfoPanelRows } from "./panel/InfoPanel";
 import { planSection } from "./panel/PlanSteps";
+import { tasksSection, useTaskClock } from "./panel/TasksSection";
 import { useAgents } from "./store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
 
@@ -247,6 +248,9 @@ export function ConversationList({
 }) {
   const open = useAgents((state) => state.open);
   const runtime = useAgents((state) => state.runtime);
+  const stopTask = useAgents((state) => state.stopTask);
+  const activeTasks = Object.values((active && runtime[active.id]?.tasks) ?? {});
+  const taskClock = useTaskClock(activeTasks);
   const now = Date.now();
   const states = new Map(
     conversations.map((header) => [header.id, rowState(conversationState(header, runtime[header.id]))]),
@@ -293,9 +297,11 @@ export function ConversationList({
     },
   ];
   const plan = planSection(active?.plan);
+  const tasks = active ? tasksSection(activeTasks, taskClock, (taskId) => stopTask(active.id, taskId)) : undefined;
   const detailSections: DetailSection[] = active
     ? [
         ...(plan ? [plan] : []),
+        ...(tasks ? [tasks] : []),
         {
           id: "conversation-changes",
           title: "Modifications",

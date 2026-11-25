@@ -172,6 +172,10 @@ export async function createSession(options: NativeSessionOptions): Promise<Harn
         }
       : {}),
     answer: (approvalId, optionId) => invoke<void>("agents.answer", { handle, approvalId, optionId }),
+    // Seul Claude Code arrête une tâche seule (requête de contrôle `stop_task`).
+    ...(options.provider === "claude"
+      ? { stopTask: (taskId: string) => invoke<void>("agents.stopTask", { handle, taskId }) }
+      : {}),
     cancel: () => invoke<void>("agents.cancel", { handle }),
     close,
   };

@@ -22,7 +22,7 @@ use tokio::sync::oneshot;
 use super::content::{content_files, is_document, pretty, readable};
 use super::event::{
     with_reason, ActionType, Activity, ActivityAction, ActivityKind, ActivityStatus, ApprovalOption, ApprovalRequest,
-    HarnessEvent, OptionKind, PlanStatus, PlanStep, SessionStatus,
+    now_ms, AgentTask, HarnessEvent, OptionKind, PlanStatus, PlanStep, SessionStatus, TaskKind, TaskStatus,
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, Autonomy, InputFile, Launch, Model, Sink, StartOptions};
@@ -228,6 +228,84 @@ pub(super) fn activity_from_item(item: &g::ThreadItem, completed: bool) -> Optio
     })
 }
 
+/// État d’une tâche de Codex : statut d’une commande ou d’un sous-agent (`CollabAgentStatus`).
+fn task_status(status: &str) -> TaskStatus {
+    match status {
+        "completed" => TaskStatus::Completed,
+        "failed" | "declined" | "errored" | "notFound" => TaskStatus::Failed,
+        "interrupted" | "shutdown" => TaskStatus::Stopped,
+        _ => TaskStatus::Running,
+    }
+}
+
+/// Tâches de Codex 0.169 lues dans les éléments du fil : chaque commande en cours (`commandExecution`, qui bloque la
+/// réponse), et chaque sous-agent lancé par `spawnAgent`, en arrière-plan jusqu’à ce qu’un appel suivant (`wait`,
+/// `closeAgent`…) rapporte sa fin dans `agentsStates`. `codex app-server` n’offre ni liste des terminaux de fond ni
+/// arrêt d’une tâche seule : aucune n’est `stoppable`.
+pub(super) fn track_tasks(tasks: &mut HashMap<String, AgentTask>, item: &g::ThreadItem, completed: bool) -> Vec<AgentTask> {
+    use g::ThreadItem as T;
+    let mut changed = Vec::new();
+    match item {
+        T::CommandExecutionThreadItem { id, command, status, started_at_ms, completed_at_ms, .. } => {
+            let status = if completed && task_status(&status_text(status)) == TaskStatus::Running {
+                TaskStatus::Completed
+            } else {
+                task_status(&status_text(status))
+            };
+            let task = tasks.entry(id.clone()).or_insert_with(|| AgentTask {
+                task_id: id.clone(),
+                kind: TaskKind::Command,
+                title: command.lines().next().unwrap_or(command).trim().to_owned(),
+                background: false,
+                status: TaskStatus::Running,
+                started_at: started_at_ms.map(|at| at as u64).unwrap_or_else(now_ms),
+                ended_at: None,
+                stoppable: false,
+            });
+            if status.finished() {
+                task.finish(status, completed_at_ms.map(|at| at as u64));
+            }
+            changed.push(task.clone());
+        }
+        T::CollabAgentToolCallThreadItem { tool, prompt, receiver_thread_ids, agents_states, started_at_ms, .. } => {
+            if completed && status_text(tool) == "spawnAgent" {
+                let title = prompt.as_deref().and_then(|prompt| prompt.lines().next()).map(str::trim).filter(|line| !line.is_empty());
+                for thread in receiver_thread_ids {
+                    if tasks.contains_key(thread) {
+                        continue;
+                    }
+                    let task = AgentTask {
+                        task_id: thread.clone(),
+                        kind: TaskKind::Agent,
+                        title: title.unwrap_or("Sous-agent").to_owned(),
+                        background: true,
+                        status: TaskStatus::Running,
+                        started_at: started_at_ms.map(|at| at as u64).unwrap_or_else(now_ms),
+                        ended_at: None,
+                        stoppable: false,
+                    };
+                    tasks.insert(thread.clone(), task.clone());
+                    changed.push(task);
+                }
+            }
+            // État des sous-agents rapporté par cet appel ; seule une fin compte (un lancement est déjà « en cours »).
+            for (thread, state) in agents_states {
+                let status = task_status(&status_text(&state.status));
+                let Some(task) = tasks.get_mut(thread).filter(|task| task.kind == TaskKind::Agent) else { continue };
+                if status.finished() {
+                    task.finish(status, None);
+                    let task = task.clone();
+                    changed.retain(|known| known.task_id != task.task_id);
+                    changed.push(task);
+                }
+            }
+        }
+        _ => {}
+    }
+    tasks.retain(|_, task| !task.status.finished());
+    changed
+}
+
 type Pending = Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>;
 
 /// Liaison JSON-RPC avec un `codex app-server`.
@@ -360,6 +438,8 @@ struct State {
     approvals: HashMap<String, Value>,
     last_error: Option<String>,
     closed: bool,
+    /// Commandes et sous-agents en cours (`track_tasks`).
+    tasks: HashMap<String, AgentTask>,
 }
 
 struct Inner {
@@ -431,6 +511,10 @@ impl Inner {
                     read::<g::ItemStartedNotification>(params).map(|notification| notification.item)
                 };
                 let Some(item) = item else { return };
+                let tasks = self.state.lock().map(|mut state| track_tasks(&mut state.tasks, &item, completed)).unwrap_or_default();
+                for task in tasks {
+                    self.emit(HarnessEvent::Task(task));
+                }
                 if let Some(activity) = activity_from_item(&item, completed) {
                     self.emit(HarnessEvent::Activity(activity));
                 }
@@ -476,6 +560,7 @@ impl Inner {
 
     /// Fin d’un tour ; `failure` porte le motif d’un échec (vide s’il n’est pas connu).
     fn finish_turn(&self, rpc: &Rpc, turn: Option<&str>, failure: Option<String>) {
+        let mut stopped = Vec::new();
         let last_error = {
             let Ok(mut state) = self.state.lock() else { return };
             if let Some(turn) = turn {
@@ -484,8 +569,20 @@ impl Inner {
                 }
             }
             state.turn_id = None;
+            // Une commande sans fin annoncée ne survit pas au tour ; un sous-agent, si.
+            let ended: Vec<String> =
+                state.tasks.iter().filter(|(_, task)| !task.background).map(|(id, _)| id.clone()).collect();
+            for id in ended {
+                if let Some(mut task) = state.tasks.remove(&id) {
+                    task.finish(TaskStatus::Stopped, None);
+                    stopped.push(task);
+                }
+            }
             state.last_error.take()
         };
+        for task in stopped {
+            self.emit(HarnessEvent::Task(task));
+        }
         self.close_approvals(rpc, None);
         if let Some(reason) = failure {
             let reason = Some(reason).filter(|reason| !reason.is_empty()).or(last_error);
@@ -550,16 +647,23 @@ impl Inner {
     }
 
     fn handle_exit(&self, reason: Option<String>) {
+        let stopped: Vec<AgentTask>;
         let approvals: Vec<String> = {
             let Ok(mut state) = self.state.lock() else { return };
             if state.closed {
                 return;
             }
             state.closed = true;
+            stopped = state.tasks.drain().map(|(_, task)| task).collect();
             state.approvals.drain().map(|(id, _)| id).collect()
         };
         for id in approvals {
             self.emit(HarnessEvent::ApprovalClosed { id });
+        }
+        // Les commandes et sous-agents meurent avec le CLI.
+        for mut task in stopped {
+            task.finish(TaskStatus::Stopped, None);
+            self.emit(HarnessEvent::Task(task));
         }
         self.emit(HarnessEvent::error(format!(
             "Codex s’est arrêté{}. Envoyer un message relance la conversation.",
@@ -938,5 +1042,29 @@ mod tests {
         let activity = activity_from_item(&command, false).unwrap();
         assert_eq!(activity.status, ActivityStatus::Running);
         assert_eq!(activity.actions.unwrap()[0].path.as_deref(), Some("/projet/a.txt"));
+    }
+
+    #[test]
+    fn commands_and_spawned_agents_become_tasks() {
+        let mut tasks = HashMap::new();
+        let item = |value: Value| serde_json::from_value::<g::ThreadItem>(value).unwrap();
+        let running = item(json!({ "type": "commandExecution", "id": "c1", "command": "npm run dev\n", "cwd": "/projet",
+            "status": "inProgress", "source": "agent", "commandActions": [] }));
+        let task = track_tasks(&mut tasks, &running, false).pop().unwrap();
+        assert_eq!((task.kind, task.title.as_str(), task.background, task.stoppable), (TaskKind::Command, "npm run dev", false, false));
+        let failed = item(json!({ "type": "commandExecution", "id": "c1", "command": "npm run dev", "cwd": "/projet",
+            "status": "failed", "exitCode": 1, "source": "agent", "commandActions": [] }));
+        assert_eq!(track_tasks(&mut tasks, &failed, true)[0].status, TaskStatus::Failed);
+        assert!(tasks.is_empty());
+
+        let spawn = item(json!({ "type": "collabAgentToolCall", "id": "s1", "tool": "spawnAgent", "status": "completed",
+            "prompt": "Relis le module\npuis réponds", "senderThreadId": "t0", "receiverThreadIds": ["t1"],
+            "agentsStates": { "t1": { "status": "pendingInit" } } }));
+        let agent = track_tasks(&mut tasks, &spawn, true).pop().unwrap();
+        assert_eq!((agent.kind, agent.title.as_str(), agent.background, agent.status), (TaskKind::Agent, "Relis le module", true, TaskStatus::Running));
+        let wait = item(json!({ "type": "collabAgentToolCall", "id": "w1", "tool": "wait", "status": "completed",
+            "senderThreadId": "t0", "receiverThreadIds": ["t1"], "agentsStates": { "t1": { "status": "completed", "message": "ok" } } }));
+        assert_eq!(track_tasks(&mut tasks, &wait, true)[0].status, TaskStatus::Completed);
+        assert!(tasks.is_empty());
     }
 }

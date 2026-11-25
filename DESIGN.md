@@ -292,7 +292,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou 
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.18.1
+### Catalogue de socle-ui 1.19.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -303,6 +303,7 @@ Tous les composants, motifs et gabarits de la version installée, avec leur rôl
 | `Alert` | Composant | `Alert` est un encart de message dans le contenu, au-dessus de ce qu'il concerne : un stock bas sur une fiche, une synchronisation impossible au-dessus d'une liste, une adresse vérifiée sous un formulaire. Il dit aussi un état durable de la page ou de l'app (lecture seule, hors ligne, données d'exemple), en tête du contenu : la barre du haut n'en affiche plus (D-253). | `docs/alfred/socle/specs/Alert.md` |
 | `AttachmentChip` | Composant | Pièce jointe d'un message, avant l'envoi : une image, un fichier, ou un long texte collé. On la voit, on l'ouvre (texte), on la retire. | `docs/alfred/socle/specs/AttachmentChip.md` |
 | `Avatar` | Composant | Représenter une personne (ou un compte) par son image ou ses initiales, à côté de son nom. | `docs/alfred/socle/specs/Avatar.md` |
+| `BackgroundTasks` | Composant | Tâches qui durent, lancées par un agent ou par l'app : une commande en arrière-plan (un serveur), un sous-agent, un script long. On voit ce qui tourne, depuis quand, et on l'arrête ; puis combien de tâches sont finies, et combien ont échoué (D-401). | `docs/alfred/socle/specs/BackgroundTasks.md` |
 | `Badge` | Composant | Montrer l'état d'un élément : « Terminé », « En retard », « À venir ». `Badge` montre un point et un libellé ; `BadgeDot` montre le point seul, nommé, quand le libellé ne tient pas. | `docs/alfred/socle/specs/Badge.md` |
 | `Button` | Composant | Bouton avec un libellé, et une icône facultative. Il déclenche une action : envoyer un formulaire, confirmer, annuler, réessayer, exporter. | `docs/alfred/socle/specs/Button.md` |
 | `Card` | Composant | `Card` regroupe un contenu court qui forme un tout : un résumé, un chiffre clé, un élément d'une grille. Elle peut être entièrement cliquable quand elle a une seule action principale. | `docs/alfred/socle/specs/Card.md` |

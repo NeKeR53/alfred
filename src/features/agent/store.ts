@@ -13,6 +13,7 @@ import { useShell } from "../../shell/store";
 import { bindMainWindowClose } from "../../shell/windowClose";
 import { useVoice } from "../voice/store";
 import {
+  type AgentTask,
   type ApprovalRequest,
   type Autonomy,
   CODEX_FILE_TOOLS,
@@ -62,6 +63,18 @@ export interface AgentDefaults {
 
 const DEFAULTS: AgentDefaults = { provider: "claude", autonomy: "ask", models: {} };
 const idleRuntime: ConversationRuntime = { status: "idle", approvals: [], questions: [], queued: [] };
+
+/** Tâches gardées par conversation : au-delà, les plus anciennes tâches finies sont oubliées. */
+export const MAX_KEPT_TASKS = 500;
+
+/** Tâches de la session, bornées : toutes celles en cours, puis les plus récentes des finies. */
+function keepTasks(tasks: Record<string, AgentTask>): Record<string, AgentTask> {
+  const all = Object.values(tasks);
+  if (all.length <= MAX_KEPT_TASKS) return tasks;
+  const finished = all.filter((task) => task.status !== "running").sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  const kept = [...all.filter((task) => task.status === "running"), ...finished].slice(0, MAX_KEPT_TASKS);
+  return Object.fromEntries(kept.map((task) => [task.taskId, task]));
+}
 
 export interface NewConversation {
   /** Identifiant choisi d’avance : la fenêtre Agent détachée crée la conversation chez elle et dans la principale. */
@@ -159,6 +172,8 @@ interface AgentState {
   /** Retire un message de la file et le rend, pour le remettre dans la saisie. */
   unqueue: (id: string, queuedId: string) => UserMessage | undefined;
   cancel: (id: string) => Promise<void>;
+  /** Arrête une seule tâche de l’agent (commande de fond, sous-agent) ; rejette si le harnais ne sait pas le faire. */
+  stopTask: (id: string, taskId: string) => Promise<void>;
   answerApproval: (id: string, approvalId: string, optionId: string) => Promise<void>;
   answerQuestion: (id: string, requestId: string, result: unknown, error?: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -559,6 +574,25 @@ export const useAgents = create<AgentState>((set, get) => {
     }
   };
 
+  /**
+   * La session se ferme : ses tâches meurent avec le CLI, et ses derniers événements seront ignorés. Celles qui
+   * tournaient sont « arrêtées » tout de suite.
+   */
+  const settleTasks = (id: string) => {
+    const tasks = get().runtime[id]?.tasks;
+    if (!tasks || !Object.values(tasks).some((task) => task.status === "running")) return;
+    const endedAt = Date.now();
+    patchRuntime(id, (runtime) => ({
+      ...runtime,
+      tasks: Object.fromEntries(
+        Object.entries(runtime.tasks ?? {}).map(([key, task]) => [
+          key,
+          task.status === "running" ? { ...task, status: "stopped" as const, endedAt } : task,
+        ]),
+      ),
+    }));
+  };
+
   /** Sessions en cours de fermeture : la suivante de la même conversation attend que le CLI soit arrêté. */
   const closings = new Map<string, Promise<void>>();
 
@@ -568,6 +602,7 @@ export const useAgents = create<AgentState>((set, get) => {
    * CLI encore occupé (OpenCode) refuser le message suivant.
    */
   const stopSession = (id: string) => {
+    settleTasks(id);
     const live = sessions.get(id);
     sessions.delete(id);
     resuming.delete(id);
@@ -585,6 +620,7 @@ export const useAgents = create<AgentState>((set, get) => {
 
   /** Ferme la session d’une conversation : ses derniers événements sont ignorés, le prochain message en rouvre une. */
   const dropSession = async (id: string) => {
+    settleTasks(id);
     const live = sessions.get(id);
     sessions.delete(id);
     resuming.delete(id);
@@ -704,6 +740,7 @@ export const useAgents = create<AgentState>((set, get) => {
           const turn = current(id)?.turns.at(-1);
           void finishTurn(id, turn?.error ? "error" : "done");
         } else if (event.status === "closed") {
+          settleTasks(id);
           sessions.delete(id);
           void finishTurn(id, "error");
           patchRuntime(id, (runtime) => ({ ...runtime, status: "idle" }));
@@ -767,6 +804,11 @@ export const useAgents = create<AgentState>((set, get) => {
       case "plan":
         patchConversation(id, (conversation) => ({ ...conversation, plan: event.steps }), { stream: true });
         return;
+      case "task": {
+        const { type: _type, ...task } = event;
+        patchRuntime(id, (runtime) => ({ ...runtime, tasks: keepTasks({ ...runtime.tasks, [task.taskId]: task }) }));
+        return;
+      }
       case "approval": {
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));
         const title = current(id)?.title ?? "Alfred";
@@ -1415,6 +1457,12 @@ export const useAgents = create<AgentState>((set, get) => {
       const running = current(id)?.turns.at(-1)?.status === "running";
       stopSession(id);
       if (running) await finishTurn(id, "cancelled");
+    },
+
+    async stopTask(id, taskId) {
+      const session = sessions.get(id)?.session;
+      if (!session?.stopTask) throw new Error("Cet agent ne sait pas arrêter une tâche seule. Interrompez sa réponse.");
+      await session.stopTask(taskId);
     },
 
     async answerApproval(id, approvalId, optionId) {

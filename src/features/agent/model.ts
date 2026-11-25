@@ -5,6 +5,7 @@ import type {
   ActivityAction,
   ActivityKind,
   ActivityStatus,
+  AgentTask,
   ApprovalRequest,
   Autonomy,
   PlanStep,
@@ -148,6 +149,8 @@ export interface ConversationRuntime {
   questions: AgentQuestion[];
   /** Messages écrits pendant une réponse : envoyés l’un après l’autre dès que l’agent a fini. Non enregistrés. */
   queued: QueuedMessage[];
+  /** Tâches de l’agent de la session (commandes de fond, sous-agents), en cours et finies. Non enregistrées. */
+  tasks?: Record<string, AgentTask>;
 }
 
 export interface QueuedMessage {

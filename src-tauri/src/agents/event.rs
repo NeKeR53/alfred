@@ -210,6 +210,60 @@ pub fn plan_from_todos(input: &Value) -> Option<Vec<PlanStep>> {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskKind {
+    Command,
+    Agent,
+}
+
+/// État d’une tâche de l’agent ; `stopped` : arrêtée par l’utilisateur, l’agent ou la fin du CLI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskStatus {
+    Running,
+    Completed,
+    Failed,
+    Stopped,
+}
+
+impl TaskStatus {
+    pub fn finished(self) -> bool {
+        self != Self::Running
+    }
+}
+
+/// Tâche de l’agent qui dure : commande lancée en arrière-plan, sous-agent, commande en cours.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTask {
+    pub task_id: String,
+    pub kind: TaskKind,
+    pub title: String,
+    /// Vrai si l’agent ne l’attend pas pour poursuivre (arrière-plan) ; faux pour une commande qui bloque la réponse.
+    pub background: bool,
+    pub status: TaskStatus,
+    /// Début et fin, en millisecondes depuis l’époque Unix.
+    pub started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<u64>,
+    /// Vrai si Alfred sait arrêter cette tâche seule (`agents.stopTask`).
+    pub stoppable: bool,
+}
+
+/// Heure courante en millisecondes depuis l’époque Unix.
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_millis() as u64).unwrap_or(0)
+}
+
+impl AgentTask {
+    /// Fin de la tâche, datée maintenant si le harnais ne dit pas quand.
+    pub fn finish(&mut self, status: TaskStatus, ended_at: Option<u64>) {
+        self.status = status;
+        self.ended_at = Some(ended_at.unwrap_or_else(now_ms));
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HarnessEvent {
@@ -249,6 +303,9 @@ pub enum HarnessEvent {
     Plan {
         steps: Vec<PlanStep>,
     },
+    /// Tâche lancée par l’agent hors de sa réponse (commande de fond, sous-agent) ou commande longue : son état entier
+    /// à chaque changement.
+    Task(AgentTask),
     /// Résultat structuré d’un appel unique (réponse contrainte par un schéma).
     Structured {
         value: Value,

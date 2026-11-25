@@ -23,7 +23,7 @@ vi.mock("./harness", async (importOriginal) => ({
 /** Session de harnais simulée : le test émet les événements que l’adaptateur produirait. */
 interface FakeSession {
   options: SessionOptions;
-  session: Record<"send" | "steer" | "answer" | "cancel" | "close", Mock>;
+  session: Record<"send" | "steer" | "answer" | "stopTask" | "cancel" | "close", Mock>;
   emit: (event: HarnessEvent) => void;
 }
 
@@ -51,6 +51,7 @@ beforeEach(() => {
         send: vi.fn(async () => undefined),
         steer: vi.fn(async () => undefined),
         answer: vi.fn(async () => undefined),
+        stopTask: vi.fn(async () => undefined),
         cancel: vi.fn(async () => undefined),
         // Comme les vrais adaptateurs : fermer la session annonce « closed ».
         close: vi.fn(async () => options.onEvent({ type: "status", status: "closed" })),
@@ -707,6 +708,48 @@ describe("lot 3 · enregistrement et chargement", () => {
       { text: "Lire le guide", status: "completed" },
       { text: "Créer la page", status: "inProgress" },
     ]);
+  });
+
+  it("suit les tâches de l’agent hors du relevé, les arrête une par une, et les dit arrêtées à la fermeture", async () => {
+    const id = start({ provider: "claude" });
+    await useAgents.getState().send(id, message("Lance le serveur"));
+    const live = sessions[0]!;
+    const server = {
+      taskId: "b1",
+      kind: "command" as const,
+      title: "npm run dev",
+      background: true,
+      status: "running" as const,
+      startedAt: 1_000,
+      stoppable: true,
+    };
+    live.emit({ type: "status", status: "responding" });
+    live.emit({ type: "task", ...server });
+    live.emit({ type: "task", ...server, taskId: "a1", kind: "agent", title: "Relire" });
+    live.emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("done"));
+    // Une tâche de fond survit au tour ; elle n’est pas une ligne du relevé.
+    expect(Object.keys(runtime(id)?.tasks ?? {})).toEqual(["b1", "a1"]);
+    expect(lastTurn(id).items).toEqual([]);
+    live.emit({
+      type: "task",
+      ...server,
+      taskId: "a1",
+      kind: "agent",
+      title: "Relire",
+      status: "completed",
+      endedAt: 2_000,
+    });
+    expect(runtime(id)?.tasks?.a1?.status).toBe("completed");
+
+    await useAgents.getState().stopTask(id, "b1");
+    expect(live.session.stopTask).toHaveBeenCalledWith("b1");
+
+    // Le CLI fermé (interruption, erreur), ses tâches meurent avec lui.
+    await useAgents.getState().cancel(id);
+    expect(runtime(id)?.tasks?.b1).toMatchObject({ status: "stopped", endedAt: expect.any(Number) });
+    expect(runtime(id)?.tasks?.a1?.status).toBe("completed");
+    await expect(useAgents.getState().stopTask(id, "b1")).rejects.toThrow("arrêter une tâche seule");
   });
 
   it("oublie un plan enregistré illisible sans refuser la conversation", async () => {

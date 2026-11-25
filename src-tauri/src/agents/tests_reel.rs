@@ -176,6 +176,45 @@ async fn plan(provider: &str) {
     run.close().await;
 }
 
+/// Tâches de fond (Claude Code 2.1) : une commande lancée avec `run_in_background` et un sous-agent de fond arrivent
+/// en événements `task` « en cours », sans attendre la fin du tour ; Alfred arrête la commande seule
+/// (`agents.stopTask`, requête `stop_task`), elle finit « arrêtée » et le sous-agent finit de son côté.
+async fn background_tasks(provider: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut extra = model(provider);
+    extra["autonomy"] = json!("auto");
+    let mut run = start(provider, dir.path().to_str().unwrap(), extra).await;
+    run.send(
+        "Lance en arrière-plan (Bash avec run_in_background) la commande `sleep 120; echo fini`. Lance aussi un \
+         sous-agent en arrière-plan (outil Agent avec run_in_background) qui exécute `sleep 5` puis répond « ok ». \
+         N’attends ni l’un ni l’autre : réponds seulement « lancé ».",
+    )
+    .await;
+    let first = run.until(idle).await;
+    let tasks: Vec<&Value> = first.iter().filter(|event| event["type"] == "task").collect();
+    let command = tasks
+        .iter()
+        .find(|task| task["kind"] == "command" && task["background"] == true)
+        .unwrap_or_else(|| panic!("{provider} : pas de commande de fond : {first:?}"));
+    assert_eq!(command["status"], "running");
+    assert_eq!(command["stoppable"], true);
+    assert!(command["startedAt"].as_u64().unwrap() > 0);
+    assert!(tasks.iter().any(|task| task["kind"] == "agent"), "{provider} : pas de sous-agent : {first:?}");
+    let id = command["taskId"].as_str().unwrap().to_owned();
+    session::handle(&run.state, "agents.stopTask", &json!({ "handle": run.handle, "taskId": id }))
+        .await
+        .unwrap()
+        .unwrap_or_else(|error| panic!("{provider} : arrêt refusé : {error}"));
+    let stopped = run.until(|event| event["type"] == "task" && event["taskId"] == id.as_str() && event["status"] != "running").await;
+    let last = stopped.last().unwrap();
+    assert_eq!(last["status"], "stopped", "{provider} : {last}");
+    assert!(last["endedAt"].as_u64().is_some());
+    // Une tâche finie ne s’arrête plus.
+    let again = session::handle(&run.state, "agents.stopTask", &json!({ "handle": run.handle, "taskId": id })).await.unwrap();
+    assert!(again.is_err());
+    run.close().await;
+}
+
 macro_rules! reel {
     ($name:ident, $provider:literal, $scenario:ident) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -189,6 +228,7 @@ macro_rules! reel {
 reel!(claude_conversation, "claude", conversation);
 reel!(claude_message_pendant_le_travail, "claude", steering);
 reel!(claude_plan, "claude", plan);
+reel!(claude_taches_de_fond, "claude", background_tasks);
 reel!(codex_conversation, "codex", conversation);
 reel!(opencode_conversation, "opencode", conversation);
 reel!(claude_espace_de_travail, "claude", workspace);

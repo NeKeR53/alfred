@@ -61,7 +61,25 @@ export type HarnessEvent =
   | { type: "session"; sessionId: string }
   | { type: "error"; message: string }
   /** Plan de l’agent, en entier à chaque mise à jour (`TodoWrite`, `update_plan`, `todowrite`) : il remplace le précédent. */
-  | { type: "plan"; steps: PlanStep[] };
+  | { type: "plan"; steps: PlanStep[] }
+  /** Tâche de l’agent qui dure (commande de fond, sous-agent, commande en cours) : son état entier à chaque changement. */
+  | ({ type: "task" } & AgentTask);
+
+/**
+ * Tâche de l’agent, suivie par Rust : commande lancée en arrière-plan, sous-agent, ou commande qui bloque la réponse
+ * (`background` faux). `stoppable` : Alfred sait l’arrêter seule (Claude Code, requête `stop_task`).
+ */
+export interface AgentTask {
+  taskId: string;
+  kind: "command" | "agent";
+  title: string;
+  background: boolean;
+  status: "running" | "completed" | "failed" | "stopped";
+  /** Début et fin, en millisecondes depuis l’époque Unix. */
+  startedAt: number;
+  endedAt?: number;
+  stoppable: boolean;
+}
 
 /** Étape du plan de l’agent. */
 export interface PlanStep {
@@ -92,6 +110,8 @@ export interface HarnessSession {
   steer?(message: string, files?: readonly InputFile[], clientId?: string): Promise<void>;
   /** Répond à une demande d’accord. */
   answer(approvalId: string, optionId: string): Promise<void>;
+  /** Arrête une seule tâche de l’agent (`AgentTask.stoppable`), quand le harnais le permet. */
+  stopTask?(taskId: string): Promise<void>;
   cancel(): Promise<void>;
   close(): Promise<void>;
 }

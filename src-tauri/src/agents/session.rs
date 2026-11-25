@@ -1,7 +1,7 @@
 //! Sessions d’agent pilotées depuis Rust. L’interface n’a que des commandes fermées :
 //!
 //! - `agents.start` (harnais, dossier, modèle, autonomie, consignes, reprise) ouvre une session et rend sa poignée ;
-//! - `agents.send`, `agents.steer`, `agents.answer`, `agents.cancel`, `agents.close` agissent sur cette poignée ;
+//! - `agents.send`, `agents.steer`, `agents.answer`, `agents.cancel`, `agents.stopTask`, `agents.close` agissent sur cette poignée ;
 //! - les événements normalisés (`HarnessEvent`) arrivent par le `Channel` de la session.
 //!
 //! L’interface ne choisit ni le programme, ni ses arguments, ni son environnement ; elle n’écrit jamais sur l’entrée
@@ -352,6 +352,19 @@ async fn cancel(args: &Value) -> AppResult<Value> {
     Ok(Value::Null)
 }
 
+/// Arrête une seule tâche de l’agent (commande de fond, sous-agent). Seul Claude Code le permet (`stop_task`) ; Codex
+/// n’offre aucun arrêt par tâche à un client de `codex app-server`, OpenCode n’annonce pas de tâches.
+async fn stop_task(args: &Value) -> AppResult<Value> {
+    let handle: String = arg(args, "handle")?;
+    let task: String = arg(args, "taskId")?;
+    super::simple_value("tâche", &task)?;
+    match &entry(&handle)?.driver {
+        Driver::Claude(claude) => claude.stop_task(&task).await,
+        _ => Err(AppError::new("Cet agent ne sait pas arrêter une tâche seule. Interrompez sa réponse.")),
+    }?;
+    Ok(Value::Null)
+}
+
 /// Ferme la session et arrête son CLI ; une poignée inconnue est déjà fermée.
 async fn close(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let handle: String = arg(args, "handle")?;
@@ -407,6 +420,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
         "agents.steer" => send(args, true).await,
         "agents.answer" => answer(args).await,
         "agents.cancel" => cancel(args).await,
+        "agents.stopTask" => stop_task(args).await,
         "agents.close" => close(state, args).await,
         "agents.models" => models(args).await,
         _ => return None,

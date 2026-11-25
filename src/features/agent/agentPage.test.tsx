@@ -5,6 +5,7 @@ import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { AgentPage, ConversationTracking } from "./AgentPage";
 import { compareConversations, type GitSummary, STATE_TONE } from "./ConversationList";
+import type { AgentTask } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
 import { AgentPageWithTracking, findConversationTitle, render } from "./socle.test-helper";
@@ -220,6 +221,66 @@ describe("page Agent", () => {
     );
     await waitFor(() => expect(section).toHaveTextContent("3 sur 3"));
     expect(within(section).queryByRole("img", { name: "En cours" })).toBeNull();
+  });
+
+  it("montre les tâches de fond de la conversation, leur durée, un arrêt par tâche et le compte des finies", async () => {
+    const now = Date.now();
+    const task = (taskId: string, patch: Partial<AgentTask>): AgentTask => ({
+      taskId,
+      kind: "command",
+      title: taskId,
+      background: true,
+      status: "running",
+      startedAt: now - 61_000,
+      stoppable: true,
+      ...patch,
+    });
+    const tasks = Object.fromEntries(
+      [
+        task("npm run dev", {}),
+        task("Relire le module", { kind: "agent", background: false, startedAt: now - 2_000 }),
+        // Une commande courte qui bloque la réponse n’est pas une tâche.
+        task("ls", { background: false, startedAt: now - 1_000 }),
+        task("cargo build", { background: false, startedAt: now - 40_000, status: "failed", endedAt: now - 1_000 }),
+        task("echo", { status: "completed", endedAt: now - 500, stoppable: false }),
+        task("codex", { stoppable: false, title: "sleep 60" }),
+      ].map((item) => [item.taskId, item]),
+    );
+    const stopTask = vi.fn(async () => undefined);
+    useAgents.setState({ stopTask });
+    render(
+      <>
+        <AgentPage />
+        <aside aria-label="Détail">
+          <ConversationTracking withList={false} />
+        </aside>
+      </>,
+    );
+    await findConversationTitle("Factures");
+    act(() =>
+      useAgents.setState((state) => ({
+        runtime: {
+          ...state.runtime,
+          c1: { ...(state.runtime.c1 ?? { status: "idle", approvals: [], questions: [], queued: [] }), tasks },
+        },
+      })),
+    );
+    const section = await within(screen.getByLabelText("Détail")).findByRole("region", {
+      name: "Tâches en arrière-plan",
+    });
+    expect(section).toHaveTextContent("3 en cours");
+    const rows = within(within(section).getByRole("list")).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent?.replace(/\d+ s$/, ""))).toEqual([
+      "npm run dev1 min ",
+      "sleep 601 min ",
+      "Relire le module",
+    ]);
+    // Sans arrêt possible (Codex), pas de bouton.
+    expect(within(section).queryByRole("button", { name: "Arrêter sleep 60" })).toBeNull();
+    fireEvent.click(within(section).getByRole("button", { name: "Arrêter npm run dev" }));
+    expect(stopTask).toHaveBeenCalledWith("c1", "npm run dev");
+    expect(section).toHaveTextContent("2 terminées");
+    expect(within(section).getByText("1 en échec")).toBeInTheDocument();
   });
 
   it("sans plan, le panneau de détail n’a pas de section Plan", async () => {
