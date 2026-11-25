@@ -1,11 +1,13 @@
-//! Automatisations : l’utilisateur fait exécuter une fonction d’un module sans la lancer lui-même. Un déclencheur
-//! (un planning cron, un appel HTTP local, un script), une fonction cible, son entrée (et le compte d’un client), et
-//! l’historique de chaque passage au Journal. Les choix sont expliqués dans `docs/automatisations.md`.
+//! Automatisations : l’utilisateur fait exécuter une action sans la lancer lui-même. Un déclencheur (un planning
+//! cron, un appel HTTP local, un script) lance une action : des fonctions dans l’ordre (étapes déterministes, avec
+//! des conditions simples), un script (une fonction de module qui enchaîne les autres), ou une conversation avec
+//! l’agent. L’historique de chaque passage, et de chaque étape, va au Journal. Les choix sont expliqués dans
+//! `docs/automatisations.md`.
 //!
 //! Une automatisation appartient au poste : elle est rangée dans la base d’Alfred, jamais dans le dossier de
 //! l’espace, qui est versionné et que l’agent écrit. Elle ne tourne que si l’utilisateur l’a validée dans son état
-//! actuel (empreinte de la fonction, de l’entrée, du compte et du déclencheur) et activée. L’agent peut en créer :
-//! elles naissent « à valider », en pause. Rien ne tourne quand Alfred est fermé.
+//! actuel (empreinte de l’action, du code d’un script et du déclencheur) et activée. L’agent peut en créer : elles
+//! naissent « à valider », en pause. Rien ne tourne quand Alfred est fermé.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,6 +23,7 @@ use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use crate::error::{arg, opt_arg, AppError, AppResult};
 use crate::permissions::Subject;
@@ -219,16 +222,96 @@ impl Trigger {
     }
 }
 
+/// Que faire quand une étape échoue.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OnError {
+    /// Le passage s’arrête en échec (par défaut).
+    #[default]
+    Stop,
+    /// L’étape suivante part ; `$prev` vaut `{ "error": "<message>" }`.
+    Continue,
+}
+
+/// Une étape d’une action déterministe : une fonction, son entrée (où `$prev`, `$event` et `$steps.N` sont
+/// remplacés), et deux conditions facultatives à une seule comparaison.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step {
+    /// `module/fonction`.
+    pub function: String,
+    #[serde(default = "empty_object")]
+    pub input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    /// L’étape ne part que si la condition est vraie ; sinon elle est passée.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    /// Après l’étape, le passage s’arrête (en réussite) si la condition est vraie.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_if: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_on_error")]
+    pub on_error: OnError,
+}
+
+fn empty_object() -> Value {
+    json!({})
+}
+
+fn is_default_on_error(value: &OnError) -> bool {
+    *value == OnError::Stop
+}
+
+fn default_minutes() -> u32 {
+    15
+}
+
+/// Durée maximale d’un passage agentique, en minutes.
+pub const MAX_AGENT_MINUTES: u32 = 120;
+/// Nombre maximal d’étapes.
+pub const MAX_STEPS: usize = 20;
+
+/// Ce que fait l’automatisation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Action {
+    /// Déterministe : des fonctions, dans l’ordre.
+    Steps { steps: Vec<Step> },
+    /// Un script : une fonction de module (TypeScript, Python, bash, PowerShell) qui enchaîne les autres par le
+    /// SDK. Son code fait partie de ce que l’utilisateur valide.
+    Script {
+        function: String,
+        #[serde(default = "empty_object")]
+        input: Value,
+    },
+    /// Agentique : une conversation avec l’agent d’Alfred, avec une consigne fixe et les données du déclencheur.
+    #[serde(rename_all = "camelCase")]
+    Agent {
+        instruction: String,
+        #[serde(default = "default_minutes")]
+        max_minutes: u32,
+    },
+}
+
+impl Action {
+    /// Ce qu’on montre dans une ligne : la fonction, le script ou l’agent.
+    fn label(&self) -> String {
+        match self {
+            Self::Steps { steps } if steps.len() == 1 => steps[0].function.clone(),
+            Self::Steps { steps } => {
+                format!("{} étapes : {}", steps.len(), steps.iter().map(|s| s.function.as_str()).collect::<Vec<_>>().join(" → "))
+            }
+            Self::Script { function, .. } => format!("script {function}"),
+            Self::Agent { .. } => "agent".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Automation {
     pub id: String,
     pub name: String,
-    /// `module/fonction`.
-    pub function: String,
-    /// Objet JSON passé à la fonction.
-    pub input: Value,
-    /// Compte d’un client que la fonction reçoit dans `input.instance`.
-    pub instance: Option<String>,
+    pub action: Action,
     pub trigger: Trigger,
     pub enabled: bool,
     /// Empreinte validée par l’utilisateur ; absente : « à valider ».
@@ -241,27 +324,58 @@ pub struct Automation {
     last_status: Option<String>,
     last_error: Option<String>,
     last_trigger: Option<String>,
+    last_conversation: Option<String>,
+}
+
+/// Empreinte du code d’un script : son fichier et sa déclaration. Toute modification remet l’automatisation à
+/// valider.
+fn code_hash(space: &Space, reference: &str) -> String {
+    let Some((module, function)) = reference.split_once('/') else { return "absent".into() };
+    let declaration = space
+        .module(module)
+        .ok()
+        .and_then(|manifest| manifest.functions.into_iter().find(|declared| declared.id == function));
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_string(&declaration).unwrap_or_default());
+    match std::fs::read(space.function_file(module, function)) {
+        Ok(bytes) => hasher.update(&bytes),
+        Err(_) => hasher.update(b"absent"),
+    }
+    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 impl Automation {
-    /// Ce que l’utilisateur valide : ce qui est exécuté, avec quoi, et quand. Le nom n’en fait pas partie.
-    fn fingerprint(&self) -> String {
-        json!({
-            "function": self.function,
-            "input": self.input,
-            "instance": self.instance,
-            "trigger": self.trigger,
-        })
-        .to_string()
+    /// Ce que l’utilisateur valide : l’action (et le code d’un script) et le déclencheur. Le nom n’en fait pas
+    /// partie.
+    fn fingerprint(&self, space: &Space) -> String {
+        // Une fonction seule, sans condition : la forme des premières automatisations, validations comprises.
+        if let Action::Steps { steps } = &self.action {
+            if let [step] = steps.as_slice() {
+                if step.when.is_none() && step.stop_if.is_none() && step.on_error == OnError::Stop {
+                    return json!({
+                        "function": step.function,
+                        "input": step.input,
+                        "instance": step.instance,
+                        "trigger": self.trigger,
+                    })
+                    .to_string();
+                }
+            }
+        }
+        let mut print = json!({ "action": self.action, "trigger": self.trigger });
+        if let Action::Script { function, .. } = &self.action {
+            print["code"] = json!(code_hash(space, function));
+        }
+        print.to_string()
     }
 
-    fn is_validated(&self) -> bool {
-        self.validated.as_deref() == Some(self.fingerprint().as_str())
+    fn is_validated(&self, space: &Space) -> bool {
+        self.validated.as_deref() == Some(self.fingerprint(space).as_str())
     }
 
     /// Peut-elle partir d’elle-même ? Validée dans son état actuel et active.
-    fn is_active(&self) -> bool {
-        self.enabled && self.is_validated()
+    fn is_active(&self, space: &Space) -> bool {
+        self.enabled && self.is_validated(space)
     }
 }
 
@@ -281,20 +395,41 @@ fn lock_db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>>
             PRIMARY KEY (space, id))",
         [],
     )?;
+    // Colonnes ajoutées avec les actions : une table d’avant les reçoit.
+    for column in ["action", "last_conversation"] {
+        let present: i64 = db.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('automations') WHERE name = ?1",
+            params![column],
+            |row| row.get(0),
+        )?;
+        if present == 0 {
+            db.execute(&format!("ALTER TABLE automations ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
     Ok(db)
 }
 
-const COLUMNS: &str = "id, name, function, input, instance, trigger, enabled, validated, created_by, created_at, secret, last_run_at, last_status, last_error, last_trigger";
+const COLUMNS: &str = "id, name, function, input, instance, trigger, enabled, validated, created_by, created_at, secret, last_run_at, last_status, last_error, last_trigger, action, last_conversation";
 
 fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
     let input: String = row.get(3)?;
     let trigger: String = row.get(5)?;
+    let action: Option<String> = row.get(15)?;
+    // Une automatisation d’avant les actions : sa fonction seule, en une étape.
+    let action = action.and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_else(|| Action::Steps {
+        steps: vec![Step {
+            function: row.get(2).unwrap_or_default(),
+            input: serde_json::from_str(&input).unwrap_or_else(|_| json!({})),
+            instance: row.get(4).unwrap_or_default(),
+            when: None,
+            stop_if: None,
+            on_error: OnError::Stop,
+        }],
+    });
     Ok(Automation {
         id: row.get(0)?,
         name: row.get(1)?,
-        function: row.get(2)?,
-        input: serde_json::from_str(&input).unwrap_or_else(|_| json!({})),
-        instance: row.get(4)?,
+        action,
         // Un déclencheur illisible ne part jamais : il devient un appel par script, sans planning ni adresse.
         trigger: serde_json::from_str(&trigger).unwrap_or(Trigger::Script),
         enabled: row.get::<_, i64>(6)? != 0,
@@ -306,6 +441,7 @@ fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
         last_status: row.get(12)?,
         last_error: row.get(13)?,
         last_trigger: row.get(14)?,
+        last_conversation: row.get(16)?,
     })
 }
 
@@ -327,18 +463,16 @@ fn existing(db: &Connection, space: &str, id: &str) -> AppResult<Automation> {
 
 fn store(db: &Connection, space: &str, automation: &Automation) -> AppResult<()> {
     db.execute(
-        "INSERT INTO automations (space, id, name, function, input, instance, trigger, enabled, validated, created_by, created_at, updated_at, secret)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-         ON CONFLICT (space, id) DO UPDATE SET name = excluded.name, function = excluded.function, input = excluded.input,
-           instance = excluded.instance, trigger = excluded.trigger, enabled = excluded.enabled,
-           validated = excluded.validated, updated_at = excluded.updated_at, secret = excluded.secret",
+        "INSERT INTO automations (space, id, name, function, input, instance, trigger, enabled, validated, created_by, created_at, updated_at, secret, action)
+         VALUES (?1, ?2, ?3, ?4, '{}', NULL, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT (space, id) DO UPDATE SET name = excluded.name, function = excluded.function, input = '{}',
+           instance = NULL, trigger = excluded.trigger, enabled = excluded.enabled, validated = excluded.validated,
+           updated_at = excluded.updated_at, secret = excluded.secret, action = excluded.action",
         params![
             space,
             automation.id,
             automation.name,
-            automation.function,
-            automation.input.to_string(),
-            automation.instance,
+            automation.action.label(),
             serde_json::to_string(&automation.trigger)?,
             i64::from(automation.enabled),
             automation.validated,
@@ -346,6 +480,7 @@ fn store(db: &Connection, space: &str, automation: &Automation) -> AppResult<()>
             automation.created_at,
             crate::app_db::now(),
             automation.secret,
+            serde_json::to_string(&automation.action)?,
         ],
     )?;
     Ok(())
@@ -399,28 +534,207 @@ fn slug(name: &str) -> String {
     }
 }
 
-/// Vérifie la définition contre l’espace ouvert : la fonction doit être déclarée par son module.
-fn check(space: &Space, automation: &Automation) -> AppResult<()> {
-    if !valid_id(&automation.id) {
-        return Err(AppError::new("Identifiant invalide : minuscules, chiffres et tirets uniquement."));
-    }
-    if automation.name.trim().is_empty() {
-        return Err(AppError::new("Donnez un nom à l’automatisation."));
-    }
-    function_problem(space, &automation.function).map_or(Ok(()), |problem| Err(AppError::new(problem)))?;
-    let Some(input) = automation.input.as_object() else {
-        return Err(AppError::new("L’entrée doit être un objet JSON, par exemple {} ou { \"projet\": \"ACME\" }."));
-    };
-    if input.contains_key(EVENT_KEY) {
-        return Err(AppError::new(format!(
-            "La clé « {EVENT_KEY} » de l’entrée est réservée : elle reçoit ce qu’apporte le déclencheur."
-        )));
-    }
-    if automation.instance.as_deref().is_some_and(|instance| instance.trim().is_empty()) {
-        return Err(AppError::new("Compte vide : choisissez un compte ou aucun."));
-    }
-    automation.trigger.check()
+// ---------------------------------------------------------------------------------------------------------------
+// Références et conditions des étapes
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Ce que les références d’une étape lisent : les données du déclencheur, les sorties des étapes déjà passées.
+#[derive(Debug, Default)]
+struct Context {
+    event: Value,
+    /// Sortie de chaque étape, dans l’ordre ; `null` pour une étape passée.
+    steps: Vec<Value>,
+    /// Sortie de la dernière étape lancée.
+    prev: Value,
 }
+
+/// Une référence : `$prev`, `$event` ou `$steps.N` (N à partir de 1), suivie d’un chemin `.cle.0.autre`.
+fn parse_reference(text: &str, step_index: usize) -> AppResult<(String, Option<usize>, Vec<String>)> {
+    let bad = || {
+        AppError::new(format!(
+            "Référence invalide : « {text} ». Attendu $prev, $event ou $steps.N, suivi d’un chemin (.cle.0)."
+        ))
+    };
+    let body = text.strip_prefix('$').ok_or_else(bad)?;
+    let mut parts = body.split('.');
+    let root = parts.next().ok_or_else(bad)?.to_string();
+    let mut index = None;
+    match root.as_str() {
+        "prev" | "event" => {}
+        "steps" => {
+            let n: usize = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+            if n == 0 || n > step_index {
+                return Err(AppError::new(format!(
+                    "« {text} » : l’étape {} ne peut lire que les étapes 1 à {step_index}.",
+                    step_index + 1
+                )));
+            }
+            index = Some(n - 1);
+        }
+        _ => return Err(bad()),
+    }
+    let path: Vec<String> = parts.map(str::to_string).collect();
+    if path.iter().any(String::is_empty) {
+        return Err(bad());
+    }
+    Ok((root, index, path))
+}
+
+fn is_reference(text: &str) -> bool {
+    ["$prev", "$event", "$steps."].iter().any(|start| text.starts_with(start))
+}
+
+fn resolve(context: &Context, text: &str) -> Value {
+    let Ok((root, index, path)) = parse_reference(text, context.steps.len()) else { return Value::Null };
+    let mut value = match (root.as_str(), index) {
+        ("prev", _) => &context.prev,
+        ("event", _) => &context.event,
+        (_, Some(index)) => context.steps.get(index).unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    };
+    for key in &path {
+        value = match value {
+            Value::Object(map) => map.get(key).unwrap_or(&Value::Null),
+            Value::Array(items) => key.parse::<usize>().ok().and_then(|i| items.get(i)).unwrap_or(&Value::Null),
+            _ => &Value::Null,
+        };
+    }
+    value.clone()
+}
+
+/// Remplace dans l’entrée chaque texte qui est une référence entière par la valeur lue ; `$$` garde un `$`.
+fn substitute(context: &Context, value: &Value) -> Value {
+    match value {
+        Value::String(text) if text.starts_with("$$") => Value::String(text[1..].to_string()),
+        Value::String(text) if is_reference(text) => resolve(context, text),
+        Value::Array(items) => Value::Array(items.iter().map(|item| substitute(context, item)).collect()),
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), substitute(context, v))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Références d’une entrée, pour les vérifier à l’enregistrement.
+fn references(value: &Value, found: &mut Vec<String>) {
+    match value {
+        Value::String(text) if !text.starts_with("$$") && text.starts_with('$') => found.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| references(item, found)),
+        Value::Object(map) => map.values().for_each(|item| references(item, found)),
+        _ => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+    Exists,
+    Empty,
+    NotEmpty,
+}
+
+/// Une condition : une seule comparaison, `<référence> <opérateur> [valeur]`. Pas de `et`, pas de `ou` : une étape
+/// de plus suffit.
+#[derive(Debug, Clone, PartialEq)]
+struct Condition {
+    reference: String,
+    op: Op,
+    value: Value,
+}
+
+const CONDITION_HELP: &str = "Forme attendue : « $prev.total > 0 », « $event.body.type == \"paiement\" », « $steps.1.items non-vide », « $prev.erreur existe ». Opérateurs : == != > >= < <= contient existe vide non-vide.";
+
+fn parse_condition(text: &str, step_index: usize) -> AppResult<Condition> {
+    let text = text.trim();
+    let (reference, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+    parse_reference(reference, step_index)
+        .map_err(|error| AppError::new(format!("Condition « {text} » : {} {CONDITION_HELP}", error.message)))?;
+    let rest = rest.trim();
+    let bad = || AppError::new(format!("Condition invalide : « {text} ». {CONDITION_HELP}"));
+    let unary = [("existe", Op::Exists), ("non-vide", Op::NotEmpty), ("vide", Op::Empty)];
+    if let Some((_, op)) = unary.iter().find(|(word, _)| rest == *word) {
+        return Ok(Condition { reference: reference.into(), op: *op, value: Value::Null });
+    }
+    let binary = [
+        (">=", Op::Gte),
+        ("<=", Op::Lte),
+        ("!=", Op::Ne),
+        ("==", Op::Eq),
+        (">", Op::Gt),
+        ("<", Op::Lt),
+        ("=", Op::Eq),
+        ("contient", Op::Contains),
+    ];
+    let (word, op) = binary.iter().find(|(word, _)| rest.starts_with(word)).ok_or_else(bad)?;
+    let literal = rest[word.len()..].trim();
+    if literal.is_empty() {
+        return Err(bad());
+    }
+    let value = serde_json::from_str(literal).unwrap_or_else(|_| Value::String(literal.to_string()));
+    Ok(Condition { reference: reference.into(), op: *op, value })
+}
+
+fn number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(n) => n.as_f64(),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
+fn same(left: &Value, right: &Value) -> bool {
+    match (number(left), number(right)) {
+        (Some(a), Some(b)) if left.is_number() || right.is_number() => a == b,
+        _ => left == right,
+    }
+}
+
+fn holds(condition: &Condition, context: &Context) -> bool {
+    let actual = resolve(context, &condition.reference);
+    let order = || match (number(&actual), number(&condition.value)) {
+        (Some(a), Some(b)) => a.partial_cmp(&b),
+        _ => match (&actual, &condition.value) {
+            (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
+            _ => None,
+        },
+    };
+    use std::cmp::Ordering::*;
+    match condition.op {
+        Op::Eq => same(&actual, &condition.value),
+        Op::Ne => !same(&actual, &condition.value),
+        Op::Gt => order() == Some(Greater),
+        Op::Gte => matches!(order(), Some(Greater | Equal)),
+        Op::Lt => order() == Some(Less),
+        Op::Lte => matches!(order(), Some(Less | Equal)),
+        Op::Contains => match (&actual, &condition.value) {
+            (Value::String(text), Value::String(part)) => text.contains(part.as_str()),
+            (Value::Array(items), value) => items.iter().any(|item| same(item, value)),
+            (Value::Object(map), Value::String(key)) => map.contains_key(key),
+            _ => false,
+        },
+        Op::Exists => !actual.is_null(),
+        Op::Empty => is_empty(&actual),
+        Op::NotEmpty => !is_empty(&actual),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Vérification
+// ---------------------------------------------------------------------------------------------------------------
 
 /// Ce qui empêche la fonction de partir, ou `None`.
 fn function_problem(space: &Space, reference: &str) -> Option<String> {
@@ -434,6 +748,82 @@ fn function_problem(space: &Space, reference: &str) -> Option<String> {
         return Some(format!("La fonction « {reference} » n’est pas déclarée dans son module."));
     }
     None
+}
+
+fn check_input(input: &Value, step_index: usize, label: &str) -> AppResult<()> {
+    let Some(object) = input.as_object() else {
+        return Err(AppError::new(format!(
+            "{label} : l’entrée doit être un objet JSON, par exemple {{}} ou {{ \"projet\": \"ACME\" }}."
+        )));
+    };
+    if object.contains_key(EVENT_KEY) {
+        return Err(AppError::new(format!(
+            "{label} : la clé « {EVENT_KEY} » de l’entrée est réservée ; elle reçoit ce qu’apporte le déclencheur."
+        )));
+    }
+    let mut found = Vec::new();
+    references(input, &mut found);
+    for reference in found {
+        parse_reference(&reference, step_index).map_err(|error| AppError::new(format!("{label} : {}", error.message)))?;
+    }
+    Ok(())
+}
+
+/// Vérifie la définition contre l’espace ouvert.
+fn check(space: &Space, automation: &Automation) -> AppResult<()> {
+    if !valid_id(&automation.id) {
+        return Err(AppError::new("Identifiant invalide : minuscules, chiffres et tirets uniquement."));
+    }
+    if automation.name.trim().is_empty() {
+        return Err(AppError::new("Donnez un nom à l’automatisation."));
+    }
+    match &automation.action {
+        Action::Steps { steps } => {
+            if steps.is_empty() {
+                return Err(AppError::new("Ajoutez au moins une étape."));
+            }
+            if steps.len() > MAX_STEPS {
+                return Err(AppError::new(format!("{MAX_STEPS} étapes au plus.")));
+            }
+            for (index, step) in steps.iter().enumerate() {
+                let label = format!("Étape {}", index + 1);
+                if let Some(problem) = function_problem(space, &step.function) {
+                    return Err(AppError::new(format!("{label} : {problem}")));
+                }
+                check_input(&step.input, index, &label)?;
+                if step.instance.as_deref().is_some_and(|instance| instance.trim().is_empty()) {
+                    return Err(AppError::new(format!("{label} : compte vide ; choisissez un compte ou aucun.")));
+                }
+                if let Some(when) = &step.when {
+                    parse_condition(when, index).map_err(|e| AppError::new(format!("{label} : {}", e.message)))?;
+                }
+                if let Some(stop) = &step.stop_if {
+                    // Après l’étape : elle peut lire sa propre sortie.
+                    parse_condition(stop, index + 1).map_err(|e| AppError::new(format!("{label} : {}", e.message)))?;
+                }
+            }
+        }
+        Action::Script { function, input } => {
+            if let Some(problem) = function_problem(space, function) {
+                return Err(AppError::new(format!("Script : {problem}")));
+            }
+            check_input(input, 0, "Script")?;
+        }
+        Action::Agent { instruction, max_minutes } => {
+            if instruction.trim().is_empty() {
+                return Err(AppError::new("Donnez sa consigne à l’agent."));
+            }
+            if instruction.chars().count() > 8000 {
+                return Err(AppError::new("La consigne dépasse 8 000 caractères."));
+            }
+            if !(1..=MAX_AGENT_MINUTES).contains(max_minutes) {
+                return Err(AppError::new(format!(
+                    "La durée maximale va de 1 à {MAX_AGENT_MINUTES} minutes."
+                )));
+            }
+        }
+    }
+    automation.trigger.check()
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -505,7 +895,147 @@ fn refuse(state: &AppState, id: &str, origin: &Origin, reason: &str) -> AppError
     AppError::new(format!("Automatisation non lancée : {reason}."))
 }
 
-/// Lance un passage. `event` : ce qu’apporte le déclencheur, passé à la fonction dans `input.event`.
+/// Entrée d’une fonction : l’entrée fixe (références remplacées), le compte, puis les données du déclencheur.
+fn input_for(context: &Context, input: &Value, instance: Option<&String>) -> Value {
+    let mut object: Map<String, Value> = substitute(context, input).as_object().cloned().unwrap_or_default();
+    if let Some(instance) = instance {
+        object.insert("instance".into(), json!(instance));
+    }
+    if !context.event.is_null() {
+        object.insert(EVENT_KEY.into(), context.event.clone());
+    }
+    Value::Object(object)
+}
+
+/// Action déterministe : chaque étape au Journal, puis la sortie de la dernière étape lancée.
+async fn run_steps(state: &Arc<AppState>, automation: &Automation, steps: &[Step], event: Value) -> AppResult<Value> {
+    let id = automation.id.as_str();
+    let total = steps.len();
+    // Une seule étape : la ligne du passage suffit au Journal.
+    let journal = |ok: bool, duration: Option<u64>, summary: &str, detail: Option<&Value>| {
+        if total > 1 {
+            crate::functions::journal(state, "automation", id, ok, duration, summary, detail);
+        }
+    };
+    let mut context = Context { event, ..Context::default() };
+    for (index, step) in steps.iter().enumerate() {
+        let n = index + 1;
+        let head = format!("étape {n}/{total} {}", step.function);
+        if let Some(when) = &step.when {
+            let condition = parse_condition(when, index)?;
+            if !holds(&condition, &context) {
+                journal(true, Some(0), &format!("{head} : passée (« {when} » est faux)"), None);
+                context.steps.push(Value::Null);
+                continue;
+            }
+        }
+        let input = input_for(&context, &step.input, step.instance.as_ref());
+        let started = Instant::now();
+        let result = crate::functions::call(state, &step.function, input, "automatisation").await;
+        let duration = Some(started.elapsed().as_millis() as u64);
+        match result {
+            Ok(output) => {
+                let detail = json!({ "step": n, "output": kept_output(&output) });
+                journal(true, duration, &format!("{head} : réussie"), Some(&detail));
+                context.steps.push(output.clone());
+                context.prev = output;
+            }
+            Err(error) => {
+                let detail = json!({ "step": n, "error": error.message });
+                journal(false, duration, &format!("{head} : échec"), Some(&detail));
+                if step.on_error == OnError::Stop {
+                    return Err(AppError::new(format!("Étape {n} ({}) : {}", step.function, error.message)));
+                }
+                let failed = json!({ "error": error.message });
+                context.steps.push(failed.clone());
+                context.prev = failed;
+            }
+        }
+        if let Some(stop) = &step.stop_if {
+            let condition = parse_condition(stop, index + 1)?;
+            if holds(&condition, &context) {
+                journal(true, Some(0), &format!("arrêt après l’étape {n} (« {stop} » est vrai)"), None);
+                break;
+            }
+        }
+    }
+    Ok(context.prev)
+}
+
+/// Consigne ajoutée à celle de l’utilisateur pour un passage agentique.
+fn unattended(name: &str, minutes: u32) -> String {
+    format!(
+        "Tu es lancé par l’automatisation « {name} » d’Alfred. Personne ne regarde : ne pose aucune question et n’attends aucun accord. \
+Tu peux appeler les fonctions de l’espace (outil call_function ou leurs outils fn__) et écrire dans ton dossier de travail, rien d’autre : \
+ni pages, ni modules, ni réglages, ni fichiers hors de ce dossier. Tu as {minutes} minutes au plus. \
+Si tu es bloqué, arrête-toi et dis pourquoi en une phrase. Termine par un compte rendu court de ce que tu as fait."
+    )
+}
+
+/// Action agentique : Rust réserve la conversation (identifiant, périmètre, dossier), la coquille la lance et rend
+/// son dernier message. Rend la sortie, et l’identifiant de la conversation dans tous les cas.
+async fn run_agent(
+    state: &Arc<AppState>,
+    space: &Space,
+    automation: &Automation,
+    instruction: &str,
+    max_minutes: u32,
+    event: Value,
+) -> (AppResult<Value>, Option<String>) {
+    let suffix: String = rand::random::<[u8; 8]>().iter().map(|byte| format!("{byte:02x}")).collect();
+    let conversation = format!("auto-{suffix}");
+    let prepared = (|| -> AppResult<std::path::PathBuf> {
+        let cwd = space.root.join(crate::space::LOCAL_DIR).join("automations").join(&automation.id);
+        std::fs::create_dir_all(&cwd)?;
+        // Périmètre : toutes les fonctions de l’espace, aucun outil qui change sa structure.
+        let mut scope = crate::app_db::AgentScope { module: format!("automatisation:{}", automation.id), ..Default::default() };
+        for module in space.module_ids() {
+            if let Ok(manifest) = space.module(&module) {
+                scope.functions.extend(manifest.functions.iter().map(|f| format!("{module}/{}", f.id)));
+            }
+        }
+        let db = lock_db(state)?;
+        crate::app_db::set_agent_scope(&db, &conversation, &scope)?;
+        db.execute(
+            "UPDATE automations SET last_conversation = ?3 WHERE space = ?1 AND id = ?2",
+            params![space_key(space), automation.id, conversation],
+        )?;
+        Ok(cwd)
+    })();
+    let cwd = match prepared {
+        Ok(cwd) => cwd,
+        Err(error) => return (Err(error), None),
+    };
+    let payload = json!({
+        "conversation": conversation,
+        "automation": automation.id,
+        "name": automation.name,
+        "cwd": crate::folders::plain(&cwd).to_string_lossy(),
+        "text": format!("{instruction}\n\n{}", unattended(&automation.name, max_minutes)),
+        "context": event,
+        "maxMinutes": max_minutes,
+    });
+    // La coquille coupe la conversation à la durée maximale ; une marge couvre son démarrage.
+    let wait = Duration::from_secs(u64::from(max_minutes) * 60 + 90);
+    let answer = match state.ask_ui("automation:agent", payload, wait).await {
+        Ok(answer) => answer,
+        Err(error) => return (Err(error), Some(conversation)),
+    };
+    let text = answer["text"].as_str().unwrap_or_default().to_string();
+    let result = match answer["status"].as_str() {
+        Some("done") => Ok(json!({ "conversation": conversation, "message": text })),
+        Some("timeout") => Err(AppError::new(format!("L’agent a dépassé {max_minutes} minutes : la conversation a été arrêtée."))),
+        Some("cancelled") => Err(AppError::new("La conversation a été arrêtée.")),
+        _ => Err(AppError::new(format!(
+            "L’agent n’a pas pu finir : {}",
+            answer["error"].as_str().unwrap_or("erreur inconnue")
+        ))),
+    };
+    (result, Some(conversation))
+}
+
+/// Lance un passage. `event` : ce qu’apporte le déclencheur, passé à chaque fonction dans `input.event`, et à
+/// l’agent comme contexte.
 pub async fn run(
     state: &Arc<AppState>,
     space: &str,
@@ -514,7 +1044,8 @@ pub async fn run(
     event: Option<Value>,
 ) -> AppResult<Value> {
     let id = automation.id.as_str();
-    if !automation.is_validated() {
+    let opened = state.space()?;
+    if !automation.is_validated(&opened) {
         return Err(refuse(state, id, &origin, "elle est à valider dans Réglages → Automatisations"));
     }
     if !automation.enabled && !matches!(origin, Origin::Manual) {
@@ -523,28 +1054,35 @@ pub async fn run(
     let Some(slot) = Slot::take(space, id) else {
         return Err(refuse(state, id, &origin, "le passage précédent n’est pas fini"));
     };
-    let mut input: Map<String, Value> = automation.input.as_object().cloned().unwrap_or_default();
-    if let Some(instance) = &automation.instance {
-        input.insert("instance".into(), json!(instance));
-    }
-    if let Some(event) = event {
-        input.insert(EVENT_KEY.into(), event);
-    }
     record_run(state, space, id, "running", None, Some(&origin.label()));
     state.emit("automations:changed", Value::Null);
     let started = Instant::now();
-    let result = crate::functions::call(state, &automation.function, Value::Object(input), "automatisation").await;
+    let event = event.unwrap_or(Value::Null);
+    let (result, conversation) = match &automation.action {
+        Action::Steps { steps } => (run_steps(state, automation, steps, event).await, None),
+        Action::Script { function, input } => {
+            let context = Context { event, ..Context::default() };
+            (crate::functions::call(state, function, input_for(&context, input, None), "automatisation").await, None)
+        }
+        Action::Agent { instruction, max_minutes } => {
+            run_agent(state, &opened, automation, instruction, *max_minutes, event).await
+        }
+    };
     let duration = Some(started.elapsed().as_millis() as u64);
-    let summary = format!("{} → fonction {}", origin.label(), automation.function);
+    let summary = format!("{} → {}", origin.label(), automation.action.label());
+    let mut detail = json!({ "trigger": origin.label() });
+    if let Some(conversation) = &conversation {
+        detail["conversation"] = json!(conversation);
+    }
     match &result {
         Ok(output) => {
             record_run(state, space, id, "ok", None, None);
-            let detail = json!({ "trigger": origin.label(), "output": kept_output(output) });
+            detail["output"] = kept_output(output);
             crate::functions::journal(state, "automation", id, true, duration, &summary, Some(&detail));
         }
         Err(error) => {
             record_run(state, space, id, "error", Some(&error.message), None);
-            let detail = json!({ "trigger": origin.label(), "error": error.message });
+            detail["error"] = json!(error.message);
             crate::functions::journal(state, "automation", id, false, duration, &summary, Some(&detail));
         }
     }
@@ -569,7 +1107,7 @@ pub fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
     let mut launched = Vec::new();
     for automation in all {
         let Trigger::Cron { cron } = &automation.trigger else { continue };
-        if !automation.is_active() {
+        if !automation.is_active(&space) {
             continue;
         }
         let Ok(cron) = Cron::parse(cron) else { continue };
@@ -658,8 +1196,8 @@ async fn receive(
         let _ = refuse(&state, &id, &Origin::Http, "preuve du secret absente ou invalide");
         return reply(StatusCode::UNAUTHORIZED, json!({ "error": "Non autorisé." }));
     }
-    if !automation.is_active() {
-        let reason = if automation.is_validated() { "elle est en pause" } else { "elle est à valider" };
+    if !automation.is_active(&space) {
+        let reason = if automation.is_validated(&space) { "elle est en pause" } else { "elle est à valider" };
         let _ = refuse(&state, &id, &Origin::Http, reason);
         return reply(StatusCode::FORBIDDEN, json!({ "error": "Automatisation inactive." }));
     }
@@ -668,7 +1206,7 @@ async fn receive(
         return reply(StatusCode::CONFLICT, json!({ "error": "Passage précédent en cours." }));
     }
     let event = crate::webhooks::input_of(&method, &headers, &query, &body);
-    // La fonction tourne dans sa propre tâche : si l’appelant n’attend plus, elle continue et se journalise seule.
+    // L’action tourne dans sa propre tâche : si l’appelant n’attend plus, elle continue et se journalise seule.
     let task = tokio::spawn({
         let state = state.clone();
         async move { run(&state, &key, &automation, Origin::Http, Some(event)).await }
@@ -676,7 +1214,7 @@ async fn receive(
     match tokio::time::timeout(SYNC_WAIT, task).await {
         Ok(Ok(Ok(output))) => reply(StatusCode::OK, output),
         Ok(Ok(Err(_))) | Ok(Err(_)) => {
-            reply(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": "La fonction de l’automatisation a échoué." }))
+            reply(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": "L’action de l’automatisation a échoué." }))
         }
         Err(_) => reply(StatusCode::ACCEPTED, json!({ "accepted": true })),
     }
@@ -691,7 +1229,7 @@ fn status_of(space: &Space, automation: &Automation) -> (&'static str, Option<St
     let problem = check(space, automation).err().map(|error| error.message);
     let status = if problem.is_some() {
         "invalid"
-    } else if !automation.is_validated() {
+    } else if !automation.is_validated(space) {
         "toValidate"
     } else if automation.enabled {
         "active"
@@ -699,6 +1237,12 @@ fn status_of(space: &Space, automation: &Automation) -> (&'static str, Option<St
         "paused"
     };
     (status, problem)
+}
+
+fn script_file(space: &Space, automation: &Automation) -> Option<String> {
+    let Action::Script { function, .. } = &automation.action else { return None };
+    let (module, name) = function.split_once('/')?;
+    Some(space.function_file(module, name).to_string_lossy().to_string())
 }
 
 fn describe(state: &AppState, space: &Space, automation: &Automation, now: NaiveDateTime) -> Value {
@@ -713,9 +1257,8 @@ fn describe(state: &AppState, space: &Space, automation: &Automation, now: Naive
     json!({
         "id": automation.id,
         "name": automation.name,
-        "function": automation.function,
-        "input": automation.input,
-        "instance": automation.instance,
+        "action": automation.action,
+        "summary": automation.action.label(),
         "trigger": automation.trigger,
         "enabled": automation.enabled,
         "status": status,
@@ -727,7 +1270,9 @@ fn describe(state: &AppState, space: &Space, automation: &Automation, now: Naive
         "lastStatus": automation.last_status,
         "lastError": automation.last_error,
         "lastTrigger": automation.last_trigger,
+        "lastConversation": automation.last_conversation,
         "nextRunAt": next,
+        "scriptFile": script_file(space, automation),
         "url": (automation.trigger == Trigger::Webhook).then(|| url_of(state, &automation.id)).flatten(),
     })
 }
@@ -754,7 +1299,8 @@ async fn catalog(state: &Arc<AppState>, space: &Space) -> Vec<Value> {
                     examples: false,
                 };
                 let args = json!({ "subject": subject, "client": need });
-                let Some(Ok(Value::Array(found))) = Box::pin(crate::clients::handle(state, "frame.clients.instances", &args)).await
+                let Some(Ok(Value::Array(found))) =
+                    Box::pin(crate::clients::handle(state, "frame.clients.instances", &args)).await
                 else {
                     continue;
                 };
@@ -768,6 +1314,7 @@ async fn catalog(state: &Arc<AppState>, space: &Space) -> Vec<Value> {
                 "moduleName": manifest.name,
                 "id": function.id,
                 "description": function.description,
+                "runtime": function.runtime,
                 "instances": instances,
             }));
         }
@@ -775,7 +1322,8 @@ async fn catalog(state: &Arc<AppState>, space: &Space) -> Vec<Value> {
     items
 }
 
-/// Définition lue dans les arguments d’une commande ou d’un outil de l’agent.
+/// Définition lue dans les arguments d’une commande ou d’un outil de l’agent. `action` donne l’action ; à défaut,
+/// `function` (avec `input` et `instance`) est une seule étape.
 fn from_args(args: &Value, previous: Option<&Automation>, created_by: &str, taken: &[String]) -> AppResult<Automation> {
     let name: String = opt_arg::<String>(args, "name")?
         .or_else(|| previous.map(|previous| previous.name.clone()))
@@ -797,23 +1345,44 @@ fn from_args(args: &Value, previous: Option<&Automation>, created_by: &str, take
         }
     };
     let trigger: Trigger = match args.get("trigger") {
-        Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+        Some(value) if !value.is_null() => serde_json::from_value(value.clone()).map_err(|_| {
             AppError::new("Déclencheur invalide : { \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }, { \"kind\": \"webhook\" } ou { \"kind\": \"script\" }.")
         })?,
-        None => previous.map(|previous| previous.trigger.clone()).ok_or_else(|| AppError::new("Déclencheur absent."))?,
+        _ => previous.map(|previous| previous.trigger.clone()).ok_or_else(|| AppError::new("Déclencheur absent."))?,
     };
-    let input = match args.get("input") {
-        Some(Value::Null) | None => previous.map(|previous| previous.input.clone()).unwrap_or_else(|| json!({})),
-        Some(value) => value.clone(),
-    };
-    let instance = match args.get("instance") {
-        None => previous.and_then(|previous| previous.instance.clone()),
-        Some(Value::Null) => None,
-        Some(_) => opt_arg::<String>(args, "instance")?.filter(|value| !value.is_empty()),
-    };
-    let function = match opt_arg::<String>(args, "function")? {
-        Some(function) => function,
-        None => previous.map(|previous| previous.function.clone()).ok_or_else(|| AppError::new("Fonction absente."))?,
+    let action = match (args.get("action").filter(|value| !value.is_null()), opt_arg::<String>(args, "function")?) {
+        (Some(value), _) => serde_json::from_value::<Action>(value.clone()).map_err(|error| {
+            AppError::new(format!(
+                "Action invalide ({error}) : {{ \"kind\": \"steps\", \"steps\": [{{ \"function\": \"module/fonction\", \"input\": {{}} }}] }}, {{ \"kind\": \"script\", \"function\": \"module/fonction\" }} ou {{ \"kind\": \"agent\", \"instruction\": \"…\", \"maxMinutes\": 15 }}."
+            ))
+        })?,
+        (None, Some(function)) => {
+            // Forme courte : une fonction. Une entrée ou un compte omis gardent ceux de l’étape unique d’avant.
+            let before = match previous.map(|previous| &previous.action) {
+                Some(Action::Steps { steps }) if steps.len() == 1 => Some(&steps[0]),
+                _ => None,
+            };
+            let input = match args.get("input") {
+                Some(Value::Null) | None => before.map(|step| step.input.clone()).unwrap_or_else(empty_object),
+                Some(value) => value.clone(),
+            };
+            let instance = match args.get("instance") {
+                None => before.and_then(|step| step.instance.clone()),
+                Some(Value::Null) => None,
+                Some(_) => opt_arg::<String>(args, "instance")?.filter(|value| !value.is_empty()),
+            };
+            Action::Steps { steps: vec![Step { function, input, instance, when: None, stop_if: None, on_error: OnError::Stop }] }
+        }
+        (None, None) => {
+            let mut action = previous.map(|previous| previous.action.clone()).ok_or_else(|| AppError::new("Action absente."))?;
+            // Une entrée seule modifie l’étape unique.
+            if let (Some(input), Action::Steps { steps }) = (args.get("input").filter(|v| !v.is_null()), &mut action) {
+                if let [step] = steps.as_mut_slice() {
+                    step.input = input.clone();
+                }
+            }
+            action
+        }
     };
     let mut secret = previous.and_then(|previous| previous.secret.clone());
     if trigger == Trigger::Webhook && secret.is_none() {
@@ -825,9 +1394,7 @@ fn from_args(args: &Value, previous: Option<&Automation>, created_by: &str, take
     Ok(Automation {
         id,
         name,
-        function,
-        input,
-        instance,
+        action,
         trigger,
         enabled: previous.is_some_and(|previous| previous.enabled),
         validated: previous.and_then(|previous| previous.validated.clone()),
@@ -838,6 +1405,7 @@ fn from_args(args: &Value, previous: Option<&Automation>, created_by: &str, take
         last_status: None,
         last_error: None,
         last_trigger: None,
+        last_conversation: None,
     })
 }
 
@@ -853,7 +1421,7 @@ fn save(state: &AppState, args: &Value) -> AppResult<Value> {
     let taken: Vec<String> = load_all(&db, &key)?.into_iter().map(|automation| automation.id).collect();
     let mut automation = from_args(args, previous.as_ref(), "user", &taken)?;
     check(&space, &automation)?;
-    automation.validated = Some(automation.fingerprint());
+    automation.validated = Some(automation.fingerprint(&space));
     automation.enabled = opt_arg::<bool>(args, "enabled")?.unwrap_or(previous.is_none() || automation.enabled);
     store(&db, &key, &automation)?;
     drop(db);
@@ -875,13 +1443,13 @@ pub fn agent_save(state: &AppState, args: &Value) -> AppResult<Value> {
     let taken: Vec<String> = load_all(&db, &key)?.into_iter().map(|automation| automation.id).collect();
     let mut automation = from_args(args, previous.as_ref(), "agent", &taken)?;
     check(&space, &automation)?;
-    if !automation.is_validated() {
+    if !automation.is_validated(&space) {
         automation.validated = None;
         automation.enabled = false;
     }
     store(&db, &key, &automation)?;
     drop(db);
-    let status = if automation.is_validated() { "unchanged" } else { "toValidate" };
+    let status = if automation.is_validated(&space) { "unchanged" } else { "toValidate" };
     if status == "toValidate" {
         let title = format!("Automatisation « {} » à valider", automation.name);
         crate::functions::journal(state, "agent", &format!("automation:{}", automation.id), true, None, &title, None);
@@ -895,7 +1463,7 @@ pub fn agent_save(state: &AppState, args: &Value) -> AppResult<Value> {
         "id": automation.id,
         "status": status,
         "next": if status == "toValidate" {
-            "Dis à l’utilisateur que l’automatisation l’attend dans Réglages → Automatisations : il la valide et l’active lui-même. Tu ne peux ni la valider, ni l’activer, ni lire son secret."
+            "Dis à l’utilisateur que l’automatisation l’attend dans Réglages → Automatisations : il la valide et l’active lui-même. Tu ne peux ni la valider, ni l’activer, ni lire son secret. Pour un script, toute modification de son fichier la remet aussi à valider."
         } else {
             "Rien de ce que l’utilisateur a validé n’a changé : l’automatisation garde son état."
         },
@@ -932,9 +1500,7 @@ pub fn agent_list(state: &AppState) -> AppResult<Value> {
                 json!({
                     "id": automation.id,
                     "name": automation.name,
-                    "function": automation.function,
-                    "input": automation.input,
-                    "instance": automation.instance,
+                    "action": automation.action,
                     "trigger": automation.trigger,
                     "status": status,
                     "problem": problem,
@@ -942,6 +1508,7 @@ pub fn agent_list(state: &AppState) -> AppResult<Value> {
                     "lastRunAt": automation.last_run_at,
                     "lastStatus": automation.last_status,
                     "lastError": automation.last_error,
+                    "lastConversation": automation.last_conversation,
                 })
             })
             .collect(),
@@ -961,6 +1528,78 @@ fn history(state: &AppState, args: &Value) -> AppResult<Value> {
             .take(limit as usize)
             .collect(),
     ))
+}
+
+/// Module local qui range les scripts créés depuis la page.
+pub const SCRIPTS_MODULE: &str = "automatisations";
+
+/// Crée un script vide (une fonction du module `automatisations`, créé au besoin) et rend sa référence et son
+/// fichier. Le fichier n’est jamais écrasé.
+async fn new_script(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let space = state.space()?;
+    let name: String = arg(args, "name")?;
+    let runtime: String = opt_arg(args, "runtime")?.unwrap_or_else(|| "python".into());
+    if !matches!(runtime.as_str(), "python" | "ts") {
+        return Err(AppError::new("Un script s’écrit en Python ou en TypeScript."));
+    }
+    if space.module(SCRIPTS_MODULE).is_err() {
+        space.write_module(&crate::space::ModuleManifest {
+            id: SCRIPTS_MODULE.into(),
+            name: "Automatisations".into(),
+            ..Default::default()
+        })?;
+    }
+    let manifest = space.module(SCRIPTS_MODULE)?;
+    let base = slug(&name).replace("automatisation", "script");
+    let mut id = base.clone();
+    let mut n = 2;
+    while manifest.functions.iter().any(|declared| declared.id == id) {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    let declared = crate::functions::handle(
+        state,
+        "functions.declare",
+        &json!({
+            "module": SCRIPTS_MODULE,
+            "id": id,
+            "description": format!("Script de l’automatisation « {name} »."),
+            "runtime": runtime,
+        }),
+    )
+    .await
+    .unwrap_or_else(|| Err(AppError::new("Déclaration de fonction indisponible.")))?;
+    let file = std::path::PathBuf::from(declared["file"].as_str().unwrap_or_default());
+    if !file.exists() {
+        let template = if runtime == "python" {
+            format!(
+                "# Script de l’automatisation « {name} » : il enchaîne des fonctions de l’espace.\n\
+# Entrée : l’objet JSON lu sur stdin ; entree[\"event\"] porte ce qu’apporte le déclencheur.\n\
+# Sortie : un objet JSON écrit sur stdout. Toute modification de ce fichier remet l’automatisation à valider.\n\
+import json\nimport sys\n\nimport alfred\n\nentree = json.load(sys.stdin)\n\
+# resultat = alfred.functions.call(\"module/fonction\", {{\"cle\": \"valeur\"}})\n\
+# if resultat.get(\"total\", 0) > 0:\n#     alfred.functions.call(\"module/autre\", {{\"total\": resultat[\"total\"]}})\n\
+print(json.dumps({{\"ok\": True}}))\n"
+            )
+        } else {
+            format!(
+                "// Script de l’automatisation « {name} » : il enchaîne des fonctions de l’espace.\n\
+// `entree.event` porte ce qu’apporte le déclencheur. Toute modification de ce fichier remet l’automatisation à valider.\n\
+import {{ functions }} from \"@alfred/sdk\";\n\n\
+export default async function (entree: {{ event?: unknown }}) {{\n\
+  // const resultat = await functions.call<{{ total: number }}>(\"module/fonction\", {{ cle: \"valeur\" }});\n\
+  // if (resultat.total > 0) await functions.call(\"module/autre\", {{ total: resultat.total }});\n\
+  void functions;\n  return {{ ok: true }};\n}}\n"
+            )
+        };
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&file, template)?;
+    }
+    let _ = crate::git::commit_all(&space.root, &format!("Script d’automatisation {SCRIPTS_MODULE}/{id}"));
+    state.emit("space:changed", Value::Null);
+    Ok(json!({ "reference": format!("{SCRIPTS_MODULE}/{id}"), "file": file.to_string_lossy() }))
 }
 
 /// Déclenchement par un script, une fonction ou une page de l’espace (SDK `automations.trigger`).
@@ -998,6 +1637,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                         "automations": items,
                         "functions": catalog(&state, &space).await,
                         "baseUrl": url_of(&state, ""),
+                        "maxAgentMinutes": MAX_AGENT_MINUTES,
                     }))
                 }
                 "automations.save" => save(&state, args),
@@ -1005,7 +1645,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     let db = lock_db(&state)?;
                     let mut automation = existing(&db, &key, &id()?)?;
                     check(&space, &automation)?;
-                    automation.validated = Some(automation.fingerprint());
+                    automation.validated = Some(automation.fingerprint(&space));
                     automation.enabled = true;
                     store(&db, &key, &automation)?;
                     drop(db);
@@ -1016,7 +1656,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     let enabled: bool = arg(args, "enabled")?;
                     let db = lock_db(&state)?;
                     let mut automation = existing(&db, &key, &id()?)?;
-                    if enabled && !automation.is_validated() {
+                    if enabled && !automation.is_validated(&space) {
                         return Err(AppError::new("Validez d’abord l’automatisation : elle a changé depuis votre accord."));
                     }
                     automation.enabled = enabled;
@@ -1055,6 +1695,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     Ok(json!({ "secret": secret }))
                 }
                 "automations.history" => history(&state, args),
+                "automations.newScript" => new_script(&state, args).await,
                 "frame.automations.trigger" => trigger_from_script(&state, args).await,
                 _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
             }
@@ -1225,7 +1866,7 @@ mod tests {
 
         // Journal : réussites et refus, jamais le secret.
         let entries = journal(&state, &space);
-        assert!(entries.iter().any(|entry| entry["status"] == "ok" && entry["summary"] == "appel HTTP → fonction outils/echo"));
+        assert!(entries.iter().any(|entry| entry["status"] == "ok" && entry["summary"] == "appel HTTP → outils/echo"));
         assert!(entries.iter().any(|entry| entry["summary"].as_str().unwrap().contains("refusé : elle est à valider")));
         assert!(entries.iter().any(|entry| entry["summary"].as_str().unwrap().contains("refusé : preuve du secret")));
         assert!(!serde_json::to_string(&entries).unwrap().contains(&secret));
@@ -1270,7 +1911,7 @@ mod tests {
         let entries = journal(&state, &space);
         let entry = entries.iter().find(|entry| entry["subject"] == json!(id)).expect("passage au journal");
         assert_eq!(entry["status"], "ok");
-        assert_eq!(entry["summary"], "planning → fonction outils/echo");
+        assert_eq!(entry["summary"], "planning → outils/echo");
         assert_eq!(entry["detail"]["output"]["recu"]["n"], 1);
         let listed = call(&state, "automations.list", Value::Null).await.unwrap();
         let item = &listed["automations"].as_array().unwrap().iter().find(|item| item["id"] == json!(id)).unwrap().clone();
@@ -1334,5 +1975,216 @@ mod tests {
         assert_eq!(second["ok"], false);
         assert!(second["error"].as_str().unwrap().contains("pas fini"));
         assert_eq!(first.await.unwrap().unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn conditions_compare_one_reference_with_one_value() {
+        let context = Context {
+            event: json!({ "body": { "type": "paiement", "montant": "12" } }),
+            steps: vec![json!({ "items": [1, 2], "total": 3 })],
+            prev: json!({ "total": 3, "nom": "acme", "vide": [] }),
+        };
+        let yes = |text: &str| holds(&parse_condition(text, 1).unwrap(), &context);
+        assert!(yes("$prev.total > 2"));
+        assert!(yes("$prev.total >= 3"));
+        assert!(!yes("$prev.total < 3"));
+        assert!(yes("$prev.total == 3"));
+        assert!(yes("$prev.total = \"3\""), "nombre et texte numérique");
+        assert!(yes("$event.body.type == \"paiement\""));
+        assert!(yes("$event.body.type == paiement"), "mot nu : un texte");
+        assert!(yes("$event.body.montant > 10"), "texte numérique comparé en nombre");
+        assert!(yes("$steps.1.items contient 2"));
+        assert!(yes("$prev.nom contient cm"));
+        assert!(yes("$prev contient nom"), "clé d’un objet");
+        assert!(yes("$prev.vide vide"));
+        assert!(yes("$steps.1.items non-vide"));
+        assert!(yes("$prev.total existe"));
+        assert!(!yes("$prev.absent existe"));
+        assert!(yes("$prev.absent vide"));
+        assert!(yes("$prev.nom != autre"));
+        for bad in ["prev.total > 1", "$prev.total", "$prev.total ~ 1", "$steps.2.x existe", "$steps.0 existe", "$autre existe", "$prev..x existe"] {
+            assert!(parse_condition(bad, 1).is_err(), "{bad}");
+        }
+        // Références dans une entrée : valeur entière remplacée, `$$` échappe.
+        let input = json!({ "total": "$prev.total", "items": ["$steps.1.items", "$$prev"], "type": "$event.body.type", "fixe": 2 });
+        assert_eq!(
+            substitute(&context, &input),
+            json!({ "total": 3, "items": [[1, 2], "$prev"], "type": "paiement", "fixe": 2 })
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn steps_chain_outputs_and_follow_their_conditions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        let _port = serve(&state).await;
+        let steps = json!({ "kind": "steps", "steps": [
+            { "function": "outils/echo", "input": { "n": 5 } },
+            { "function": "outils/echo", "input": { "double": "$prev.recu.n", "premier": "$steps.1.recu" }, "when": "$prev.recu.n > 3" },
+            { "function": "outils/echo", "input": {}, "when": "$prev.recu.n > 100" },
+            { "function": "outils/boum", "onError": "continue" },
+            { "function": "outils/echo", "input": { "erreur": "$prev.error" }, "stopIf": "$prev.recu.erreur contient panne" },
+            { "function": "outils/echo", "input": { "jamais": true } }
+        ] });
+        let created = call(&state, "automations.save", json!({ "name": "Chaîne", "action": steps, "trigger": { "kind": "script" } })).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let run = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert_eq!(run["ok"], true, "{run}");
+        assert!(run["output"]["recu"]["erreur"].as_str().unwrap().contains("panne du service"), "{run}");
+
+        let entries: Vec<String> = journal(&state, &space).iter().rev().map(|e| e["summary"].as_str().unwrap().to_string()).collect();
+        assert_eq!(
+            entries,
+            vec![
+                "étape 1/6 outils/echo : réussie",
+                "étape 2/6 outils/echo : réussie",
+                "étape 3/6 outils/echo : passée (« $prev.recu.n > 100 » est faux)",
+                "étape 4/6 outils/boum : échec",
+                "étape 5/6 outils/echo : réussie",
+                "arrêt après l’étape 5 (« $prev.recu.erreur contient panne » est vrai)",
+                "exécution manuelle → 6 étapes : outils/echo → outils/echo → outils/echo → outils/boum → outils/echo → outils/echo",
+            ]
+        );
+        let second = journal(&state, &space).into_iter().find(|e| e["summary"] == "étape 2/6 outils/echo : réussie").unwrap();
+        assert_eq!(second["detail"]["output"]["recu"], json!({ "double": 5, "premier": { "n": 5 } }));
+
+        // Une étape qui échoue sans « continuer » arrête le passage en échec.
+        call(&state, "automations.save", json!({ "id": id, "action": { "kind": "steps", "steps": [
+            { "function": "outils/boum" }, { "function": "outils/echo" }
+        ] } })).await.unwrap();
+        let failed = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert_eq!(failed["ok"], false);
+        assert!(failed["error"].as_str().unwrap().starts_with("Étape 1 (outils/boum)"), "{failed}");
+
+        // Vérifications à l’enregistrement : référence vers une étape à venir, condition illisible, aucune étape.
+        for (action, expected) in [
+            (json!({ "kind": "steps", "steps": [{ "function": "outils/echo", "input": { "x": "$steps.1.y" } }] }), "étapes 1 à 0"),
+            (json!({ "kind": "steps", "steps": [{ "function": "outils/echo", "when": "$prev.x environ 3" }] }), "Condition invalide"),
+            (json!({ "kind": "steps", "steps": [] }), "au moins une étape"),
+            (json!({ "kind": "steps", "steps": [{ "function": "outils/absente" }] }), "n’est pas déclarée"),
+        ] {
+            let error = call(&state, "automations.save", json!({ "id": id, "action": action })).await.unwrap_err().message;
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_script_action_is_validated_with_its_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        let _port = serve(&state).await;
+        // Le script appelle deux fonctions de l’espace par le pont et décide entre elles.
+        let mut manifest = space.module("outils").unwrap();
+        manifest.functions.push(FunctionDecl { id: "chef".into(), runtime: Runtime::Bash, ..Default::default() });
+        space.write_module(&manifest).unwrap();
+        let script = space.module_dir("outils").join("functions/chef.sh");
+        std::fs::write(
+            &script,
+            "cat >/dev/null\nr=$(curl -s -X POST \"$ALFRED_SDK_URL/functions.call\" -H \"Authorization: Bearer $ALFRED_SDK_TOKEN\" -H 'Content-Type: application/json' -d '{\"function\":\"echo\",\"input\":{\"a\":1}}')\nprintf '{\"premier\":%s}' \"$r\"\n",
+        )
+        .unwrap();
+        let created = call(&state, "automations.save", json!({
+            "name": "Chef", "action": { "kind": "script", "function": "outils/chef" }, "trigger": { "kind": "script" }
+        })).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let run = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert_eq!(run["output"]["premier"]["ok"]["recu"]["a"], 1, "{run}");
+        let listed = call(&state, "automations.list", Value::Null).await.unwrap();
+        assert!(listed["automations"][0]["scriptFile"].as_str().unwrap().ends_with("functions/chef.sh"));
+
+        // Le code change : à valider, et plus rien ne part, même à la main.
+        std::fs::write(&script, "cat >/dev/null\necho '{\"autre\":true}'\n").unwrap();
+        let listed = call(&state, "automations.list", Value::Null).await.unwrap();
+        assert_eq!(listed["automations"][0]["status"], "toValidate");
+        let refused = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert!(refused["error"].as_str().unwrap().contains("à valider"), "{refused}");
+        call(&state, "automations.validate", json!({ "id": id })).await.unwrap();
+        let run = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert_eq!(run["output"], json!({ "autre": true }));
+
+        // Un script vide se crée dans le module « automatisations », sans écraser un fichier.
+        let made = call(&state, "automations.newScript", json!({ "name": "Rapport du soir", "runtime": "python" })).await.unwrap();
+        assert_eq!(made["reference"], "automatisations/rapport-du-soir");
+        let text = std::fs::read_to_string(made["file"].as_str().unwrap()).unwrap();
+        assert!(text.contains("import alfred"));
+        let again = call(&state, "automations.newScript", json!({ "name": "Rapport du soir", "runtime": "ts" })).await.unwrap();
+        assert_eq!(again["reference"], "automatisations/rapport-du-soir-2");
+        assert!(std::fs::read_to_string(again["file"].as_str().unwrap()).unwrap().contains("@alfred/sdk"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_action_opens_a_new_scoped_conversation_and_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        // L’interface simulée : elle répond à chaque demande de passage agentique.
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let mut events = state.events.subscribe();
+        tokio::spawn({
+            let (state, asked) = (state.clone(), asked.clone());
+            async move {
+                while let Ok(event) = events.recv().await {
+                    if event.name != "automation:agent" {
+                        continue;
+                    }
+                    asked.lock().unwrap().push(event.payload.clone());
+                    let id = event.payload["requestId"].as_str().unwrap().to_string();
+                    let lent = event.payload["context"]["data"] == json!("lent");
+                    let answer = if lent {
+                        json!({ "status": "timeout", "text": "" })
+                    } else {
+                        json!({ "status": "done", "text": "Trois relances envoyées." })
+                    };
+                    let _ = state.resolve_ui(&id, Ok(answer));
+                }
+            }
+        });
+        let created = agent_save(&state, &json!({
+            "name": "Relances", "action": { "kind": "agent", "instruction": "Relance les impayés.", "maxMinutes": 5 },
+            "trigger": { "kind": "script" }
+        })).unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["status"], "toValidate");
+        call(&state, "automations.validate", json!({ "id": id })).await.unwrap();
+
+        let subject = json!({ "kind": "function", "module": "outils", "reference": "outils/echo" });
+        let output = call(&state, "frame.automations.trigger", json!({ "id": id, "event": { "client": "acme" }, "subject": subject })).await.unwrap();
+        assert_eq!(output["message"], "Trois relances envoyées.");
+        let conversation = output["conversation"].as_str().unwrap().to_string();
+        assert!(conversation.starts_with("auto-"));
+        let request = asked.lock().unwrap()[0].clone();
+        assert_eq!(request["conversation"], json!(conversation));
+        assert_eq!(request["maxMinutes"], 5);
+        assert_eq!(request["context"]["data"], json!({ "client": "acme" }));
+        let text = request["text"].as_str().unwrap();
+        assert!(text.starts_with("Relance les impayés."));
+        assert!(text.contains("Personne ne regarde"));
+        let cwd = std::path::PathBuf::from(request["cwd"].as_str().unwrap());
+        assert!(cwd.ends_with(".alfred/automations/relances") && cwd.is_dir(), "{cwd:?}");
+
+        // Périmètre : toutes les fonctions de l’espace, aucun module à modifier.
+        let scope = crate::app_db::agent_scope(&state.app_db.lock().unwrap(), &conversation).unwrap().unwrap();
+        assert_eq!(scope.module, "automatisation:relances");
+        assert_eq!(scope.functions, vec!["outils/echo", "outils/lent", "outils/boum"]);
+
+        // Journal : le passage et le lien vers sa conversation ; la ligne de la page le garde aussi.
+        let entry = journal(&state, &space).into_iter().find(|e| e["subject"] == json!(id)).unwrap();
+        assert_eq!(entry["summary"], "script outils/echo → agent");
+        assert_eq!(entry["detail"]["conversation"], json!(conversation));
+        let listed = call(&state, "automations.list", Value::Null).await.unwrap();
+        assert_eq!(listed["automations"][0]["lastConversation"], json!(conversation));
+
+        // Durée dépassée : échec, conversation nommée quand même ; chaque passage a sa conversation.
+        let late = call(&state, "frame.automations.trigger", json!({ "id": id, "event": "lent", "subject": subject })).await;
+        assert!(late.unwrap_err().message.contains("dépassé 5 minutes"));
+        let entry = journal(&state, &space).into_iter().find(|e| e["status"] == "error").unwrap();
+        assert_ne!(entry["detail"]["conversation"], json!(conversation));
+
+        // Limites vérifiées à l’enregistrement.
+        let error = agent_save(&state, &json!({ "id": id, "action": { "kind": "agent", "instruction": "x", "maxMinutes": 500 } })).unwrap_err();
+        assert!(error.message.contains("1 à 120 minutes"));
+        let error = agent_save(&state, &json!({ "id": id, "action": { "kind": "agent", "instruction": "  " } })).unwrap_err();
+        assert!(error.message.contains("consigne"));
     }
 }

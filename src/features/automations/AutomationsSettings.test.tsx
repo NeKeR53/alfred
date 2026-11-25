@@ -27,9 +27,8 @@ function automation(extra: Partial<AutomationItem>): AutomationItem {
   return {
     id: "releve",
     name: "Relevé du matin",
-    function: "banque/relever",
-    input: {},
-    instance: null,
+    action: { kind: "steps", steps: [{ function: "banque/relever", input: {} }] },
+    summary: "banque/relever",
     trigger: { kind: "cron", cron: "0 8 * * 1-5" },
     enabled: true,
     status: "active",
@@ -41,6 +40,8 @@ function automation(extra: Partial<AutomationItem>): AutomationItem {
     lastError: null,
     lastTrigger: null,
     nextRunAt: null,
+    lastConversation: null,
+    scriptFile: null,
     url: null,
     ...extra,
   };
@@ -55,7 +56,7 @@ beforeEach(() => {
     automation({
       id: "paiement",
       name: "Paiement reçu",
-      function: "ventes/encaisser",
+      action: { kind: "steps", steps: [{ function: "ventes/encaisser", input: {} }] },
       trigger: { kind: "webhook" },
       enabled: false,
       status: "toValidate",
@@ -173,9 +174,7 @@ it("exécute maintenant, et crée une automatisation par le formulaire", async (
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(calls.find((call) => call.command === "automations.save")?.args).toEqual({
     name: "Relevé du soir",
-    function: "banque/relever",
-    input: { jours: 1 },
-    instance: null,
+    action: { kind: "steps", steps: [{ function: "banque/relever", input: { jours: 1 } }] },
     trigger: { kind: "cron", cron: "0 18 * * *" },
     enabled: true,
   });
@@ -186,4 +185,56 @@ it("donne une commande curl prête à copier", () => {
   expect(curlCommand(URL, "abc")).toBe(
     `curl -X POST '${URL}' -H 'X-Alfred-Secret: abc' -H 'Content-Type: application/json' -d '{}'`,
   );
+});
+
+it("crée une action agentique : consigne et durée maximale", async () => {
+  const user = userEvent.setup();
+  renderSections(useAutomationsSections);
+  const list = await screen.findByRole("region", { name: "Automatisations" });
+  await user.click(within(list).getByRole("button", { name: "Nouvelle automatisation" }));
+  const form = await screen.findByRole("dialog", { name: "Nouvelle automatisation" });
+  await user.type(within(form).getByRole("textbox", { name: /Nom/ }), "Tri du courrier");
+  await user.click(within(form).getByRole("radio", { name: /Agent/ }));
+  await user.type(within(form).getByRole("textbox", { name: /Consigne/ }), "Classe les messages reçus.");
+  await user.click(within(form).getByRole("radio", { name: /Appel HTTP local/ }));
+  await user.click(within(form).getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.find((call) => call.command === "automations.save")?.args).toEqual({
+    name: "Tri du courrier",
+    action: { kind: "agent", instruction: "Classe les messages reçus.", maxMinutes: 15 },
+    trigger: { kind: "webhook" },
+    enabled: true,
+  });
+});
+
+it("enchaîne des étapes : références, condition, et une étape retirée", async () => {
+  const user = userEvent.setup();
+  renderSections(useAutomationsSections);
+  const list = await screen.findByRole("region", { name: "Automatisations" });
+  await user.click(within(list).getByRole("button", { name: "Nouvelle automatisation" }));
+  const form = await screen.findByRole("dialog", { name: "Nouvelle automatisation" });
+  await user.type(within(form).getByRole("textbox", { name: /Nom/ }), "Chaîne");
+  const pick = async (index: number, option: RegExp) => {
+    await user.click(within(form).getAllByRole("button", { name: /Fonction/ })[index] as HTMLElement);
+    await user.click(await screen.findByRole("option", { name: option }));
+  };
+  await pick(0, /relever/);
+  await user.click(within(form).getByRole("button", { name: "Ajouter une étape" }));
+  await user.click(within(form).getByRole("button", { name: "Ajouter une étape" }));
+  await pick(1, /encaisser/);
+  const second = within(form).getByRole("group", { name: "Étape 2" });
+  const entry = within(second).getByRole("textbox", { name: /Entrée/ });
+  await user.clear(entry);
+  await user.type(entry, '{{"total": "$prev.total"}');
+  await user.type(within(second).getByRole("textbox", { name: /Lancer seulement si/ }), "$prev.total > 0");
+  await user.click(within(form).getByRole("button", { name: "Retirer l’étape 3" }));
+  await user.click(within(form).getByRole("button", { name: "Enregistrer" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.find((call) => call.command === "automations.save")?.args.action).toEqual({
+    kind: "steps",
+    steps: [
+      { function: "banque/relever", input: {} },
+      { function: "ventes/encaisser", input: { total: "$prev.total" }, when: "$prev.total > 0" },
+    ],
+  });
 });

@@ -5,6 +5,7 @@ import { checkHarnesses, useInstalledProviders } from "./features/agent/harness"
 import { AgentPanel, bindPageAi } from "./features/agent/pageAgent";
 import { useAgentSummary } from "./features/agent/summary";
 import { UiFixTool } from "./features/agent/uiFix";
+import { bindAutomationAgents } from "./features/automations/agentRuns";
 import { useModuleUpdates } from "./features/modules/useModuleUpdates";
 import { CommandPalette } from "./features/palette/CommandPalette";
 import { settingsTabs } from "./features/settings/tabs";
@@ -27,6 +28,8 @@ export function App() {
   const welcoming = useWelcome((state) => state.active);
   useEffect(() => {
     bindPageAi();
+    // Les passages agentiques des automatisations partent de la fenêtre principale seulement.
+    if (!pageWindowReference() && !isAgentsWindow()) bindAutomationAgents();
     void start();
     // Quels agents sont installés : un agent absent n’est proposé nulle part.
     void checkHarnesses();

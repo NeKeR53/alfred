@@ -1,19 +1,21 @@
 /**
- * Rubrique « Automatisations » des Réglages : les fonctions que l’utilisateur fait exécuter sans les lancer
- * lui-même, par un planning cron, un appel HTTP local ou un script (voir docs/automatisations.md). Deux sections :
- * la liste (une ligne par automatisation : déclencheur, fonction, dernier et prochain passage, état en étiquette ;
- * ses actions dans la ligne) et l’historique des passages, lu au Journal. Le formulaire de création et de
- * modification s’ouvre en modale.
+ * Rubrique « Automatisations » des Réglages : ce que l’utilisateur fait exécuter sans le lancer lui-même (voir
+ * docs/automatisations.md). Un déclencheur (planning cron, appel HTTP local, script) lance une action : des
+ * fonctions dans l’ordre, un script, ou une conversation avec l’agent. Sections : ce qui attend une validation, la
+ * liste (une ligne par automatisation : déclencheur, action, dernier et prochain passage, état ; ses actions dans
+ * la ligne) et l’historique des passages, étape par étape, lu au Journal. Le formulaire s’ouvre en modale.
  */
-import { Check, Play, Plus } from "lucide-react";
+import { Check, MessageSquare, Play, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type Action,
   Alert,
   Button,
   Checkbox,
+  Fieldset,
   LogViewer,
   Modal,
+  NumberField,
   RadioButtonGroup,
   Select,
   type SettingsSection,
@@ -24,15 +26,20 @@ import { invoke, onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { type JournalEntry, journalLines } from "../journal/JournalSettings";
 import { errorMessage } from "../vault/api";
+import { openConversation } from "./agentRuns";
 import {
+  type AutomationAction,
   type AutomationDraft,
   type AutomationFunction,
   type AutomationItem,
+  type AutomationStep,
   type AutomationsList,
   type AutomationTrigger,
+  actionLabel,
   automationSecret,
   curlCommand,
   listAutomations,
+  newAutomationScript,
   removeAutomation,
   rotateAutomationSecret,
   runAutomationNow,
@@ -66,9 +73,9 @@ export function tagsOf(
   return tags;
 }
 
-/** Description de la ligne : déclencheur, fonction, dernier passage, prochain passage ou problème. */
+/** Description de la ligne : déclencheur, action, dernier passage, prochain passage ou problème. */
 export function describe(item: AutomationItem): string {
-  const parts = [triggerLabel(item.trigger), `fonction ${item.function}`];
+  const parts = [triggerLabel(item.trigger), actionLabel(item.action)];
   if (item.problem) parts.push(item.problem);
   if (item.running || item.lastStatus === "running") parts.push("en cours");
   else if (item.lastRunAt) parts.push(`${item.lastStatus === "error" ? "échec" : "réussie"} ${when(item.lastRunAt)}`);
@@ -90,24 +97,81 @@ async function copy(text: string, done: string) {
 
 const NONE = "__aucun__";
 
+/** Une étape telle que le formulaire la tient : l’entrée en texte JSON. */
+interface StepDraft {
+  key: string;
+  function: string | null;
+  instance: string;
+  input: string;
+  when: string;
+  stopIf: string;
+  continueOnError: boolean;
+}
+
+const newStep = (): StepDraft => ({
+  key: crypto.randomUUID(),
+  function: null,
+  instance: NONE,
+  input: "{}",
+  when: "",
+  stopIf: "",
+  continueOnError: false,
+});
+
+function stepDraft(step: AutomationStep): StepDraft {
+  return {
+    key: crypto.randomUUID(),
+    function: step.function,
+    instance: step.instance ?? NONE,
+    input: JSON.stringify(step.input ?? {}, null, 2),
+    when: step.when ?? "",
+    stopIf: step.stopIf ?? "",
+    continueOnError: step.onError === "continue",
+  };
+}
+
+/** Lit une entrée JSON : un objet, sans la clé réservée `event`. */
+export function parseInput(text: string): { value?: Record<string, unknown>; error?: string } {
+  try {
+    const value: unknown = JSON.parse(text.trim() || "{}");
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+      return { error: 'L’entrée doit être un objet JSON, par exemple {} ou { "projet": "ACME" }.' };
+    if ("event" in value) return { error: "La clé « event » est réservée : elle reçoit ce qu’apporte le déclencheur." };
+    return { value: value as Record<string, unknown> };
+  } catch {
+    return { error: "JSON illisible : vérifiez les guillemets et les virgules." };
+  }
+}
+
 /** Formulaire de création ou de modification, en modale. */
 function AutomationForm({
   initial,
   functions,
+  maxMinutes,
   onClose,
+  onScriptCreated,
 }: {
   initial?: AutomationItem;
   functions: AutomationFunction[];
+  maxMinutes: number;
   onClose: () => void;
+  onScriptCreated: () => void;
 }) {
+  const action = initial?.action;
   const [name, setName] = useState(initial?.name ?? "");
-  const [reference, setReference] = useState<string | null>(initial?.function ?? null);
-  const [instance, setInstance] = useState<string>(initial?.instance ?? NONE);
+  const [actionKind, setActionKind] = useState<AutomationAction["kind"]>(action?.kind ?? "steps");
+  const [steps, setSteps] = useState<StepDraft[]>(
+    action?.kind === "steps" && action.steps.length > 0 ? action.steps.map(stepDraft) : [newStep()],
+  );
+  const [script, setScript] = useState<string | null>(action?.kind === "script" ? action.function : null);
+  const [scriptFile, setScriptFile] = useState<string | null>(initial?.scriptFile ?? null);
+  const [instruction, setInstruction] = useState(action?.kind === "agent" ? action.instruction : "");
+  const [minutes, setMinutes] = useState<number | null>(action?.kind === "agent" ? action.maxMinutes : 15);
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(initial?.trigger.kind ?? "cron");
   const [cron, setCron] = useState(initial?.trigger.kind === "cron" ? initial.trigger.cron : "0 8 * * 1-5");
-  const [input, setInput] = useState(initial ? JSON.stringify(initial.input, null, 2) : "{}");
   const [enabled, setEnabled] = useState(initial ? initial.enabled || initial.status === "toValidate" : true);
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState<"python" | "ts">();
   const [error, setError] = useState<string>();
 
   const sections = useMemo(() => {
@@ -119,31 +183,54 @@ function AutomationForm({
     }
     return [...byModule.values()];
   }, [functions]);
-  const chosen = functions.find((fn) => fn.reference === reference);
-  const accounts = chosen?.instances ?? [];
 
-  const parsed = useMemo((): { value?: Record<string, unknown>; error?: string } => {
-    try {
-      const value: unknown = JSON.parse(input.trim() || "{}");
-      if (value === null || typeof value !== "object" || Array.isArray(value))
-        return { error: 'L’entrée doit être un objet JSON, par exemple {} ou { "projet": "ACME" }.' };
-      if ("event" in value)
-        return { error: "La clé « event » est réservée : elle reçoit ce qu’apporte le déclencheur." };
-      return { value: value as Record<string, unknown> };
-    } catch {
-      return { error: "JSON illisible : vérifiez les guillemets et les virgules." };
+  const update = (key: string, patch: Partial<StepDraft>) =>
+    setSteps((current) => current.map((step) => (step.key === key ? { ...step, ...patch } : step)));
+  const parsedSteps = steps.map((step) => parseInput(step.input));
+
+  const built = ((): AutomationAction | undefined => {
+    if (actionKind === "steps") {
+      if (steps.some((step) => !step.function) || parsedSteps.some((parsed) => parsed.error)) return undefined;
+      return {
+        kind: "steps",
+        steps: steps.map((step, index) => ({
+          function: step.function ?? "",
+          input: parsedSteps[index]?.value ?? {},
+          ...(step.instance !== NONE ? { instance: step.instance } : {}),
+          ...(step.when.trim() ? { when: step.when.trim() } : {}),
+          ...(step.stopIf.trim() ? { stopIf: step.stopIf.trim() } : {}),
+          ...(step.continueOnError ? { onError: "continue" as const } : {}),
+        })),
+      };
     }
-  }, [input]);
+    if (actionKind === "script") return script ? { kind: "script", function: script } : undefined;
+    if (!instruction.trim() || !minutes) return undefined;
+    return { kind: "agent", instruction: instruction.trim(), maxMinutes: minutes };
+  })();
+
+  const createScript = async (runtime: "python" | "ts") => {
+    setCreating(runtime);
+    setError(undefined);
+    try {
+      const made = await newAutomationScript(name.trim() || "script", runtime);
+      setScript(made.reference);
+      setScriptFile(made.file);
+      onScriptCreated();
+      notify({ title: "Script créé", description: made.file, tone: "success" });
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setCreating(undefined);
+    }
+  };
 
   const submit = async () => {
-    if (!reference || !name.trim() || !parsed.value) return;
+    if (!name.trim() || !built) return;
     const trigger: AutomationTrigger = kind === "cron" ? { kind, cron: cron.trim() } : { kind };
     const draft: AutomationDraft = {
       ...(initial ? { id: initial.id } : {}),
       name: name.trim(),
-      function: reference,
-      input: parsed.value,
-      instance: instance === NONE ? null : instance,
+      action: built,
       trigger,
       enabled,
     };
@@ -163,9 +250,9 @@ function AutomationForm({
   return (
     <Modal
       isOpen
-      size="md"
+      size="lg"
       title={initial ? `Modifier « ${initial.name} »` : "Nouvelle automatisation"}
-      description="Une fonction d’un module, lancée sans vous, tant qu’Alfred est ouvert."
+      description="Une action lancée sans vous, tant qu’Alfred est ouvert."
       isBusy={busy}
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -178,7 +265,7 @@ function AutomationForm({
           <Button
             variant="primary"
             isPending={busy}
-            isDisabled={!name.trim() || !reference || !!parsed.error || (kind === "cron" && !cron.trim())}
+            isDisabled={!name.trim() || !built || (kind === "cron" && !cron.trim())}
             onPress={() => void submit()}
           >
             Enregistrer
@@ -192,28 +279,165 @@ function AutomationForm({
         </Alert>
       ) : null}
       <TextInput label="Nom" isRequired autoFocus value={name} onChange={setName} placeholder="Relance des impayés" />
-      <Select
-        label="Fonction"
+      <RadioButtonGroup
+        label="Action"
         isRequired
-        options={sections}
-        value={reference}
-        onChange={(id) => {
-          setReference(id);
-          setInstance(NONE);
-        }}
-        description={functions.length === 0 ? "Aucune fonction dans l’espace : demandez-en une à l’agent." : undefined}
-      />
-      {accounts.length > 0 ? (
-        <Select
-          label="Compte"
-          description="Passé à la fonction dans input.instance."
-          options={[
-            { id: NONE, label: "Aucun (compte par défaut)" },
-            ...accounts.map((a) => ({ id: a.id, label: a.label })),
-          ]}
-          value={instance}
-          onChange={(id) => setInstance(id ?? NONE)}
-        />
+        value={actionKind}
+        onChange={(value) => setActionKind((value ?? "steps") as AutomationAction["kind"])}
+      >
+        <RadioButtonGroup.Option
+          value="steps"
+          description="Une ou plusieurs fonctions ; la sortie d’une étape peut nourrir la suivante, avec des conditions simples."
+        >
+          Fonctions, dans l’ordre
+        </RadioButtonGroup.Option>
+        <RadioButtonGroup.Option
+          value="script"
+          description="Une fonction qui enchaîne les autres avec sa propre logique (Python ou TypeScript). Son code fait partie de votre accord."
+        >
+          Script
+        </RadioButtonGroup.Option>
+        <RadioButtonGroup.Option
+          value="agent"
+          description="Une conversation avec l’agent, sans surveillance : il appelle les fonctions de l’espace, rien d’autre."
+        >
+          Agent
+        </RadioButtonGroup.Option>
+      </RadioButtonGroup>
+      {actionKind === "steps"
+        ? steps.map((step, index) => {
+            const accounts = functions.find((fn) => fn.reference === step.function)?.instances ?? [];
+            const n = index + 1;
+            return [
+              <Fieldset key={step.key} legend={`Étape ${n}`}>
+                <Select
+                  label="Fonction"
+                  isRequired
+                  options={sections}
+                  value={step.function}
+                  onChange={(id) => update(step.key, { function: id, instance: NONE })}
+                  description={
+                    functions.length === 0 ? "Aucune fonction dans l’espace : demandez-en une à l’agent." : undefined
+                  }
+                />
+                {accounts.length > 0 ? (
+                  <Select
+                    label="Compte"
+                    description="Passé à la fonction dans input.instance."
+                    options={[
+                      { id: NONE, label: "Aucun (compte par défaut)" },
+                      ...accounts.map((account) => ({ id: account.id, label: account.label })),
+                    ]}
+                    value={step.instance}
+                    onChange={(id) => update(step.key, { instance: id ?? NONE })}
+                  />
+                ) : null}
+                <TextArea
+                  label="Entrée (JSON)"
+                  value={step.input}
+                  onChange={(value) => update(step.key, { input: value })}
+                  minRows={2}
+                  error={parsedSteps[index]?.error}
+                  description={
+                    index === 0
+                      ? 'Objet passé à la fonction. Une valeur "$event.body.id" est remplacée par la donnée du déclencheur.'
+                      : 'Une valeur "$prev.total" (étape précédente), "$steps.1.items" ou "$event.body.id" est remplacée par la valeur lue.'
+                  }
+                />
+                <TextInput
+                  label="Lancer seulement si"
+                  value={step.when}
+                  onChange={(value) => update(step.key, { when: value })}
+                  placeholder={index === 0 ? "$event.body.type == paiement" : "$prev.total > 0"}
+                  description="Une comparaison : == != > >= < <= contient existe vide non-vide. Vide : toujours."
+                />
+                <TextInput
+                  label="Arrêter ensuite si"
+                  value={step.stopIf}
+                  onChange={(value) => update(step.key, { stopIf: value })}
+                  placeholder="$prev.restant == 0"
+                />
+                <Checkbox
+                  isSelected={step.continueOnError}
+                  onChange={(value) => update(step.key, { continueOnError: value })}
+                >
+                  Continuer si elle échoue
+                </Checkbox>
+              </Fieldset>,
+              steps.length > 1 ? (
+                <Button
+                  key={`${step.key}-retirer`}
+                  size="sm"
+                  variant="subtle"
+                  onPress={() => setSteps((current) => current.filter((other) => other.key !== step.key))}
+                >
+                  {`Retirer l’étape ${n}`}
+                </Button>
+              ) : null,
+            ];
+          })
+        : null}
+      {actionKind === "steps" ? (
+        <Button size="sm" onPress={() => setSteps((current) => [...current, newStep()])}>
+          Ajouter une étape
+        </Button>
+      ) : null}
+      {actionKind === "script" ? (
+        <>
+          <Select
+            label="Script"
+            isRequired
+            options={sections}
+            value={script}
+            onChange={(id) => {
+              setScript(id);
+              setScriptFile(null);
+            }}
+            description="Une fonction de l’espace. Elle reçoit input.event et appelle les autres par functions.call."
+          />
+          <Button size="sm" isPending={creating === "python"} onPress={() => void createScript("python")}>
+            Nouveau script Python
+          </Button>
+          <Button size="sm" isPending={creating === "ts"} onPress={() => void createScript("ts")}>
+            Nouveau script TypeScript
+          </Button>
+          {scriptFile ? (
+            <Button
+              size="sm"
+              variant="subtle"
+              onPress={() =>
+                void invoke("files.open", { path: scriptFile }).catch((failure) =>
+                  notify({ title: "Le script ne s’est pas ouvert", description: errorMessage(failure), tone: "error" }),
+                )
+              }
+            >
+              Ouvrir le script
+            </Button>
+          ) : null}
+        </>
+      ) : null}
+      {actionKind === "agent" ? (
+        <>
+          <TextArea
+            label="Consigne"
+            isRequired
+            value={instruction}
+            onChange={setInstruction}
+            minRows={4}
+            placeholder="Relis les factures impayées de plus de 30 jours et relance chaque client par sa fonction d’envoi."
+            description="L’agent reçoit aussi les données du déclencheur. Personne ne regarde : il appelle les fonctions de l’espace et écrit dans son dossier, rien d’autre, et ne pose pas de question."
+          />
+          <NumberField
+            label="Durée maximale"
+            unit="minutes"
+            isRequired
+            minValue={1}
+            maxValue={maxMinutes}
+            value={minutes}
+            onChange={setMinutes}
+            description="Au-delà, la conversation est arrêtée et le passage compte comme un échec."
+          />
+        </>
       ) : null}
       <RadioButtonGroup
         label="Déclencheur"
@@ -247,14 +471,6 @@ function AutomationForm({
           description="Minute, heure, jour, mois, jour de la semaine. 0 8 * * 1-5 : à 8 h du lundi au vendredi. */15 * * * * : tous les quarts d’heure."
         />
       ) : null}
-      <TextArea
-        label="Entrée (JSON)"
-        value={input}
-        onChange={setInput}
-        minRows={3}
-        error={parsed.error}
-        description="Objet passé à la fonction."
-      />
       <Checkbox
         isSelected={enabled}
         onChange={setEnabled}
@@ -264,6 +480,23 @@ function AutomationForm({
       </Checkbox>
     </Modal>
   );
+}
+
+/** Ce que l’utilisateur valide, redit avant son accord. */
+export function validationMessage(item: AutomationItem): string {
+  const action = item.action;
+  const what =
+    action.kind === "agent"
+      ? `une conversation avec l’agent (${action.maxMinutes} min au plus), consigne : « ${action.instruction.slice(0, 300)} »`
+      : action.kind === "script"
+        ? `le script ${action.function}, dans son état actuel`
+        : action.steps
+            .map(
+              (step, index) =>
+                `${index + 1}. ${step.function} ${JSON.stringify(step.input)}${step.when ? ` si ${step.when}` : ""}`,
+            )
+            .join(" ; ");
+  return `${triggerLabel(item.trigger)} : elle lancera ${what}, sans vous demander.`;
 }
 
 /**
@@ -344,7 +577,7 @@ export function useAutomationsSections(): SettingsSection[] {
         isHidden: !waiting,
         confirm: {
           title: `Valider « ${item.name} » ?`,
-          message: `Elle lancera ${item.function} (${triggerLabel(item.trigger)}) avec l’entrée ${JSON.stringify(item.input)}${item.instance ? `, compte ${item.instance}` : ""}, sans vous demander.`,
+          message: validationMessage(item),
           confirmLabel: "Valider et activer",
         },
         onPress: () => act(() => validateAutomation(item.id), "L’automatisation n’a pas été validée"),
@@ -367,6 +600,13 @@ export function useAutomationsSections(): SettingsSection[] {
             () => setAutomationEnabled(item.id, !item.enabled),
             item.enabled ? "L’automatisation n’a pas été mise en pause" : "L’automatisation n’a pas été activée",
           ),
+      },
+      {
+        id: "conversation",
+        label: "Ouvrir la dernière conversation",
+        icon: <MessageSquare size={16} aria-hidden="true" />,
+        isHidden: !item.lastConversation,
+        onPress: () => (item.lastConversation ? openConversation(item.lastConversation) : undefined),
       },
       { id: "edit", label: "Modifier", onPress: () => setEditing(item) },
       {
@@ -473,6 +713,8 @@ export function useAutomationsSections(): SettingsSection[] {
         <AutomationForm
           initial={editing === "new" ? undefined : editing}
           functions={data?.functions ?? []}
+          maxMinutes={data?.maxAgentMinutes ?? 120}
+          onScriptCreated={() => void load()}
           onClose={() => {
             setEditing(undefined);
             void load();

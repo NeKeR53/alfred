@@ -1,15 +1,17 @@
 # Automatisations — décisions d’architecture
 
-Décidé le 2026-11-25, sans questions à Alexandre (délégation). Chaque décision donne la raison. Code : `src-tauri/src/automations.rs` (cœur), `src/features/automations/AutomationsSettings.tsx` (page), SDK : `automations.trigger`.
+Décidé le 2026-11-25, sans questions à Alexandre (délégation). Chaque décision donne la raison. Code : `src-tauri/src/automations.rs` (cœur), `src/features/automations/AutomationsSettings.tsx` (page), `src/features/automations/agentRuns.ts` (passages agentiques), SDK : `automations.trigger`. Les actions (A-12 à A-17) ont été ajoutées le même jour, à la demande d’Alexandre.
 
 ## Ce qu’est une automatisation
 
-Une automatisation exécute une **fonction d’un module** sans que l’utilisateur la lance lui-même. Elle a :
+Une automatisation exécute une **action** sans que l’utilisateur la lance lui-même. Elle a :
 
 - un **nom** et un identifiant (tiré du nom) ;
-- une **fonction cible** (`module/fonction`), de n’importe quel module ;
-- une **entrée** fixe (objet JSON) et, au besoin, un **compte** d’un client (`input.instance`) ;
 - un **déclencheur** : planning cron, appel HTTP local, ou script ;
+- une **action**, parmi trois :
+  - **déterministe** : une ou plusieurs fonctions de n’importe quel module, dans l’ordre, chacune avec son entrée fixe, son compte (`input.instance`) et ses conditions ;
+  - **script** : une fonction de module qui enchaîne les autres avec sa propre logique ;
+  - **agentique** : une conversation avec l’agent d’Alfred ;
 - un état : **à valider**, **active**, **en pause**, ou **invalide** (fonction absente, planning illisible) ;
 - un **historique** : chaque passage au Journal (type « Automatisation »).
 
@@ -34,7 +36,7 @@ Limite : une automatisation ne suit pas l’espace sur un autre ordinateur. Elle
 ### A-3. Accord : validée dans son état actuel, puis activée
 
 Une automatisation ne part d’elle-même que si :
-1. l’utilisateur l’a **validée** dans son état actuel ; l’empreinte couvre la fonction, l’entrée, le compte et le déclencheur (pas le nom) ;
+1. l’utilisateur l’a **validée** dans son état actuel ; l’empreinte couvre l’action (fonctions, entrées, comptes, conditions ; consigne et durée d’un agent ; code d’un script, A-13) et le déclencheur, pas le nom ;
 2. elle est **active**.
 
 - Créée ou modifiée par l’utilisateur dans la page : son geste vaut validation ; elle est active d’office à la création (interrupteur « Active » dans le formulaire).
@@ -102,8 +104,59 @@ Réglages → **Automatisations** (groupe Espace de travail, avant Journal). Rub
 
 Le formulaire (modale) : nom, fonction (groupée par module), compte (si la fonction utilise un client à plusieurs comptes), déclencheur, planning cron, entrée JSON, « Active dès l’enregistrement ».
 
+### A-12. Action déterministe : des étapes, des références, une comparaison par condition
+
+- Une action déterministe est une liste de 1 à 20 **étapes**. Chaque étape a une fonction, une entrée fixe (objet JSON), un compte facultatif, et trois réglages facultatifs.
+- **Références** : dans l’entrée, un texte qui **est entièrement** une référence est remplacé par la valeur lue : `$prev` (sortie de l’étape précédente lancée), `$steps.N` (sortie de l’étape N, à partir de 1, déjà passée), `$event` (données du déclencheur), suivis d’un chemin `.cle.0.autre`. Une valeur absente vaut `null`. `$$…` garde un `$`. Pas d’interpolation dans un texte plus long.
+- **`when`** (« Lancer seulement si ») : l’étape ne part que si la condition est vraie ; sinon elle est **passée** (sa sortie vaut `null`, `$prev` ne change pas).
+- **`stopIf`** (« Arrêter ensuite si ») : après l’étape, le passage s’arrête, en réussite, si la condition est vraie. Elle peut lire la sortie de l’étape (`$prev`).
+- **`onError: "continue"`** (« Continuer si elle échoue ») : l’étape suivante part ; `$prev` vaut `{ "error": "<message>" }`. Par défaut, un échec arrête le passage en échec.
+- **Condition** : **une seule comparaison**, `<référence> <opérateur> [valeur]`. Opérateurs : `==` (ou `=`), `!=`, `>`, `>=`, `<`, `<=`, `contient` (texte, liste, clé d’un objet), `existe`, `vide`, `non-vide`. La valeur est du JSON (`3`, `"paiement"`, `true`), ou un mot nu lu comme texte. Un nombre et un texte numérique se comparent en nombres.
+- Pas de `et`, `ou`, `sinon` ni de branche : deux étapes avec deux conditions suffisent. Au-delà, c’est un script.
+- Tout est vérifié à l’enregistrement (fonction déclarée, référence vers une étape déjà passée, condition lisible), pas au passage.
+
+Raison : Alexandre veut « pas de if/else/switch case, mais pas loin ». Une comparaison par étape couvre « ne relancer que s’il y a des impayés » et « s’arrêter quand il n’y a plus rien », sans langage à apprendre ni à sécuriser.
+
+### A-13. Action script : une fonction de module, son code dans l’accord
+
+- Le script est une **fonction de module** ordinaire (TypeScript, Python avec `import alfred`, bash, PowerShell). Il reçoit `input.event` et appelle les autres fonctions par `functions.call`, avec la logique qu’il veut.
+- « Nouveau script Python » et « Nouveau script TypeScript » créent un fichier modèle dans le module local **`automatisations`** (créé au besoin, sans page), sans jamais écraser un fichier. L’agent écrit ses scripts au même endroit (`declare_function`).
+- L’empreinte validée contient le **code** du script : le fichier et sa déclaration (SHA-256). Toute modification, par l’utilisateur ou l’agent, remet l’automatisation « à valider » ; aucun passage ne part, même manuel.
+- Les appels à des fonctions d’**autres modules** suivent l’accord habituel des modules : il est demandé au premier appel. Faites un passage manuel (« Exécuter maintenant ») juste après la validation, pour le donner devant l’écran.
+
+Raison : réutiliser les fonctions évite un second moteur d’exécution (le cadre des fonctions TypeScript, le pont des scripts, l’environnement Python par module) ; l’accord porte enfin sur le code lui-même, ce que A-3 ne fait pas pour une simple fonction.
+
+### A-14. Action agentique : une conversation neuve, lancée par la coquille
+
+- Rust prépare le passage : un identifiant de conversation neuf (`auto-…`), son **périmètre**, son dossier de travail (`.alfred/automations/<id>/` dans l’espace, hors git). Il demande ensuite à la coquille de la lancer (`automation:agent`) et attend son issue.
+- La coquille crée la conversation, **jamais une conversation existante**, titrée « <nom> · automatisation », avec l’origine « Depuis l’automatisation « <nom> » » en tête du relevé. Elle apparaît dans la liste des conversations de la page Agent.
+- Message : la consigne fixe, suivie des règles du passage sans surveillance (A-15) ; les données du déclencheur partent en contexte (« Données du déclencheur »).
+- Sa sortie : `{ conversation, message }` (le dernier message de l’agent).
+- Une interface ouverte plus tard retrouve une demande en attente (`ui.waiting`). Seule la fenêtre principale lance ces conversations.
+- Le harnais et le modèle sont ceux réglés par défaut pour l’agent.
+
+### A-15. Ce que l’agent fait sans demander, quand personne ne regarde
+
+- **Il peut** : appeler toutes les fonctions de l’espace (`call_function` et leurs outils `fn__…`), attendre un événement (`wait_for_event`), lire et écrire dans son dossier de travail.
+- **Il ne peut pas** : changer la structure de l’espace (pages, modules, clients, accords, automatisations), lire la base des modules, écrire ou lancer quoi que ce soit hors de son dossier. Le périmètre MCP le refuse (module `automatisation:<id>` qui ne correspond à aucun module), et le mode « espace de travail » du harnais refuse sans demander ce qui sort du dossier.
+- **Il ne pose pas de question** : la consigne le lui dit. Une question ou une demande d’accord restée sans réponse finit à la durée maximale.
+- **Durée maximale** : 15 minutes par défaut, de 1 à 120. Au-delà, la coquille arrête la conversation ; le passage compte comme un échec.
+- **Un passage à la fois** par automatisation (A-8) : chaque passage a sa propre conversation.
+
+Raison : une fonction est le seul moyen d’agir que l’utilisateur a déjà jugé utile ; tout le reste demande sa présence.
+
+### A-16. Journal : chaque étape, et le lien vers la conversation
+
+- Une action à plusieurs étapes écrit une ligne par étape (« étape 2/3 module/fonction : réussie », « passée (« … » est faux) », « échec »), une ligne d’arrêt si `stopIf` est vrai, puis la ligne du passage (« planning → 3 étapes : … »). Une seule étape : la ligne du passage suffit.
+- Un passage agentique porte l’identifiant de sa conversation (`detail.conversation`), même en échec. La ligne de l’automatisation garde la dernière conversation : l’action « Ouvrir la dernière conversation » l’ouvre dans la page Agent.
+
+### A-17. Formulaire
+
+Le formulaire choisit l’action (`RadioButtonGroup`) : les étapes en `Fieldset` (« Étape N » : fonction, compte, entrée JSON, « Lancer seulement si », « Arrêter ensuite si », « Continuer si elle échoue »), avec « Ajouter une étape » et « Retirer l’étape N » ; le script (choix de la fonction, « Nouveau script Python », « Nouveau script TypeScript », « Ouvrir le script ») ; l’agent (consigne en `TextArea`, durée maximale en `NumberField`). La modale passe en taille `lg`. `/design check` : tout est prévu par socle-ui 1.19.1. Limite connue : avec beaucoup d’étapes, le formulaire devient long pour une modale (la spec de `Modal` conseille une page pour un long formulaire) ; il reste dans la modale, comme la rubrique des Réglages.
+
 ## Suites possibles (non faites)
 
 - Les planifications déclarées par un module tournent dès leur déclaration, sans accord de l’utilisateur. Les faire passer par le même accord qu’une automatisation.
 - Réveil d’Alfred par le système (launchd, Planificateur de tâches) pour un planning quand l’app est fermée.
-- Accord étendu au code de la fonction (empreinte du fichier).
+- Accord étendu au code des fonctions d’une action déterministe (c’est fait pour un script, A-13).
+- Choisir le harnais et le modèle d’un passage agentique.

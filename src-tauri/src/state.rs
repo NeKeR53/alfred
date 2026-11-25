@@ -116,7 +116,8 @@ impl AppState {
         if let Some(object) = payload.as_object_mut() {
             object.insert("requestId".to_string(), Value::String(id.clone()));
         }
-        if name == "permission:ask" {
+        // Demandes qu’une interface ouverte plus tard doit retrouver (`ui.waiting`) : un accord, un passage agentique.
+        if name == "permission:ask" || name == "automation:agent" {
             if let Ok(mut asked) = self.asked.lock() {
                 asked.push((name.to_string(), payload.clone()));
             }
