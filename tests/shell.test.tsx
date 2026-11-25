@@ -103,6 +103,7 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
     "Marketplace",
     "Apparence",
     "Ordre du menu",
+    "Automatisations",
     "Journal",
     "Agent",
     "Voix",

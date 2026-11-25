@@ -95,11 +95,12 @@ Outils MCP : `create_automation` (créer ou modifier ; naît à valider), `list_
 
 ### A-11. Interface
 
-Réglages → **Automatisations** (groupe Espace de travail, avant Journal). Rubrique en deux sections, composants socle-ui seulement (`SettingsPage`, `Modal`, `TextInput`, `Select`, `RadioButtonGroup`, `TextArea`, `Toggle`, `LogViewer`, `Alert`) :
+Réglages → **Automatisations** (groupe Espace de travail, avant Journal). Rubrique en sections, composants socle-ui seulement (`SettingsPage`, `Modal`, `TextInput`, `Select`, `RadioButtonGroup`, `TextArea`, `Checkbox`, `LogViewer`, `Alert`). `/design check` : tout est prévu par socle-ui 1.19.1 (le corps d’une `Modal` espace ses champs ; « Active » est une `Checkbox`, car elle fait partie d’un formulaire qu’on envoie) ; aucune pièce ajoutée à socle-ui.
+0. **À valider** (seulement s’il y en a) : celles que l’agent a préparées ou modifiées, avec « Valider et activer » (confirmation qui redit la fonction, le déclencheur, l’entrée et le compte). Elles n’ont pas « Exécuter maintenant ».
 1. **Automatisations** : une ligne par automatisation (nom, déclencheur, fonction, dernier et prochain passage ; état en étiquette) ; actions : Valider et activer, Mettre en pause ou Activer, Exécuter maintenant, Modifier, Copier l’adresse, Copier la commande curl, Copier le secret, Régénérer le secret, Supprimer. Bouton de section « Nouvelle automatisation ».
 2. **Historique** : le Journal des passages, filtré par automatisation.
 
-Le formulaire (modale) : nom, fonction (groupée par module), compte (si la fonction utilise un client à plusieurs comptes), déclencheur, planning cron, entrée JSON, Active.
+Le formulaire (modale) : nom, fonction (groupée par module), compte (si la fonction utilise un client à plusieurs comptes), déclencheur, planning cron, entrée JSON, « Active dès l’enregistrement ».
 
 ## Suites possibles (non faites)
 
