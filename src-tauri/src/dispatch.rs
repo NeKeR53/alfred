@@ -17,6 +17,7 @@ const LAST_SPACE: &str = "space.last";
 fn ui_snapshot(state: &AppState, space: &Space) -> AppResult<Value> {
     let mut snapshot = space.snapshot()?;
     snapshot.examples = crate::examples::modules(state);
+    crate::kept_scripts::annotate(state, space, &mut snapshot);
     Ok(serde_json::to_value(snapshot)?)
 }
 
@@ -38,7 +39,7 @@ pub async fn dispatch(state: Arc<AppState>, command: &str, args: Value) -> AppRe
     if let Some(result) = crate::python::objects::handle(&state, command, &args).await {
         return result;
     }
-    delegate!(vault, agent_workspace, examples, clients, states, space_db, function_tests, backups, module_files, folders, folder_git, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, model_files, commands, functions, agents, conversations, mcp, webhooks, schedules, automations, marketplace, permissions, pages, reorganize, composer, voice, badges, menu_sections, menu_zones, setup, team_sync, spaces);
+    delegate!(kept_scripts, vault, agent_workspace, examples, clients, states, space_db, function_tests, backups, module_files, folders, folder_git, documents, jobs, module_search, module_events, module_history, module_semantic, decisions, model_files, commands, functions, agents, conversations, mcp, webhooks, schedules, automations, marketplace, permissions, pages, reorganize, composer, voice, badges, menu_sections, menu_zones, setup, team_sync, spaces);
     match command {
         "app.info" => {
             let server = state.server()?;

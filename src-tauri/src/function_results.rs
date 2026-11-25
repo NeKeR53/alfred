@@ -273,6 +273,7 @@ mod tests {
             param: None,
             tests: Vec::new(),
             examples: 0,
+            kept: None,
         };
         let functions = [
             declared("jira/lister-tickets", Some(crate::space::Effect::Read)),

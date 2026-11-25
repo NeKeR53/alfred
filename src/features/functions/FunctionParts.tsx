@@ -74,6 +74,7 @@ function isScript(fn: ResolvedFunction): boolean {
 /** Étiquettes d’une fonction : seulement ce qui mérite l’attention (langage d’un script, écriture, tests, état). */
 function tagsOf(fn: ResolvedFunction, tests: FunctionTests | undefined): SettingTag[] {
   const tags: SettingTag[] = [];
+  if (fn.kept === "toValidate") tags.push({ label: "À valider", tone: "warning" });
   if (isScript(fn)) tags.push({ label: RUNTIME_LABELS[fn.runtime], tone: "neutral" });
   if (fn.effect !== "read") tags.push({ label: "Écriture", tone: "neutral" });
   const state = stateOf(fn);
@@ -82,6 +83,17 @@ function tagsOf(fn: ResolvedFunction, tests: FunctionTests | undefined): Setting
     tags.push({ label: isScript(fn) ? "Interpréteur absent" : "Ne compile pas", tone: "danger" });
   else if (tests && tests.state !== "none" && tests.state !== "passed") tags.push(TEST_STATE_LABELS[tests.state]);
   return tags;
+}
+
+/** Accepte un script gardé par l’agent dans son état actuel : il peut alors tourner. */
+async function acceptKept(fn: ResolvedFunction) {
+  try {
+    await invoke("functions.acceptKept", { reference: fn.reference });
+    await useShell.getState().refresh();
+    notify({ title: `Fonction « ${fn.id} » acceptée`, tone: "success" });
+  } catch (failure) {
+    notify({ title: "L’accord n’a pas été enregistré", description: errorMessage(failure), tone: "error" });
+  }
 }
 
 /** Active ou retire la fonction des outils proposés à l’agent. */
@@ -124,12 +136,18 @@ export function functionRow(
       fn.missing
         ? "Déclarée dans le module, mais son fichier n’existe pas encore : demandez à l’agent de l’écrire."
         : null,
+      fn.kept === "toValidate"
+        ? "Script gardé par l’agent : il ne tourne qu’après votre accord. Toute modification le remet à valider."
+        : null,
       ...errors,
     ]
       .filter(Boolean)
       .join(" "),
     tags: tagsOf(fn, tests),
     actions: [
+      ...(fn.kept === "toValidate"
+        ? [{ id: "accept", label: "Accepter", isDisabled: stateOf(fn) !== "ready", onPress: () => void acceptKept(fn) }]
+        : []),
       { id: "try", label: "Essayer…", isDisabled: stateOf(fn) !== "ready", onPress: onTry },
       {
         id: "tool",

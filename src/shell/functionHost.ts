@@ -280,14 +280,28 @@ async function executeFunction(
   accounts: Record<string, string>,
 ): Promise<unknown> {
   const [module, name] = reference.split("/");
-  const { snapshot } = useShell.getState();
-  const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
+  let { snapshot } = useShell.getState();
+  let declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
+  // Une fonction déclarée à l’instant (un script gardé, la déclaration d’un agent) : l’espace est relu une fois.
+  if (!declared && module && name) {
+    await useShell
+      .getState()
+      .refresh()
+      .catch(() => undefined);
+    snapshot = useShell.getState().snapshot;
+    declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
+  }
   if (!module || !name || !declared) throw new AlfredError({ message: `La fonction « ${reference} » n’existe pas.` });
   const sample = examples || inExampleMode(snapshot, module);
   // Une fonction de connecteur en mode exemple n’est pas lancée : Alfred rend l’exemple le plus proche de l’entrée.
   if (sample && (declared.uses.clients ?? []).length > 0)
     return invoke("functions.example", { function: reference, input, caller });
   if (declared.missing) throw new AlfredError({ message: `La fonction « ${reference} » n’est pas encore écrite.` });
+  // Un script gardé par l’agent ne tourne qu’accepté ; la vérification (`check`) le lance avant.
+  if (declared.kept === "toValidate" && caller !== "vérification")
+    throw new AlfredError({
+      message: `La fonction « ${reference} » est un script gardé par l’agent : elle attend votre accord (Réglages → Modules).`,
+    });
   // Un script (bash, PowerShell, Python) est lancé par Alfred lui-même, qui le note au journal.
   if (declared.runtime && declared.runtime !== "ts")
     return invoke("functions.call", {

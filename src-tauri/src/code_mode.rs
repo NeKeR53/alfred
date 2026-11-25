@@ -40,9 +40,10 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "run",
-        "alfred run <fichier.ts | -> [--input '{…}']",
-        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Lecture seule : une fonction qui n’est pas `effect: read` est refusée. Limites : 60 s, 50 appels, 20 000 caractères de sortie.",
+        "alfred run <fichier.ts | -> [--input '{…}'] [--again <id>] [--save module/nom] [--description …]",
+        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Lecture seule : une fonction qui n’est pas `effect: read` est refusée. Limites : 60 s, 50 appels, 20 000 caractères de sortie. Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction de lecture du module (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
     ),
+    ("runs", "alfred runs [--limit n]", "Exécutions de Code Mode gardées 7 jours : id, date, réussite, nombre d’appels, début du code."),
 ];
 
 /// Exécution en cours : ce que ses requêtes peuvent faire, et ce qu’elles ont fait.
@@ -92,6 +93,10 @@ pub async fn handle(
     match command {
         "api" => Some(api(state, conversation, argv)),
         "run" => Some(run_command(state, conversation, argv, stdin, cwd).await),
+        "runs" => Some(options(argv, &["limit"]).and_then(|(_, named)| {
+            let limit = named.get("limit").and_then(Value::as_str).and_then(|raw| raw.parse().ok()).unwrap_or(20usize);
+            crate::kept_scripts::list(state, limit.clamp(1, 200))
+        })),
         _ => None,
     }
 }
@@ -394,13 +399,33 @@ async fn run_command(
     stdin: Option<&str>,
     cwd: Option<&Path>,
 ) -> AppResult<Value> {
-    let (positional, named) = options(argv, &["input"])?;
-    let code = source(&positional, stdin, cwd)?;
-    let input = match named.get("input").and_then(Value::as_str) {
-        Some(raw) => serde_json::from_str(raw).map_err(|_| AppError::new("`--input` attend du JSON."))?,
-        None => json!({}),
+    let (positional, named) = options(argv, &["input", "again", "save", "description"])?;
+    let text = |name: &str| named.get(name).and_then(Value::as_str).map(str::to_string);
+    let input = match text("input") {
+        Some(raw) => Some(serde_json::from_str(&raw).map_err(|_| AppError::new("`--input` attend du JSON."))?),
+        None => None,
     };
-    execute(state, conversation, &code, input).await.0
+    let (code, input) = match text("again") {
+        Some(id) => {
+            if positional.iter().any(|value| value != "-") {
+                return Err(AppError::new("`--again` relance une exécution gardée : sans fichier."));
+            }
+            let stored = crate::kept_scripts::load(state, &id)?;
+            (stored.code, input.unwrap_or(stored.input))
+        }
+        None => (source(&positional, stdin, cwd)?, input.unwrap_or_else(|| json!({}))),
+    };
+    let (outcome, calls) = execute(state, conversation, &code, input.clone()).await;
+    // Un code qui ne compile pas n’a pas tourné : il n’est pas gardé.
+    let compiled = !matches!(&outcome, Err(error) if error.message == "Le code ne se compile pas.");
+    let id = if compiled { Some(crate::kept_scripts::record(state, conversation, &code, &input, &outcome, &calls)?) } else { None };
+    let mut shown = outcome?;
+    shown["run"] = json!(id);
+    if let (Some(target), Some(id)) = (text("save"), &id) {
+        let stored = crate::kept_scripts::load(state, id)?;
+        shown["saved"] = crate::kept_scripts::save(state, conversation, &target, text("description"), &stored).await?;
+    }
+    Ok(shown)
 }
 
 /// Exécute `code` pour la conversation : `{ result, logs, calls, ms }`, et les appels faits.

@@ -182,6 +182,8 @@ export interface ResolvedFunction {
   tests?: FunctionTestCase[];
   /** Nombre de réponses d’exemple déclarées (mode « données d’exemple »). */
   examples?: number;
+  /** Script gardé par l’agent (Code Mode) : il ne tourne qu’accepté par l’utilisateur. */
+  kept?: "toValidate" | "accepted";
 }
 
 export type FunctionRuntime = "ts" | "bash" | "pwsh" | "python";

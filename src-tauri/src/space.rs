@@ -881,6 +881,9 @@ pub struct ResolvedFunction {
     pub tests: Vec<FunctionTest>,
     /// Nombre de réponses d’exemple déclarées.
     pub examples: usize,
+    /// Script gardé par l’agent (`kept_scripts.rs`) : `toValidate` ou `accepted`. Rempli pour l’interface.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1795,6 +1798,7 @@ impl Space {
                     param: function.param.clone(),
                     tests: function.tests.clone(),
                     examples: function.examples.len(),
+                    kept: None,
                 });
             }
         }

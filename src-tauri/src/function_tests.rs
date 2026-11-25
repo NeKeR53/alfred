@@ -16,7 +16,7 @@ use crate::space::{Effect, Expect, FunctionDecl, FunctionTest, ModuleManifest, S
 use crate::state::AppState;
 
 /// Appelant inscrit au journal pour un test.
-const CALLER: &str = "vérification";
+pub const CALLER: &str = "vérification";
 /// Sortie gardée avec un résultat, pour la montrer à l’utilisateur : au-delà, elle est coupée.
 const MAX_OUTPUT: usize = 4000;
 

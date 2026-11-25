@@ -71,6 +71,7 @@ pub async fn call_unfed(state: &Arc<AppState>, reference: &str, input: Value, ca
     let Some(declared) = manifest.functions.iter().find(|declared| declared.id == function) else {
         return Err(AppError::new(format!("La fonction « {reference} » n’est pas déclarée dans son module.")));
     };
+    crate::kept_scripts::ensure_runnable(state, reference, caller)?;
     let examples = examples || crate::examples::is_on(state, module);
     if examples && declared.is_connector() {
         crate::examples::respond(state, reference, declared, &input, caller)

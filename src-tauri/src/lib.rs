@@ -30,6 +30,7 @@ mod functions;
 mod git;
 mod git_network;
 mod jobs;
+mod kept_scripts;
 mod libraries;
 mod marketplace;
 mod model_files;
