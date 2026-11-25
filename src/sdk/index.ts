@@ -695,12 +695,37 @@ export type MultipartPart =
 /** Requête d’un téléchargement, d’un flux ou d’un WebSocket : comme `ClientRequest`, sans cache. */
 export type ClientTransferRequest = Omit<ClientRequest, "path" | "cache" | "responseType">;
 
+/** Options d’un téléchargement : celles d’une requête, et où vont les octets. */
+export type ClientDownloadRequest = ClientTransferRequest & {
+  /** Nom du fichier ; à défaut, celui que donne le service, puis le dernier segment du chemin. */
+  name?: string;
+  /**
+   * Octets dans un fichier temporaire de l’espace (`temporary.path`) au lieu des fichiers du module : le code le
+   * déplace où il veut (un script Python), il est retiré après un jour.
+   */
+  temporary?: boolean;
+  /** Taille au-delà de laquelle le téléchargement est abandonné, en octets (2 Go au plus). */
+  maxSize?: number;
+};
+
+/** Fichier temporaire d’un téléchargement `temporary: true`. */
+export interface TemporaryDownload {
+  /** Chemin absolu du fichier, à déplacer. */
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+}
+
 export interface ClientDownload {
   status: number;
   ok: boolean;
   headers: Record<string, string>;
-  /** Le fichier rangé dans les fichiers du module ; `null` si le service a répondu par une erreur. */
+  /** Le fichier rangé dans les fichiers du module ; `null` si le service a répondu par une erreur ou avec `temporary`. */
   file: FileInfo | null;
+  /** Avec `temporary: true` : le fichier temporaire ; `null` si le service a répondu par une erreur. */
+  temporary?: TemporaryDownload | null;
   /** Réponse du service quand `ok` est faux (JSON décodé, sinon texte). */
   body?: unknown;
 }
@@ -771,8 +796,10 @@ export function client(id: string, options: ClientOptions = {}) {
     /**
      * Télécharge en flux dans les fichiers du module (2 Go au plus), avec son SHA-256, sans passer par la fonction.
      * `name` : nom du fichier ; à défaut, celui que donne le service, puis le dernier segment du chemin.
+     * `temporary: true` : dans un fichier temporaire (`temporary.path`) ; `maxSize` : taille maximale en octets.
+     * Une redirection vers un hôte de `redirectHosts` du client est suivie, sans l’authentification.
      */
-    download: (path: string, options: ClientTransferRequest & { name?: string } = {}) =>
+    download: (path: string, options: ClientDownloadRequest = {}) =>
       request<ClientDownload>("clients.download", { client: id, path, ...options, ...(instance ? { instance } : {}) }),
     /**
      * Ouvre une réponse en continu (SSE, journal suivi, journaux Docker) et rend l’identifiant de son canal, que la

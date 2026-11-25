@@ -118,7 +118,7 @@ Le code Python d’un module importe `alfred` sans rien installer : Alfred met l
 | --- | --- |
 | `alfred.db.query(sql, params=[])` | Lignes de la base de l’espace, en dictionnaires. Tables du module seulement (`<module>_…`). |
 | `alfred.db.execute(sql, params=[])` | Écriture ; rend `{"changes", "lastInsertId"}`. |
-| `alfred.client("jira", instance=None)` | Compte d’un service déclaré dans `uses.clients` de la fonction. `.get(path, query)`, `.post(path, body)`, `.put`, `.patch`, `.delete`, `.request(method, path, query=, headers=, body=, form=, multipart=, file=, response_type=, cache=, sealed=)` rendent un `alfred.Response` (`status`, `ok`, `headers`, `body`, `raise_for_status()`). Aussi `.download(path, name=)`, `.stream(path)`, `.instances()`, `.params()`, `.clear_cache()`. Alfred ajoute l’authentification : le code ne voit jamais le secret. |
+| `alfred.client("jira", instance=None)` | Compte d’un service déclaré dans `uses.clients` de la fonction. `.get(path, query)`, `.post(path, body)`, `.put`, `.patch`, `.delete`, `.request(method, path, query=, headers=, body=, form=, multipart=, file=, response_type=, cache=, sealed=)` rendent un `alfred.Response` (`status`, `ok`, `headers`, `body`, `raise_for_status()`). Aussi `.fetch(path, query)` (les octets d’un petit binaire, 5 Mo au plus ; `Response.content` rend aussi les octets d’une réponse `response_type="base64"`), `.download(path, name=, temporary=, max_size=)` (section 6, « Fichiers, flux et WebSocket »), `.download_to(path, cible, max_size=)` (télécharge vers un chemin du disque par un fichier temporaire ; rend `{status, ok, headers, path, size, sha256}`, `path` à `None` en échec), `.stream(path)`, `.instances()`, `.params()`, `.clear_cache()`. Alfred ajoute l’authentification : le code ne voit jamais le secret. Un script ne joint jamais le réseau lui-même (`urllib`, `requests`, `curl`) : `check` le refuse. |
 | `alfred.secrets` | `is_ref(valeur)`, `PREFIX`. Un champ secret arrive en référence opaque ; `reveal` et `write_env_file` lèvent toujours une erreur : c’est la page qui les appelle. |
 | `alfred.files` | `save(name, text=… ou data=b"…", mime=)`, `list(prefix, limit)`, `get(id)`, `read(id)` (octets), `read_text(id)`, `remove(id)`. |
 | `alfred.notify(title, description=None, tone="info")` | Notification dans Alfred (et au système quand Alfred est en arrière-plan). `tone` : `info`, `success`, `warning`, `error`. |
@@ -509,6 +509,7 @@ Un client se déclare avec l’outil `declare_client`, qui écrit `clients/jira.
 - `auth.type` : `none` ; `bearer` ; `basic` ; `apiKey` avec `header` (et `prefix` facultatif) **ou** `queryParam` ; `oauth2` avec `authorizationUrl`, `tokenUrl`, `scopes` ; `clientCredentials` avec `tokenUrl`, `scopes` ; `session` avec `login` et `apply` (identifiant et mot de passe échangés par Alfred contre un jeton, voir plus bas) ; `secretUrl` (toute l’adresse est secrète).
 - `auth.secret` : l’entrée du coffre renvoyée par `vault_store` ; omis, `declare_client` garde celle déjà reliée. `headers` : en-têtes fixes, jamais d’authentification.
 - `testPath` : chemin que lit le bouton Tester des Réglages (`GET`), pour chaque instance. Choisis une lecture légère qui demande l’authentification (`/me`, `/labels`…) : beaucoup d’API n’ont rien à la racine, qui est lue sans lui.
+- `redirectHosts` : hôtes vers lesquels Alfred suit une redirection du service (`"media.exemple.com"`, ou `"*.cdn.exemple.com"` pour tous ses sous-domaines). Sans lui, seule une redirection vers la même origine est suivie ; une autre revient telle quelle (`status` 302, `headers.location`). La redirection n’est suivie que pour une lecture (`GET`, `HEAD`), en HTTPS, et la requête suivante part **nue** : ni authentification, ni en-têtes du client ou de la fonction. Une adresse qui contient le secret n’est jamais suivie. Exemple : un flux de podcast dont le son passe par un CDN (`"redirectHosts": ["*.acast.com"]`). Les hôtes font partie de ce que l’utilisateur valide.
 
 Pour un service à plusieurs instances, `methods` remplace `auth` : la liste des façons de s’authentifier, et `instances` les comptes (adresse libre, méthode, entrée du coffre). `declare_client` crée ou met à jour les instances qu’il reçoit et garde les autres ; l’utilisateur peut aussi en ajouter dans la fiche du module (Réglages → Modules).
 
@@ -611,10 +612,19 @@ Un seul corps par requête : `body`, `form`, `multipart` ou `file`.
 **Recevoir un binaire.** `responseType: "base64"` rend `body` en base64 (une image, une icône : 5 Mo au plus) ; `"text"` force le texte. Au-delà, ou pour un fichier à garder, `download` :
 
 ```ts
-interface ClientDownload { status: number; ok: boolean; headers: Record<string, string>; file: FileInfo | null; body?: unknown }
+interface ClientDownload {
+  status: number; ok: boolean; headers: Record<string, string>;
+  file: FileInfo | null;                                                                  // fichier du module
+  temporary?: { path: string; name: string; mime: string; size: number; sha256: string } | null; // avec temporary: true
+  body?: unknown;                                                                         // réponse du service en échec
+}
 ```
 
-`client(id).download(path, { name, query, … })` écrit la réponse en flux dans les fichiers du module (2 Go au plus), avec son SHA-256, sans passer par la mémoire de la fonction ; le fichier n’apparaît qu’une fois complet. `name` omis : le nom donné par le service (`Content-Disposition`), sinon le dernier segment du chemin. Un statut d’erreur ne laisse aucun fichier : `file` vaut `null` et `body` porte la réponse. Une transmission muette plus de deux minutes est abandonnée. La fonction rend `file.id` à la page, qui l’affiche (`DocumentViewer`), l’ouvre (`files.open`) ou l’enregistre (`files.export`).
+`client(id).download(path, { name, query, temporary, maxSize, … })` écrit la réponse en flux dans les fichiers du module (2 Go au plus), avec son SHA-256, sans passer par la mémoire de la fonction ; le fichier n’apparaît qu’une fois complet. `name` omis : le nom donné par le service (`Content-Disposition`), sinon le dernier segment du chemin. Un statut d’erreur ne laisse aucun fichier : `file` vaut `null` et `body` porte la réponse. Une transmission muette plus de deux minutes est abandonnée. La fonction rend `file.id` à la page, qui l’affiche (`DocumentViewer`), l’ouvre (`files.open`) ou l’enregistre (`files.export`).
+
+- `temporary: true` : les octets vont dans un fichier temporaire de l’espace, pas dans les fichiers du module. `temporary.path` est son chemin absolu : un script le déplace où il en a besoin (un dossier de travail). Un fichier temporaire non déplacé est retiré après un jour.
+- `maxSize` : taille maximale en octets. Au-delà, le téléchargement échoue (« Fichier trop gros ») et ne laisse aucun fichier.
+- Une redirection vers un hôte de `redirectHosts` du client est suivie, sans l’authentification (section 6). Un fichier servi par un **autre hôte** que le service (images sur un stockage, son sur un CDN) se joint par un client sans compte de cet hôte (`"auth": { "type": "none" }`), jamais par le réseau du script.
 
 ```ts
 // functions/telecharger-artefact.ts

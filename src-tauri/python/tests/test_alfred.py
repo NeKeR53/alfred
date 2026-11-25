@@ -131,6 +131,43 @@ class AlfredTest(unittest.TestCase):
             response.raise_for_status()
         self.assertEqual(caught.exception.status, 404)
 
+    def test_binary_reads_and_temporary_downloads(self):
+        FakeBridge.replies["clients.request"] = {"status": 200, "ok": True, "headers": {}, "body": "AAH/"}
+        photos = self.alfred.client("photos")
+        self.assertEqual(photos.fetch("/vignette.jpg", {"t": 1}), b"\x00\x01\xff")
+        self.assertEqual(self.last()[1]["responseType"], "base64")
+        self.assertEqual(photos.request("GET", "/v", response_type="base64").content, b"\x00\x01\xff")
+        FakeBridge.replies["clients.request"] = {"status": 403, "ok": False, "headers": {}, "body": "expiré"}
+        with self.assertRaises(self.alfred.AlfredError) as caught:
+            photos.fetch("/vignette.jpg")
+        self.assertEqual(caught.exception.status, 403)
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as dossier:
+            temporaire = os.path.join(dossier, "tmp-episode.mp3")
+            with open(temporaire, "wb") as fichier:
+                fichier.write(b"ID3")
+            FakeBridge.replies["clients.download"] = {
+                "status": 200, "ok": True, "headers": {}, "file": None,
+                "temporary": {"path": temporaire, "name": "episode.mp3", "mime": "audio/mpeg", "size": 3, "sha256": "ab"},
+            }
+            cible = os.path.join(dossier, "episodes", "a.mp3")
+            recu = self.alfred.client("episodes").download_to("/e.mp3", cible, max_size=50, query={"t": "1"})
+            method, body, _ = self.last()
+            self.assertEqual(method, "clients.download")
+            self.assertEqual(body, {"client": "episodes", "path": "/e.mp3", "temporary": True, "maxSize": 50, "query": {"t": "1"}})
+            self.assertEqual((recu["ok"], recu["path"], recu["size"]), (True, cible, 3))
+            with open(cible, "rb") as fichier:
+                self.assertEqual(fichier.read(), b"ID3")
+            self.assertFalse(os.path.exists(temporaire))
+
+            FakeBridge.replies["clients.download"] = {"status": 404, "ok": False, "headers": {}, "temporary": None, "body": "absent"}
+            echec = self.alfred.client("episodes").download_to("/absent.mp3", cible)
+            self.assertEqual((echec["ok"], echec["path"], echec["body"]), (False, None, "absent"))
+        self.alfred.client("photos").download("/a.zip", name="a.zip")
+        self.assertEqual(self.last()[1], {"client": "photos", "path": "/a.zip", "name": "a.zip"})
+
     def test_files_encode_bytes(self):
         self.alfred.files.save("a.bin", data=b"\x00\x01")
         self.assertEqual(self.last()[1], {"name": "a.bin", "data": base64.b64encode(b"\x00\x01").decode()})

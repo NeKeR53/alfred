@@ -284,4 +284,30 @@ mod tests {
         assert!(problems[0].contains("« jira/lister-tickets »") && problems[0].contains("useAlfredState"));
         assert!(problems[1].contains("« ci/etat »"));
     }
+
+    /// Un calcul (lecture sans service, `ai.oneShot` par exemple) d’un module qui a des clients n’alimente pas d’état :
+    /// `check` ne le refuse pas. Une lecture qui joint un service sans état reste refusée.
+    #[test]
+    fn only_a_read_that_reaches_a_service_must_feed_a_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = crate::space::Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let module = space.root.join("modules").join("histoires");
+        std::fs::create_dir_all(module.join("functions")).unwrap();
+        let read = |id: &str, uses: Value| json!({ "id": id, "description": id, "effect": "read", "uses": uses,
+            "input": { "type": "object", "properties": {} }, "output": { "type": "object", "properties": {} } });
+        let manifest = json!({ "id": "histoires", "name": "Histoires", "version": "0.1.0",
+            "clients": [{ "id": "wikisource", "label": "Wikisource" }],
+            "functions": [read("decouper-histoire", json!({})), read("lister-contes", json!({ "clients": ["wikisource"] }))] });
+        std::fs::write(module.join("module.json"), manifest.to_string()).unwrap();
+        for id in ["decouper-histoire", "lister-contes"] {
+            std::fs::write(module.join("functions").join(format!("{id}.ts")), "export default async function () { return {}; }\n").unwrap();
+        }
+        let snapshot = space.snapshot().unwrap();
+        let problem = |id: &str| {
+            let function = snapshot.functions.iter().find(|function| function.id == id).unwrap();
+            function_problem(&space, function)
+        };
+        assert_eq!(problem("decouper-histoire"), None, "un calcul sans service n’a pas d’état");
+        assert!(problem("lister-contes").is_some_and(|problem| problem.contains("état nommé")));
+    }
 }

@@ -185,21 +185,103 @@ fn download_name(asked: Option<String>, response: &reqwest::Response, path: &str
         .unwrap_or_else(|| "telechargement".to_string())
 }
 
-async fn receive_file(state: &Arc<AppState>, granted: &Granted, name: Option<String>) -> AppResult<Value> {
+/// Où va un téléchargement : les fichiers du module, ou un fichier temporaire de l’espace que le code déplace.
+struct Target {
+    name: Option<String>,
+    temporary: bool,
+    /// Taille au-delà de laquelle le téléchargement est abandonné (octets) ; à défaut, `MAX_TRANSFER`.
+    max_size: u64,
+}
+
+impl Target {
+    fn of(args: &Value) -> AppResult<Self> {
+        let max_size = match opt_arg::<u64>(args, "maxSize")? {
+            Some(0) => return Err(AppError::new("`maxSize` vaut au moins 1 octet.")),
+            Some(size) => size.min(clients::MAX_TRANSFER),
+            None => clients::MAX_TRANSFER,
+        };
+        Ok(Self { name: opt_arg(args, "name")?, temporary: opt_arg(args, "temporary")?.unwrap_or(false), max_size })
+    }
+
+    fn too_large(&self) -> AppError {
+        if self.max_size == clients::MAX_TRANSFER {
+            AppError::new("Fichier trop gros : 2 Go au plus par téléchargement.")
+        } else {
+            AppError::new(format!("Fichier trop gros : plus de {} octets (`maxSize`).", self.max_size))
+        }
+    }
+}
+
+/// Dossier des téléchargements temporaires (`temporary: true`), hors des fichiers versionnés de l’espace.
+fn temporary_dir(space: &crate::space::Space) -> std::path::PathBuf {
+    space.local_dir().join("tmp").join("downloads")
+}
+
+/// Durée de vie d’un téléchargement temporaire que le code n’a pas déplacé.
+const TEMPORARY_LIFETIME: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Retire les téléchargements temporaires de plus d’un jour : le code devait les déplacer.
+fn sweep_temporary(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > TEMPORARY_LIFETIME);
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Fichier en cours d’écriture : retiré s’il n’est pas terminé (échec, abandon, taille dépassée).
+struct Partial {
+    path: std::path::PathBuf,
+    done: bool,
+}
+
+impl Drop for Partial {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+async fn receive_file(state: &Arc<AppState>, granted: &Granted, target: Target) -> AppResult<Value> {
     let sent = clients::send(state, &granted.client, &granted.call, Profile::Download).await?;
     if !sent.response.status().is_success() {
-        return failed(sent, "file").await;
+        return failed(sent, if target.temporary { "temporary" } else { "file" }).await;
     }
     let Sent { mut response, secrets } = sent;
     let status = response.status();
     let headers = clients::response_headers(&response, &secrets);
-    if response.content_length().is_some_and(|length| length > clients::MAX_TRANSFER) {
-        return Err(AppError::new("Fichier trop gros : 2 Go au plus par téléchargement."));
+    if response.content_length().is_some_and(|length| length > target.max_size) {
+        return Err(target.too_large());
     }
-    let name = download_name(name, &response, &granted.call.path);
+    let name = download_name(target.name.clone(), &response, &granted.call.path);
     let mime = response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()).map(str::to_string);
-    let incoming = crate::module_files::begin(&granted.space, &granted.subject.module, &name, mime.as_deref())?;
-    let mut file = tokio::fs::File::create(&incoming.path).await?;
+    // Fichier du module, ou fichier temporaire `<uuid>-<nom>` que le code déplace (il disparaît après un jour).
+    let (incoming, path) = if target.temporary {
+        let dir = temporary_dir(&granted.space);
+        std::fs::create_dir_all(&dir)?;
+        sweep_temporary(&dir);
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        (None, dir.join(format!("{id}-{}", crate::conversations::safe_name(&name))))
+    } else {
+        let incoming = crate::module_files::begin(&granted.space, &granted.subject.module, &name, mime.as_deref())?;
+        let path = incoming.path.clone();
+        (Some(incoming), path)
+    };
+    let mut partial = Partial { path: path.with_extension("part"), done: false };
+    if incoming.is_some() {
+        // Le fichier du module se nettoie lui-même (`Incoming`) : il s’écrit à sa place.
+        partial.path = path.clone();
+        partial.done = true;
+    }
+    let mut file = tokio::fs::File::create(&partial.path).await?;
     let mut redactor = Redactor::new(&secrets);
     let mut hasher = Sha256::new();
     let mut size: u64 = 0;
@@ -209,8 +291,8 @@ async fn receive_file(state: &Arc<AppState>, granted: &Granted, name: Option<Str
             None => (redactor.finish(), true),
         };
         size += bytes.len() as u64;
-        if size > clients::MAX_TRANSFER {
-            return Err(AppError::new("Fichier trop gros : 2 Go au plus par téléchargement."));
+        if size > target.max_size {
+            return Err(target.too_large());
         }
         hasher.update(&bytes);
         file.write_all(&bytes).await?;
@@ -221,18 +303,38 @@ async fn receive_file(state: &Arc<AppState>, granted: &Granted, name: Option<Str
     file.flush().await?;
     file.sync_all().await?;
     drop(file);
-    let digest = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-    let info = incoming.finish(size, digest)?;
-    Ok(json!({ "status": status.as_u16(), "ok": true, "headers": headers, "file": info }))
+    let digest: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    match incoming {
+        Some(incoming) => {
+            let info = incoming.finish(size, digest)?;
+            Ok(json!({ "status": status.as_u16(), "ok": true, "headers": headers, "file": info }))
+        }
+        None => {
+            std::fs::rename(&partial.path, &path)?;
+            partial.done = true;
+            let mime = mime.map(|mime| mime.split(';').next().unwrap_or_default().trim().to_string());
+            let temporary = json!({
+                "path": path.to_string_lossy(),
+                "name": name,
+                "mime": mime.filter(|mime| !mime.is_empty()).unwrap_or_else(|| "application/octet-stream".to_string()),
+                "size": size,
+                "sha256": digest,
+            });
+            Ok(json!({ "status": status.as_u16(), "ok": true, "headers": headers, "file": null, "temporary": temporary }))
+        }
+    }
 }
 
 /// `client(id).download(path, …)` : le corps va en flux dans les fichiers du module (2 Go au plus), avec son
 /// empreinte SHA-256, sans passer par la fonction. `{ status, ok, headers, file }` ; en échec, `file` est nul et
-/// `body` porte la réponse du service.
+/// `body` porte la réponse du service. Avec `temporary: true`, le corps va dans un fichier temporaire de l’espace
+/// (`.alfred/tmp/downloads`) : `temporary` porte `{ path, name, mime, size, sha256 }`, et le code déplace le fichier
+/// (il est retiré après un jour). `maxSize` (octets) abandonne un fichier plus gros.
 pub async fn download(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
+    let target = Target::of(args)?;
     let granted = clients::grant_call(state, args, None).await?;
     let started = Instant::now();
-    let result = receive_file(state, &granted, opt_arg(args, "name")?).await;
+    let result = receive_file(state, &granted, target).await;
     journaled(state, &granted, started, &result, "fichier");
     result
 }
@@ -1015,5 +1117,115 @@ mod tests {
             Some("résumé final.zip")
         );
         assert_eq!(disposition_name("inline"), None);
+    }
+
+    /// Hébergeur de fichiers sur un autre hôte (`localhost`) : il note les en-têtes reçus.
+    async fn cdn() -> (u16, Arc<Mutex<Vec<HeaderMap>>>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<HeaderMap>>> = Arc::default();
+        let noted = seen.clone();
+        let router = Router::new()
+            .route(
+                "/media/{name}",
+                get(move |headers: HeaderMap| {
+                    let noted = noted.clone();
+                    async move {
+                        noted.lock().unwrap().push(headers);
+                        ([("content-type", "audio/mpeg")], b"ID3-episode-complet".to_vec())
+                    }
+                }),
+            )
+            // Une seconde redirection, sur le même hôte : suivie d’office.
+            .route("/relais", get(move || async move { axum::response::Redirect::temporary("/media/relaye.mp3") }));
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (port, seen)
+    }
+
+    /// Service qui renvoie ses fichiers vers `cdn` (sur `localhost`) ou vers une autre origine non déclarée.
+    async fn redirecting(cdn: u16) -> String {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let to = |target: String| move || async move { axum::response::Redirect::temporary(&target) };
+        let router = Router::new()
+            .route("/api/episode", get(to(format!("http://localhost:{cdn}/media/episode.mp3"))))
+            .route("/api/relais", get(to(format!("http://localhost:{cdn}/relais"))))
+            .route("/api/fuite", get(to(format!("http://localhost:{cdn}/media/x.mp3?cle={TOKEN}"))))
+            .route("/api/ailleurs", get(to(format!("http://127.0.0.1:{cdn}/media/ailleurs.mp3"))))
+            .route("/api/ecrire", any(to(format!("http://localhost:{cdn}/media/ecrit.mp3"))));
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        format!("http://127.0.0.1:{port}/api")
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_a_declared_host_is_followed_bare_and_a_temporary_download_returns_a_path() {
+        let (state, _dir) = test_state();
+        let (port, seen) = cdn().await;
+        let base = redirecting(port).await;
+        let secret = unique("redirection");
+        invoke(&state, "vault.save", json!({ "id": secret, "label": "Jeton", "kind": "token", "secrets": { "value": TOKEN } }))
+            .await
+            .unwrap();
+        let client = json!({ "id": "podcast", "label": "Podcast", "baseUrl": base, "auth": { "type": "bearer", "secret": secret },
+            "headers": { "X-Client": "alfred" }, "redirectHosts": [" LocalHost "] });
+        let saved = invoke(&state, "clients.save", json!({ "client": client })).await.unwrap();
+        assert_eq!(saved["status"], json!("ready"), "{saved}");
+        grant(&state, &function_subject("ci"), "podcast");
+
+        // Fichier temporaire : le chemin, la taille et l’empreinte ; la requête suivie part sans en-tête du compte.
+        let downloaded = call(&state, "frame.clients.download", "podcast", json!({ "path": "/episode", "temporary": true })).await.unwrap();
+        assert_eq!((downloaded["ok"].clone(), downloaded["file"].clone()), (json!(true), Value::Null), "{downloaded}");
+        let temporary = &downloaded["temporary"];
+        let path = std::path::PathBuf::from(temporary["path"].as_str().unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"ID3-episode-complet");
+        assert!(path.starts_with(temporary_dir(&state.space().unwrap())), "{}", path.display());
+        assert_eq!((temporary["name"].clone(), temporary["mime"].clone(), temporary["size"].clone()), (json!("episode"), json!("audio/mpeg"), json!(19)));
+        let digest: String = Sha256::digest(b"ID3-episode-complet").iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(temporary["sha256"], json!(digest));
+        let headers = seen.lock().unwrap().last().cloned().unwrap();
+        assert!(headers.get("authorization").is_none() && headers.get("x-client").is_none(), "{headers:?}");
+
+        // Une redirection de plus sur le même hôte ; une requête ordinaire en base64 suit aussi.
+        let relayed = call(&state, "frame.clients.download", "podcast", json!({ "path": "/relais", "name": "relaye.mp3" })).await.unwrap();
+        assert_eq!(relayed["file"]["name"], json!("relaye.mp3"), "{relayed}");
+        let small = call(&state, "frame.clients.request", "podcast", json!({ "path": "/episode", "responseType": "base64" })).await.unwrap();
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(small["body"].as_str().unwrap()).unwrap(), b"ID3-episode-complet");
+
+        // Rendue telle quelle : un hôte non déclaré, une adresse qui porte le secret, une écriture.
+        let before = seen.lock().unwrap().len();
+        for (method, path) in [("GET", "/ailleurs"), ("GET", "/fuite"), ("POST", "/ecrire")] {
+            let response = call(&state, "frame.clients.request", "podcast", json!({ "method": method, "path": path })).await.unwrap();
+            assert_eq!(response["status"], json!(307), "{path} : {response}");
+        }
+        assert_eq!(seen.lock().unwrap().len(), before, "aucune de ces redirections n’est suivie");
+
+        // `maxSize` : un fichier plus gros est abandonné, sans rien laisser.
+        let error = call(&state, "frame.clients.download", "podcast", json!({ "path": "/episode", "temporary": true, "maxSize": 5 })).await.unwrap_err();
+        assert!(error.message.contains("maxSize"), "{}", error.message);
+        let left: Vec<_> = std::fs::read_dir(temporary_dir(&state.space().unwrap())).unwrap().flatten().map(|entry| entry.file_name()).collect();
+        assert_eq!(left.len(), 1, "seul le premier téléchargement reste : {left:?}");
+    }
+
+    #[tokio::test]
+    async fn redirect_hosts_are_validated_and_part_of_the_validated_fingerprint() {
+        let (state, _dir) = test_state();
+        for wrong in ["https://cdn.exemple.com", "cdn.exemple.com:443", "*.com", "*", "cdn exemple", "cdn.exemple.com/media"] {
+            let client = json!({ "id": "cdn", "label": "CDN", "baseUrl": "https://api.exemple.com", "auth": { "type": "none" }, "redirectHosts": [wrong] });
+            let error = invoke(&state, "clients.save", json!({ "client": client })).await.unwrap_err();
+            assert!(error.message.contains("Hôte de redirection invalide"), "{wrong} : {}", error.message);
+        }
+        let hosts = ["media.exemple.com".to_string(), "*.cdn.exemple.com".to_string()];
+        let from = url::Url::parse("https://api.exemple.com/").unwrap();
+        let allowed = |target: &str| clients::redirect_allowed(&hosts, &from, &url::Url::parse(target).unwrap());
+        assert!(allowed("https://media.exemple.com/a.mp3") && allowed("https://s0.cdn.exemple.com/a"));
+        assert!(!allowed("https://cdn.exemple.com/a"), "`*.` ne vaut que pour les sous-domaines");
+        assert!(!allowed("http://media.exemple.com/a"), "pas de HTTPS vers HTTP");
+        assert!(!allowed("https://media.exemple.com.pirate.net/a") && !allowed("https://user@media.exemple.com/a"));
+
+        let mut client = clients::Client { id: "cdn".into(), label: "CDN".into(), base_url: "https://api.exemple.com".into(), ..Default::default() };
+        let before = clients::fingerprint(&client);
+        assert!(before.get("redirectHosts").is_none(), "absente sans hôte : les validations déjà données tiennent");
+        client.redirect_hosts = hosts.to_vec();
+        assert_eq!(clients::fingerprint(&client)["redirectHosts"], json!("media.exemple.com, *.cdn.exemple.com"));
     }
 }

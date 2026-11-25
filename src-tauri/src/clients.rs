@@ -192,6 +192,9 @@ pub struct Client {
     /// Paramètres obligatoires que le compte n’a pas encore (leurs noms) : le compte reste invalide.
     #[serde(skip)]
     pub missing_params: Vec<String>,
+    /// Hôtes vers lesquels une redirection est suivie (voir `ClientDef::redirect_hosts`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub redirect_hosts: Vec<String>,
 }
 
 /// Instance d’un client écrit sous sa forme simple (une adresse, une authentification), et méthode qu’elle utilise.
@@ -283,6 +286,12 @@ pub struct ClientDef {
     /// fonctions que sous forme de références.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sealed: Vec<SealedRule>,
+    /// Hôtes vers lesquels Alfred suit une redirection du service (`media.exemple.com`, `*.cdn.exemple.com` pour
+    /// tous ses sous-domaines), en HTTPS, pour une lecture (`GET`, `HEAD`). La requête suivante part nue : ni
+    /// l’authentification, ni les en-têtes du client ou de la fonction. Sans eux, seule une redirection vers la même
+    /// origine est suivie.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub redirect_hosts: Vec<String>,
 }
 
 fn clean(value: &mut Option<String>) {
@@ -597,6 +606,14 @@ impl ClientDef {
         self.base_url = self.base_url.trim().to_string();
         clean(&mut self.test_path);
         clean_headers(&mut self.headers);
+        let mut hosts: Vec<String> = Vec::new();
+        for host in self.redirect_hosts.drain(..) {
+            let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+            if !host.is_empty() && !hosts.contains(&host) {
+                hosts.push(host);
+            }
+        }
+        self.redirect_hosts = hosts;
         for method in &mut self.methods {
             method.id = method.id.trim().to_string();
             if method.id.is_empty() && !method.label.is_empty() {
@@ -655,6 +672,13 @@ impl ClientDef {
             }
         }
         valid_headers(&self.headers)?;
+        for host in &self.redirect_hosts {
+            if !valid_redirect_host(host) {
+                return Err(AppError::new(format!(
+                    "Hôte de redirection invalide : « {host} ». Un nom d’hôte seul (`media.exemple.com`), ou `*.exemple.com` pour ses sous-domaines ; ni schéma, ni port, ni chemin."
+                )));
+            }
+        }
         if self.methods.is_empty() {
             return Err(AppError::new("Le client doit proposer au moins une méthode d’authentification."));
         }
@@ -789,6 +813,7 @@ impl ClientDef {
             params,
             missing_params,
             sealed: self.sealed.clone(),
+            redirect_hosts: self.redirect_hosts.clone(),
         })
     }
 
@@ -948,7 +973,7 @@ fn resolve(space: &Space, module: &str, name: &str) -> AppResult<ClientDef> {
 
 /// Champs de l’empreinte : tout ce qui décide où part le secret et ce qu’il permet d’obtenir. Chaque valeur est un
 /// texte ou `null`, pour pouvoir montrer l’avant et l’après à l’utilisateur.
-const TRUST_FIELDS: [(&str, &str); 14] = [
+const TRUST_FIELDS: [(&str, &str); 15] = [
     ("authType", "Authentification"),
     ("secret", "Entrée du coffre"),
     ("baseUrl", "Adresse de base"),
@@ -963,6 +988,7 @@ const TRUST_FIELDS: [(&str, &str); 14] = [
     ("params", "Paramètres du compte"),
     ("login", "Connexion"),
     ("sealed", "Champs scellés"),
+    ("redirectHosts", "Redirections suivies vers"),
 ];
 
 /// Forme canonique d’une adresse : deux écritures de la même adresse donnent la même empreinte. Pour l’adresse de
@@ -1012,6 +1038,9 @@ pub fn fingerprint(client: &Client) -> Value {
     }
     if !client.sealed.is_empty() {
         print["sealed"] = json!(crate::secret_refs::describe_rules(&client.sealed));
+    }
+    if !client.redirect_hosts.is_empty() {
+        print["redirectHosts"] = json!(client.redirect_hosts.join(", "));
     }
     print
 }
@@ -1912,8 +1941,74 @@ pub(crate) async fn send(state: &Arc<AppState>, client: &Client, call: &Call, pr
         }
         let mut secrets = credential.secrets;
         secrets.extend(placed.iter().cloned());
+        let response = follow_redirects(&http, client, &call.method, response, &secrets).await?;
         return Ok(Sent { response, secrets });
     }
+}
+
+/// Nom d’hôte de `redirectHosts` : des étiquettes DNS, ou `*.` suivi d’au moins deux étiquettes.
+fn valid_redirect_host(host: &str) -> bool {
+    let name = host.strip_prefix("*.").unwrap_or(host);
+    let labels: Vec<&str> = name.split('.').collect();
+    let minimum = if host.starts_with("*.") { 2 } else { 1 };
+    labels.len() >= minimum
+        && labels.iter().all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+}
+
+/// L’adresse vise-t-elle l’un des hôtes déclarés, sans descendre de HTTPS à HTTP ?
+pub(crate) fn redirect_allowed(hosts: &[String], from: &Url, target: &Url) -> bool {
+    let Some(host) = target.host_str().map(str::to_ascii_lowercase) else { return false };
+    let scheme = target.scheme() == "https" || (target.scheme() == "http" && from.scheme() == "http");
+    scheme
+        && target.username().is_empty()
+        && target.password().is_none()
+        && hosts.iter().any(|allowed| match allowed.strip_prefix("*.") {
+            Some(domain) => host.len() > domain.len() + 1 && host.ends_with(&format!(".{domain}")),
+            None => host == *allowed,
+        })
+}
+
+/// Plus longue chaîne de redirections vers d’autres hôtes suivie pour une requête.
+const MAX_FOREIGN_REDIRECTS: usize = 5;
+
+/// Suit une redirection vers un hôte de `redirectHosts` (lecture seulement). Chaque saut part nu : ni
+/// authentification, ni en-têtes du client ou de la fonction, ni corps. Une adresse qui contient un secret du compte
+/// n’est pas suivie ; la redirection est alors rendue telle quelle, comme une redirection vers un hôte non déclaré.
+async fn follow_redirects(
+    http: &reqwest::Client,
+    client: &Client,
+    method: &Method,
+    mut response: reqwest::Response,
+    secrets: &[String],
+) -> AppResult<reqwest::Response> {
+    if client.redirect_hosts.is_empty() || !(method == Method::GET || method == Method::HEAD) {
+        return Ok(response);
+    }
+    for _ in 0..MAX_FOREIGN_REDIRECTS {
+        if !response.status().is_redirection() {
+            break;
+        }
+        let Some(next) = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|location| response.url().join(location).ok())
+        else {
+            break;
+        };
+        let leaks = secrets.iter().any(|secret| !secret.is_empty() && next.as_str().contains(secret.as_str()));
+        if leaks || !redirect_allowed(&client.redirect_hosts, response.url(), &next) {
+            break;
+        }
+        response = http.request(method.clone(), next).send().await.map_err(|error| network_error(error, secrets))?;
+    }
+    Ok(response)
 }
 
 /// Corps dont les références de secret ont été remplacées (requête `sealed: true` vers un chemin scellé du même

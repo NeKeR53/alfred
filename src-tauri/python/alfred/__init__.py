@@ -185,10 +185,12 @@ class Response:
     """Réponse d’un service appelé par :meth:`Client.request`.
 
     Attributs : ``status`` (code HTTP), ``ok`` (2xx), ``headers`` (dictionnaire), ``body`` (JSON décodé, sinon le
-    texte), ``cached`` (resservie par le cache d’Alfred).
+    texte ; en base64 avec ``response_type="base64"``), ``cached`` (resservie par le cache d’Alfred), ``content``
+    (les octets reçus).
     """
 
-    def __init__(self, raw: Mapping[str, Any]) -> None:
+    def __init__(self, raw: Mapping[str, Any], binary: bool = False) -> None:
+        self._binary = binary
         self.status: int = int(raw.get("status", 0))
         self.ok: bool = bool(raw.get("ok", False))
         self.headers: Dict[str, str] = dict(raw.get("headers") or {})
@@ -202,6 +204,15 @@ class Response:
             detail = self.body if isinstance(self.body, (dict, list)) else {"body": self.body}
             raise AlfredError(f"Le service a répondu {self.status}.", status=self.status, detail=detail)
         return self
+
+    @property
+    def content(self) -> bytes:
+        """Les octets reçus : décodés du base64 avec ``response_type="base64"``, sinon le texte en UTF-8."""
+        if self._binary and isinstance(self.body, str):
+            return base64.b64decode(self.body)
+        if isinstance(self.body, str):
+            return self.body.encode("utf-8")
+        return json.dumps(self.body).encode("utf-8")
 
     def json(self) -> Any:
         """Le corps décodé (déjà fait par Alfred quand la réponse est du JSON)."""
@@ -257,7 +268,7 @@ class Client:
             cache=cache,
             sealed=sealed,
         )
-        return Response(raw)
+        return Response(raw, binary=response_type == "base64")
 
     def get(self, path: str, query: Optional[Mapping[str, Any]] = None, *, cache: Optional[int] = None) -> Response:
         """Lecture ``GET``."""
@@ -275,9 +286,61 @@ class Client:
     def delete(self, path: str) -> Response:
         return self.request("DELETE", path)
 
-    def download(self, path: str, *, name: Optional[str] = None, **options: Any) -> Dict[str, Any]:
-        """Télécharge dans les fichiers du module, sans passer par ce code ; rend ``{status, ok, headers, file}``."""
-        return call("clients.download", client=self.id, instance=self.instance, path=path, name=name, **options)
+    def fetch(self, path: str, query: Optional[Mapping[str, Any]] = None) -> bytes:
+        """Les octets d’un petit binaire (une image : 5 Mo au plus) ; lève :class:`AlfredError` sur une erreur."""
+        return self.request("GET", path, query=query, response_type="base64").raise_for_status().content
+
+    def download(
+        self,
+        path: str,
+        *,
+        name: Optional[str] = None,
+        temporary: bool = False,
+        max_size: Optional[int] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        """Télécharge sans passer par ce code ; rend ``{status, ok, headers, file}``.
+
+        Par défaut, le fichier va dans les fichiers du module (``file``). Avec ``temporary=True``, il va dans un
+        fichier temporaire de l’espace : ``temporary`` porte ``{path, name, mime, size, sha256}``, et le code le
+        déplace (sinon il est retiré après un jour). ``max_size`` : taille maximale, en octets. Une redirection vers
+        un hôte de ``redirectHosts`` du client est suivie, sans l’authentification."""
+        return call(
+            "clients.download",
+            client=self.id,
+            instance=self.instance,
+            path=path,
+            name=name,
+            temporary=temporary or None,
+            maxSize=max_size,
+            **options,
+        )
+
+    def download_to(
+        self, path: str, target: Union[str, "os.PathLike[str]"], *, max_size: Optional[int] = None, **options: Any
+    ) -> Dict[str, Any]:
+        """Télécharge vers ``target`` (un chemin du disque), par un fichier temporaire déplacé une fois complet.
+
+        Rend ``{status, ok, headers, path, size, sha256}`` ; ``path`` vaut ``None`` si le service a répondu par une
+        erreur (``body`` porte alors sa réponse)."""
+        raw = self.download(path, temporary=True, max_size=max_size, **options)
+        temporary = raw.get("temporary")
+        result = {key: value for key, value in raw.items() if key not in ("file", "temporary")}
+        if not raw.get("ok") or not temporary:
+            result["path"] = None
+            return result
+        destination = os.fspath(target)
+        directory = os.path.dirname(destination)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        try:
+            os.replace(temporary["path"], destination)
+        except OSError:
+            import shutil
+
+            shutil.move(temporary["path"], destination)
+        result.update(path=destination, size=temporary.get("size"), sha256=temporary.get("sha256"))
+        return result
 
     def stream(self, path: str, *, format: Optional[str] = None, **options: Any) -> Dict[str, Any]:
         """Ouvre une réponse en continu (SSE, journal) ; rend l’identifiant du canal (``channel``) que lit la page."""
