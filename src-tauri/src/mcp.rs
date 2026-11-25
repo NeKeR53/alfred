@@ -1152,7 +1152,12 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 Some(Ok(clients)) => clients,
                 _ => Value::Array(Vec::new()),
             };
-            Ok(overview(&space.snapshot()?, clients))
+            let mut view = overview(&space.snapshot()?, clients);
+            // États partagés : un module consommateur y trouve l’état, ses paramètres décrits et l’appel à écrire.
+            let shared = crate::states::agent_overview(&space);
+            view["states"] = shared["states"].clone();
+            view["entities"] = shared["entities"].clone();
+            Ok(view)
         }
         "place_page" => {
             let title: String = arg(args, "title")?;

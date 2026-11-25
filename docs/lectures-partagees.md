@@ -135,7 +135,10 @@ jamais le service pour ces états. Règle de l’agent : un module de service es
 
 `params: ["jql"]` sur l’état. La sous-clé est l’objet des seuls paramètres déclarés, non nuls, en JSON aux clés triées :
 deux abonnés avec les mêmes valeurs, dans n’importe quel ordre, partagent le même état et un seul rafraîchissement. Une
-entité (`jira/ticket` + `42`) reste désignée par sa clé. `key` reste accepté pour un état à un seul paramètre.
+entité (`jira/ticket` + `42`) reste désignée par sa clé. `key` reste accepté pour un état à un seul paramètre. Chaque paramètre est décrit (`{ id, description, example }`) ; `check` refuse un paramètre sans description.
+`space_overview` rend `states` et `entities` : fournisseur, description, paramètres décrits, entité, politique, et l’appel
+à écrire (`subscribe`). C’est la chaîne d’un module consommateur : il trouve l’état par sa description, choisit les
+valeurs d’après la description et l’exemple, déclare `requires` sur le fournisseur et écrit l’appel.
 
 ### F3. Dans le cœur, une cible par état et par jeu de paramètres
 

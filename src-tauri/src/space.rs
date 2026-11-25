@@ -184,14 +184,63 @@ pub struct StateDecl {
     /// Besoin dont le compte entre dans la portée ; omis : le seul besoin du module.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<String>,
-    /// Paramètres de l’état (`["jql"]` pour `jira/tickets-du-filtre`) : chaque jeu de valeurs est un état à part, et
-    /// deux abonnés avec les mêmes paramètres normalisés partagent le même.
+    /// Paramètres de l’état (`jql` pour `jira/tickets-du-filtre`) : chaque jeu de valeurs est un état à part, et
+    /// deux abonnés avec les mêmes paramètres normalisés partagent le même. Chacun est décrit (`description`,
+    /// `example`) : c’est ainsi qu’un module consommateur sait quoi passer (`space_overview`, `states`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub params: Vec<String>,
+    pub params: Vec<StateParam>,
     /// Politique de rafraîchissement : le module fournisseur tient l’état à jour lui-même, dans le cœur (`states.rs`).
     /// Absente : l’état change seulement quand quelqu’un le lit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<RefreshDecl>,
+}
+
+impl StateDecl {
+    /// Noms des paramètres, dans l’ordre déclaré.
+    pub fn param_names(&self) -> Vec<&str> {
+        self.params.iter().map(StateParam::id).collect()
+    }
+}
+
+/// Paramètre d’un état : un nom seul (`"jql"`), ou décrit (`{ "id": "jql", "description": "…", "example": "…" }`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum StateParam {
+    Name(String),
+    Described(ParamDecl),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ParamDecl {
+    pub id: String,
+    /// Ce que le paramètre choisit, en mots de l’utilisateur (« Filtre JQL des tickets »).
+    pub description: String,
+    /// Une valeur d’exemple, montrée aux modules qui s’abonnent (`assignee = currentUser()`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<Value>,
+}
+
+impl StateParam {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Name(id) => id,
+            Self::Described(param) => &param.id,
+        }
+    }
+
+    pub fn description(&self) -> &str {
+        match self {
+            Self::Name(_) => "",
+            Self::Described(param) => &param.description,
+        }
+    }
+}
+
+impl From<&str> for StateParam {
+    fn from(id: &str) -> Self {
+        Self::Name(id.to_string())
+    }
 }
 
 /// Comment le fournisseur tient un état à jour.

@@ -794,7 +794,7 @@ fn check(space: &Space, automation: &Automation) -> AppResult<()> {
         if !(params.is_null() || params.is_object()) {
             return Err(AppError::new("Les paramètres de l’état sont un objet : { \"jql\": \"…\" }."));
         }
-        if let Some(unknown) = params.as_object().and_then(|fields| fields.keys().find(|name| !declared.params.contains(name))) {
+        if let Some(unknown) = params.as_object().and_then(|fields| fields.keys().find(|name| !declared.param_names().contains(&name.as_str()))) {
             return Err(AppError::new(format!("L’état « {state} » n’a pas de paramètre « {unknown} ».")));
         }
     }

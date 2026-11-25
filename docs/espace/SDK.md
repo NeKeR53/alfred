@@ -241,9 +241,10 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
   "states": [
     { "id": "mes-tickets", "entity": "ticket", "items": "issues", "description": "Les tickets qui me sont attribués.",
       "refresh": { "function": "rafraichir-mes-tickets", "every": 30, "incremental": true } },
-    { "id": "tickets-du-filtre", "entity": "ticket", "params": ["jql"], "description": "Les tickets d’un filtre JQL.",
+    { "id": "tickets-du-filtre", "entity": "ticket", "description": "Les tickets d’un filtre JQL.",
+      "params": [{ "id": "jql", "description": "Filtre JQL des tickets", "example": "assignee = currentUser() AND resolution = Unresolved" }],
       "refresh": { "function": "rafraichir-filtre", "every": 60, "incremental": true } },
-    { "id": "ci", "params": ["job"], "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
+    { "id": "ci", "params": [{ "id": "job", "description": "Nom du job Jenkins", "example": "alfred-main" }], "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
   ]
 }
 ```
@@ -251,7 +252,7 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 - **Entité** (`entities`) : un type d’objet du service (ticket, mail, job CI), avec son champ identifiant (`key`, `id` par défaut), sa forme (`schema`) et la `version` du contrat (à monter quand la forme change de façon incompatible). Chaque objet est rangé **une seule fois**, sous sa clé d’entité (`jira/ticket` + `ALF-12`), dans la portée de son compte.
 - **État** (`states`) : une donnée nommée (`jira/mes-tickets`, `jenkins/ci`). Un état de liste (`entity`) garde seulement les identifiants ; la page reçoit la liste avec ses objets. `items` : le champ de la liste quand la fonction rend un objet (`{ "issues": [...] }`). Sans `entity`, l’état garde sa valeur telle quelle.
 - `client` (facultatif, sur une entité ou un état) : le besoin dont le compte entre dans la portée, quand le module en a plusieurs.
-- `params` (facultatif) : les paramètres de l’état (`["jql"]`). Chaque jeu de valeurs est un état à part ; deux abonnés avec les mêmes paramètres (dans n’importe quel ordre) partagent le même état et un seul rafraîchissement.
+- `params` (facultatif) : les paramètres de l’état, **chacun décrit** : `{ "id": "jql", "description": "Filtre JQL des tickets", "example": "assignee = currentUser()" }`. Chaque jeu de valeurs est un état à part ; deux abonnés avec les mêmes paramètres (dans n’importe quel ordre) partagent le même état et un seul rafraîchissement. La description et l’exemple sont ce que lit un module consommateur pour savoir quoi passer : `check` refuse un paramètre sans description.
 - `refresh` (facultatif) : la politique du **fournisseur**, voir plus bas.
 - Le nom et la forme d’un état ou d’une entité sont **un contrat entre modules** : ne les change pas sans monter la `version`.
 
@@ -273,6 +274,12 @@ Une écriture peut aussi déclarer `entity` : elle rend l’objet modifié, qui 
 Le rafraîchissement tourne **dans le cœur d’Alfred**, même sans page affichée, tant qu’Alfred est ouvert : **un seul par état et par jeu de paramètres**, quel que soit le nombre d’abonnés. Il s’arrête quand le dernier abonné part. Garde-fous : période minimale, quatre lectures à la fois au plus, un écart entre deux départs, un recul progressif après un échec (période × 2, × 4… jusqu’à 30 minutes). L’heure du dernier passage et son erreur arrivent aux abonnés avec la valeur (`status` de `useAlfredState`) ; Réglages → États montre ce qui tourne. Alfred fermé, rien ne tourne. Un état sans `refresh` est lu une fois au premier abonnement, puis il change seulement quand quelqu’un le lit. `check` refuse un état à rafraîchissement sans sa fonction de lecture, ou une période sous 10 s.
 
 **Les abonnés** : une page (`useAlfredState`), une fonction ou un script (`states.subscribe`), une automatisation déclenchée par un état. Ils ne joignent jamais le service eux-mêmes pour ces données.
+
+**La chaîne, du besoin à l’abonnement.** « Montre-moi mes tickets Jira non résolus » dans un tableau de bord :
+
+1. `space_overview` liste `states` : pour chaque état, son fournisseur (`jira`), sa description (« Les tickets d’un filtre JQL. »), ses paramètres décrits (`jql` : « Filtre JQL des tickets »), son entité (`jira/ticket`), sa politique, et l’appel à écrire (`subscribe` : `useAlfredState("jira/tickets-du-filtre", { params: { jql: "…" } })`). Il liste aussi `entities`.
+2. L’agent choisit l’état par sa description, et la valeur des paramètres d’après la description et l’exemple (ici une requête JQL : `assignee = currentUser() AND resolution = Unresolved`).
+3. Le module consommateur déclare `requires: [{ "module": "jira" }]`, puis la page écrit l’appel. Aucun état ne convient : l’agent l’ajoute au module fournisseur (état, paramètres décrits, fonction, politique), jamais dans le consommateur.
 
 **L’abonnement.**
 

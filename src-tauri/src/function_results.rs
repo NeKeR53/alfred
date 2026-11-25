@@ -212,6 +212,12 @@ pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
             }
             None => {}
         }
+        // Un paramètre se décrit : c’est ce que lit un module consommateur pour savoir quoi passer.
+        for param in &state.params {
+            if param.description().trim().is_empty() {
+                problems.push(json!({ "module": module, "state": state.id, "problem": format!("Décris le paramètre « {} » : {{ \"id\": \"{}\", \"description\": \"…\", \"example\": … }}. Un module qui s’abonne lit cette description dans `space_overview`.", param.id(), param.id()) }));
+            }
+        }
         if let Some(entity) = &state.entity {
             if !manifest.entities.iter().any(|declared| &declared.id == entity) {
                 problems.push(json!({ "module": module, "state": state.id, "problem": format!("L’état liste des « {entity} », type absent de `entities`.") }));

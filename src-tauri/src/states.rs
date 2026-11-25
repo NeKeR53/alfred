@@ -79,9 +79,9 @@ pub(crate) fn params_key(declared: &StateDecl, source: &Value) -> String {
         return String::new();
     }
     let mut chosen = Map::new();
-    for name in &declared.params {
+    for name in declared.param_names() {
         if let Some(value) = source.get(name).filter(|value| !value.is_null()) {
-            chosen.insert(name.clone(), value.clone());
+            chosen.insert(name.to_string(), value.clone());
         }
     }
     // `Map` de serde_json garde ses clés triées : la chaîne est stable.
@@ -97,8 +97,8 @@ pub(crate) fn params_of(sub: &str) -> Value {
 fn request_sub(declared: &StateDecl, args: &Value) -> String {
     match args.get("params").filter(|params| params.is_object()) {
         Some(params) => params_key(declared, params),
-        None => match (args.get("key").and_then(id_text), declared.params.as_slice()) {
-            (Some(key), [only]) => params_key(declared, &json!({ only: key })),
+        None => match (args.get("key").and_then(id_text), declared.param_names().as_slice()) {
+            (Some(key), [only]) => params_key(declared, &json!({ *only: key })),
             _ => params_key(declared, &json!({})),
         },
     }
@@ -540,6 +540,55 @@ pub(crate) fn state_target(state: &AppState, space: &Space, subject: &Subject, a
     Ok(StateTarget { manifest, declared, scope, sub, key })
 }
 
+/// États et entités de l’espace, pour l’agent (`space_overview`) : de quoi s’abonner sans lire les manifestes. Pour
+/// chaque état : son fournisseur, sa description, ses paramètres décrits avec un exemple, sa politique, et l’appel à
+/// écrire dans une page.
+pub fn agent_overview(space: &Space) -> Value {
+    let mut states = Vec::new();
+    let mut entities = Vec::new();
+    for module in space.module_ids() {
+        let Ok(manifest) = space.module(&module) else { continue };
+        for declared in &manifest.states {
+            let name = format!("{module}/{}", declared.id);
+            let example: Map<String, Value> = declared
+                .params
+                .iter()
+                .map(|param| {
+                    let value = match param {
+                        crate::space::StateParam::Described(described) => described.example.clone(),
+                        crate::space::StateParam::Name(_) => None,
+                    };
+                    (param.id().to_string(), value.unwrap_or_else(|| json!("…")))
+                })
+                .collect();
+            let call = if example.is_empty() {
+                format!("useAlfredState(\"{name}\")")
+            } else {
+                format!("useAlfredState(\"{name}\", {{ params: {} }})", Value::Object(example))
+            };
+            states.push(json!({
+                "state": name,
+                "provider": module,
+                "description": declared.description,
+                "params": declared.params.iter().map(|param| json!({ "id": param.id(), "description": param.description() })).collect::<Vec<_>>(),
+                "entity": declared.entity.as_ref().map(|entity| format!("{module}/{entity}")),
+                "refresh": declared.refresh,
+                "subscribe": call,
+            }));
+        }
+        for entity in &manifest.entities {
+            entities.push(json!({
+                "entity": format!("{module}/{}", entity.id),
+                "description": entity.description,
+                "key": entity.key_field(),
+                "version": entity.version,
+                "subscribe": format!("useAlfredState(\"{module}/{}\", {{ key }})", entity.id),
+            }));
+        }
+    }
+    json!({ "states": states, "entities": entities })
+}
+
 #[cfg(test)]
 pub(crate) fn read_for_tests(state: &AppState, args: &Value) -> Value {
     read(state, args).unwrap()
@@ -627,6 +676,44 @@ mod tests {
 
     fn get(state: &AppState, subject: &Subject, name: &str, key: Option<&str>) -> AppResult<Value> {
         read(state, &json!({ "subject": subject, "name": name, "key": key }))
+    }
+
+    #[test]
+    fn a_consumer_finds_each_state_its_described_params_and_the_call_to_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let mut manifest = ModuleManifest { id: "jira".into(), name: "Jira".into(), ..Default::default() };
+        manifest.entities.push(EntityDecl { id: "ticket".into(), key: Some("cle".into()), version: 1, ..Default::default() });
+        manifest.states.push(StateDecl {
+            id: "tickets-du-filtre".into(),
+            description: "Les tickets d’un filtre JQL.".into(),
+            entity: Some("ticket".into()),
+            params: vec![crate::space::StateParam::Described(crate::space::ParamDecl {
+                id: "jql".into(),
+                description: "Filtre JQL des tickets".into(),
+                example: Some(json!("assignee = currentUser()")),
+            })],
+            ..Default::default()
+        });
+        manifest.states.push(StateDecl { id: "ci".into(), params: vec!["job".into()], ..Default::default() });
+        space.write_module(&manifest).unwrap();
+
+        let view = agent_overview(&space);
+        let filter = &view["states"][0];
+        assert_eq!(filter["state"], json!("jira/tickets-du-filtre"));
+        assert_eq!(filter["provider"], json!("jira"));
+        assert_eq!(filter["params"], json!([{ "id": "jql", "description": "Filtre JQL des tickets" }]));
+        assert_eq!(filter["entity"], json!("jira/ticket"));
+        assert_eq!(
+            filter["subscribe"],
+            json!(r#"useAlfredState("jira/tickets-du-filtre", { params: {"jql":"assignee = currentUser()"} })"#)
+        );
+        assert_eq!(view["entities"][0]["subscribe"], json!(r#"useAlfredState("jira/ticket", { key })"#));
+
+        // Un paramètre sans description est refusé par `check`.
+        let problems = crate::function_results::state_problems(&space, "jira");
+        assert!(problems.iter().any(|problem| problem["problem"].as_str().unwrap().contains("Décris le paramètre « job »")), "{problems:?}");
+        assert!(!problems.iter().any(|problem| problem["problem"].as_str().unwrap().contains("« jql »")));
     }
 
     #[tokio::test]
