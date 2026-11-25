@@ -52,7 +52,8 @@ export interface SubscribeOptions {
 }
 
 type Listener = (state: QueryState) => void;
-type Execute = (call: QueryCall) => Promise<unknown>;
+/** `replay` : relance après une nouvelle réponse d’une ressource lue ; le cœur sert ses réponses gardées. */
+type Execute = (call: QueryCall, how: { replay: boolean }) => Promise<unknown>;
 
 interface Subscriber {
   listener: Listener;
@@ -75,6 +76,10 @@ interface Entry {
   lastUsed: number;
   poll: ReturnType<typeof setInterval> | undefined;
   pollEvery: number | undefined;
+  /** Ressources du cœur (compte + requête) lues par la dernière exécution. */
+  resources: Set<string>;
+  /** Fin de la dernière exécution (ms) : une annonce tardive du cœur s’y rattache encore. */
+  lastEnded: number | undefined;
 }
 
 export const DEFAULT_STALE_AFTER_S = 30;
@@ -144,6 +149,18 @@ export interface QueryStore {
   invalidate(scope?: InvalidateScope): void;
   /** État courant d’une lecture. */
   peek(call: QueryCall): QueryState;
+  /**
+   * La lecture `key` (en cours, ou finie à l’instant) a lu la ressource `resource` du cœur : quand une autre
+   * fonction relira cette ressource, cette lecture se relancera.
+   */
+  depend(key: string, resource: string): void;
+  /**
+   * Une fonction vient de lire `resource` sur le réseau : les lectures affichées qui en dépendent se relancent, en
+   * relance (le cœur leur sert la réponse gardée, sans requête). `readers` : les lectures qui l’ont lue, exclues.
+   */
+  resourceRead(resource: string, readers?: readonly string[]): void;
+  /** Lectures de `reference` en cours, ou finies il y a moins de `withinMs`. */
+  readersOf(reference: string, withinMs: number): string[];
   /** Oublie tout (changement d’espace). */
   clear(): void;
   /** Nombre de lectures gardées (tests). */
@@ -153,6 +170,17 @@ export interface QueryStore {
 export function createQueryStore(options: { execute?: Execute; now?: () => number } = {}): QueryStore {
   const now = options.now ?? (() => Date.now());
   const entries = new Map<string, Entry>();
+  /** Ressource du cœur → lectures qui l’ont lue. */
+  const dependents = new Map<string, Set<string>>();
+
+  const unlink = (entry: Entry) => {
+    for (const resource of entry.resources) {
+      const keys = dependents.get(resource);
+      keys?.delete(entry.key);
+      if (keys?.size === 0) dependents.delete(resource);
+    }
+    entry.resources.clear();
+  };
 
   const stateOf = (entry: Entry | undefined): QueryState => ({
     data: entry?.hasData ? entry.data : undefined,
@@ -170,12 +198,18 @@ export function createQueryStore(options: { execute?: Execute; now?: () => numbe
   const forgetUnused = () => {
     const limit = now() - FORGET_AFTER_MS;
     for (const [key, entry] of entries)
-      if (entry.subscribers.size === 0 && !entry.inflight && entry.lastUsed < limit) entries.delete(key);
+      if (entry.subscribers.size === 0 && !entry.inflight && entry.lastUsed < limit) {
+        unlink(entry);
+        entries.delete(key);
+      }
     if (entries.size <= MAX_ENTRIES) return;
     const idle = [...entries.values()]
       .filter((entry) => entry.subscribers.size === 0 && !entry.inflight)
       .sort((a, b) => a.lastUsed - b.lastUsed);
-    for (const entry of idle.slice(0, entries.size - MAX_ENTRIES)) entries.delete(entry.key);
+    for (const entry of idle.slice(0, entries.size - MAX_ENTRIES)) {
+      unlink(entry);
+      entries.delete(entry.key);
+    }
   };
 
   const entryFor = (call: QueryCall): Entry => {
@@ -203,6 +237,8 @@ export function createQueryStore(options: { execute?: Execute; now?: () => numbe
         lastUsed: now(),
         poll: undefined,
         pollEvery: undefined,
+        resources: new Set(),
+        lastEnded: undefined,
       };
       entries.set(key, entry);
     }
@@ -211,17 +247,23 @@ export function createQueryStore(options: { execute?: Execute; now?: () => numbe
     return entry;
   };
 
-  const start = (entry: Entry, execute: Execute | undefined): Promise<unknown> => {
+  const start = (entry: Entry, execute: Execute | undefined, replay = false): Promise<unknown> => {
     if (entry.inflight) return entry.inflight;
     const run = execute ?? options.execute;
     if (!run) return Promise.reject(new Error("Le magasin des lectures n’est pas prêt."));
     const generation = entry.generation;
-    const inflight = (async () => run(entry.call))();
+    // Les ressources lues sont celles de cette exécution : le pont et le cœur les rattachent pendant qu’elle tourne.
+    unlink(entry);
+    const inflight = (async () => run(entry.call, { replay }))();
     entry.inflight = inflight;
     notify(entry);
+    const ended = () => {
+      entry.inflight = undefined;
+      entry.lastEnded = now();
+    };
     inflight.then(
       (output) => {
-        entry.inflight = undefined;
+        ended();
         if (generation !== entry.generation) {
           // Une écriture est passée pendant la lecture : la réponse est peut-être d’avant, on relit.
           if (entry.subscribers.size > 0) void start(entry, undefined).catch(() => undefined);
@@ -236,7 +278,7 @@ export function createQueryStore(options: { execute?: Execute; now?: () => numbe
         notify(entry);
       },
       (error: unknown) => {
-        entry.inflight = undefined;
+        ended();
         // La dernière valeur reste montrée avec l’erreur : la page peut dire « Mise à jour impossible ».
         entry.error = toError(error);
         notify(entry);
@@ -310,12 +352,39 @@ export function createQueryStore(options: { execute?: Execute; now?: () => numbe
         if (entry.subscribers.size > 0) void start(entry, undefined).catch(() => undefined);
       }
     },
+    depend(key, resource) {
+      const entry = entries.get(key);
+      if (!entry) return;
+      entry.resources.add(resource);
+      const keys = dependents.get(resource) ?? new Set<string>();
+      keys.add(key);
+      dependents.set(resource, keys);
+    },
+    resourceRead(resource, readers = []) {
+      const skip = new Set(readers);
+      for (const key of [...(dependents.get(resource) ?? [])]) {
+        const entry = entries.get(key);
+        if (!entry || skip.has(key) || entry.inflight || entry.subscribers.size === 0) continue;
+        void start(entry, undefined, true).catch(() => undefined);
+      }
+    },
+    readersOf(reference, withinMs) {
+      const limit = now() - withinMs;
+      return [...entries.values()]
+        .filter(
+          (entry) =>
+            entry.call.reference === reference &&
+            (entry.inflight !== undefined || (entry.lastEnded !== undefined && entry.lastEnded >= limit)),
+        )
+        .map((entry) => entry.key);
+    },
     peek(call) {
       return stateOf(entries.get(queryKey(call)));
     },
     clear() {
       for (const entry of entries.values()) if (entry.poll) clearInterval(entry.poll);
       entries.clear();
+      dependents.clear();
     },
     size() {
       return entries.size;

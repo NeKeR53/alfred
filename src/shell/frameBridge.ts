@@ -288,6 +288,10 @@ export const frameServices: {
     options: { staleAfter?: number; refreshEvery?: number },
     listener: (state: unknown) => void,
   ) => FunctionWatch;
+  /** Un cadre de fonctions a lu la ressource `resource` du cœur (lectures partagées). */
+  recordRead?: (identity: FrameIdentity, resource: string) => void;
+  /** Une lecture en cours dans ce cadre est une relance : le cœur sert ses réponses gardées. */
+  replaying?: (identity: FrameIdentity) => boolean;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   sendToAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;
@@ -635,11 +639,23 @@ export async function handleFrameRequest(
     case "db.query":
     case "db.execute":
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
-    case "clients.request":
-      return invoke("frame.clients.request", {
+    case "clients.request": {
+      // `reuse` est fixé par la coquille seule : une relance d’une lecture prend la réponse gardée par le cœur.
+      const reuse = identity.kind === "function" && frameServices.replaying?.(identity) === true;
+      const response = await invoke<Record<string, unknown> | null>("frame.clients.request", {
         ...pick(params, [...CLIENT_CALL, "responseType", "cache", "sealed"]),
         subject,
+        ...(reuse ? { reuse: true } : {}),
       });
+      // La ressource lue (compte + requête) rattache la lecture en cours ; la fonction ne la voit pas.
+      if (response && typeof response === "object" && "resource" in response) {
+        const { resource, ...rest } = response;
+        if (identity.kind === "function" && typeof resource === "string")
+          frameServices.recordRead?.(identity, resource);
+        return rest;
+      }
+      return response;
+    }
     case "clients.download":
       return invoke("frame.clients.download", { ...pick(params, [...CLIENT_CALL, "name"]), subject });
     case "clients.stream":

@@ -287,6 +287,8 @@ Ce qu’Alfred fait, sans rien à écrire de plus :
 Règles :
 
 - `useQuery` refuse une fonction qui n’est pas déclarée `effect: "read"` : une écriture s’appelle avec `functions.call`, dans une action.
+- **Une seule fonction de lecture par donnée**, dans le module qui déclare le client ; les autres modules la lisent par `requires` (`useQuery("mail/lister-mails", …)`), sans écrire la leur.
+- **Même service, fonctions différentes.** Si deux fonctions lisent la même ressource (même compte, même requête), une nouvelle réponse lue par l’une relance l’autre dans chaque page qui la montre, et le cœur lui sert la réponse qu’il vient de recevoir : aucune requête de plus.
 - L’entrée identifie la donnée : passe les mêmes champs, dans n’importe quel ordre, pour partager la lecture (`{ jql }` partout, pas `{ jql }` ici et `{ requete }` ailleurs). N’y mets ni date courante ni nombre au hasard.
 - `hasError` du gabarit : `Boolean(q.error) && !q.data` ; une donnée déjà affichée reste montrée quand une relecture échoue.
 - Une lecture qui ouvre un canal (`suivre-journal`) : `useQuery(…, { staleAfter: 0 })`, pour que chaque page reçoive un canal ouvert.

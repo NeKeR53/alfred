@@ -882,7 +882,11 @@ quel que soit l’appelant. La clé : fonction, entrée normalisée, comptes de 
 appels identiques en cours n’en font qu’un, et chaque réponse est publiée à toutes les pages abonnées
 (<code>useQuery</code> du SDK). Une page qui s’ouvre reçoit tout de suite la dernière réponse ; plus vieille que 30 s,
 elle se relit en fond. Une écriture du même module rend caduques ses lectures, et celles des modules qui en dépendent,
-pour les mêmes comptes. Les autres fenêtres reçoivent les réponses par l’événement <code>functions:result</code>, que le
+pour les mêmes comptes. Deux fonctions différentes qui lisent la même ressource d’un service (même compte, même requête) restent liées :
+le cœur garde chaque réponse <code>GET</code> et annonce chaque nouvelle réponse (<code>clients:read</code>) ; la coquille,
+qui sait quelles lectures ont lu quelle ressource, relance les autres lectures affichées, et le cœur leur sert la réponse
+gardée, sans requête. Une écriture sur le compte efface aussitôt les réponses gardées.
+Les autres fenêtres reçoivent les réponses par l’événement <code>functions:result</code>, que le
 cœur émet aussi pour une fonction qu’il lance lui-même (<code>function_results::publish</code>). Décisions :
 <code>docs/lectures-partagees.md</code>.</p>
 

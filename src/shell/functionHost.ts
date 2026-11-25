@@ -8,7 +8,7 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protoc
 import { inExampleMode } from "./examples";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
 import { frameKey } from "./frameKeys";
-import { createQueryStore, inputInstance, type QueryCall } from "./sharedQueries";
+import { createQueryStore, inputInstance, type QueryCall, queryKey } from "./sharedQueries";
 import { useShell } from "./store";
 
 interface Host {
@@ -145,6 +145,7 @@ function hostFor(module: string, examples: boolean, accounts: Record<string, str
 export function resetFunctionHosts() {
   sharedQueries.clear();
   runningByModule.clear();
+  readsByHost.clear();
   for (const host of hosts.values()) {
     for (const settle of host.pending.values())
       settle.reject(new AlfredError({ message: "L’espace de travail a été fermé." }));
@@ -158,7 +159,7 @@ export function resetFunctionHosts() {
  * en vol et publie chaque réponse aux pages abonnées (`useQuery`). Voir `sharedQueries.ts`.
  */
 export const sharedQueries = createQueryStore({
-  execute: (call) => executeRead(call),
+  execute: (call, how) => executeRead(call, how.replay),
 });
 
 /** Identifiant de cette coquille : une réponse qu’elle a diffusée ne lui revient pas. */
@@ -180,10 +181,30 @@ export function dependentModules(module: string): string[] {
   return [...found];
 }
 
-async function executeRead(call: QueryCall): Promise<unknown> {
-  const output = await track(call.reference.split("/")[0] ?? "", () =>
-    executeFunction(call.reference, call.input, call.caller ?? "partage", call.examples === true, call.accounts ?? {}),
-  );
+/**
+ * Lectures en cours dans chaque cadre de fonctions (clé du cadre → clés des lectures du magasin), et nombre de
+ * relances parmi elles. Le pont rattache à ces lectures les ressources que le cadre lit (`clients.request`) et
+ * demande au cœur ses réponses gardées pendant une relance.
+ */
+const readsByHost = new Map<string, Map<string, boolean>>();
+
+async function executeRead(call: QueryCall, replay = false): Promise<unknown> {
+  const module = call.reference.split("/")[0] ?? "";
+  const sample = call.examples === true;
+  const host = hostKey(module, sample, call.accounts ?? {});
+  const key = queryKey(call);
+  const running = readsByHost.get(host) ?? new Map<string, boolean>();
+  running.set(key, replay);
+  readsByHost.set(host, running);
+  let output: unknown;
+  try {
+    output = await track(module, () =>
+      executeFunction(call.reference, call.input, call.caller ?? "partage", sample, call.accounts ?? {}, replay),
+    );
+  } finally {
+    running.delete(key);
+    if (running.size === 0) readsByHost.delete(host);
+  }
   shareResult(call, true, output);
   return output;
 }
@@ -267,6 +288,20 @@ export function receiveClientChange(payload: unknown) {
 }
 
 /**
+ * Une fonction vient de lire une ressource sur le réseau (le cœur l’annonce, `clients:read`) : les lectures
+ * affichées qui dépendent de cette ressource se relancent, et le cœur leur sert la réponse gardée, sans requête.
+ * Pour un script, le cœur nomme la fonction : ses lectures en cours (ou finies à l’instant) sont rattachées à la
+ * ressource et exclues de la relance. Une fonction TypeScript est rattachée par le pont, et sa lecture est en cours.
+ */
+export function receiveClientRead(payload: unknown) {
+  const read = payload as { resource?: string; function?: string } | null;
+  if (!read?.resource) return;
+  const readers = read.function ? sharedQueries.readersOf(read.function, 3_000) : [];
+  for (const key of readers) sharedQueries.depend(key, read.resource);
+  sharedQueries.resourceRead(read.resource, readers);
+}
+
+/**
  * Appelle `module/fonction` avec `input`. Une lecture (`effect: "read"`) passe par le magasin partagé : un appel
  * identique déjà en cours est rejoint, et la réponse est publiée à toutes les pages qui la montrent. Une écriture
  * rend ensuite caduques les lectures de son module.
@@ -307,6 +342,8 @@ async function executeFunction(
   caller: string,
   examples: boolean,
   accounts: Record<string, string>,
+  /** Relance d’une lecture : le cœur sert ses réponses gardées (scripts ; pour TypeScript, le pont). */
+  reuse = false,
 ): Promise<unknown> {
   const [module, name] = reference.split("/");
   const { snapshot } = useShell.getState();
@@ -319,7 +356,13 @@ async function executeFunction(
   if (declared.missing) throw new AlfredError({ message: `La fonction « ${reference} » n’est pas encore écrite.` });
   // Un script (bash, PowerShell, Python) est lancé par Alfred lui-même, qui le note au journal.
   if (declared.runtime && declared.runtime !== "ts")
-    return invoke("functions.call", { function: reference, input, caller, ...(sample ? { examples: true } : {}) });
+    return invoke("functions.call", {
+      function: reference,
+      input,
+      caller,
+      ...(sample ? { examples: true } : {}),
+      ...(reuse ? { reuse: true } : {}),
+    });
   if (active >= MAX_ACTIVE_CALLS)
     throw new AlfredError({
       message: "Trop d’appels de fonctions en cours : une fonction s’appelle peut-être en boucle.",
@@ -386,6 +429,17 @@ frameServices.watchFunction = (identity, reference, input, options, listener) =>
     unsubscribe: sharedQueries.subscribe(call, listener, options),
     refresh: () => sharedQueries.refresh(call),
   };
+};
+
+// Le pont voit chaque requête d’un cadre de fonctions : il rattache la ressource lue aux lectures en cours de ce cadre,
+// et demande au cœur sa réponse gardée quand l’une d’elles est une relance.
+frameServices.recordRead = (identity, resource) => {
+  const running = readsByHost.get(hostKey(identity.module, identity.examples === true, identity.accounts ?? {}));
+  for (const key of running?.keys() ?? []) sharedQueries.depend(key, resource);
+};
+frameServices.replaying = (identity) => {
+  const running = readsByHost.get(hostKey(identity.module, identity.examples === true, identity.accounts ?? {}));
+  return [...(running?.values() ?? [])].some(Boolean);
 };
 
 frameServices.callFunction = (identity, reference, input) =>

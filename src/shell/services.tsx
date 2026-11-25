@@ -9,7 +9,7 @@ import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
-import { callFunction, receiveClientChange, receiveSharedResult } from "./functionHost";
+import { callFunction, receiveClientChange, receiveClientRead, receiveSharedResult } from "./functionHost";
 import { notify } from "./notifications";
 import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
@@ -59,6 +59,8 @@ function bind() {
   onNativeEvent("functions:result", receiveSharedResult);
   // Écriture chez un service vue par le cœur (script, automatisation, autre fenêtre) : les lectures touchées se relisent.
   onNativeEvent("clients:changed", receiveClientChange);
+  // Nouvelle réponse d’un service : les lectures affichées qui lisent la même ressource se relancent, sans requête.
+  onNativeEvent("clients:read", receiveClientRead);
   onNativeEvent("agent:frameErrors", (payload) => {
     const request = payload as { requestId: string; module?: string | null };
     const errors = [...frameErrors.entries()]

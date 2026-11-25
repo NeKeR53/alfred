@@ -63,6 +63,21 @@ pub fn publish(state: &AppState, result: &FunctionResult) {
     }
 }
 
+/// Événement d’une nouvelle réponse d’un service (lecture faite sur le réseau), reçu par les coquilles.
+pub const CLIENT_READ: &str = "clients:read";
+
+/// Une fonction vient de lire une ressource sur le réseau : les coquilles relancent les lectures affichées qui en
+/// dépendent, et ces relances prennent la réponse gardée par le cœur (`client_reads`), sans nouvelle requête. Le
+/// nom de la fonction n’est connu que pour un script (`module/fonction`) ; une fonction TypeScript est rattachée à la
+/// ressource par le pont de la coquille, qui voit la réponse passer.
+pub fn client_read(state: &AppState, subject: &crate::permissions::Subject, resource: &str) {
+    let mut payload = json!({ "resource": resource, "module": subject.module });
+    if subject.reference.split_once('/').is_some_and(|(_, id)| id != "*") {
+        payload["function"] = json!(subject.reference);
+    }
+    state.emit(CLIENT_READ, payload);
+}
+
 /// Événement d’une écriture chez un service, reçu par les coquilles.
 pub const CLIENT_CHANGED: &str = "clients:changed";
 

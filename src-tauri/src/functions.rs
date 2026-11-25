@@ -275,6 +275,12 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     let caller = caller.as_deref().unwrap_or("interface");
                     // La coquille dit si l’appelant montre des données d’exemple (un cadre ne l’atteint pas).
                     let examples = opt_arg::<bool>(args, "examples").ok().flatten().unwrap_or(false);
+                    // Relance d’une lecture par la coquille : ses lectures prennent les réponses gardées par le cœur.
+                    let _replay = opt_arg::<bool>(args, "reuse")
+                        .ok()
+                        .flatten()
+                        .unwrap_or(false)
+                        .then(|| crate::client_reads::replay(&reference));
                     call_in(state, &reference, args.get("input").cloned().unwrap_or(json!({})), caller, examples).await
                 }
                 Err(error) => Err(error),

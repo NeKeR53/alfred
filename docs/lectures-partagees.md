@@ -129,10 +129,9 @@ fonction ne lit un client par un autre chemin. Trois verrous :
 
 Choix et limites :
 
-- Le cœur ne garde pas la réponse après l’avoir rendue. Une valeur gardée quelques secondes aurait changé ce que
-  reçoit une fonction qui relit juste après un changement (une tâche qui suit un état, une relecture après une
-  écriture). La valeur gardée et la diffusion aux pages restent le rôle du magasin de la coquille, au niveau des
-  fonctions.
+- Une lecture ordinaire ne reçoit jamais une réponse gardée par le cœur. Une valeur gardée quelques secondes pour
+  tous aurait changé ce que reçoit une fonction qui relit juste après un changement (une tâche qui suit un état, une
+  relecture après une écriture). Depuis D10, le cœur garde les réponses, mais ne les sert qu’aux relances.
 - `download`, `stream` et `socket` ne passent pas par le magasin : ce sont un fichier et des flux en direct, pas un
   état à partager.
 - Une écriture faite par une fonction TypeScript est connue de la coquille, qui invalide elle-même à la fin de
@@ -143,6 +142,44 @@ Choix et limites :
   connus ; un script qui le cache autrement n’aurait de toute façon pas le secret du service.
 - Une lecture qui ouvre un canal (journal en direct) se lit avec `useQuery(…, { staleAfter: 0 })` : chaque page qui
   s’ouvre reçoit un canal ouvert.
+
+### D10. Même service, fonctions différentes : la garantie tient aussi (2026-11-25)
+
+Besoin d’Alexandre : « je lis mes mails ; deux modules lisent les mails ; si le premier déclenche la lecture, les deux
+se mettent à jour ». Avec D3 seul, deux fonctions différentes ne partageaient rien.
+
+1. **Le cœur garde chaque réponse `GET` réussie** (`client_reads.rs`), avec la clé de la ressource : compte (espace,
+   client, instance) + requête normalisée. 60 s au plus, 500 réponses, 2 Mio chacune au plus.
+   - Toute écriture sur le compte l’efface aussitôt, et une lecture partie avant l’écriture n’est pas gardée : jamais
+     de valeur d’avant une écriture (la raison de l’abandon des 2 s en D9).
+   - **Elle ne sert qu’aux relances** demandées par la coquille. Une lecture ordinaire (« Actualiser », suivi d’un CI
+     toutes les 5 s, une fonction qui relit après un changement) joint toujours le service. Ajustement de la piste
+     proposée : servir la réponse gardée à tout le monde aurait rendu une valeur ancienne à ces lectures.
+2. **Le cœur annonce chaque nouvelle réponse** (`clients:read` : ressource, module, et fonction pour un script).
+3. **La coquille sait quelles lectures ont lu quelle ressource.**
+   - Fonction TypeScript : le pont voit passer la réponse (`clients.request`), qui porte la ressource ; il la rattache
+     aux lectures en cours dans ce cadre de fonctions, puis retire ce champ (la fonction ne le voit pas). Deux lectures
+     en même temps dans le même cadre sont toutes deux rattachées : au pire, une relance de trop, servie par la
+     réponse gardée.
+   - Script : le cœur nomme la fonction ; la coquille rattache ses lectures en cours, ou finies il y a moins de 3 s.
+4. **À l’annonce**, la coquille relance les lectures affichées (avec un abonné) qui dépendent de la ressource, sauf
+   celle qui vient de lire et celles déjà en cours. La relance passe `reuse` (TypeScript, fixé par le pont seul) ou
+   `reuse: true` à `functions.call` (script) : le cœur sert la réponse gardée. Aucune requête ne part ; la relance
+   n’annonce rien (pas de boucle). Si la relance lit une autre ressource non gardée, elle la lit sur le réseau.
+5. **Règle de l’agent** : une seule fonction de lecture par donnée, dans le module qui déclare le client ; les
+   autres modules l’appellent par `requires` (AGENTS.md 2 ter, SDK.md section 3, PLACEMENT.md 11.1). Le point 4 est le
+   filet pour les cas restants.
+
+**Ce qui est garanti.** Toute lecture d’un service par une fonction de lecture, dans n’importe quel module, met à jour
+toutes les pages affichées qui lisent la même ressource (même compte, même requête), sans requête de plus.
+
+**Ce qui ne l’est pas.**
+- Deux requêtes différentes sur la même donnée (`/messages?limit=20` et `/messages?limit=50`, ou deux API qui rendent
+  les mêmes mails) sont deux ressources : rien ne les relie.
+- Une lecture faite par une fonction appelée par une autre fonction (lecture imbriquée) met à jour les pages de la
+  fonction intérieure, pas celles de la fonction extérieure.
+- Une page fermée, ou une valeur sans abonné, n’est pas relancée : elle se relit à sa prochaine ouverture.
+- Les écritures faites hors d’Alfred (un mail arrivé chez le service) ne sont vues qu’à la prochaine lecture.
 
 ## Point d’entrée pour les automatisations
 
@@ -173,7 +210,10 @@ lectures qu’elle touche. Le cœur n’a pas à connaître l’effet. Les appel
 - `src/sdk/index.ts` : `useQuery`.
 - `src-tauri/src/function_results.rs` : `functions.shareResult`, `publish`, `client_changed` et les contrôles de
   `check` (`page_read_problems`, `function_problem`).
-- `src-tauri/src/client_reads.rs` : lectures d’un client réunies dans le cœur (branché dans `clients::frame_request`).
+- `src-tauri/src/client_reads.rs` : lectures d’un client dans le cœur (en vol, gardées, relances), branché dans
+  `clients::frame_request`.
 - Tests : `sharedQueries.test.ts`, `sharedQueries.pages.test.ts` (deux pages, une requête), `useQuery.test.tsx`,
   `function_results.rs`, `client_reads.rs`, `clients.rs` (`identical_reads_in_flight_reach_the_service_once` : deux
-  fonctions de deux modules, un vrai serveur, une seule requête reçue).
+  fonctions de deux modules, un vrai serveur, une seule requête reçue, relance servie par la réponse gardée, rien de
+  gardé après une écriture), `sharedQueries.resources.test.ts` (deux modules, deux fonctions différentes sur la même
+  ressource, deux pages : une lecture de la première met à jour la seconde, une seule requête au service).
