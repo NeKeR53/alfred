@@ -1034,7 +1034,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "title": title,
                 "file": placed.file,
                 "moduleDirectory": placed.module_dir,
-                "next": "Écrire le composant React dans `file` (export par défaut), en suivant docs/alfred/PLACEMENT.md, docs/alfred/DESIGN.md et docs/alfred/SDK.md, avec les composants du catalogue de socle-ui (DESIGN.md, section 8 ; spec dans docs/alfred/socle/specs/), puis appeler `check`.",
+                "next": "Écrire le composant React dans `file` (export par défaut), en suivant docs/alfred/guides/page.md, docs/alfred/PLACEMENT.md, docs/alfred/DESIGN.md et docs/alfred/SDK.md, avec les composants du catalogue de socle-ui (DESIGN.md, section 8 ; spec dans docs/alfred/socle/specs/), puis appeler `check`.",
             }))
         }
         "delete_page" => {
@@ -1742,9 +1742,9 @@ mod tests {
         let checked = call(&state, "check", json!({ "module": "outils" })).await.unwrap();
         assert!(!checked["functions"].to_string().contains("outils/saluer"), "{checked:#}");
 
-        // Sans `effect: read`, Code Mode ne la lance pas ; une lecture, si.
+        // Sans `effect: read`, c’est une écriture : sans accord de l’utilisateur, Code Mode ne la lance pas.
         let refused = crate::code_mode::call_as_agent(&state, CONVERSATION, "outils/saluer", json!({ "nom": "Zoé" })).await;
-        assert!(refused.unwrap_err().message.contains("effect: read"));
+        assert!(refused.unwrap_err().message.contains("rien n’a été écrit"));
         let mut manifest = space.module("outils").unwrap();
         manifest.functions[0].effect = Some(crate::space::Effect::Read);
         space.write_module(&manifest).unwrap();
@@ -2242,7 +2242,7 @@ mod tests {
             async move { crate::code_mode::call_as_agent(&state, conversation, reference, json!({})).await }
         };
         assert!(code("banque/outil").await.unwrap_err().message.contains("hors du module"), "autre module non accordé");
-        assert!(code("notes/outil").await.unwrap_err().message.contains("effect: read"), "écriture non offerte");
+        assert!(code("notes/outil").await.unwrap_err().message.contains("n’offre pas"), "écriture non offerte");
         assert_eq!(code("banque/exporter").await.unwrap(), json!({ "appelée": "banque/exporter" }));
         assert_eq!(code("notes/exporter").await.unwrap(), json!({ "appelée": "notes/exporter" }));
         for tool in

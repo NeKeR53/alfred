@@ -1,7 +1,7 @@
 //! Scripts gardés de Code Mode. Chaque `alfred run` est gardé sept jours dans la base d’Alfred (code, entrée,
 //! sortie, date, conversation) : `alfred runs` les liste, `alfred run --again <id>` en relance un. Un script réussi
 //! peut devenir une vraie fonction TypeScript d’un module (`alfred run --save module/nom`) : son fichier, sa
-//! déclaration (`effect: read`, `uses`, entrée et sortie déduites de l’exécution, premier test) et, s’il appelle un
+//! déclaration (`effect: read`, ou `write` s’il a écrit ; `uses`, entrée et sortie déduites de l’exécution, premier test) et, s’il appelle un
 //! autre module, `requires`. Elle reste « à valider » tant que l’utilisateur ne l’a pas acceptée dans la fiche du
 //! module (Réglages → Modules) : l’accord porte sur une empreinte de sa déclaration et de son fichier, et toute
 //! modification la remet à valider, comme une automatisation.
@@ -196,7 +196,7 @@ pub fn home_module(calls: &[String]) -> String {
 }
 
 /// Fichier d’une fonction gardée : le code de l’agent, avec la même `api` qu’en Code Mode, branchée sur le SDK.
-fn function_source(code: &str, functions: &[(String, String, String)], date: &str) -> String {
+fn function_source(code: &str, functions: &[(String, String, String)], date: &str, writes: bool) -> String {
     let mut modules: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
     for (module, id, reference) in functions {
         modules.entry(module).or_default().push(format!(
@@ -211,14 +211,15 @@ fn function_source(code: &str, functions: &[(String, String, String)], date: &st
     }
     let body: String = code.lines().map(|line| if line.is_empty() { String::new() } else { format!("  {line}") }).collect::<Vec<_>>().join("\n");
     format!(
-        "// Script gardé par l’agent depuis Code Mode (`alfred run`), le {date}. Il ne fait que lire.\n\
+        "// Script gardé par l’agent depuis Code Mode (`alfred run`), le {date}. {}\n\
          // Il ne tourne qu’après l’accord de l’utilisateur (Réglages → Modules) ; toute modification le remet à valider.\n\
          import {{ functions, states }} from \"@alfred/sdk\";\n\n\
          // biome-ignore lint/suspicious/noExplicitAny: même API qu’en Code Mode.\n\
          const api: any = {{\n  call: (reference: string, input?: unknown) => functions.call(reference, input ?? {{}}),\n  \
          states: {{ get: (name: string, options = {{}}) => states.get(name, options) }},\n{api}}};\n\n\
          // biome-ignore lint/suspicious/noExplicitAny: entrée décrite dans module.json.\n\
-         export default async function (input: any) {{\n{body}\n}}\n"
+         export default async function (input: any) {{\n{body}\n}}\n",
+        if writes { "Il écrit chez un service." } else { "Il ne fait que lire." }
     )
 }
 
@@ -271,19 +272,21 @@ pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, descr
     let named: Vec<&crate::space::ResolvedFunction> = snapshot
         .functions
         .iter()
-        // Seulement des lectures : le script gardé ne fait que lire, comme en Code Mode.
-        .filter(|function| function.effect == Some(crate::space::Effect::Read))
+        // Les fonctions appelées, les lectures des modules que le code nomme, et les écritures qu’il nomme.
         .filter(|function| {
+            let module = format!("api.{}.", crate::code_mode::ident(&function.module));
             called.contains(&function.reference)
-                || run.code.contains(&format!("api.{}.", crate::code_mode::ident(&function.module)))
+                || (function.effect == Some(crate::space::Effect::Read) && run.code.contains(&module))
+                || run.code.contains(&format!("{module}{}(", crate::code_mode::ident(&function.id)))
         })
         .collect();
+    let writes = named.iter().any(|function| function.effect != Some(crate::space::Effect::Read));
     let mapped: Vec<(String, String, String)> =
         named.iter().map(|function| (function.module.clone(), function.id.clone(), function.reference.clone())).collect();
     let result = run.output.get("result").cloned().unwrap_or(Value::Null);
     let description = description
         .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| format!("Script gardé par l’agent : lit {}.", if called.is_empty() { "des données".to_string() } else { called.join(", ") }));
+        .unwrap_or_else(|| format!("Script gardé par l’agent : {} {}.", if writes { "appelle" } else { "lit" }, if called.is_empty() { "des données".to_string() } else { called.join(", ") }));
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     let test = json!({
         "name": format!("Exécution du {date}"),
@@ -299,7 +302,7 @@ pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, descr
             "description": description,
             "input": schema_of(&run.input, 4),
             "output": shape_of(&result, 3, false),
-            "effect": "read",
+            "effect": if writes { "write" } else { "read" },
             "uses": { "functions": called },
             "tests": [test],
         }),
@@ -307,7 +310,7 @@ pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, descr
     .await
     .unwrap_or_else(|| Err(AppError::new("Déclaration impossible.")))?;
     let file = declared["file"].as_str().map(std::path::PathBuf::from).ok_or_else(|| AppError::new("Fichier de la fonction introuvable."))?;
-    std::fs::write(&file, function_source(&run.code, &mapped, &date))?;
+    std::fs::write(&file, function_source(&run.code, &mapped, &date, writes))?;
     // Un autre module appelé : une dépendance déclarée, qui accorde ses fonctions.
     let mut manifest = space.module(&module)?;
     let mut added = Vec::new();
@@ -460,6 +463,18 @@ mod tests {
         assert!(ensure_runnable(&state, "mes-scripts/total", "page").is_ok());
         std::fs::write(space.function_file(PERSONAL_MODULE, "total"), format!("{file}\n// changé")).unwrap();
         assert_eq!(status_of(&state, &space, "mes-scripts/total"), Some("toValidate"));
+        // Un script qui écrit se garde aussi : une écriture, à valider.
+        let mut notes = space.module("notes").unwrap();
+        notes.functions.push(FunctionDecl { id: "archiver".into(), effect: Some(crate::space::Effect::Write), ..Default::default() });
+        space.write_module(&notes).unwrap();
+        let writing = "await api.notes.archiver({ id: 1 });\nreturn 1;";
+        let id = record(&state, "conv", writing, &json!({}), &Ok(json!({ "result": 1 })), &["notes/archiver".to_string()]).unwrap();
+        let saved = save(&state, "conv", "notes/archiver-tout", None, &load(&state, &id).unwrap()).await.unwrap();
+        assert_eq!(saved["status"], "toValidate");
+        let declared = space.module("notes").unwrap().functions.into_iter().find(|f| f.id == "archiver-tout").unwrap();
+        assert_eq!(declared.effect, Some(crate::space::Effect::Write));
+        let file = std::fs::read_to_string(space.function_file("notes", "archiver-tout")).unwrap();
+        assert!(file.contains("Il écrit") && file.contains("functions.call(\"notes/archiver\""), "{file}");
         let failed = record(&state, "conv", code, &input, &Err(AppError::new("boum")), &[]).unwrap();
         assert!(save(&state, "conv", "x", None, &load(&state, &failed).unwrap()).await.is_err());
     }

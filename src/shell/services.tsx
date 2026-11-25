@@ -9,7 +9,7 @@ import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
-import { callFunction, receiveStatesChanged, runAgentCode } from "./functionHost";
+import { callFunction, cancelAgentCode, receiveStatesChanged, runAgentCode } from "./functionHost";
 import { notify } from "./notifications";
 import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
@@ -66,6 +66,7 @@ function bind() {
       (error) => reject(request.requestId, error),
     );
   });
+  onNativeEvent("agent:codeCancel", cancelAgentCode);
   // Un état ou une entité a changé dans le cœur : les pages abonnées qui en dépendent se relisent, sans requête.
   onNativeEvent("states:changed", receiveStatesChanged);
   onNativeEvent("agent:frameErrors", (payload) => {

@@ -189,6 +189,48 @@ pub enum Driver {
 struct Entry {
     driver: Driver,
     token: Option<String>,
+    /// Pour les cartes qu’Alfred ajoute lui-même au tour en cours (accord d’une écriture de Code Mode).
+    sink: Sink,
+}
+
+/// Cartes d’accord posées par Alfred (et non par le harnais), en attente de la réponse de l’utilisateur.
+fn own_approvals() -> &'static Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> = OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// Préfixe des cartes posées par Alfred.
+const OWN_APPROVAL: &str = "alfred-";
+
+/// Pose une carte d’accord dans le tour en cours de la conversation et attend le choix de l’utilisateur (l’identifiant
+/// de l’option), au plus `wait`. `None` : aucune session ouverte pour cette conversation, ou pas de réponse à temps.
+pub async fn ask_in_conversation(
+    state: &AppState,
+    conversation: &str,
+    title: &str,
+    detail: &str,
+    options: Vec<super::event::ApprovalOption>,
+    wait: std::time::Duration,
+) -> Option<String> {
+    let sink = {
+        let tokens = state.agent_tokens.lock().ok()?;
+        let all = sessions().lock().ok()?;
+        all.values()
+            .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
+            .map(|entry| entry.sink.clone())?
+    };
+    let id = format!("{OWN_APPROVAL}{}", uuid::Uuid::new_v4().simple());
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    own_approvals().lock().ok()?.insert(id.clone(), sender);
+    sink.emit(HarnessEvent::Approval {
+        request: super::event::ApprovalRequest { id: id.clone(), title: title.into(), detail: Some(detail.into()), options },
+    });
+    let answer = tokio::time::timeout(wait, receiver).await.ok().and_then(Result::ok);
+    if let Ok(mut pending) = own_approvals().lock() {
+        pending.remove(&id);
+    }
+    sink.emit(HarnessEvent::ApprovalClosed { id });
+    answer
 }
 
 fn sessions() -> &'static Mutex<HashMap<String, Arc<Entry>>> {
@@ -266,6 +308,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     });
     let handle = uuid::Uuid::new_v4().to_string();
     let sink = Sink { state: state.clone(), output, handle: handle.clone() };
+    let own_sink = sink.clone();
     let launch = Launch { state: state.clone(), options, program, sink, token: token.clone(), port, handle: handle.clone() };
     let opened = match provider {
         Provider::Claude => claude::Claude::start(launch).map(Driver::Claude),
@@ -287,7 +330,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
         Driver::Codex(codex) => codex.session_id(),
         Driver::Opencode(opencode) => Some(opencode.session_id()),
     };
-    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token }));
+    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink }));
     Ok(json!({ "handle": handle, "sessionId": session_id }))
 }
 
@@ -330,6 +373,13 @@ async fn answer(args: &Value) -> AppResult<Value> {
     let handle: String = arg(args, "handle")?;
     let approval: String = arg(args, "approvalId")?;
     let option: String = arg(args, "optionId")?;
+    if approval.starts_with(OWN_APPROVAL) {
+        let sender = own_approvals().lock().map_err(|_| gone())?.remove(&approval);
+        if let Some(sender) = sender {
+            let _ = sender.send(option);
+        }
+        return Ok(Value::Null);
+    }
     match &entry(&handle)?.driver {
         Driver::Claude(claude) => claude.answer(&approval, &option),
         Driver::Codex(codex) => codex.answer(&approval, &option),

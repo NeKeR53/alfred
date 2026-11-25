@@ -384,6 +384,15 @@ export interface AgentCodeResult {
   error?: { message: string; stack?: unknown };
 }
 
+/** Exécutions de Code Mode en cours dans cette coquille : le cœur peut en arrêter une (`agent:codeCancel`). */
+const runningCode = new Map<string, (result: AgentCodeResult) => void>();
+
+/** Le cœur arrête une exécution à son échéance : son cadre est retiré. */
+export function cancelAgentCode(payload: unknown) {
+  const run = (payload as { run?: unknown } | null)?.run;
+  if (typeof run === "string") runningCode.get(run)?.({ logs: [], error: { message: "Durée maximale dépassée." } });
+}
+
 /** Requêtes que le code d’un agent peut faire : appeler une fonction, lire un état. Le cœur vérifie chacune. */
 const AGENT_CODE_METHODS = new Set(["agentCode.call", "agentCode.state"]);
 
@@ -404,6 +413,7 @@ export function runAgentCode(request: { run: string; key: string; input: unknown
   return new Promise<AgentCodeResult>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (result: AgentCodeResult) => {
+      runningCode.delete(request.run);
       clearTimeout(timer);
       window.removeEventListener("message", listen);
       frame.remove();
@@ -442,6 +452,7 @@ export function runAgentCode(request: { run: string; key: string; input: unknown
       );
     };
     window.addEventListener("message", listen);
+    runningCode.set(request.run, finish);
     timer = setTimeout(
       () => finish({ logs: [], error: { message: `Durée maximale dépassée (${request.timeoutMs / 1000} s).` } }),
       request.timeoutMs,

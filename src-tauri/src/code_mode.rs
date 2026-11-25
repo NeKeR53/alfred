@@ -5,10 +5,12 @@
 //! partagé (`agentCode.state`). Chaque appel passe par `functions::call_in` avec l’appelant « agent-code », qui
 //! l’inscrit au Journal.
 //!
-//! Étape 1, lecture seule : une fonction qui n’est pas `effect: read` est refusée, sauf une fonction que la page qui
-//! a lancé la conversation offre à son agent (l’utilisateur l’a accordée). Étape 2, à venir : une écriture demande
-//! l’accord de l’utilisateur, par une carte dans la conversation (fonction, entrée, empreinte), sur le modèle des
-//! autorisations des harnais ; un accord vaut pour cette conversation et cette fonction, jamais au-delà.
+//! Lectures libres, écritures avec accord. Une fonction qui n’est pas `effect: read` demande l’accord de
+//! l’utilisateur : une carte dans le tour en cours de la conversation (fonction, description, entrée), « Autoriser »
+//! (cette fois), « Autoriser pour cette conversation » (cette fonction, cette conversation, jamais au-delà) ou
+//! « Refuser ». Sans réponse en 90 s, ou sans conversation ouverte, rien n’est écrit. Le temps d’attente ne compte
+//! pas dans la durée de l’exécution. Une conversation lancée par une page n’écrit que par les fonctions que la page
+//! lui offre (accordées par l’utilisateur), sans carte ; elle ne demande rien de plus.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,6 +26,8 @@ use crate::state::AppState;
 
 /// Durée maximale d’une exécution.
 pub const MAX_DURATION: Duration = Duration::from_secs(60);
+/// Attente maximale d’une exécution, accords compris : au-delà, le cadre s’arrête de lui-même.
+const MAX_WAIT: Duration = Duration::from_secs(15 * 60);
 /// Nombre maximal d’appels (fonctions et états) par exécution.
 pub const MAX_CALLS: usize = 50;
 /// Taille maximale de la sortie rendue à l’agent (valeur rendue et console), en caractères.
@@ -36,12 +40,12 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "api",
         "alfred api [module | module/fonction]",
-        "Types TypeScript des fonctions de lecture et des états partagés, pour `alfred run`. Sans valeur : une ligne par fonction. Avec un module : ses déclarations. Avec une fonction : son détail (entrée, sortie, description).",
+        "Types TypeScript des fonctions et des états partagés, pour `alfred run`. Sans valeur : une ligne par fonction. Avec un module : ses déclarations. Avec une fonction : son détail (entrée, sortie, description).",
     ),
     (
         "run",
         "alfred run <fichier.ts | -> [--input '{…}'] [--examples] [--again <id>] [--save module/nom] [--description …]",
-        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Lecture seule : une fonction qui n’est pas `effect: read` est refusée. Limites : 60 s, 50 appels, 20 000 caractères de sortie. `--examples` : les fonctions de connecteur rendent leurs données d’exemple, sans joindre le service. Écrire le code dans un fichier, ou `alfred run - <<'EOF'` … `EOF` (une commande `alfred` seule passe sans demande d’accord). Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction de lecture du module (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
+        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Une lecture part tout de suite ; une écriture (fonction qui n’est pas `effect: read`) attend l’accord de l’utilisateur, par une carte dans la conversation (90 s au plus, sinon rien n’est écrit) ; il peut l’accorder pour toute la conversation. Limites : 60 s, 50 appels, 20 000 caractères de sortie. `--examples` : les fonctions de connecteur rendent leurs données d’exemple, sans joindre le service. Écrire le code dans un fichier, ou `alfred run - <<'EOF'` … `EOF` (une commande `alfred` seule passe sans demande d’accord). Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction du module (une écriture si elle a écrit) (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
     ),
     ("runs", "alfred runs [--limit n]", "Exécutions de Code Mode gardées 7 jours : id, date, réussite, nombre d’appels, début du code."),
 ];
@@ -51,7 +55,8 @@ struct Run {
     conversation: String,
     scope: Option<AgentScope>,
     js: String,
-    deadline: Instant,
+    /// Échéance : repoussée du temps passé à attendre un accord.
+    deadline: Mutex<Instant>,
     calls: Mutex<Vec<String>>,
     /// Les fonctions rendent leurs données d’exemple, sans joindre aucun service.
     examples: bool,
@@ -238,7 +243,8 @@ pub fn ts_type(schema: &Value, docs: bool) -> String {
 /// Fonctions qu’une conversation peut appeler en Code Mode : les lectures qu’elle atteint, et pour une conversation
 /// lancée par une page, les fonctions que la page lui offre (écritures comprises, accordées par l’utilisateur).
 fn callable<'a>(functions: &'a [ResolvedFunction], scope: Option<&AgentScope>) -> Vec<&'a ResolvedFunction> {
-    functions.iter().filter(|function| !function.missing && allowed(function, scope)).collect()
+    // Une conversation ouverte par l’utilisateur voit aussi les écritures : chacune demande son accord.
+    functions.iter().filter(|function| !function.missing && (scope.is_none() || allowed(function, scope))).collect()
 }
 
 fn allowed(function: &ResolvedFunction, scope: Option<&AgentScope>) -> bool {
@@ -271,7 +277,11 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
             scope.as_ref().is_none_or(|scope| scope.module == provider)
         })
         .collect();
-    let write_note = |function: &ResolvedFunction| if function.effect == Some(Effect::Read) { "" } else { " (écriture accordée à cette conversation)" };
+    let write_note = |function: &ResolvedFunction| match (function.effect == Some(Effect::Read), scope.is_some()) {
+        (true, _) => "",
+        (false, true) => " (écriture offerte par la page)",
+        (false, false) => " (écriture : l’utilisateur l’accorde par une carte)",
+    };
     match positional.first() {
         None => {
             let mut lines = vec![
@@ -292,7 +302,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
                 lines.push(line);
             }
             if functions.is_empty() {
-                lines.push("Aucune fonction de lecture (effect: read) dans cet espace.".to_string());
+                lines.push("Aucune fonction dans cet espace.".to_string());
             }
             for declared in &states {
                 lines.push(format!(
@@ -316,7 +326,7 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
                 .collect();
             if chosen.is_empty() {
                 return Err(AppError::new(format!(
-                    "Aucune fonction de lecture pour « {target} ». `alfred api` les liste."
+                    "Aucune fonction pour « {target} ». `alfred api` les liste."
                 )));
             }
             let module_ident = ident(&chosen[0].module);
@@ -456,20 +466,31 @@ async fn execute_inner(state: &Arc<AppState>, conversation: &str, code: &str, in
         conversation: conversation.to_string(),
         scope: crate::agent_tools::scope_of(state, conversation),
         js,
-        deadline: Instant::now() + MAX_DURATION,
+        deadline: Mutex::new(Instant::now() + MAX_DURATION),
         calls: Mutex::new(Vec::new()),
         examples,
     });
     runs().lock().map_err(|_| AppError::new("Code Mode indisponible."))?.insert(id.clone(), run.clone());
     let _registered = Registered(id.clone());
     let started = Instant::now();
-    let answer = state
-        .ask_ui(
-            "agent:code",
-            json!({ "run": id, "key": frame_key(state), "input": input, "timeoutMs": MAX_DURATION.as_millis() as u64 }),
-            MAX_DURATION + Duration::from_secs(5),
-        )
-        .await;
+    // Le cadre attend sans limite propre : le cœur l’arrête à l’échéance, repoussée pendant l’attente d’un accord.
+    let ask = state.ask_ui(
+        "agent:code",
+        json!({ "run": id, "key": frame_key(state), "input": input, "timeoutMs": MAX_WAIT.as_millis() as u64 }),
+        MAX_WAIT,
+    );
+    tokio::pin!(ask);
+    let answer = loop {
+        tokio::select! {
+            answer = &mut ask => break answer,
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                if Instant::now() > run.deadline_at() {
+                    state.emit("agent:codeCancel", json!({ "run": id }));
+                    break Err(AppError::new(format!("Durée maximale dépassée ({} s).", MAX_DURATION.as_secs())));
+                }
+            }
+        }
+    };
     let ms = started.elapsed().as_millis() as u64;
     let calls = run.calls.lock().map(|calls| calls.clone()).unwrap_or_default();
     let outcome = answer.and_then(|answer| shape(answer, &calls, ms));
@@ -549,7 +570,7 @@ fn active(args: &Value) -> AppResult<Arc<Run>> {
         .ok()
         .and_then(|all| all.get(&id).cloned())
         .ok_or_else(|| AppError::new("Cette exécution est terminée."))?;
-    if Instant::now() > run.deadline {
+    if Instant::now() > run.deadline_at() {
         return Err(AppError::new(format!("Durée maximale dépassée ({} s).", MAX_DURATION.as_secs())));
     }
     Ok(run)
@@ -583,20 +604,124 @@ async fn call_function(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             function.reference
         )));
     }
-    if !allowed(function, run.scope.as_ref()) {
+    let write = !allowed(function, run.scope.as_ref());
+    if write && run.scope.is_some() {
         return Err(AppError::new(format!(
-            "« {} » n’est pas une lecture (effect: read) : Code Mode ne fait que lire. Pour la lancer, le dire à l’utilisateur.",
+            "« {} » est une écriture que la page n’offre pas à cette conversation : elle n’est pas lancée.",
             function.reference
         )));
     }
     count(&run, function.reference.clone())?;
     let input = args.get("input").cloned().filter(|input| !input.is_null()).unwrap_or_else(|| json!({}));
     let input = crate::agent_tools::with_fixed_input(run.scope.as_ref(), &function.reference, input);
+    if write {
+        approve_write(state, &run, function, &input).await?;
+    }
     let reference = function.reference.clone();
-    let remaining = run.deadline.saturating_duration_since(Instant::now());
+    let remaining = run.deadline_at().saturating_duration_since(Instant::now());
     tokio::time::timeout(remaining, crate::functions::call_in(state, &reference, input, "agent-code", run.examples))
         .await
         .map_err(|_| AppError::new(format!("Durée maximale dépassée ({} s).", MAX_DURATION.as_secs())))?
+}
+
+impl Run {
+    fn deadline_at(&self) -> Instant {
+        self.deadline.lock().map(|deadline| *deadline).unwrap_or_else(|_| Instant::now())
+    }
+}
+
+/// Attente maximale d’une réponse à une carte d’accord.
+pub const APPROVAL_WAIT: Duration = Duration::from_secs(90);
+
+fn grants_db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, rusqlite::Connection>> {
+    let db = state.app_db.lock().map_err(|_| AppError::new("La base d’Alfred est indisponible."))?;
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS code_grants (conversation TEXT NOT NULL, reference TEXT NOT NULL, granted_at TEXT NOT NULL,
+         PRIMARY KEY (conversation, reference))",
+        [],
+    )?;
+    Ok(db)
+}
+
+fn granted(state: &AppState, conversation: &str, reference: &str) -> bool {
+    grants_db(state)
+        .and_then(|db| {
+            Ok(db.query_row(
+                "SELECT 1 FROM code_grants WHERE conversation = ?1 AND reference = ?2",
+                rusqlite::params![conversation, reference],
+                |_| Ok(()),
+            ).is_ok())
+        })
+        .unwrap_or(false)
+}
+
+/// Réponses données à la place de l’utilisateur dans les tests, par conversation : identifiant d’option ; absente,
+/// pas de réponse.
+#[cfg(test)]
+pub static TEST_ANSWERS: Mutex<Vec<(&'static str, &'static str)>> = Mutex::new(Vec::new());
+
+async fn ask_user(state: &AppState, conversation: &str, function: &ResolvedFunction, input: &Value) -> Option<String> {
+    #[cfg(test)]
+    {
+        let _ = (state, function, input);
+        return TEST_ANSWERS
+            .lock()
+            .ok()
+            .and_then(|answers| answers.iter().find(|(asked, _)| *asked == conversation).map(|(_, answer)| answer.to_string()));
+    }
+    #[cfg(not(test))]
+    {
+        use crate::agents::event::{ApprovalOption, OptionKind};
+        let mut shown = serde_json::to_string_pretty(input).unwrap_or_default();
+        if shown.chars().count() > 1500 {
+            shown = shown.chars().take(1500).collect::<String>() + "\n…";
+        }
+        let description = if function.description.is_empty() { String::new() } else { format!("{}\n", function.description) };
+        crate::agents::session::ask_in_conversation(
+            state,
+            conversation,
+            &format!("Écrire avec {}", function.reference),
+            &format!("{description}Entrée :\n{shown}"),
+            vec![
+                ApprovalOption::new("once", "Autoriser", OptionKind::Allow),
+                ApprovalOption::new("conversation", "Autoriser pour cette conversation", OptionKind::AllowAlways),
+                ApprovalOption::new("deny", "Refuser", OptionKind::Deny),
+            ],
+            APPROVAL_WAIT,
+        )
+        .await
+    }
+}
+
+/// Une écriture dans une conversation ouverte par l’utilisateur : accordée pour la conversation, ou demandée par une
+/// carte. Le temps d’attente repousse l’échéance de l’exécution.
+async fn approve_write(state: &AppState, run: &Run, function: &ResolvedFunction, input: &Value) -> AppResult<()> {
+    if granted(state, &run.conversation, &function.reference) {
+        return Ok(());
+    }
+    let started = Instant::now();
+    let answer = ask_user(state, &run.conversation, function, input).await;
+    if let Ok(mut deadline) = run.deadline.lock() {
+        *deadline += started.elapsed();
+    }
+    match answer.as_deref() {
+        Some("once") => Ok(()),
+        Some("conversation") => {
+            grants_db(state)?.execute(
+                "INSERT OR IGNORE INTO code_grants (conversation, reference, granted_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![run.conversation, function.reference, chrono::Utc::now().to_rfc3339()],
+            )?;
+            Ok(())
+        }
+        Some(_) => Err(AppError::new(format!(
+            "L’utilisateur a refusé l’écriture « {} » : rien n’a été écrit.",
+            function.reference
+        ))),
+        None => Err(AppError::new(format!(
+            "Pas de réponse à la demande d’accord pour « {} » : rien n’a été écrit. Le dire à l’utilisateur.",
+            function.reference
+        ))),
+    }
 }
 
 async fn read_state(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
@@ -633,7 +758,7 @@ pub async fn call_as_agent(state: &Arc<AppState>, conversation: &str, reference:
         conversation: conversation.to_string(),
         scope: crate::agent_tools::scope_of(state, conversation),
         js: String::new(),
-        deadline: Instant::now() + MAX_DURATION,
+        deadline: Mutex::new(Instant::now() + MAX_DURATION),
         calls: Mutex::new(Vec::new()),
         examples: false,
     });
@@ -645,6 +770,68 @@ pub async fn call_as_agent(state: &Arc<AppState>, conversation: &str, reference:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une écriture attend l’accord : sans réponse ou refusée, rien n’est écrit ; « une fois » vaut pour cet appel,
+    /// « pour cette conversation » pour les suivants ; une conversation de page n’écrit que ce que la page offre.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_waits_for_the_user() {
+        use crate::space::{FunctionDecl, ModuleManifest, Space};
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let mut manifest = ModuleManifest { id: "notes".into(), name: "Notes".into(), ..Default::default() };
+        manifest.functions.push(FunctionDecl {
+            id: "archiver".into(),
+            runtime: crate::scripts::Runtime::Bash,
+            effect: Some(Effect::Write),
+            ..Default::default()
+        });
+        space.write_module(&manifest).unwrap();
+        let marker = dir.path().join("ecrit");
+        std::fs::create_dir_all(space.module_dir("notes").join("functions")).unwrap();
+        std::fs::write(
+            space.module_dir("notes").join("functions/archiver.sh"),
+            format!("cat >/dev/null\necho x >> '{}'\nprintf '{{\"ok\":true}}'\n", marker.display()),
+        )
+        .unwrap();
+        state.set_space(Some(space));
+        let written = || std::fs::read_to_string(&marker).map(|text| text.lines().count()).unwrap_or(0);
+        let call = |conversation: &'static str| {
+            let state = state.clone();
+            async move { call_as_agent(&state, conversation, "notes/archiver", json!({ "id": 1 })).await }
+        };
+        let answer = |value: Option<&'static str>| {
+            let mut answers = TEST_ANSWERS.lock().unwrap();
+            answers.retain(|(conversation, _)| !["c1", "c2", "page"].contains(conversation));
+            if let Some(value) = value {
+                answers.extend([("c1", value), ("page", value)]);
+            }
+        };
+
+        answer(None);
+        assert!(call("c1").await.unwrap_err().message.contains("Pas de réponse"));
+        answer(Some("deny"));
+        assert!(call("c1").await.unwrap_err().message.contains("refusé"));
+        assert_eq!(written(), 0, "rien n’est écrit sans accord");
+        answer(Some("once"));
+        assert_eq!(call("c1").await.unwrap(), json!({ "ok": true }));
+        answer(None);
+        assert!(call("c1").await.is_err(), "« Autoriser » ne vaut que pour cet appel");
+        answer(Some("conversation"));
+        call("c1").await.unwrap();
+        answer(None);
+        call("c1").await.unwrap();
+        assert_eq!(written(), 3);
+        assert!(call("c2").await.is_err(), "l’accord ne vaut que pour sa conversation");
+
+        let page = AgentScope { module: "notes".into(), ..AgentScope::default() };
+        crate::app_db::set_agent_scope(&state.app_db.lock().unwrap(), "page", &page).unwrap();
+        answer(Some("once"));
+        assert!(call("page").await.unwrap_err().message.contains("n’offre pas"), "une page ne demande rien de plus");
+        assert_eq!(written(), 3);
+        answer(None);
+    }
 
     #[test]
     fn schemas_become_typescript() {
