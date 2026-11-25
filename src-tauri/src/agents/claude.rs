@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use super::event::{
     with_reason, ActionType, Activity, ActivityAction, ActivityKind, ActivityStatus, ApprovalOption, ApprovalRequest,
-    HarnessEvent, OptionKind, SessionStatus,
+    plan_from_todos, HarnessEvent, OptionKind, SessionStatus,
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, write_prompt, Autonomy, InputFile, Launch, Sink};
@@ -18,6 +18,31 @@ use super::{checked_dir, command, simple_value, MCP_TOKEN_ENV};
 use crate::error::{AppError, AppResult};
 
 const ALFRED_TOOL_PREFIX: &str = "mcp__alfred__";
+/// Liste de tâches de Claude Code : son plan, montré dans le panneau de la conversation et non dans le relevé.
+const PLAN_TOOL: &str = "TodoWrite";
+
+/// Ce que devient un appel d’outil de Claude Code.
+#[derive(Debug, PartialEq)]
+pub(super) enum ToolUse {
+    Activity(Activity),
+    /// Mise à jour du plan (`TodoWrite`).
+    Plan(HarnessEvent),
+    /// Appel sans intérêt pour l’utilisateur : le chargement de l’outil de plan (`ToolSearch` « select:TodoWrite »).
+    Hidden,
+}
+
+pub(super) fn tool_use(id: &str, name: &str, input: &Value) -> ToolUse {
+    if name == PLAN_TOOL {
+        return match plan_from_todos(input) {
+            Some(steps) => ToolUse::Plan(HarnessEvent::Plan { steps }),
+            None => ToolUse::Hidden,
+        };
+    }
+    if name == "ToolSearch" && input["query"].as_str().is_some_and(|query| query.contains(PLAN_TOOL)) {
+        return ToolUse::Hidden;
+    }
+    ToolUse::Activity(tool_activity(id, name, input))
+}
 
 /// Options de lancement de Claude Code, construites par Rust depuis les options validées de la session.
 #[derive(Debug, Default)]
@@ -239,6 +264,10 @@ fn decide(tool: &str, autonomy: Autonomy, one_shot: bool) -> Decision {
         // Les outils d’Alfred sont les siens : pas de question pour s’en servir.
         return Decision::Allow;
     }
+    if tool == PLAN_TOOL && !one_shot {
+        // Le plan ne touche à rien : il ne demande jamais d’accord.
+        return Decision::Allow;
+    }
     if tool == "AskUserQuestion" {
         return Decision::Deny("Pose ta question directement dans ta réponse : l’utilisateur te répondra dans la conversation.");
     }
@@ -390,9 +419,14 @@ impl Inner {
             for (index, block) in blocks.iter().enumerate() {
                 match (block["type"].as_str(), block["id"].as_str()) {
                     (Some("tool_use"), Some(id)) => {
-                        let activity = tool_activity(id, block["name"].as_str().unwrap_or("outil"), &block["input"]);
-                        state.activities.insert(id.to_owned(), activity.clone());
-                        out.push(HarnessEvent::Activity(activity));
+                        match tool_use(id, block["name"].as_str().unwrap_or("outil"), &block["input"]) {
+                            ToolUse::Activity(activity) => {
+                                state.activities.insert(id.to_owned(), activity.clone());
+                                out.push(HarnessEvent::Activity(activity));
+                            }
+                            ToolUse::Plan(plan) => out.push(plan),
+                            ToolUse::Hidden => {}
+                        }
                     }
                     (Some("text"), _) if !state.streamed.contains(&message_id) => {
                         if let Some(text) = block["text"].as_str().filter(|text| !text.is_empty()) {
@@ -548,6 +582,11 @@ impl Claude {
         command.args(claude_arguments(&claude, launch.token.as_ref().map(|_| launch.port), prompt.as_deref())?);
         if let Some(token) = &launch.token {
             command.env(MCP_TOKEN_ENV, token);
+        }
+        if !options.one_shot {
+            // Claude Code 2.1 ne donne sa liste de tâches (`TodoWrite`) qu’aux anciens modèles : Alfred la demande pour
+            // tous, sous sa forme d’une seule liste, plutôt que les outils `TaskCreate`/`TaskUpdate`.
+            command.env("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1").env("CLAUDE_CODE_ENABLE_TASKS", "0");
         }
         let inner = Arc::new(Inner {
             sink: launch.sink.clone(),
@@ -764,6 +803,30 @@ mod tests {
         assert!(matches!(decide("Write", Autonomy::Workspace, false), Decision::Deny(_)));
         assert!(matches!(decide("Bash", Autonomy::Ask, true), Decision::Deny(_)));
         assert!(matches!(decide("AskUserQuestion", Autonomy::Auto, false), Decision::Deny(_)));
+        assert_eq!(decide("TodoWrite", Autonomy::Workspace, false), Decision::Allow);
+        assert_eq!(decide("TodoWrite", Autonomy::Strict, false), Decision::Allow);
+    }
+
+    #[test]
+    fn the_todo_list_becomes_the_plan_and_leaves_the_transcript() {
+        use super::super::event::{PlanStatus, PlanStep};
+        let input = json!({ "todos": [
+            { "content": "un", "status": "completed", "activeForm": "un" },
+            { "content": "deux", "status": "in_progress", "activeForm": "deux" },
+            { "content": "trois", "status": "pending", "activeForm": "trois" },
+        ] });
+        assert_eq!(
+            tool_use("t1", "TodoWrite", &input),
+            ToolUse::Plan(HarnessEvent::Plan { steps: vec![
+                PlanStep { text: "un".into(), status: PlanStatus::Completed },
+                PlanStep { text: "deux".into(), status: PlanStatus::InProgress },
+                PlanStep { text: "trois".into(), status: PlanStatus::Pending },
+            ] })
+        );
+        assert_eq!(tool_use("t2", "TodoWrite", &json!({})), ToolUse::Hidden);
+        assert_eq!(tool_use("t3", "ToolSearch", &json!({ "query": "select:TodoWrite", "max_results": 1 })), ToolUse::Hidden);
+        assert!(matches!(tool_use("t4", "ToolSearch", &json!({ "query": "select:WebFetch" })), ToolUse::Activity(_)));
+        assert!(matches!(tool_use("t5", "Bash", &json!({ "command": "ls" })), ToolUse::Activity(_)));
     }
 
     #[test]

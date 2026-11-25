@@ -59,7 +59,15 @@ export type HarnessEvent =
   | { type: "approvalClosed"; id: string }
   /** Identifiant de la session dans le harnais, pour la reprendre plus tard. */
   | { type: "session"; sessionId: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** Plan de l’agent, en entier à chaque mise à jour (`TodoWrite`, `update_plan`, `todowrite`) : il remplace le précédent. */
+  | { type: "plan"; steps: PlanStep[] };
+
+/** Étape du plan de l’agent. */
+export interface PlanStep {
+  text: string;
+  status: "pending" | "inProgress" | "completed";
+}
 
 /** Fichier joint remis au CLI avec le message. */
 export type InputFile = { path: string; name: string; mimeType?: string };

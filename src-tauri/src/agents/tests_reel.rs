@@ -148,6 +148,34 @@ async fn steering(provider: &str) {
     run.close().await;
 }
 
+/// L’agent tient son plan : chaque mise à jour arrive en événement `plan` (le plan entier), jamais en ligne d’outil, et
+/// sans demande d’accord, même en mode « avec accord ». Claude Code seulement : Codex 0.169 n’offre pas `update_plan`
+/// par `codex app-server` (« update_plan est indisponible », 2026-11-25).
+async fn plan(provider: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut extra = model(provider);
+    extra["autonomy"] = json!("ask");
+    let mut run = start(provider, dir.path().to_str().unwrap(), extra).await;
+    run.send(
+        "Tiens ta liste de tâches avec ton outil de plan : trois étapes, « un », « deux », « trois ». Marque-les \
+         faites une par une, en mettant le plan à jour à chaque étape. Ne fais rien d’autre, puis réponds « fini ».",
+    )
+    .await;
+    let events = run.until(idle).await;
+    let plans: Vec<&Value> = events.iter().filter(|event| event["type"] == "plan").collect();
+    assert!(plans.len() >= 2, "{provider} : le plan n’est pas arrivé, ou une seule fois : {events:?}");
+    let last = plans.last().unwrap()["steps"].as_array().unwrap();
+    assert_eq!(last.len(), 3, "{provider} : {last:?}");
+    assert!(last.iter().all(|step| step["status"] == "completed"), "{provider} : {last:?}");
+    assert!(
+        !events.iter().any(|event| event["type"] == "activity"
+            && ["TodoWrite", "ToolSearch", "update_plan"].iter().any(|tool| event["title"].as_str().unwrap_or_default().contains(tool))),
+        "{provider} : le plan apparaît dans le relevé"
+    );
+    assert!(!events.iter().any(|event| event["type"] == "approval"), "{provider} : le plan a demandé un accord");
+    run.close().await;
+}
+
 macro_rules! reel {
     ($name:ident, $provider:literal, $scenario:ident) => {
         #[tokio::test(flavor = "multi_thread")]
@@ -160,6 +188,7 @@ macro_rules! reel {
 
 reel!(claude_conversation, "claude", conversation);
 reel!(claude_message_pendant_le_travail, "claude", steering);
+reel!(claude_plan, "claude", plan);
 reel!(codex_conversation, "codex", conversation);
 reel!(opencode_conversation, "opencode", conversation);
 reel!(claude_espace_de_travail, "claude", workspace);
@@ -185,8 +214,8 @@ async fn claude_suivi_de_factures() {
 
     let root_text = root.to_string_lossy().to_string();
     let instructions = [
-        "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace de travail.".to_string(),
-        "Parle-lui comme un majordome posé et serviable : à la première personne, en le vouvoyant, sans jargon technique, sans parler de toi comme d’une application ou d’un agent. Propose de mettre en place ce dont il a besoin plutôt que d’expliquer l’outil. Tes réponses sont lues à voix haute : des phrases courtes et naturelles à l’oral.".to_string(),
+        "Tu es Alfred. Tu mets en place pages, panneaux et fonctions dans l’espace de travail de l’utilisateur.".to_string(),
+        "Travaille sans commenter. Tiens ton plan à jour avec ton outil de liste de tâches. Écris seulement une question quand tu es bloqué (une à la fois, avec ta recommandation), des éléments à valider, ou un compte rendu final point par point. Une idée par phrase, des phrases courtes, la voix active, pas de remplissage. Vouvoie l’utilisateur, sans jargon : tes réponses sont lues à voix haute.".to_string(),
         format!("Son espace de travail est le dossier {root_text} : pages, panneaux, fonctions et clients y sont rangés par module."),
         format!("Avant de créer ou de modifier quoi que ce soit dans l’espace de travail, lis {root_text}/AGENTS.md et suis-le."),
         "Les outils « alfred » servent à placer une page, vérifier qu’elle compile, lire ses erreurs et interroger la base.".to_string(),

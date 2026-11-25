@@ -167,6 +167,49 @@ pub struct ApprovalRequest {
     pub options: Vec<ApprovalOption>,
 }
 
+/// État d’une étape du plan de l’agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl PlanStatus {
+    /// État lu dans un harnais : `in_progress` (Claude Code, OpenCode) ou `inProgress` (Codex). Une étape annulée ou
+    /// d’un état inconnu n’est pas gardée.
+    pub fn parse(status: &str) -> Option<Self> {
+        match status {
+            "pending" => Some(Self::Pending),
+            "in_progress" | "inProgress" => Some(Self::InProgress),
+            "completed" => Some(Self::Completed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PlanStep {
+    pub text: String,
+    pub status: PlanStatus,
+}
+
+/// Plan d’une liste de tâches du harnais (`todos` de Claude Code et d’OpenCode) : `{ content, status }`.
+pub fn plan_from_todos(input: &Value) -> Option<Vec<PlanStep>> {
+    let todos = input["todos"].as_array()?;
+    Some(
+        todos
+            .iter()
+            .filter_map(|todo| {
+                let text = todo["content"].as_str()?.trim();
+                let status = PlanStatus::parse(todo["status"].as_str()?)?;
+                (!text.is_empty()).then(|| PlanStep { text: text.to_owned(), status })
+            })
+            .collect(),
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HarnessEvent {
@@ -201,6 +244,10 @@ pub enum HarnessEvent {
     },
     Error {
         message: String,
+    },
+    /// Plan de l’agent, en entier à chaque mise à jour : il remplace le précédent.
+    Plan {
+        steps: Vec<PlanStep>,
     },
     /// Résultat structuré d’un appel unique (réponse contrainte par un schéma).
     Structured {
@@ -289,6 +336,27 @@ mod tests {
             serde_json::to_value(HarnessEvent::Session { session_id: "s".into() }).unwrap(),
             json!({ "type": "session", "sessionId": "s" })
         );
+    }
+
+    #[test]
+    fn a_todo_list_becomes_a_plan() {
+        let input = json!({ "todos": [
+            { "content": "Lire le guide", "status": "completed", "activeForm": "Lecture du guide" },
+            { "content": "Créer la page", "status": "in_progress" },
+            { "content": "Vérifier", "status": "pending" },
+            { "content": "Abandonné", "status": "cancelled" },
+            { "content": "  ", "status": "pending" },
+        ] });
+        let steps = plan_from_todos(&input).unwrap();
+        assert_eq!(
+            serde_json::to_value(HarnessEvent::Plan { steps }).unwrap(),
+            json!({ "type": "plan", "steps": [
+                { "text": "Lire le guide", "status": "completed" },
+                { "text": "Créer la page", "status": "inProgress" },
+                { "text": "Vérifier", "status": "pending" },
+            ] })
+        );
+        assert_eq!(plan_from_todos(&json!({})), None);
     }
 
     #[test]

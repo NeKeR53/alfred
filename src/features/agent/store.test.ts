@@ -669,6 +669,67 @@ describe("lot 3 · enregistrement et chargement", () => {
     expect(conversation("c1").lastStatus).toBe("cancelled");
   });
 
+  it("garde le dernier plan de l’agent, l’enregistre et le relit, sans ligne d’outil dans le relevé", async () => {
+    const id = start({ provider: "claude" });
+    await useAgents.getState().send(id, message("Ajoute une page Factures"));
+    const live = sessions[0];
+    live.emit({ type: "status", status: "responding" });
+    live.emit({
+      type: "plan",
+      steps: [
+        { text: "Lire le guide", status: "inProgress" },
+        { text: "Créer la page", status: "pending" },
+      ],
+    });
+    live.emit({
+      type: "plan",
+      steps: [
+        { text: "Lire le guide", status: "completed" },
+        { text: "Créer la page", status: "inProgress" },
+      ],
+    });
+    flushAgentUpdates();
+    expect(conversation(id).plan).toEqual([
+      { text: "Lire le guide", status: "completed" },
+      { text: "Créer la page", status: "inProgress" },
+    ]);
+    expect(lastTurn(id).items).toEqual([]);
+    live.emit({ type: "status", status: "idle" });
+    await vi.waitFor(() => expect(lastTurn(id).status).toBe("done"));
+
+    const saved = called("conversations.save").at(-1)?.conversation as Record<string, unknown>;
+    expect(saved.plan).toEqual(conversation(id).plan);
+    resetAgentEngine();
+    useAgents.setState({ loaded: {}, headers: [] });
+    native.invoke.mockImplementation(async (command: string) => (command === "conversations.get" ? saved : null));
+    await useAgents.getState().ensureLoaded(id);
+    expect(conversation(id).plan).toEqual([
+      { text: "Lire le guide", status: "completed" },
+      { text: "Créer la page", status: "inProgress" },
+    ]);
+  });
+
+  it("oublie un plan enregistré illisible sans refuser la conversation", async () => {
+    const saved = {
+      id: "c3",
+      title: "Plan",
+      provider: "claude",
+      cwd: "/espace",
+      autonomy: "ask",
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+      unread: false,
+      started: true,
+      plan: [{ text: "Étape", status: "abandonnée" }],
+      turns: [],
+    };
+    native.invoke.mockImplementation(async (command: string) => (command === "conversations.get" ? saved : null));
+    await useAgents.getState().ensureLoaded("c3");
+    expect(conversation("c3")).toBeDefined();
+    expect(conversation("c3").plan).toBeUndefined();
+  });
+
   it("n’ouvre pas une conversation enregistrée mal formée", async () => {
     native.invoke.mockImplementation(async (command: string) =>
       command === "conversations.get" ? { id: "c2", title: "X", turns: "rien" } : null,

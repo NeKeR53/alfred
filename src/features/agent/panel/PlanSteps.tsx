@@ -1,0 +1,40 @@
+import { Circle, CircleCheck, CircleDot } from "lucide-react";
+import { type DetailSection, List, type ListItemData } from "socle-ui";
+import type { PlanStep } from "../harness";
+
+const STEP_STATE: Record<PlanStep["status"], { label: string; icon: typeof Circle }> = {
+  pending: { label: "À faire", icon: Circle },
+  inProgress: { label: "En cours", icon: CircleDot },
+  completed: { label: "Faite", icon: CircleCheck },
+};
+
+/**
+ * Étapes du plan de l’agent, rendues par `List` de socle-ui (la spec de `ProgressIndicator` renvoie à `List` pour une
+ * liste de tâches), une ligne par étape : une icône d’état à gauche, le texte de l’étape en titre, son état en méta.
+ * Le `status` (`Badge`) de `List` n’est rendu que sur la ligne 2, avec un sous-titre : les étapes n’en ont pas.
+ */
+function PlanSteps({ steps }: { steps: readonly PlanStep[] }) {
+  const items: ListItemData[] = steps.map((step, index) => {
+    const state = STEP_STATE[step.status];
+    const Icon = state.icon;
+    return {
+      id: String(index),
+      title: step.text,
+      meta: state.label,
+      visual: <Icon size={16} aria-hidden />,
+    };
+  });
+  return <List label="Étapes du plan" items={items} selectionMode="none" leading="icon" />;
+}
+
+/** Section « Plan » du panneau de la conversation, avec le compte des étapes faites ; rien sans plan. */
+export function planSection(plan: readonly PlanStep[] | undefined): DetailSection | undefined {
+  if (!plan?.length) return undefined;
+  const done = plan.filter((step) => step.status === "completed").length;
+  return {
+    id: "conversation-plan",
+    title: "Plan",
+    summary: { label: `${done} sur ${plan.length}`, tone: done === plan.length ? "success" : "neutral" },
+    content: <PlanSteps steps={plan} />,
+  };
+}

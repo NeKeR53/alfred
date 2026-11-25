@@ -22,7 +22,7 @@ use tokio::sync::oneshot;
 use super::content::{content_files, is_document, pretty, readable};
 use super::event::{
     with_reason, ActionType, Activity, ActivityAction, ActivityKind, ActivityStatus, ApprovalOption, ApprovalRequest,
-    HarnessEvent, OptionKind, SessionStatus,
+    HarnessEvent, OptionKind, PlanStatus, PlanStep, SessionStatus,
 };
 use super::process::{unavailable, LineProcess};
 use super::session::{attached_list, message_text, Autonomy, InputFile, Launch, Model, Sink, StartOptions};
@@ -119,6 +119,20 @@ fn activity_status(status: &str, completed: bool) -> ActivityStatus {
 }
 
 /// Activité affichée pour un élément du fil ; `None` pour un message (il passe par le texte) ou un élément muet.
+/// Plan de `turn/plan/updated` (outil `update_plan` de Codex) : `{ plan: [{ step, status }] }`.
+pub(super) fn plan_from_update(params: &Value) -> Option<Vec<PlanStep>> {
+    let plan = params["plan"].as_array()?;
+    Some(
+        plan.iter()
+            .filter_map(|step| {
+                let text = step["step"].as_str()?.trim();
+                let status = PlanStatus::parse(step["status"].as_str()?)?;
+                (!text.is_empty()).then(|| PlanStep { text: text.to_owned(), status })
+            })
+            .collect(),
+    )
+}
+
 pub(super) fn activity_from_item(item: &g::ThreadItem, completed: bool) -> Option<Activity> {
     use g::ThreadItem as T;
     let done = if completed { ActivityStatus::Completed } else { ActivityStatus::Running };
@@ -434,6 +448,11 @@ impl Inner {
             "item/reasoning/summaryTextDelta" | "item/plan/delta" => {
                 if let (Some(item), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str()) {
                     self.emit(HarnessEvent::delta(item, delta));
+                }
+            }
+            "turn/plan/updated" => {
+                if let Some(steps) = plan_from_update(params) {
+                    self.emit(HarnessEvent::Plan { steps });
                 }
             }
             "item/mcpToolCall/progress" => {
@@ -844,6 +863,24 @@ pub async fn skills_command(args: &Value) -> AppResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_plan_update_becomes_the_plan() {
+        let params = json!({ "threadId": "t", "turnId": "u", "explanation": null, "plan": [
+            { "step": "Lire le guide", "status": "completed" },
+            { "step": "Créer la page", "status": "inProgress" },
+            { "step": "Vérifier", "status": "pending" },
+        ] });
+        assert_eq!(
+            plan_from_update(&params).unwrap(),
+            vec![
+                PlanStep { text: "Lire le guide".into(), status: PlanStatus::Completed },
+                PlanStep { text: "Créer la page".into(), status: PlanStatus::InProgress },
+                PlanStep { text: "Vérifier".into(), status: PlanStatus::Pending },
+            ]
+        );
+        assert_eq!(plan_from_update(&json!({})), None);
+    }
 
     #[test]
     fn modes_become_codex_policies() {

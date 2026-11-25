@@ -85,4 +85,29 @@ mod tests {
         assert!(SDK.contains("PLACEMENT.md"));
         assert!(PLACEMENT.contains("alfred-question"));
     }
+
+    #[test]
+    fn le_guide_de_l_espace_dit_de_travailler_sans_commenter() {
+        let root = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(&root.path().join("espace"), Some("Essai")).unwrap();
+        materialize(&space).unwrap();
+        let guide = fs::read_to_string(space.root.join("AGENTS.md")).unwrap();
+        for expected in [
+            "## Ta façon de parler",
+            "**Travaille en silence.**",
+            "Tiens ton plan à jour avec l’outil de plan de ton harnais",
+            "**Écris seulement trois sortes de messages.**",
+            "ce qui reste ou n’est pas vérifié",
+            "Une idée par phrase.",
+            "Vouvoie l’utilisateur",
+            "Alfred est une personne, pas un logiciel.",
+            "Une proposition, en une ligne",
+        ] {
+            assert!(guide.contains(expected), "le guide n’a pas « {expected} »");
+        }
+        for removed in ["majordome qui devance", "dis ce que tu as fait et où le trouver", "Puis dis-lui ce que tu as créé"] {
+            assert!(!guide.contains(removed), "le guide a encore « {removed} »");
+        }
+        assert_eq!(fs::read_to_string(space.root.join("CLAUDE.md")).unwrap(), "@AGENTS.md\n");
+    }
 }

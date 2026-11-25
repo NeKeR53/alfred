@@ -229,8 +229,8 @@ function signature(conversation: Conversation) {
 /** Consignes données au harnais, hors du fil : où est l’espace et où lire les règles de construction. */
 function instructions(spaceDir: string) {
   return [
-    "Tu es Alfred, le majordome de l’utilisateur : tu mets en place pour lui pages, panneaux et fonctions dans son espace de travail.",
-    "Parle-lui comme un majordome posé et serviable : à la première personne, en le vouvoyant, sans jargon technique, sans parler de toi comme d’une application ou d’un agent. Propose de mettre en place ce dont il a besoin plutôt que d’expliquer l’outil. Tes réponses sont lues à voix haute : des phrases courtes et naturelles à l’oral.",
+    "Tu es Alfred. Tu mets en place pages, panneaux et fonctions dans l’espace de travail de l’utilisateur.",
+    "Travaille sans commenter. Tiens ton plan à jour avec ton outil de liste de tâches. Écris seulement une question quand tu es bloqué (une à la fois, avec ta recommandation), des éléments à valider, ou un compte rendu final point par point. Une idée par phrase, des phrases courtes, la voix active, pas de remplissage. Vouvoie l’utilisateur, sans jargon : tes réponses sont lues à voix haute.",
     `Son espace de travail est le dossier ${spaceDir} : pages, panneaux, fonctions et clients y sont rangés par module.`,
     // Le séparateur du dossier est repris : un chemin Windows reste en barres inverses.
     `Avant de créer ou de modifier quoi que ce soit dans l’espace de travail, lis ${spaceDir}${spaceDir.includes("\\") ? "\\" : "/"}AGENTS.md et suis-le.`,
@@ -763,6 +763,9 @@ export const useAgents = create<AgentState>((set, get) => {
           const content = boundedActivityContent((base.content ?? "") + event.content, base.activityKind);
           return { ...turn, items: upsertItem(turn.items, { ...base, content, occurredAt: Date.now() }) };
         });
+        return;
+      case "plan":
+        patchConversation(id, (conversation) => ({ ...conversation, plan: event.steps }), { stream: true });
         return;
       case "approval": {
         patchRuntime(id, (runtime) => ({ ...runtime, approvals: [...runtime.approvals, event.request] }));

@@ -1,7 +1,15 @@
 /** Modèle d’une conversation d’agent, tel qu’Alfred l’affiche et l’enregistre. */
 
 import type { FileLines } from "../../lib/types";
-import type { ActivityAction, ActivityKind, ActivityStatus, ApprovalRequest, Autonomy, Provider } from "./harness";
+import type {
+  ActivityAction,
+  ActivityKind,
+  ActivityStatus,
+  ApprovalRequest,
+  Autonomy,
+  PlanStep,
+  Provider,
+} from "./harness";
 import { type ComposerReference, type ComposerReferenceMention, referenceInstructions } from "./lib/composerReferences";
 
 export interface Attachment {
@@ -116,6 +124,8 @@ export interface Conversation {
    * répondu : la conversation « attend votre réponse », comme dans OneApp.
    */
   pendingQuestion?: string;
+  /** Dernier plan de l’agent, montré dans le panneau « Détails de la conversation » et enregistré avec elle. */
+  plan?: PlanStep[];
   /** File d’attente enregistrée, comme dans OneApp : elle est rendue à la session vivante au chargement. */
   queued?: QueuedMessage[];
   turns: Turn[];
@@ -453,12 +463,26 @@ export function validateHeaders(value: unknown): ConversationHeader[] {
   return value as ConversationHeader[];
 }
 
-/** Conversation complète relue sur le disque. */
+const PLAN_STATUSES = new Set(["pending", "inProgress", "completed"]);
+
+function validPlan(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((step) => isObject(step) && isString(step.text) && PLAN_STATUSES.has(String(step.status)))
+  );
+}
+
+/** Conversation complète relue sur le disque. Un plan illisible est oublié : il ne ferme pas la conversation. */
 export function validateConversation(value: unknown): Conversation {
   if (!validHeader(value) || !Array.isArray((value as Record<string, unknown>).turns))
     throw new Error("Cette conversation enregistrée est invalide : elle n’a pas été ouverte.");
   const turns = (value as { turns: unknown[] }).turns;
   if (!turns.every(validTurn) || new Set(turns.map((turn) => (turn as Turn).id)).size !== turns.length)
     throw new Error("Cette conversation enregistrée est invalide : elle n’a pas été ouverte.");
-  return value as Conversation;
+  const conversation = value as Conversation;
+  if (conversation.plan !== undefined && !validPlan(conversation.plan)) {
+    const { plan: _plan, ...rest } = conversation;
+    return rest;
+  }
+  return conversation;
 }

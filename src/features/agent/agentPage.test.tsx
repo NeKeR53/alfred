@@ -173,6 +173,68 @@ describe("page Agent", () => {
     expect(within(panel).queryByRole("region", { name: "Conversations" })).toBeNull();
   });
 
+  it("montre le plan de l’agent en tête du panneau de détail, avec l’état de chaque étape, mis à jour en direct", async () => {
+    database.c1 = stored("c1", "Factures", 2_000, {
+      plan: [
+        { text: "Lire le guide", status: "completed" },
+        { text: "Créer la page", status: "inProgress" },
+        { text: "Vérifier la page", status: "pending" },
+      ],
+    });
+    render(
+      <>
+        <AgentPage />
+        <aside aria-label="Détail">
+          <ConversationTracking withList={false} />
+        </aside>
+      </>,
+    );
+    await findConversationTitle("Factures");
+    const panel = screen.getByLabelText("Détail");
+    const section = await within(panel).findByRole("region", { name: "Plan" });
+    const regions = within(panel).getAllByRole("region");
+    expect(regions[0]).toBe(section);
+    expect(section).toHaveTextContent("1 sur 3");
+    const steps = within(section).getAllByRole("row");
+    expect(steps.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/Lire le guide.*Faite/),
+      expect.stringMatching(/Créer la page.*En cours/),
+      expect.stringMatching(/Vérifier la page.*À faire/),
+    ]);
+
+    act(() =>
+      useAgents.setState((state) => ({
+        loaded: {
+          ...state.loaded,
+          c1: {
+            ...state.loaded.c1!,
+            plan: [
+              { text: "Lire le guide", status: "completed" },
+              { text: "Créer la page", status: "completed" },
+              { text: "Vérifier la page", status: "completed" },
+            ],
+          },
+        },
+      })),
+    );
+    await waitFor(() => expect(section).toHaveTextContent("3 sur 3"));
+    expect(within(section).queryByText("En cours")).toBeNull();
+  });
+
+  it("sans plan, le panneau de détail n’a pas de section Plan", async () => {
+    render(
+      <aside aria-label="Détail">
+        <AgentPage />
+        <ConversationTracking withList={false} />
+      </aside>,
+    );
+    await findConversationTitle("Factures");
+    expect(
+      await within(screen.getByLabelText("Détail")).findByRole("region", { name: "Modifications" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Plan" })).toBeNull();
+  });
+
   it("une conversation rouverte montre le bilan à la fin de chaque suite de messages, jamais entre deux", async () => {
     const at = 1_000_000;
     const done = (id: string, startedAt: number, endedAt: number, files?: string[]) => ({

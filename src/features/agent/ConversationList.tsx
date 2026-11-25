@@ -6,6 +6,7 @@ import type { Commit, FileLines } from "../../lib/types";
 import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
 import { InfoPanelRows } from "./panel/InfoPanel";
+import { planSection } from "./panel/PlanSteps";
 import { useAgents } from "./store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
 
@@ -291,8 +292,10 @@ export function ConversationList({
       content: <InfoPanelRows rows={rows} />,
     },
   ];
+  const plan = planSection(active?.plan);
   const detailSections: DetailSection[] = active
     ? [
+        ...(plan ? [plan] : []),
         {
           id: "conversation-changes",
           title: "Modifications",

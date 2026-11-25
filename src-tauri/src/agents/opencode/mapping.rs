@@ -8,7 +8,7 @@ use crate::agents::content::MAX_IMAGE_DATA_URL;
 use crate::agents::event::{
     ActionType as AgentActionType, Activity as AgentActivity, ActivityAction as AgentActivityAction,
     ActivityKind as AgentActivityKind, ActivityStatus as AgentActivityStatus, ApprovalOption, ApprovalRequest,
-    HarnessEvent as NativeAgentEvent, OptionKind,
+    plan_from_todos, HarnessEvent as NativeAgentEvent, OptionKind,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -201,9 +201,9 @@ impl LiveMapper {
                     name: data["name"].as_str().unwrap_or("outil").to_owned(),
                     input: Value::Null,
                 };
-                let event = tool_activity(id, &call.name, &call.input, ToolState::Running);
+                let event = tool_event(id, &call.name, &call.input, ToolState::Running);
                 self.tools.insert(id.to_owned(), call);
-                vec![event]
+                event.into_iter().collect()
             }
             "session.tool.called" => {
                 let Some(id) = data["id"].as_str() else {
@@ -211,12 +211,7 @@ impl LiveMapper {
                 };
                 let call = self.tools.entry(id.to_owned()).or_default();
                 call.input = data["input"].clone();
-                vec![tool_activity(
-                    id,
-                    &call.name,
-                    &call.input,
-                    ToolState::Running,
-                )]
+                tool_event(id, &call.name, &call.input, ToolState::Running).into_iter().collect()
             }
             "session.tool.success" | "session.tool.failed" => {
                 let Some(id) = data["id"].as_str() else {
@@ -234,7 +229,7 @@ impl LiveMapper {
                         error: error_text(data),
                     }
                 };
-                vec![tool_activity(id, &call.name, &call.input, state)]
+                tool_event(id, &call.name, &call.input, state).into_iter().collect()
             }
             _ => Vec::new(),
         }
@@ -331,6 +326,16 @@ fn edit_actions(input: &Value, metadata: Option<&Value>) -> Vec<AgentActivityAct
             vec![action]
         })
         .unwrap_or_default()
+}
+
+/// Événement d'un appel d'outil OpenCode : sa liste de tâches (`todowrite`) devient le plan de la conversation, hors
+/// du relevé ; sa relecture (`todoread`) n'est pas montrée ; tout autre outil est une activité.
+fn tool_event(id: &str, name: &str, input: &Value, state: ToolState) -> Option<NativeAgentEvent> {
+    match name {
+        "todowrite" => plan_from_todos(input).map(|steps| NativeAgentEvent::Plan { steps }),
+        "todoread" => None,
+        _ => Some(tool_activity(id, name, input, state)),
+    }
 }
 
 /// Activité typée d'un appel d'outil OpenCode, au même niveau que Codex : commande, lecture,
@@ -505,7 +510,7 @@ pub(super) fn assistant_events(message: &Value) -> Vec<NativeAgentEvent> {
                     },
                     _ => ToolState::Running,
                 };
-                events.push(tool_activity(id, name, &tool["input"], state));
+                events.extend(tool_event(id, name, &tool["input"], state));
             }
             _ => {}
         }
@@ -577,5 +582,25 @@ mod tests {
             ExecutionEnd::from_event("session.execution.interrupted", &json!({})),
             Some(ExecutionEnd::Interrupted)
         );
+    }
+
+    #[test]
+    fn the_todo_list_becomes_the_plan() {
+        let mut live = LiveMapper::default();
+        let started = live.map(&event("session.tool.input.started", json!({ "id": "call-2", "name": "todowrite" })));
+        assert!(started.is_empty(), "rien tant que la liste n’est pas écrite");
+        let called = live.map(&event(
+            "session.tool.called",
+            json!({ "id": "call-2", "input": { "todos": [
+                { "id": "1", "content": "Lire", "status": "completed", "priority": "high" },
+                { "id": "2", "content": "Écrire", "status": "in_progress", "priority": "high" },
+                { "id": "3", "content": "Oublié", "status": "cancelled", "priority": "low" },
+            ] } }),
+        ));
+        let NativeAgentEvent::Plan { steps } = &called[0] else { panic!("plan attendu : {called:?}") };
+        assert_eq!(steps.iter().map(|step| step.text.as_str()).collect::<Vec<_>>(), ["Lire", "Écrire"]);
+        let done = live.map(&event("session.tool.success", json!({ "id": "call-2", "content": [] })));
+        assert!(matches!(&done[..], [NativeAgentEvent::Plan { .. }]), "aucune ligne d’outil : {done:?}");
+        assert!(live.map(&event("session.tool.input.started", json!({ "id": "call-3", "name": "todoread" }))).is_empty());
     }
 }
