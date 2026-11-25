@@ -129,7 +129,7 @@ Raison : réutiliser les fonctions évite un second moteur d’exécution (le ca
 ### A-14. Action agentique : une conversation neuve, lancée par la coquille
 
 - Rust prépare le passage : un identifiant de conversation neuf (`auto-…`), son **périmètre**, son dossier de travail (`.alfred/automations/<id>/` dans l’espace, hors git). Il demande ensuite à la coquille de la lancer (`automation:agent`) et attend son issue.
-- La coquille crée la conversation, **jamais une conversation existante**, titrée « <nom> · automatisation », avec l’origine « Depuis l’automatisation « <nom> » » en tête du relevé. Elle apparaît dans la liste des conversations de la page Agent.
+- Par défaut, la coquille crée une conversation neuve (pour une conversation existante choisie par l’utilisateur, voir A-18), titrée « <nom> · automatisation », avec l’origine « Depuis l’automatisation « <nom> » » en tête du relevé. Elle apparaît dans la liste des conversations de la page Agent.
 - Message : la consigne fixe, suivie des règles du passage sans surveillance (A-15) ; les données du déclencheur partent en contexte (« Données du déclencheur »).
 - Sa sortie : `{ conversation, message }` (le dernier message de l’agent).
 - Une interface ouverte plus tard retrouve une demande en attente (`ui.waiting`). Seule la fenêtre principale lance ces conversations.
@@ -153,6 +153,20 @@ Raison : une fonction est le seul moyen d’agir que l’utilisateur a déjà ju
 ### A-17. Formulaire
 
 Le formulaire choisit l’action (`RadioButtonGroup`) : les étapes en `Fieldset` (« Étape N » : fonction, compte, entrée JSON, « Lancer seulement si », « Arrêter ensuite si », « Continuer si elle échoue »), avec « Ajouter une étape » et « Retirer l’étape N » ; le script (choix de la fonction, « Nouveau script Python », « Nouveau script TypeScript », « Ouvrir le script ») ; l’agent (consigne en `TextArea`, durée maximale en `NumberField`). La modale passe en taille `lg`. `/design check` : tout est prévu par socle-ui 1.19.1. Limite connue : avec beaucoup d’étapes, le formulaire devient long pour une modale (la spec de `Modal` conseille une page pour un long formulaire) ; il reste dans la modale, comme la rubrique des Réglages.
+
+### A-18. Action agentique dans une conversation existante
+
+Une action agentique vise soit **une nouvelle conversation à chaque passage** (A-14, par défaut), soit **une conversation existante**, choisie par l’utilisateur dans le formulaire (`action.conversation`).
+
+- **Le message** : chaque passage ajoute à la conversation la consigne, les règles du passage sans surveillance et les données du déclencheur (en contexte). Il commence par « Depuis l’automatisation « <nom> » : », qui le distingue d’un message de l’utilisateur.
+- **Son tour** : si l’agent y travaille, le message entre dans la **file de messages** et part à la fin du tour en cours, sans le couper. Il n’est **pas** glissé dans le tour en cours par le pilotage de Claude Code (steer) : ce tour est celui de l’utilisateur, sans les limites A-15, et un message glissé y serait traité avec ses droits. La file garde chaque tour à un seul demandeur. Comme pour tout message en file, il ne part qu’après un tour fini normalement ; après une erreur ou un arrêt, il attend l’utilisateur.
+- **Durée maximale** : elle compte l’attente du tour. Dépassée, le message sort de la file s’il y est encore, ou le tour de l’automatisation est arrêté ; le tour de l’utilisateur n’est jamais touché.
+- **Limites A-15** : le périmètre (appeler les fonctions, rien d’autre) est posé au début du tour de l’automatisation et rendu à sa fin (`automations.agentScope`) : le périmètre d’avant revient, et l’utilisateur retrouve sa conversation telle qu’il l’avait. Un tour interrompu par la fermeture d’Alfred ne le laisse pas : il est retiré au démarrage. Le harnais garde le mode de la conversation : seule une conversation en mode **« Seulement dans son dossier »** peut être visée (le formulaire grise les autres) ; dans un autre mode, le passage échoue. Son dossier est alors celui de la conversation.
+- **Échecs clairs** : conversation supprimée, archivée ou passée dans un autre mode : le passage n’envoie rien et échoue ; le Journal dit pourquoi (« Passage impossible : la conversation « … » est archivée. ») et porte l’identifiant de la conversation. La ligne de l’automatisation le montre aussi, avant tout passage.
+- **Accord** : la conversation visée fait partie de l’empreinte validée (elle est dans l’action). En changer remet l’automatisation « à valider ». Sans conversation visée, l’empreinte reste celle d’avant : les automatisations déjà validées le restent.
+- **Agent** : `create_automation` prend `action.conversation` ; l’agent ne vise une conversation existante que si l’utilisateur le demande.
+
+Raison : l’utilisateur peut vouloir suivre au même endroit le fil d’une tâche récurrente (un suivi quotidien, une conversation de veille), sans qu’une automatisation n’écrive jamais dans une conversation qu’il n’a pas choisie.
 
 ## Suites possibles (non faites)
 

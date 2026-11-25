@@ -97,6 +97,12 @@ beforeEach(() => {
         };
       case "automations.history":
         return [];
+      case "conversations.list":
+        return [
+          { id: "conv-dossier", title: "Suivi des ventes", autonomy: "workspace" },
+          { id: "conv-complet", title: "Travail libre", autonomy: "auto" },
+          { id: "conv-archivee", title: "Ancienne", autonomy: "workspace", archived: true },
+        ];
       case "automations.validate":
         automations = automations.map((entry) =>
           entry.id === id ? { ...entry, status: "active", enabled: true } : entry,
@@ -236,5 +242,33 @@ it("enchaîne des étapes : références, condition, et une étape retirée", as
       { function: "banque/relever", input: {} },
       { function: "ventes/encaisser", input: { total: "$prev.total" }, when: "$prev.total > 0" },
     ],
+  });
+});
+
+it("vise une conversation existante : seulement celles en mode « Seulement dans son dossier »", async () => {
+  const user = userEvent.setup();
+  renderSections(useAutomationsSections);
+  const list = await screen.findByRole("region", { name: "Automatisations" });
+  await user.click(within(list).getByRole("button", { name: "Nouvelle automatisation" }));
+  const form = await screen.findByRole("dialog", { name: "Nouvelle automatisation" });
+  await user.type(within(form).getByRole("textbox", { name: /Nom/ }), "Suivi quotidien");
+  await user.click(within(form).getByRole("radio", { name: /^Agent/ }));
+  await user.type(within(form).getByRole("textbox", { name: /Consigne/ }), "Résume la journée.");
+  await user.click(within(form).getByRole("radio", { name: /Une conversation existante/ }));
+  const save = within(form).getByRole("button", { name: "Enregistrer" });
+  expect(save).toBeDisabled();
+  await user.click(within(form).getByRole("button", { name: /Conversation visée/ }));
+  expect(
+    await screen.findByRole("option", { name: /Travail libre \(mode : pas seulement son dossier\)/ }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(screen.queryByRole("option", { name: /Ancienne/ })).toBeNull();
+  await user.click(screen.getByRole("option", { name: "Suivi des ventes" }));
+  await user.click(save);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(calls.find((call) => call.command === "automations.save")?.args.action).toEqual({
+    kind: "agent",
+    instruction: "Résume la journée.",
+    maxMinutes: 15,
+    conversation: "conv-dossier",
   });
 });

@@ -37,8 +37,10 @@ import {
   type AutomationTrigger,
   actionLabel,
   automationSecret,
+  type ConversationChoice,
   curlCommand,
   listAutomations,
+  listConversations,
   newAutomationScript,
   removeAutomation,
   rotateAutomationSecret,
@@ -77,6 +79,7 @@ export function tagsOf(
 export function describe(item: AutomationItem): string {
   const parts = [triggerLabel(item.trigger), actionLabel(item.action)];
   if (item.problem) parts.push(item.problem);
+  if (item.target?.problem) parts.push(`${item.target.problem.replace(/^./, (c) => c.toUpperCase())}`);
   if (item.running || item.lastStatus === "running") parts.push("en cours");
   else if (item.lastRunAt) parts.push(`${item.lastStatus === "error" ? "échec" : "réussie"} ${when(item.lastRunAt)}`);
   else parts.push("jamais lancée");
@@ -167,6 +170,17 @@ function AutomationForm({
   const [scriptFile, setScriptFile] = useState<string | null>(initial?.scriptFile ?? null);
   const [instruction, setInstruction] = useState(action?.kind === "agent" ? action.instruction : "");
   const [minutes, setMinutes] = useState<number | null>(action?.kind === "agent" ? action.maxMinutes : 15);
+  const [target, setTarget] = useState<"new" | "existing">(
+    action?.kind === "agent" && action.conversation ? "existing" : "new",
+  );
+  const [conversation, setConversation] = useState<string | null>(
+    action?.kind === "agent" ? (action.conversation ?? null) : null,
+  );
+  const [conversations, setConversations] = useState<ConversationChoice[]>();
+  useEffect(() => {
+    if (actionKind !== "agent" || target !== "existing" || conversations) return;
+    listConversations().then(setConversations, () => setConversations([]));
+  }, [actionKind, target, conversations]);
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(initial?.trigger.kind ?? "cron");
   const [cron, setCron] = useState(initial?.trigger.kind === "cron" ? initial.trigger.cron : "0 8 * * 1-5");
   const [enabled, setEnabled] = useState(initial ? initial.enabled || initial.status === "toValidate" : true);
@@ -205,7 +219,13 @@ function AutomationForm({
     }
     if (actionKind === "script") return script ? { kind: "script", function: script } : undefined;
     if (!instruction.trim() || !minutes) return undefined;
-    return { kind: "agent", instruction: instruction.trim(), maxMinutes: minutes };
+    if (target === "existing" && !conversation) return undefined;
+    return {
+      kind: "agent",
+      instruction: instruction.trim(),
+      maxMinutes: minutes,
+      ...(target === "existing" && conversation ? { conversation } : {}),
+    };
   })();
 
   const createScript = async (runtime: "python" | "ts") => {
@@ -435,8 +455,51 @@ function AutomationForm({
             maxValue={maxMinutes}
             value={minutes}
             onChange={setMinutes}
-            description="Au-delà, la conversation est arrêtée et le passage compte comme un échec."
+            description={
+              target === "existing"
+                ? "Attente de son tour comprise. Au-delà, le message sort de la file ou le tour est arrêté, et le passage compte comme un échec."
+                : "Au-delà, la conversation est arrêtée et le passage compte comme un échec."
+            }
           />
+          <RadioButtonGroup
+            label="Conversation"
+            isRequired
+            value={target}
+            onChange={(value) => setTarget(value === "existing" ? "existing" : "new")}
+          >
+            <RadioButtonGroup.Option
+              value="new"
+              description="Chaque passage ouvre sa conversation, dans le dossier de l’automatisation."
+            >
+              Une nouvelle conversation à chaque passage
+            </RadioButtonGroup.Option>
+            <RadioButtonGroup.Option
+              value="existing"
+              description="Chaque passage y ajoute la consigne, marquée « Depuis l’automatisation ». Si l’agent y travaille, le message attend son tour."
+            >
+              Une conversation existante
+            </RadioButtonGroup.Option>
+          </RadioButtonGroup>
+          {target === "existing" ? (
+            <Select
+              label="Conversation visée"
+              isRequired
+              placeholder={conversations ? "Choisir…" : "Chargement…"}
+              options={(conversations ?? [])
+                .filter((choice) => !choice.archived || choice.id === conversation)
+                .map((choice) => ({
+                  id: choice.id,
+                  label:
+                    choice.autonomy === "workspace"
+                      ? choice.title
+                      : `${choice.title} (mode : pas seulement son dossier)`,
+                  isDisabled: choice.autonomy !== "workspace" && choice.id !== conversation,
+                }))}
+              value={conversation}
+              onChange={setConversation}
+              description="Seulement une conversation en mode « Seulement dans son dossier ». Changer de conversation remet l’automatisation à valider."
+            />
+          ) : null}
         </>
       ) : null}
       <RadioButtonGroup
@@ -487,7 +550,7 @@ export function validationMessage(item: AutomationItem): string {
   const action = item.action;
   const what =
     action.kind === "agent"
-      ? `une conversation avec l’agent (${action.maxMinutes} min au plus), consigne : « ${action.instruction.slice(0, 300)} »`
+      ? `${action.conversation ? `un message dans la conversation « ${item.target?.title ?? action.conversation} »` : "une conversation neuve avec l’agent"} (${action.maxMinutes} min au plus), consigne : « ${action.instruction.slice(0, 300)} »`
       : action.kind === "script"
         ? `le script ${action.function}, dans son état actuel`
         : action.steps

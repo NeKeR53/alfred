@@ -20,7 +20,23 @@ export interface AutomationStep {
 export type AutomationAction =
   | { kind: "steps"; steps: AutomationStep[] }
   | { kind: "script"; function: string; input?: Record<string, unknown> }
-  | { kind: "agent"; instruction: string; maxMinutes: number };
+  | {
+      kind: "agent";
+      instruction: string;
+      maxMinutes: number;
+      /** Conversation existante qui reçoit chaque passage ; absente : une conversation neuve à chaque passage. */
+      conversation?: string;
+    };
+
+/** Conversation de l’espace qu’une automatisation peut viser. */
+export interface ConversationChoice {
+  id: string;
+  title: string;
+  archived?: boolean;
+  autonomy?: string;
+}
+
+export const listConversations = () => invoke<ConversationChoice[]>("conversations.list");
 
 export interface AutomationItem {
   id: string;
@@ -41,6 +57,8 @@ export interface AutomationItem {
   /** Conversation du dernier passage agentique. */
   lastConversation: string | null;
   nextRunAt: string | null;
+  /** Conversation existante visée par un agent : son titre, et pourquoi un passage échouerait. */
+  target?: { id: string; title: string; problem: string | null } | null;
   /** Fichier du script, pour l’ouvrir. */
   scriptFile: string | null;
   url: string | null;
@@ -113,6 +131,6 @@ export function actionLabel(action: AutomationAction): string {
     case "script":
       return `script ${action.function}`;
     case "agent":
-      return `agent, ${action.maxMinutes} min au plus`;
+      return `agent${action.conversation ? " dans une conversation existante" : ""}, ${action.maxMinutes} min au plus`;
   }
 }

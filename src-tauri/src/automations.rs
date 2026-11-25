@@ -290,6 +290,9 @@ pub enum Action {
         instruction: String,
         #[serde(default = "default_minutes")]
         max_minutes: u32,
+        /// Conversation existante qui reçoit chaque passage ; absente : une conversation neuve à chaque passage.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation: Option<String>,
     },
 }
 
@@ -302,6 +305,7 @@ impl Action {
                 format!("{} étapes : {}", steps.len(), steps.iter().map(|s| s.function.as_str()).collect::<Vec<_>>().join(" → "))
             }
             Self::Script { function, .. } => format!("script {function}"),
+            Self::Agent { conversation: Some(_), .. } => "agent, conversation existante".into(),
             Self::Agent { .. } => "agent".into(),
         }
     }
@@ -809,7 +813,12 @@ fn check(space: &Space, automation: &Automation) -> AppResult<()> {
             }
             check_input(input, 0, "Script")?;
         }
-        Action::Agent { instruction, max_minutes } => {
+        Action::Agent { instruction, max_minutes, conversation } => {
+            if conversation.as_deref().is_some_and(|id| {
+                id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            }) {
+                return Err(AppError::new("Conversation invalide : choisissez-en une dans la liste."));
+            }
             if instruction.trim().is_empty() {
                 return Err(AppError::new("Donnez sa consigne à l’agent."));
             }
@@ -987,13 +996,7 @@ async fn run_agent(
     let prepared = (|| -> AppResult<std::path::PathBuf> {
         let cwd = space.root.join(crate::space::LOCAL_DIR).join("automations").join(&automation.id);
         std::fs::create_dir_all(&cwd)?;
-        // Périmètre : toutes les fonctions de l’espace, aucun outil qui change sa structure.
-        let mut scope = crate::app_db::AgentScope { module: format!("automatisation:{}", automation.id), ..Default::default() };
-        for module in space.module_ids() {
-            if let Ok(manifest) = space.module(&module) {
-                scope.functions.extend(manifest.functions.iter().map(|f| format!("{module}/{}", f.id)));
-            }
-        }
+        let scope = space_scope(space, &automation.id);
         let db = lock_db(state)?;
         crate::app_db::set_agent_scope(&db, &conversation, &scope)?;
         db.execute(
@@ -1017,21 +1020,146 @@ async fn run_agent(
     });
     // La coquille coupe la conversation à la durée maximale ; une marge couvre son démarrage.
     let wait = Duration::from_secs(u64::from(max_minutes) * 60 + 90);
-    let answer = match state.ask_ui("automation:agent", payload, wait).await {
-        Ok(answer) => answer,
-        Err(error) => return (Err(error), Some(conversation)),
+    let answer = state.ask_ui("automation:agent", payload, wait).await;
+    (agent_outcome(answer, &conversation, max_minutes), Some(conversation))
+}
+
+/// Conversation enregistrée de l’espace ouvert : son titre, et pourquoi un passage ne peut pas y aller.
+fn conversation_problem(state: &AppState, space: &Space, id: &str) -> (String, Option<String>) {
+    let row: Option<String> = state.app_db.lock().ok().and_then(|db| {
+        db.query_row(
+            "SELECT data FROM conversations WHERE id = ?1 AND space = ?2",
+            params![id, space_key(space)],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()
+    });
+    let Some(data) = row.and_then(|text| serde_json::from_str::<Value>(&text).ok()) else {
+        return (id.to_string(), Some(format!("la conversation « {id} » a été supprimée")));
     };
+    let title = data["title"].as_str().unwrap_or(id).to_string();
+    let problem = if data["archived"] == json!(true) {
+        Some(format!("la conversation « {title} » est archivée"))
+    } else if data["autonomy"].as_str() != Some("workspace") {
+        Some(format!(
+            "la conversation « {title} » n’est pas en mode « Seulement dans son dossier » : passez-la dans ce mode, ou visez une conversation neuve"
+        ))
+    } else {
+        None
+    };
+    (title, problem)
+}
+
+/// Issue d’un passage agentique rendue par la coquille.
+fn agent_outcome(answer: AppResult<Value>, conversation: &str, max_minutes: u32) -> AppResult<Value> {
+    let answer = answer?;
     let text = answer["text"].as_str().unwrap_or_default().to_string();
-    let result = match answer["status"].as_str() {
+    match answer["status"].as_str() {
         Some("done") => Ok(json!({ "conversation": conversation, "message": text })),
-        Some("timeout") => Err(AppError::new(format!("L’agent a dépassé {max_minutes} minutes : la conversation a été arrêtée."))),
+        Some("timeout") => Err(AppError::new(format!(
+            "L’agent a dépassé {max_minutes} minutes (attente de son tour comprise) : le passage a été arrêté."
+        ))),
         Some("cancelled") => Err(AppError::new("La conversation a été arrêtée.")),
+        Some("gone") => Err(AppError::new(answer["error"].as_str().unwrap_or("La conversation n’existe plus.").to_string())),
         _ => Err(AppError::new(format!(
             "L’agent n’a pas pu finir : {}",
             answer["error"].as_str().unwrap_or("erreur inconnue")
         ))),
-    };
-    (result, Some(conversation))
+    }
+}
+
+/// Action agentique dans une conversation existante : le message s’y ajoute, et attend son tour si l’agent
+/// travaille. Le périmètre A-15 n’est posé que pendant le tour de l’automatisation (`automations.agentScope`).
+async fn run_agent_in(
+    state: &Arc<AppState>,
+    space: &Space,
+    automation: &Automation,
+    target: &str,
+    instruction: &str,
+    max_minutes: u32,
+    event: Value,
+) -> (AppResult<Value>, Option<String>) {
+    let (title, problem) = conversation_problem(state, space, target);
+    if let Some(problem) = problem {
+        return (Err(AppError::new(format!("Passage impossible : {problem}."))), Some(target.to_string()));
+    }
+    if let Ok(db) = lock_db(state) {
+        let _ = db.execute(
+            "UPDATE automations SET last_conversation = ?3 WHERE space = ?1 AND id = ?2",
+            params![space_key(space), automation.id, target],
+        );
+    }
+    let payload = json!({
+        "conversation": target,
+        "existing": true,
+        "title": title,
+        "automation": automation.id,
+        "name": automation.name,
+        "text": format!("{instruction}\n\n{}", unattended_here(&automation.name, max_minutes)),
+        "context": event,
+        "maxMinutes": max_minutes,
+    });
+    let wait = Duration::from_secs(u64::from(max_minutes) * 60 + 90);
+    let answer = state.ask_ui("automation:agent", payload, wait).await;
+    (agent_outcome(answer, target, max_minutes), Some(target.to_string()))
+}
+
+/// Consigne ajoutée pour un passage dans une conversation existante.
+fn unattended_here(name: &str, minutes: u32) -> String {
+    format!(
+        "Ce message vient de l’automatisation « {name} » d’Alfred, pas de l’utilisateur. Personne ne regarde : ne pose aucune question et n’attends aucun accord. \
+Pour ce tour, tu peux appeler les fonctions de l’espace (outil call_function ou leurs outils fn__) et écrire dans ton dossier de travail, rien d’autre : \
+ni pages, ni modules, ni réglages, ni fichiers hors de ce dossier. Tu as {minutes} minutes au plus. \
+Si tu es bloqué, arrête-toi et dis pourquoi en une phrase. Termine par un compte rendu court de ce que tu as fait."
+    )
+}
+
+/// Périmètres que les passages ont remplacés, par conversation, pour les rendre à la fin du tour.
+fn borrowed_scopes() -> &'static Mutex<HashMap<String, Option<crate::app_db::AgentScope>>> {
+    static BORROWED: OnceLock<Mutex<HashMap<String, Option<crate::app_db::AgentScope>>>> = OnceLock::new();
+    BORROWED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Pose (`on`) ou retire le périmètre A-15 d’une conversation existante, pendant le tour d’une automatisation.
+/// Appelée par la coquille au début et à la fin de ce tour ; le périmètre d’avant revient ensuite.
+fn agent_scope(state: &AppState, space: &Space, args: &Value) -> AppResult<Value> {
+    let conversation: String = arg(args, "conversation")?;
+    let on: bool = arg(args, "on")?;
+    let db = lock_db(state)?;
+    let mut borrowed = borrowed_scopes().lock().map_err(|_| AppError::new("Périmètres indisponibles."))?;
+    if on {
+        let id: String = arg(args, "automation")?;
+        let automation = existing(&db, &space_key(space), &id)?;
+        let aimed = matches!(&automation.action, Action::Agent { conversation: Some(target), .. } if *target == conversation);
+        if !aimed || !automation.is_validated(space) {
+            return Err(AppError::new("Cette automatisation ne vise pas cette conversation."));
+        }
+        if !borrowed.contains_key(&conversation) {
+            borrowed.insert(conversation.clone(), crate::app_db::agent_scope(&db, &conversation)?);
+        }
+        crate::app_db::set_agent_scope(&db, &conversation, &space_scope(space, &automation.id))?;
+    } else if let Some(previous) = borrowed.remove(&conversation) {
+        match previous {
+            Some(scope) => crate::app_db::set_agent_scope(&db, &conversation, &scope)?,
+            None => {
+                db.execute("DELETE FROM agent_scopes WHERE conversation = ?1", params![conversation])?;
+            }
+        }
+    }
+    Ok(Value::Null)
+}
+
+/// Périmètre d’un passage agentique : toutes les fonctions de l’espace, aucun outil qui change sa structure.
+fn space_scope(space: &Space, id: &str) -> crate::app_db::AgentScope {
+    let mut scope = crate::app_db::AgentScope { module: format!("automatisation:{id}"), ..Default::default() };
+    for module in space.module_ids() {
+        if let Ok(manifest) = space.module(&module) {
+            scope.functions.extend(manifest.functions.iter().map(|f| format!("{module}/{}", f.id)));
+        }
+    }
+    scope
 }
 
 /// Lance un passage. `event` : ce qu’apporte le déclencheur, passé à chaque fonction dans `input.event`, et à
@@ -1064,7 +1192,10 @@ pub async fn run(
             let context = Context { event, ..Context::default() };
             (crate::functions::call(state, function, input_for(&context, input, None), "automatisation").await, None)
         }
-        Action::Agent { instruction, max_minutes } => {
+        Action::Agent { instruction, max_minutes, conversation: Some(target) } => {
+            run_agent_in(state, &opened, automation, target, instruction, *max_minutes, event).await
+        }
+        Action::Agent { instruction, max_minutes, conversation: None } => {
             run_agent(state, &opened, automation, instruction, *max_minutes, event).await
         }
     };
@@ -1136,6 +1267,14 @@ pub fn tick(state: &Arc<AppState>, now: NaiveDateTime) -> Vec<String> {
 
 /// Lance la boucle du planning ; appelée une fois au démarrage d’Alfred, dans le runtime tokio.
 pub fn start(state: Arc<AppState>) {
+    // Un tour d’automatisation interrompu par la fermeture d’Alfred a pu laisser le périmètre A-15 sur une
+    // conversation existante : il est retiré. Les conversations neuves (`auto-…`) le gardent.
+    if let Ok(db) = state.app_db.lock() {
+        let _ = db.execute(
+            "DELETE FROM agent_scopes WHERE module LIKE 'automatisation:%' AND conversation NOT LIKE 'auto-%'",
+            [],
+        );
+    }
     tokio::spawn(async move {
         loop {
             tick(&state, Local::now().naive_local());
@@ -1273,6 +1412,14 @@ fn describe(state: &AppState, space: &Space, automation: &Automation, now: Naive
         "lastConversation": automation.last_conversation,
         "nextRunAt": next,
         "scriptFile": script_file(space, automation),
+        // Conversation existante visée : son titre, et ce qui empêcherait un passage d’y aller.
+        "target": match &automation.action {
+            Action::Agent { conversation: Some(target), .. } => {
+                let (title, problem) = conversation_problem(state, space, target);
+                json!({ "id": target, "title": title, "problem": problem })
+            }
+            _ => Value::Null,
+        },
         "url": (automation.trigger == Trigger::Webhook).then(|| url_of(state, &automation.id)).flatten(),
     })
 }
@@ -1696,6 +1843,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 }
                 "automations.history" => history(&state, args),
                 "automations.newScript" => new_script(&state, args).await,
+                "automations.agentScope" => agent_scope(&state, &space, args),
                 "frame.automations.trigger" => trigger_from_script(&state, args).await,
                 _ => Err(AppError::new(format!("Commande inconnue : {command}"))),
             }
@@ -2186,5 +2334,91 @@ mod tests {
         assert!(error.message.contains("1 à 120 minutes"));
         let error = agent_save(&state, &json!({ "id": id, "action": { "kind": "agent", "instruction": "  " } })).unwrap_err();
         assert!(error.message.contains("consigne"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_action_can_post_to_an_existing_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        let asked = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let mut events = state.events.subscribe();
+        tokio::spawn({
+            let (state, asked) = (state.clone(), asked.clone());
+            async move {
+                while let Ok(event) = events.recv().await {
+                    if event.name == "automation:agent" {
+                        asked.lock().unwrap().push(event.payload.clone());
+                        let id = event.payload["requestId"].as_str().unwrap().to_string();
+                        let _ = state.resolve_ui(&id, Ok(json!({ "status": "done", "text": "Noté." })));
+                    }
+                }
+            }
+        });
+        let save = |id: &str, archived: bool, autonomy: &str| {
+            let data = json!({ "id": id, "title": "Suivi des ventes", "archived": archived, "autonomy": autonomy });
+            state.app_db.lock().unwrap().execute(
+                "INSERT INTO conversations (id, space, updated_at, data) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                params![id, space_key(&space), crate::app_db::now(), data.to_string()],
+            ).unwrap();
+        };
+        let created = agent_save(&state, &json!({
+            "name": "Suivi", "trigger": { "kind": "script" },
+            "action": { "kind": "agent", "instruction": "Note la vente.", "conversation": "conv-1" }
+        })).unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        call(&state, "automations.validate", json!({ "id": id })).await.unwrap();
+
+        // Supprimée, archivée, ou dans un autre mode : le passage échoue, la raison va au Journal.
+        let failure = || async {
+            let run = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+            assert_eq!(run["ok"], false);
+            run["error"].as_str().unwrap().to_string()
+        };
+        assert!(failure().await.contains("a été supprimée"));
+        save("conv-1", true, "workspace");
+        assert!(failure().await.contains("« Suivi des ventes » est archivée"));
+        save("conv-1", false, "auto");
+        assert!(failure().await.contains("Seulement dans son dossier"));
+        assert!(asked.lock().unwrap().is_empty(), "rien n’a été envoyé");
+        let entry = journal(&state, &space).into_iter().next().unwrap();
+        assert_eq!(entry["detail"]["conversation"], "conv-1");
+        assert!(entry["detail"]["error"].as_str().unwrap().contains("Seulement dans son dossier"));
+
+        // Prête : le message part dans cette conversation, marqué par l’automatisation.
+        save("conv-1", false, "workspace");
+        let run = call(&state, "automations.runNow", json!({ "id": id })).await.unwrap();
+        assert_eq!(run["output"], json!({ "conversation": "conv-1", "message": "Noté." }));
+        let request = asked.lock().unwrap()[0].clone();
+        assert_eq!(request["existing"], true);
+        assert_eq!(request["conversation"], "conv-1");
+        assert_eq!(request["title"], "Suivi des ventes");
+        assert!(request["text"].as_str().unwrap().contains("vient de l’automatisation « Suivi »"));
+
+        // Le périmètre A-15 ne vaut que pendant le tour, puis celui d’avant revient.
+        let scope_of = || crate::app_db::agent_scope(&state.app_db.lock().unwrap(), "conv-1").unwrap();
+        let page = crate::app_db::AgentScope { module: "ventes".into(), functions: vec!["outils/echo".into()], ..Default::default() };
+        crate::app_db::set_agent_scope(&state.app_db.lock().unwrap(), "conv-1", &page).unwrap();
+        call(&state, "automations.agentScope", json!({ "conversation": "conv-1", "automation": id, "on": true })).await.unwrap();
+        assert_eq!(scope_of().unwrap().module, "automatisation:suivi");
+        call(&state, "automations.agentScope", json!({ "conversation": "conv-1", "on": false })).await.unwrap();
+        assert_eq!(scope_of().unwrap(), page);
+        state.app_db.lock().unwrap().execute("DELETE FROM agent_scopes WHERE conversation = 'conv-1'", []).unwrap();
+        call(&state, "automations.agentScope", json!({ "conversation": "conv-1", "automation": id, "on": true })).await.unwrap();
+        call(&state, "automations.agentScope", json!({ "conversation": "conv-1", "on": false })).await.unwrap();
+        assert!(scope_of().is_none(), "aucun périmètre avant : aucun après");
+        // Une automatisation qui ne vise pas cette conversation ne pose rien.
+        let other = call(&state, "automations.agentScope", json!({ "conversation": "conv-2", "automation": id, "on": true })).await;
+        assert!(other.is_err());
+
+        // Changer de conversation remet l’automatisation à valider.
+        let changed = agent_save(&state, &json!({ "id": id, "action": { "kind": "agent", "instruction": "Note la vente.", "conversation": "conv-2" } })).unwrap();
+        assert_eq!(changed["status"], "toValidate");
+        // Sans conversation : l’empreinte d’avant ne change pas (une nouvelle conversation par passage).
+        let plain = Automation {
+            action: Action::Agent { instruction: "x".into(), max_minutes: 15, conversation: None },
+            ..from_args(&json!({ "name": "p", "trigger": { "kind": "script" }, "function": "outils/echo" }), None, "user", &[]).unwrap()
+        };
+        assert!(!plain.fingerprint(&space).contains("conversation"));
     }
 }
