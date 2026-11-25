@@ -84,6 +84,10 @@ pub(super) fn permissions(autonomy: Autonomy, one_shot: bool, tools: bool) -> Ve
     };
     if tools {
         rules.push(rule("alfred_*", "allow"));
+        // La CLI `alfred` passe sans demande : chaque commande est vérifiée par le cœur.
+        for resource in ["alfred", "alfred *"] {
+            rules.push(json!({ "action": "shell", "resource": resource, "effect": "allow" }));
+        }
     }
     rules
 }
@@ -147,7 +151,11 @@ impl OpenCode {
         launch.sink.emit(HarnessEvent::status(SessionStatus::Connecting));
         let tools_url = launch.tools_url();
         let config = server_config(launch.token.as_ref().map(|_| tools_url.as_str()), launch.token.as_deref());
-        let server = Server::start(&launch.program, &options.cwd, vec![("OPENCODE_CONFIG_CONTENT", config.to_string())]).await?;
+        let mut env = vec![("OPENCODE_CONFIG_CONTENT", config.to_string())];
+        if let Some(token) = &launch.token {
+            env.extend(crate::agent_cli::harness_env(&launch.state, launch.port, token));
+        }
+        let server = Server::start(&launch.program, &options.cwd, env).await?;
         let opened = open_session(&server, &launch).await;
         let id = match opened {
             Ok(id) => id,
@@ -543,7 +551,8 @@ mod tests {
     #[test]
     fn modes_become_session_rules() {
         assert_eq!(permissions(Autonomy::Auto, false, false), Vec::<Value>::new());
-        assert_eq!(permissions(Autonomy::Workspace, false, true), vec![rule("external_directory", "deny"), rule("alfred_*", "allow")]);
+        assert_eq!(permissions(Autonomy::Workspace, false, true)[..2], [rule("external_directory", "deny"), rule("alfred_*", "allow")]);
+        assert!(permissions(Autonomy::Workspace, false, true).iter().any(|rule| rule["resource"] == "alfred *" && rule["effect"] == "allow"));
         assert_eq!(permissions(Autonomy::Ask, false, false), vec![rule("external_directory", "ask")]);
         assert_eq!(permissions(Autonomy::Strict, false, false).len(), 4);
         assert!(permissions(Autonomy::Auto, true, false).iter().all(|rule| rule["effect"] == "deny"));

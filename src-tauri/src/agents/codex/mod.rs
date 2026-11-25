@@ -72,7 +72,8 @@ pub(super) fn policy(autonomy: Autonomy, roots: &[String], read_only: bool, wind
     }
     match autonomy {
         Autonomy::Auto => full(),
-        Autonomy::Workspace => workspace("never", true),
+        // Toute demande d’accord est refusée d’office, sauf celle de lancer la CLI `alfred` hors du bac à sable.
+        Autonomy::Workspace => workspace("on-request", true),
         Autonomy::Strict if windows => read_only_policy(),
         Autonomy::Strict => (json!("untrusted"), json!("read-only"), json!({ "type": "readOnly" })),
         Autonomy::Ask if windows => full(),
@@ -386,6 +387,7 @@ async fn connect(
     program: &Path,
     cwd: &str,
     token: Option<&str>,
+    env: Vec<(&'static str, String)>,
     on_message: impl Fn(&Arc<Rpc>, Value) + Send + Sync + 'static,
     on_exit: impl FnOnce(Option<String>) + Send + 'static,
 ) -> AppResult<Arc<Rpc>> {
@@ -395,6 +397,7 @@ async fn connect(
     if let Some(token) = token {
         command.env(MCP_TOKEN_ENV, token);
     }
+    command.envs(env);
     let (reader, exiting) = (Arc::downgrade(&rpc), Arc::downgrade(&rpc));
     let process = LineProcess::spawn(
         &mut command,
@@ -599,6 +602,14 @@ impl Inner {
     fn server_request(&self, rpc: &Rpc, method: &str, message: &Value) {
         let id = message["id"].clone();
         let params = &message["params"];
+        // La CLI `alfred` sort du bac à sable, qui coupe le réseau local : le cœur vérifie lui-même chaque commande.
+        if method == "item/commandExecution/requestApproval" && !self.options.one_shot {
+            let command = read::<g::CommandExecutionRequestApprovalParams>(params).and_then(|request| request.command);
+            if command.as_deref().is_some_and(crate::agent_cli::is_alfred_command) {
+                let _ = rpc.write(&json!({ "id": id, "result": { "decision": "accept" } }));
+                return;
+            }
+        }
         let card = match method {
             "item/commandExecution/requestApproval" => read::<g::CommandExecutionRequestApprovalParams>(params).map(|request| {
                 let detail = [
@@ -712,6 +723,11 @@ impl Codex {
             &launch.program,
             &launch.options.cwd,
             launch.token.as_deref(),
+            launch
+                .token
+                .as_deref()
+                .map(|token| crate::agent_cli::harness_env(&launch.state, launch.port, token))
+                .unwrap_or_default(),
             move |rpc, message| handler.handle(rpc, message),
             move |reason| {
                 exiting.handle_exit(reason);
@@ -884,7 +900,7 @@ impl Codex {
 
 /// Lance un `codex app-server` de service, sans outils, le temps d’une lecture.
 async fn utility<T>(program: &Path, cwd: &str, work: impl AsyncFnOnce(&Rpc) -> AppResult<T>) -> AppResult<T> {
-    let rpc = connect(program, cwd, None, |_, _| {}, |_| {}).await?;
+    let rpc = connect(program, cwd, None, Vec::new(), |_, _| {}, |_| {}).await?;
     let result = work(&rpc).await;
     rpc.terminate();
     result
@@ -990,7 +1006,7 @@ mod tests {
     fn modes_become_codex_policies() {
         let roots = vec!["/projet".to_string()];
         let (approval, sandbox, turn) = policy(Autonomy::Workspace, &roots, false, false);
-        assert_eq!((approval, sandbox), (json!("never"), json!("workspace-write")));
+        assert_eq!((approval, sandbox), (json!("on-request"), json!("workspace-write")));
         assert_eq!(
             turn,
             json!({ "type": "workspaceWrite", "writableRoots": ["/projet"], "networkAccess": false,

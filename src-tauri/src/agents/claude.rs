@@ -127,9 +127,17 @@ pub(super) fn claude_arguments(
     }
     if options.sandbox {
         // Bac à sable du système (Seatbelt sous macOS) : les commandes n’écrivent que dans le dossier de travail et
-        // passent sans demande ; ce qui en sortirait reste refusé.
-        let settings = json!({ "sandbox": { "enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false } });
-        args.extend(["--settings".to_string(), settings.to_string()]);
+        // passent sans demande ; ce qui en sortirait reste refusé. La CLI `alfred` en sort : elle ne fait que
+        // parler au cœur, qui applique lui-même le périmètre de la conversation.
+        let mut sandbox = json!({ "enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false });
+        if mcp_port.is_some() {
+            sandbox["excludedCommands"] = json!(["alfred"]);
+        }
+        args.extend(["--settings".to_string(), json!({ "sandbox": sandbox }).to_string()]);
+    }
+    if mcp_port.is_some() {
+        // La CLI `alfred` passe sans demande : chaque commande est vérifiée par le cœur.
+        args.extend(["--allowedTools".to_string(), "Bash(alfred:*)".to_string()]);
     }
     if let Some(port) = mcp_port {
         // Le jeton n’est jamais sur la ligne de commande, lisible par tout processus du poste : Claude Code résout
@@ -560,7 +568,12 @@ impl Inner {
         }
         let tool = request["tool_name"].as_str().unwrap_or("outil");
         let input = request["input"].clone();
-        match decide(tool, self.autonomy, self.one_shot) {
+        // La CLI `alfred` seule, sans rien d’enchaîné : le cœur vérifie chaque commande, rien à demander.
+        let alfred_cli = !self.one_shot
+            && tool == "Bash"
+            && input["command"].as_str().is_some_and(crate::agent_cli::is_alfred_command);
+        let decision = if alfred_cli { Decision::Allow } else { decide(tool, self.autonomy, self.one_shot) };
+        match decision {
             Decision::Allow => {
                 let _ = self.respond(request_id, json!({ "behavior": "allow", "updatedInput": input }));
             }
@@ -677,6 +690,7 @@ impl Claude {
         command.args(claude_arguments(&claude, launch.token.as_ref().map(|_| launch.port), prompt.as_deref())?);
         if let Some(token) = &launch.token {
             command.env(MCP_TOKEN_ENV, token);
+            command.envs(crate::agent_cli::harness_env(&launch.state, launch.port, token));
         }
         if !options.one_shot {
             // Claude Code 2.1 ne donne sa liste de tâches (`TodoWrite`) qu’aux anciens modèles : Alfred la demande pour

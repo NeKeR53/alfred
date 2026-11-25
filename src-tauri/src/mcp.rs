@@ -43,7 +43,7 @@ fn reaches(scope: Option<&AgentScope>, reference: &str) -> bool {
 /// Outils qu’une conversation lancée par un module peut utiliser : rien qui change la structure de l’espace ni qui
 /// lise au-delà du module.
 /// Clé du résultat d’un outil qui porte une image : `answer` la rend comme contenu `image` du protocole MCP.
-const IMAGE_KEY: &str = "__image";
+const IMAGE_KEY: &str = crate::agent_cli::IMAGE_KEY;
 
 const SCOPED_TOOLS: [&str; 6] = ["check", "db_schema", "db_query", "call_function", "wait_for_event", "cancel_wait"];
 
@@ -225,14 +225,7 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
             let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let started = std::time::Instant::now();
-            // Un agent appelle souvent plusieurs outils à la fois : ceux qui enregistrent un commit passent un par
-            // un, sinon deux commits se disputent le verrou de l’index git et l’un échoue.
-            let _serialized =
-                if COMMITTING_TOOLS.contains(&name.as_str()) { Some(commit_lock().lock().await) } else { None };
-            let outcome = call_tool(state, conversation, &name, &arguments).await;
-            let duration = started.elapsed().as_millis() as u64;
-            Ok(match outcome {
+            Ok(match run_tool(state, conversation, &name, &arguments).await {
                 Ok(value) if value.get(IMAGE_KEY).is_some() => {
                     // Une capture d’écran : l’image elle-même, puis ce qui l’accompagne en texte.
                     let image = &value[IMAGE_KEY];
@@ -252,15 +245,6 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
                     json!({ "content": [{ "type": "text", "text": text }], "isError": false })
                 }
                 Err(error) => {
-                    functions::journal(
-                        state,
-                        "agent",
-                        &name,
-                        false,
-                        Some(duration),
-                        &error.message,
-                        error.detail.as_ref(),
-                    );
                     let detail = error
                         .detail
                         .as_ref()
@@ -276,6 +260,21 @@ async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<V
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
         Err(error) => json!({ "jsonrpc": "2.0", "id": id, "error": error }),
     })
+}
+
+/// Exécute un outil pour la conversation : ceux qui enregistrent un commit passent un par un, et un échec est noté
+/// au journal. C’est le chemin commun de la CLI `alfred` (`agent_cli.rs`).
+pub(crate) async fn run_tool(state: &Shared, conversation: &str, name: &str, arguments: &Value) -> AppResult<Value> {
+    let started = std::time::Instant::now();
+    // Un agent appelle souvent plusieurs outils à la fois : ceux qui enregistrent un commit passent un par un, sinon
+    // deux commits se disputent le verrou de l’index git et l’un échoue.
+    let _serialized = if COMMITTING_TOOLS.contains(&name) { Some(commit_lock().lock().await) } else { None };
+    let outcome = call_tool(state, conversation, name, arguments).await;
+    if let Err(error) = &outcome {
+        let duration = started.elapsed().as_millis() as u64;
+        functions::journal(state, "agent", name, false, Some(duration), &error.message, error.detail.as_ref());
+    }
+    outcome
 }
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -302,7 +301,7 @@ fn function_tool_name(reference: &str) -> String {
     format!("fn__{}", reference.replace('/', "__").replace('-', "_"))
 }
 
-fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
+pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let placement = json!({
         "description": "Emplacement, choisi d’après docs/alfred/PLACEMENT.md (lu avant). Un nouveau domaine de travail est une nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut. `tab` seulement si l’utilisateur parle d’onglet ou demande une autre vue d’une section existante (« ajoute un onglet à Factures », « une synthèse des factures ») ; `panel` pour les propriétés de l’élément sélectionné dans une page ; `settings` pour une préférence du module. Si deux emplacements conviennent, demander à l’utilisateur avec une recommandation, sans inventer. Omis : nouvelle entrée du menu au nom de la page.",
         "oneOf": [

@@ -205,6 +205,22 @@ async fn serve(State(state): State<Shared>, headers: HeaderMap, Path(method): Pa
     if headers.contains_key(header::ORIGIN) {
         return (StatusCode::FORBIDDEN, Json(json!({ "error": { "message": "Pont réservé aux fonctions en script." } }))).into_response();
     }
+    // La CLI `alfred` d’un agent : le jeton est celui de sa conversation.
+    if method == crate::agent_cli::BRIDGE_METHOD {
+        let conversation = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(|token| state.agent_tokens.lock().ok()?.get(token.trim()).cloned());
+        let Some(conversation) = conversation else {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": { "message": "Jeton de conversation inconnu : la CLI `alfred` ne sert que dans une conversation d’Alfred ouverte." } }))).into_response();
+        };
+        let body = body.map(|Json(value)| value).unwrap_or(json!({}));
+        return match crate::agent_cli::handle(&state, &conversation, &body).await {
+            Ok(value) => Json(json!({ "ok": value })).into_response(),
+            Err(error) => (StatusCode::BAD_REQUEST, Json(json!({ "error": error }))).into_response(),
+        };
+    }
     let Some(subject) = subject_of(&headers) else {
         return (
             StatusCode::UNAUTHORIZED,

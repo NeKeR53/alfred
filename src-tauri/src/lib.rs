@@ -1,3 +1,4 @@
+mod agent_cli;
 mod agent_setup;
 mod agent_workspace;
 mod agents;
@@ -9,6 +10,7 @@ mod channels;
 mod client_cache;
 mod client_reads;
 mod clients;
+mod code_mode;
 mod commands;
 mod composer;
 mod conversations;
@@ -167,6 +169,14 @@ pub fn extract_pdf_from_stdin() -> i32 {
 /// L’option qui lance ce processus à la place de l’application.
 #[doc(hidden)]
 pub const EXTRACT_PDF_FLAG: &str = documents::EXTRACT_PDF_FLAG;
+
+/// Argument qui fait de l’exécutable la CLI `alfred` des agents (`agent_cli.rs`).
+pub const CLI_FLAG: &str = agent_cli::CLI_FLAG;
+
+/// CLI `alfred` des agents : rend le code de sortie.
+pub fn cli_main(args: Vec<String>) -> i32 {
+    agent_cli::main(args)
+}
 
 pub fn run() {
     tauri::Builder::default()
