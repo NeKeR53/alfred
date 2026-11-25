@@ -231,14 +231,13 @@ Demande : « Je veux suivre mes tickets Jira. »
 - **Panneau de droite** de « Mes tickets » : un `Drawer` sur le ticket sélectionné. En-tête : « ALF-12 · Export en échec », état, actions « Ouvrir dans Jira » et « Commenter ». Sections « Suivi » (état et priorité, modifiables par le menu de leur ligne ; responsable, modifiable par une fenêtre) et « Dates ».
 - **Onglet ouvert** sur un ticket : double-clic → `views.open({ id: ticket.key, label: \`${ticket.key} ${ticket.summary}\`, params: { key: ticket.key } })`. La même page rend une `DetailPage` : description en `Markdown`, commentaires dans une section, action `primary` « Commenter », action `danger` « Supprimer » qui ferme l’onglet (`views.close()`).
 - **Actions** : « Nouveau ticket » (`primary`, en-tête de la liste) ouvre `useOpenForm` (projet, type, résumé, priorité) ; « Actualiser » (icône `RefreshCw`) en en-tête, car les tickets changent hors d’Alfred ; « Ouvrir dans Jira » en action de ligne.
-- **Une seule lecture par donnée** : la fonction `lister-tickets` vit dans le module `jira`, qui déclare le client ; un tableau de bord d’un autre module la lit par `requires`, sans écrire la sienne.
-- **Données** (règle obligatoire) : la liste, le panneau et l’onglet lisent les fonctions de lecture du connecteur avec `useQuery` (SDK.md, section 3), jamais avec `functions.call` ; `check` refuse une page qui contourne ce magasin partagé : la liste et un tableau de bord qui montrent les mêmes tickets partagent une seule requête et changent ensemble ; « Commenter » (`functions.call` d’une écriture) les fait relire d’eux-mêmes.
+- **États** (règle obligatoire, SDK.md section 3) : le module `jira` déclare l’entité `ticket` (`key: "cle"`) et l’état `mes-tickets` (liste de tickets) ; `lister-tickets` alimente `mes-tickets`, `lire-ticket` alimente l’entité (`param: "cle"`). La liste s’abonne à `mes-tickets`, le panneau et l’onglet à `jira/ticket` avec la clé : jamais `functions.call` pour afficher une donnée. Un tableau de bord d’un autre module s’abonne aux mêmes états par `requires`, sans écrire sa propre lecture. Relire un ticket met à jour la liste, le panneau, l’onglet et le tableau de bord ; « Commenter » (une écriture) fait relire les états affichés.
 - **Messages** : une fonction planifiée relève les tickets assignés ; un nouveau ticket → `shell.notify` (au centre de notifications) et `badge.set` sur l’entrée.
 - **Réglages** : « Projet par défaut » dans une page des Réglages du module.
 
 ```tsx
 // pages/tickets.tsx : la liste, ou le ticket ouvert dans un onglet.
-const tickets = useQuery<Ticket[]>("lister-tickets", { jql: "assignee = currentUser()" });
+const tickets = useAlfredState<Ticket[]>("mes-tickets");
 const view = usePageContext()?.view ?? null;
 if (view) return <Ticket cle={String(view.params?.key ?? view.id)} />;
 return (

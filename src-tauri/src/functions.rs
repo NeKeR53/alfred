@@ -46,17 +46,27 @@ pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, calle
         return Err(AppError::new(format!("La fonction « {reference} » n’est pas déclarée dans son module.")));
     };
     let examples = examples || crate::examples::is_on(state, module);
-    if examples && declared.is_connector() {
-        return crate::examples::respond(state, reference, declared, &input, caller);
+    let fed_input = input.clone();
+    let result = if examples && declared.is_connector() {
+        crate::examples::respond(state, reference, declared, &input, caller)
+    } else if declared.runtime.is_script() {
+        call_script(state, &space, &manifest, declared, input, caller, examples).await
+    } else {
+        let mut payload = json!({ "function": reference, "input": input, "caller": caller });
+        if examples {
+            payload["examples"] = json!(true);
+        }
+        // La coquille exécute la fonction sans alimenter les états : c’est fait ici, une seule fois.
+        payload["fed"] = json!(true);
+        state.ask_ui("function:call", payload, Duration::from_secs(180)).await
+    };
+    // La sortie d’une lecture alimente l’état qu’elle déclare (`states.rs`), quel que soit l’appelant.
+    if let Ok(output) = &result {
+        if let Err(error) = crate::states::feed(state, &space, reference, &fed_input, None, examples, output) {
+            log::error!("état alimenté par {reference} : {}", error.message);
+        }
     }
-    if declared.runtime.is_script() {
-        return call_script(state, &space, &manifest, declared, input, caller, examples).await;
-    }
-    let mut payload = json!({ "function": reference, "input": input, "caller": caller });
-    if examples {
-        payload["examples"] = json!(true);
-    }
-    state.ask_ui("function:call", payload, Duration::from_secs(180)).await
+    result
 }
 
 fn declaration_for(manifest: &ModuleManifest, id: &str) -> AppResult<FunctionDecl> {
@@ -198,6 +208,10 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 kernel: opt_arg::<bool>(args, "kernel")?.unwrap_or(false),
                 effect: opt_arg::<crate::space::Effect>(args, "effect")
                     .map_err(|_| AppError::new("Effet inconnu : `effect` vaut read ou write."))?,
+                // État ou entité que la sortie alimente (`states.rs`), et champ de l’entrée qui porte la sous-clé.
+                state: opt_arg::<String>(args, "state")?.filter(|value| !value.is_empty()),
+                entity: opt_arg::<String>(args, "entity")?.filter(|value| !value.is_empty()),
+                param: opt_arg::<String>(args, "param")?.filter(|value| !value.is_empty()),
                 tests: opt_arg::<Vec<crate::space::FunctionTest>>(args, "tests")
                     .map_err(|error| AppError::new(format!("Tests illisibles : {}", error.message)))?
                     .unwrap_or_default(),
@@ -217,6 +231,15 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     }
                     if args.get("examples").is_none() {
                         declaration.examples = std::mem::take(&mut existing.examples);
+                    }
+                    for (field, kept, declared) in [
+                        ("state", &mut existing.state, &mut declaration.state),
+                        ("entity", &mut existing.entity, &mut declaration.entity),
+                        ("param", &mut existing.param, &mut declaration.param),
+                    ] {
+                        if args.get(field).is_none() {
+                            *declared = kept.take();
+                        }
                     }
                     *existing = declaration
                 }
@@ -275,12 +298,6 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     let caller = caller.as_deref().unwrap_or("interface");
                     // La coquille dit si l’appelant montre des données d’exemple (un cadre ne l’atteint pas).
                     let examples = opt_arg::<bool>(args, "examples").ok().flatten().unwrap_or(false);
-                    // Relance d’une lecture par la coquille : ses lectures prennent les réponses gardées par le cœur.
-                    let _replay = opt_arg::<bool>(args, "reuse")
-                        .ok()
-                        .flatten()
-                        .unwrap_or(false)
-                        .then(|| crate::client_reads::replay(&reference));
                     call_in(state, &reference, args.get("input").cloned().unwrap_or(json!({})), caller, examples).await
                 }
                 Err(error) => Err(error),

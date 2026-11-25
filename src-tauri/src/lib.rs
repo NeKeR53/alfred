@@ -60,6 +60,7 @@ mod space;
 mod space_db;
 mod spaces;
 mod state;
+mod states;
 mod system_notifications;
 mod team_sync;
 mod transpile;

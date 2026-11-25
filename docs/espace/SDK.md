@@ -161,7 +161,7 @@ Une erreur non rattrapée (`AlfredError` comprise) termine le script avec un cod
 
 **Sécurité du pont.** Le pont n’écoute que sur 127.0.0.1. Chaque processus reçoit son propre jeton (`ALFRED_SDK_TOKEN`), lié à un seul module et qui cesse de valoir à la fin du processus ; une demande sans jeton, avec un jeton expiré, avec le jeton d’un autre module (`X-Alfred-Module`) ou venue d’un navigateur (en-tête `Origin`) est refusée. N’écris jamais le jeton ni l’environnement dans un fichier, la sortie ou le journal.
 
-## 3. Charger des données : `useAsync`, `useQuery` et les gabarits
+## 3. Charger des données : `useAsync`, `useAlfredState` et les gabarits
 
 Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `Drawer`, `Page`), qui affiche chargement, erreur et absence :
 
@@ -227,29 +227,51 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 
 `load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
 
-### Lire un service : `useQuery`
+### Les données d’un service : les états partagés
 
-**Règle obligatoire : toute lecture d’un service passe par le magasin partagé.** Une page lit une fonction de lecture d’un connecteur (`effect: "read"`) avec `useQuery`, jamais avec `functions.call` (ni dans `useAsync`, ni ailleurs) : `check` refuse la page (`sharedReads`). La réponse est partagée par toute l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, montrent la même donnée.
+**Règle obligatoire : une page s’abonne à un état, elle n’appelle pas une fonction pour afficher une donnée.** L’état est la seule source de vérité : l’interface le suit, et un changement met à jour toutes les pages au même moment. Toute lecture d’un service alimente un état nommé. `check` refuse une page qui lit une fonction de lecture par `functions.call` (`sharedReads`), et une lecture d’un service qui n’alimente aucun état.
 
-Comment Alfred le garantit, sans que le module puisse l’éviter :
+**Le contrat, déclaré par le module qui détient le client** (`module.json`) :
 
-- **Dans le cœur.** `client()` (TypeScript, Python, bash, PowerShell) n’a qu’un chemin vers le service : Alfred. Le cadre d’une fonction n’a pas de réseau, et un script n’a pas le secret. Chaque `GET` ou `HEAD` y passe par le magasin du cœur : deux lectures identiques en cours (même compte, même requête), venues de n’importe quelles fonctions, n’en font qu’une. Chaque écriture y est vue, et fait relire les lectures affichées du module.
-- **Dans la coquille.** Chaque appel d’une fonction `effect: "read"`, quel que soit l’appelant, passe par le magasin des pages : appels identiques réunis, réponse publiée à toutes les pages abonnées.
-- **Dans `check`.** Une page qui lit une fonction de lecture par `functions.call` est refusée (`sharedReads`). Une fonction qui joint un service sans `effect` est refusée : ses lectures ne seraient pas partagées. Un script qui appelle le réseau lui-même (`curl`, `requests`, `Invoke-RestMethod`…) est refusé : il passe par le client d’Alfred.
+```json
+{
+  "entities": [
+    { "id": "ticket", "key": "cle", "version": 1, "description": "Un ticket Jira.", "schema": { "type": "object", "properties": { "cle": { "type": "string" }, "titre": { "type": "string" }, "etat": { "type": "string" } } } }
+  ],
+  "states": [
+    { "id": "mes-tickets", "entity": "ticket", "items": "issues", "description": "Les tickets qui me sont attribués." },
+    { "id": "ci", "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
+  ]
+}
+```
+
+- **Entité** (`entities`) : un type d’objet du service (ticket, mail, job CI), avec son champ identifiant (`key`, `id` par défaut), sa forme (`schema`) et la `version` du contrat (à monter quand la forme change de façon incompatible). Chaque objet est rangé **une seule fois**, sous sa clé d’entité (`jira/ticket` + `ALF-12`), dans la portée de son compte.
+- **État** (`states`) : une donnée nommée (`jira/mes-tickets`, `jenkins/ci`). Un état de liste (`entity`) garde seulement les identifiants ; la page reçoit la liste avec ses objets. `items` : le champ de la liste quand la fonction rend un objet (`{ "issues": [...] }`). Sans `entity`, l’état garde sa valeur telle quelle.
+- `client` (facultatif, sur une entité ou un état) : le besoin dont le compte entre dans la portée, quand le module en a plusieurs.
+- `refreshEvery` (facultatif, secondes, 5 au moins) : relecture périodique, **seulement si tu la veux** (l’état d’un CI en cours) ; une seule pour toutes les pages, tant qu’une page le montre.
+- Le nom et la forme d’un état ou d’une entité sont **un contrat entre modules** : ne les change pas sans monter la `version`.
+
+**L’alimentation : la sortie d’une lecture suffit.** Une fonction de lecture déclare (`declare_function`) ce qu’elle alimente :
+
+- `state: "mes-tickets"` : sa sortie devient la valeur de l’état ; pour une liste d’entités, chaque objet met à jour son entité ;
+- `entity: "ticket"` et `param: "cle"` : la lecture d’un seul objet (son identifiant dans l’entrée `cle`) met à jour l’entité, donc **chaque liste qui le montre**, quel que soit son module ;
+- `param` sur un état : le champ de l’entrée qui porte la sous-clé (`state: "ci"`, `param: "job"` donne `jenkins/ci` + `<job>`).
+
+Une écriture peut aussi déclarer `entity` : elle rend l’objet modifié, qui met à jour l’entité. Sinon, une écriture fait relire les états affichés de son module. Un script, une fonction ou une page du module déclarant peut aussi publier : `states.publish("ci", { etat: "vert" }, { key: job })` (Python : `alfred.states.publish(...)`).
+
+**L’abonnement.**
 
 ```tsx
-import { useQuery } from "@alfred/sdk";
+import { useAlfredState } from "@alfred/sdk";
 import { ListPage } from "socle-ui";
 
 // Module « sprint », avec `"requires": [{ "module": "jira" }]`.
 export default function MesTickets() {
-  const tickets = useQuery<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", {
-    jql: "assignee = currentUser()",
-  });
+  const tickets = useAlfredState<Ticket[]>("jira/mes-tickets");
   return (
     <ListPage
       title="Mes tickets"
-      rows={tickets.data?.tickets}
+      rows={tickets.data}
       columns={[{ id: "cle", label: "Clé" }, { id: "titre", label: "Titre" }]}
       empty={{ title: "Aucun ticket" }}
       isLoading={tickets.loading}
@@ -258,41 +280,50 @@ export default function MesTickets() {
     />
   );
 }
+
+// Seulement le nombre de non-lus : la page ne se redessine que si ce nombre change.
+const nonLus = useAlfredState<Mail[], number>("mail/boite-de-reception", {
+  select: (boite) => boite.filter((mail) => !mail.lu).length,
+});
+// Un état par sous-clé, et un objet seul :
+const ci = useAlfredState("jenkins/ci", { key: job });
+const ticket = useAlfredState<Ticket>("jira/ticket", { key: "ALF-12" });
 ```
 
 ```ts
-function useQuery<Data>(
-  reference: string | null | undefined, // « fonction » du module, ou « module/fonction » ; null : rien n’est lu
-  input?: unknown,
-  options?: { staleAfter?: number; refreshEvery?: number }, // secondes
+function useAlfredState<Value, Selected = Value>(
+  name: string | null | undefined, // « etat » du module, « module/etat » d’une dépendance ; null : rien n’est suivi
+  options?: {
+    key?: string | number;          // sous-clé de l’état, ou identifiant de l’entité
+    instance?: string;              // compte ; omis : celui de la page pour ce besoin, sinon celui par défaut
+    select?: (value: Value) => Selected; // partie montrée : redessin seulement si elle change (comparaison structurelle)
+  },
 ): {
-  data: Data | undefined;     // dernière réponse, gardée pendant une relecture et après une erreur
-  error: Error | undefined;   // la dernière lecture a échoué
-  loading: boolean;           // aucune donnée encore
-  refreshing: boolean;        // une lecture est en cours
+  data: Selected | undefined;  // valeur courante ; undefined tant que l’état est vide
+  loading: boolean;            // aucune valeur encore, première lecture en cours
+  refreshing: boolean;         // une lecture est en cours
+  error: Error | undefined;    // la dernière lecture a échoué (la valeur précédente reste)
   updatedAt: Date | undefined;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<void>; // relit l’état chez le service : toutes les pages abonnées suivent
 };
+states.get(name, { key?, instance? }): Promise<{ value, empty, updatedAt }>;   // une fois, hors d’un composant
+states.publish(name, value, { key?, instance? }): Promise<{ changed: number }>; // module déclarant seulement
 ```
 
-Ce qu’Alfred fait, sans rien à écrire de plus :
+Ce qu’Alfred fait :
 
-- **Une seule requête.** Dix pages ouvertes sur la même lecture ne font qu’un appel. Deux appels identiques en cours n’en font qu’un.
-- **Tout de suite.** Une page qui s’ouvre reçoit la dernière réponse connue. Si elle a moins de `staleAfter` secondes (30 par défaut), rien n’est relu. Plus vieille, elle s’affiche et se relit en fond (`refreshing`).
-- **À jour partout.** Chaque nouvelle réponse de cette lecture met à jour toutes les pages qui la montrent, d’où qu’elle vienne : une autre page, un `functions.call`, un agent, une planification, une autre fenêtre.
-- **Après une écriture.** Une fonction d’écriture du même connecteur (`effect: "write"`, ou sans `effect`) fait relire ses lectures affichées, et celles des modules qui en dépendent, pour le même compte. Ne relance rien toi-même après `functions.call("jira/commenter-ticket", …)`.
-- **Suivi en direct.** `refreshEvery: 15` relit toutes les 15 secondes (5 au moins) tant qu’une page montre la donnée, une seule fois pour toutes ces pages : l’état d’un CI, une file d’attente. La relecture s’arrête quand plus aucune page ne la montre.
-- **Comptes séparés.** La clé comprend les comptes de la page (`usePageContext().accounts`) et le mode « données d’exemple » : deux comptes ne voient jamais la réponse l’un de l’autre. L’accord de l’utilisateur pour la fonction est demandé comme pour `functions.call`.
+- La page reçoit la valeur courante tout de suite, puis chaque changement, d’où qu’il vienne : une autre page, une action, une automatisation, une autre fenêtre. Aucune requête ne part pour cela.
+- Un état encore vide est lu une fois, par la page qui s’ouvre (la fonction qui l’alimente), pour toutes les pages.
+- **Sans lecture, un état ne change pas.** Pas de revalidation en fond : il change quand quelqu’un le lit (`refresh`, une action, une automatisation, un webhook du service), ou par `refreshEvery` s’il le déclare.
+- Comptes séparés, données d’exemple séparées. Un module voit les états de son module et de ses dépendances (`requires`) seulement ; seul le module déclarant les publie.
+- Une fonction (TypeScript, Python, bash, PowerShell) s’abonne par le bus d’événements : `events.subscribes` avec `"event": "jira/etat.mes-tickets"` (ou `"jira/entite.ticket"`) ; elle reçoit `{ state, key, instance, examples }` et lit la valeur avec `states.get`.
 
 Règles :
 
-- `useQuery` refuse une fonction qui n’est pas déclarée `effect: "read"` : une écriture s’appelle avec `functions.call`, dans une action.
-- **Une seule fonction de lecture par donnée**, dans le module qui déclare le client ; les autres modules la lisent par `requires` (`useQuery("mail/lister-mails", …)`), sans écrire la leur.
-- **Même service, fonctions différentes.** Si deux fonctions lisent la même ressource (même compte, même requête), une nouvelle réponse lue par l’une relance l’autre dans chaque page qui la montre, et le cœur lui sert la réponse qu’il vient de recevoir : aucune requête de plus.
-- L’entrée identifie la donnée : passe les mêmes champs, dans n’importe quel ordre, pour partager la lecture (`{ jql }` partout, pas `{ jql }` ici et `{ requete }` ailleurs). N’y mets ni date courante ni nombre au hasard.
-- `hasError` du gabarit : `Boolean(q.error) && !q.data` ; une donnée déjà affichée reste montrée quand une relecture échoue.
-- Une lecture qui ouvre un canal (`suivre-journal`) : `useQuery(…, { staleAfter: 0 })`, pour que chaque page reçoive un canal ouvert.
+- **Une seule fonction de lecture par donnée**, dans le module qui déclare le client ; les autres modules s’abonnent à son état par `requires`, sans écrire la leur.
+- Une liste et le détail d’un objet partagent l’entité : déclare `entity` sur la lecture du détail, avec `param`.
 - `useAsync` reste pour ce qui n’est pas un service : `db.query`, `files`, `search`, `history`.
+- Ouvrir un canal (journal, console) est une action : la fonction est déclarée `effect: "write"`, et la page l’appelle avec `functions.call`.
 
 ## 4. Base de données : `db`
 
@@ -360,10 +391,11 @@ export async function compter() {
 Une page ou une fonction qui a besoin d’un service externe appelle les fonctions du **connecteur** de ce service (le module qui détient son client, déclaré dans `requires` s’il en est un autre), jamais `client()` directement. **Une page ne peut pas appeler un client** : Alfred refuse la requête, même accordée, et `check` signale l’import de `client` dans une page. Le connecteur renvoie des données déjà mises en forme (`{ tickets: [{ cle, titre, statut }] }`), décrites par son schéma `output` : la page n’a pas à connaître l’API.
 
 ```tsx
-import { useQuery } from "@alfred/sdk";
+import { useAlfredState } from "@alfred/sdk";
 
-// Module « sprint », avec `"requires": [{ "module": "jira" }]`. Lecture partagée : voir section 3, « useQuery ».
-const tickets = useQuery<{ tickets: Array<{ cle: string; titre: string }> }>("jira/lister-tickets", { projet: "ALF" });
+// Module « sprint », avec `"requires": [{ "module": "jira" }]` : il s’abonne à l’état que le connecteur alimente
+// (section 3, « Les données d’un service »).
+const tickets = useAlfredState<Ticket[]>("jira/mes-tickets");
 ```
 
 Seules les fonctions du connecteur écrivent `client("jira")`. Un module qui utilise plusieurs services déclare plusieurs clients dans `clients`, chacun avec ses fonctions. **Une fonction, une responsabilité** : chacune touche un seul service et y fait une seule opération (`lister-tickets`, `lire-ticket`, `commenter-ticket`), et son entrée en porte les données (`projet`, `ticket`, `texte`). Jamais de fonction relais qui reçoit un chemin, une méthode ou une adresse et transmet n’importe quel appel (`requete({ path, method })`) : `check` la signale. Une opération qui manque (commenter, changer d’état) s’ajoute au connecteur, avec `effect`, ses tests (AGENTS.md, « Tests d’une fonction ») et ses données d’exemple, puis la page l’appelle.
@@ -374,7 +406,7 @@ Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }`
 
 ## 6. Clients : `client(id)`
 
-`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, passent par ces fonctions, et les lisent avec `useQuery` (section 3). Chaque `GET` ou `HEAD` d’un client passe par le magasin partagé du cœur : deux lectures identiques en cours n’en font qu’une, quelles que soient les fonctions qui les demandent. Chaque écriture fait relire les lectures affichées du module. Déclare toujours `effect` : `check` refuse une fonction de connecteur sans lui.
+`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, s’abonnent aux états que ces fonctions alimentent (`useAlfredState`, section 3). Deux `GET` ou `HEAD` identiques en cours n’en font qu’un, quelles que soient les fonctions qui les demandent. Chaque écriture fait relire les états affichés du module. Déclare toujours `effect` : `check` refuse une fonction de connecteur sans lui.
 
 ```ts
 client(id: string, options?: { instance?: string }): {
@@ -411,11 +443,11 @@ Alfred exécute la requête et ajoute l’authentification : la page ne voit jam
 
 **Un statut HTTP d’erreur ne rejette pas la promesse** : teste `ok` ou `status`. Le rejet signifie que la requête n’a pas abouti : client inconnu ou à valider, secret manquant, accès refusé, chemin refusé, erreur réseau. La première requête d’une page vers un client (et, séparément, de son panneau, ou des fonctions d’un module) demande l’accord de l’utilisateur.
 
-**Cache des lectures** : `cache: 300` (secondes, un jour au plus) sur un `GET` ou un `HEAD` fait garder la réponse réussie (statut 2xx) et la resservir sans rappeler le service, avec `cached: true` et `cacheAge`. Pour tout le module, donne `cache` au besoin dans `module.json` (`"clients": [{ "id": "jira", "label": "Jira", "cache": 300 }]`) ; la requête peut le changer (`cache: 0` pour relire). Le cache est propre au module et à la requête exacte (chemin, paramètres, en-têtes, instance) ; une modification du client le rend caduc ; `clearCache()` l’oublie après une écriture. Réserve-le aux lectures qui changent peu (projets, profils, référentiels) pour ménager les quotas du service, jamais à une donnée que l’utilisateur attend à jour. Ce cache, durable et propre au module, est distinct des lectures partagées entre les pages (`useQuery`, section 3), qui vivent en mémoire et sont faites pour une donnée à jour.
+**Cache des lectures** : `cache: 300` (secondes, un jour au plus) sur un `GET` ou un `HEAD` fait garder la réponse réussie (statut 2xx) et la resservir sans rappeler le service, avec `cached: true` et `cacheAge`. Pour tout le module, donne `cache` au besoin dans `module.json` (`"clients": [{ "id": "jira", "label": "Jira", "cache": 300 }]`) ; la requête peut le changer (`cache: 0` pour relire). Le cache est propre au module et à la requête exacte (chemin, paramètres, en-têtes, instance) ; une modification du client le rend caduc ; `clearCache()` l’oublie après une écriture. Réserve-le aux lectures qui changent peu (projets, profils, référentiels) pour ménager les quotas du service, jamais à une donnée que l’utilisateur attend à jour. Ce cache, durable et propre au module, est distinct des états partagés (`useAlfredState`, section 3), la donnée que les pages montrent.
 
 Un client peut avoir **plusieurs instances** : plusieurs comptes ou installations du même service (deux sites Jira, deux boîtes mail), chacune avec son adresse, sa méthode d’authentification et son secret. `client("jira", { instance: "acme" })` appelle l’instance `acme` ; sans `instance`, c’est l’instance par défaut (la première). `client("jira").instances()` liste les instances (identifiant, nom, `default`) pour proposer un choix à l’utilisateur : ni adresse ni secret. L’accord de l’utilisateur vaut pour le client et toutes ses instances. Rejet si l’instance nommée n’existe pas, ou si le client n’en a aucune.
 
-Le menu appartient à l’utilisateur : il fait ses pages et leurs onglets à partir des pages déclarées par le module (les modèles), et choisit pour chacun le compte de chaque besoin (AGENTS.md, « Modèles de pages et pages de l’utilisateur »). Le même fichier de page sert à toutes ses copies. La page lit ses comptes dans `usePageContext()` : `accounts` (`{ jira: "acme" }`, un compte par besoin) et `instance` (le compte du besoin qu’elle suit par `perInstance`, ou son seul compte), et les passe aux fonctions dans leur `input` (`useQuery("lister-tickets", { instance, projet })`) ; la fonction appelle `client(id, { instance: input.instance })`. Une fonction appelée par la page vise aussi d’office les comptes de la page : `client("jira")`, sans instance, y appelle le compte choisi pour `jira` (puis, à défaut, celui par défaut) ; pour une fonction d’un module dont la page dépend, le compte choisi pour `dépendance/besoin`. Le compte d’un autre service du même type, que l’utilisateur a repris pour la page, s’écrit `client/instance` (« bitbucket/equipe ») : passe-le tel quel, `client(id, { instance })` l’accepte et joint ce service-là. Une fonction en script (bash, PowerShell, Python) ne reçoit que son `input`. Une page ne suppose pas qu’une autre page du module existe pour le même compte. Elle peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
+Le menu appartient à l’utilisateur : il fait ses pages et leurs onglets à partir des pages déclarées par le module (les modèles), et choisit pour chacun le compte de chaque besoin (AGENTS.md, « Modèles de pages et pages de l’utilisateur »). Le même fichier de page sert à toutes ses copies. La page lit ses comptes dans `usePageContext()` : `accounts` (`{ jira: "acme" }`, un compte par besoin) et `instance` (le compte du besoin qu’elle suit par `perInstance`, ou son seul compte), et les passe aux fonctions dans leur `input` (`functions.call("commenter-ticket", { instance, cle, texte })`) ; la fonction appelle `client(id, { instance: input.instance })`. Une fonction appelée par la page vise aussi d’office les comptes de la page : `client("jira")`, sans instance, y appelle le compte choisi pour `jira` (puis, à défaut, celui par défaut) ; pour une fonction d’un module dont la page dépend, le compte choisi pour `dépendance/besoin`. Le compte d’un autre service du même type, que l’utilisateur a repris pour la page, s’écrit `client/instance` (« bitbucket/equipe ») : passe-le tel quel, `client(id, { instance })` l’accepte et joint ce service-là. Une fonction en script (bash, PowerShell, Python) ne reçoit que son `input`. Une page ne suppose pas qu’une autre page du module existe pour le même compte. Elle peut lister les instances (`client(id).instances()`, ni adresse ni secret) pour proposer un choix.
 
 `client("crm/hubspot")` désigne le client du besoin `hubspot` déclaré par le module `crm`, dont ce module dépend (`requires`) : il suit la liaison choisie pour `crm`, sans besoin à déclarer ni accord à demander. Rejet si le module ne dépend pas de `crm`, ou si `crm` ne déclare pas ce besoin.
 
@@ -604,11 +636,11 @@ export default async function ({ conteneur, environnement }: { conteneur: string
 
 ```tsx
 // pages/journal.tsx
-import { useChannel, useQuery } from "@alfred/sdk";
+import { functions, useAsync, useChannel } from "@alfred/sdk";
 
 export default function Journal() {
-  // Une lecture qui ouvre un canal : `staleAfter: 0`, chaque page qui s’ouvre reçoit un canal ouvert.
-  const ouvert = useQuery<{ canal: string }>("suivre-journal", { conteneur: "web", environnement: 1 }, { staleAfter: 0 });
+  // Ouvrir un canal est une action (`effect: "write"`) : chaque page qui s’ouvre reçoit son canal.
+  const ouvert = useAsync(() => functions.call<{ canal: string }>("suivre-journal", { conteneur: "web", environnement: 1 }), []);
   const journal = useChannel(ouvert.data?.canal);
   return <pre>{journal.events.map((ligne) => `${ligne.stream === "stderr" ? "! " : ""}${ligne.data}`).join("\n")}</pre>;
 }
@@ -1032,7 +1064,7 @@ Ouvrir un élément (un ticket, un client, un document) ajoute un **onglet ferma
 ```tsx
 // pages/tickets.tsx (module jira) : la liste ouvre chaque ticket dans un onglet ; l’onglet montre le ticket.
 import { ListPage } from "socle-ui";
-import { functions, usePageContext, useQuery, views } from "@alfred/sdk";
+import { functions, useAlfredState, usePageContext, views } from "@alfred/sdk";
 
 export default function Tickets() {
   const view = usePageContext()?.view ?? null;
@@ -1040,7 +1072,7 @@ export default function Tickets() {
 }
 
 function Liste() {
-  const tickets = useQuery<{ id: string; key: string; summary: string }[]>("rechercher", { jql: "assignee = currentUser()" });
+  const tickets = useAlfredState<{ id: string; key: string; summary: string }[]>("mes-tickets");
   return (
     <ListPage
       title="Mes tickets"
@@ -1054,8 +1086,8 @@ function Liste() {
 }
 
 function Ticket({ cle }: { cle: string }) {
-  const ticket = useQuery("ticket", { key: cle });
-  // Le ticket supprimé : son onglet se ferme, la liste revient (et se relit d’elle-même : `supprimer` est une écriture).
+  const ticket = useAlfredState("ticket", { key: cle });
+  // Le ticket supprimé : son onglet se ferme, la liste revient (ses états affichés se relisent : `supprimer` est une écriture).
   const supprimer = async () => { await functions.call("supprimer", { key: cle }); await views.close(); };
   …
 }

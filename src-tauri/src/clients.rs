@@ -2186,8 +2186,8 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             return Ok(cached);
         }
     }
-    // Lectures partagées du cœur : une lecture rejoint la même lecture en vol ; une écriture prévient les coquilles
-    // (`clients:changed`), qui font relire les lectures affichées du module.
+    // Lectures du cœur : une lecture rejoint la même lecture en vol ; une écriture prévient les coquilles
+    // (`clients:changed`), qui font relire les états affichés du module.
     let account = crate::client_reads::Account {
         space: space.root.to_string_lossy().to_string(),
         client: client.id.clone(),
@@ -2207,42 +2207,19 @@ async fn frame_request(state: &Arc<AppState>, args: &Value) -> AppResult<Value> 
             call.query.as_ref(),
             call.headers.as_ref(),
         );
-        // Une relance de la coquille (fonction TypeScript : `reuse`, fixé par le pont ; script : relance en cours de
-        // cette fonction) prend la réponse gardée : deux fonctions qui lisent la même ressource ne font qu’une requête.
-        let reuse = opt_arg::<bool>(args, "reuse")?.unwrap_or(false)
-            || crate::client_reads::replaying(&subject.reference);
-        let (result, source) =
-            crate::client_reads::read(&shared_key, &account, reuse, || perform(state, client, call)).await;
+        let (result, source) = crate::client_reads::read(&shared_key, || perform(state, client, call)).await;
         let outcome = match source {
             crate::client_reads::Source::Fetched => outcome_of(&result),
             crate::client_reads::Source::Joined => {
                 (outcome_of(&result).0, "réponse partagée (même lecture en cours)".to_string())
             }
-            crate::client_reads::Source::Kept => (outcome_of(&result).0, "réponse partagée (relance)".to_string()),
         };
         journal(state, space, client, call, requester, started, outcome);
-        let fetched_ok = source == crate::client_reads::Source::Fetched
-            && result.as_ref().is_ok_and(|response| response.get("ok").and_then(Value::as_bool) == Some(true));
-        if fetched_ok {
-            // Nouvelle réponse : les coquilles relancent les lectures affichées qui dépendent de cette ressource.
-            crate::function_results::client_read(state, subject, &shared_key);
-        }
-        // Fonction TypeScript (`module/*`) : la coquille apprend quelle ressource elle a lue (le pont retire ce champ
-        // avant la fonction). Pour un script, le cœur connaît la fonction et l’annonce lui-même (`clients:read`).
-        if !subject.reference.ends_with("/*") {
-            return result;
-        }
-        result.map(|mut response| {
-            if let Some(object) = response.as_object_mut() {
-                object.insert("resource".to_string(), Value::String(shared_key.clone()));
-            }
-            response
-        })
+        result
     } else {
         let result = perform(state, client, call).await;
         journal(state, space, client, call, requester, started, outcome_of(&result));
         if !crate::client_reads::is_read(&call.method) {
-            crate::client_reads::written(&account);
             crate::function_results::client_changed(state, space, subject, &account.client, &account.instance);
         }
         result
@@ -3556,8 +3533,7 @@ mod tests {
     }
 
     /// Deux fonctions de deux modules lisent en même temps la même ressource du même compte : une seule requête part,
-    /// et chacune reçoit la réponse. Une écriture prévient les coquilles (`clients:changed`) ; une écriture faite par
-    /// une fonction déclarée `effect: "read"` (une recherche en POST) ne les prévient pas.
+    /// et chacune reçoit la réponse. Une écriture prévient les coquilles (`clients:changed`).
     #[tokio::test]
     async fn identical_reads_in_flight_reach_the_service_once() {
         let (state, _dir) = test_state();
@@ -3576,40 +3552,11 @@ mod tests {
         assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 1, "une seule requête");
         assert_eq!(first.unwrap()["body"], json!({ "tickets": ["ALF-1"] }));
         assert_eq!(second.unwrap()["body"], json!({ "tickets": ["ALF-1"] }));
-        // Une lecture ordinaire rappelle toujours le service.
-        request(&state, &crm, "public", read.clone()).await.unwrap();
+        // Une fois la réponse reçue, rien n’est gardé : la lecture suivante rappelle le service.
+        request(&state, &crm, "public", read).await.unwrap();
         assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 2);
 
-        // Deux modules, deux fonctions différentes sur la même ressource. La première lit : nouvelle réponse,
-        // annoncée aux coquilles avec sa ressource. La seconde, relancée par la coquille, prend la réponse gardée.
         let mut events = state.events.subscribe();
-        let lire_a = Subject { reference: "crm/lire-mails".into(), ..function_subject("crm") };
-        let lire_b = Subject { reference: "suivi/mes-mails".into(), ..function_subject("suivi") };
-        grant(&state, &lire_a, "public");
-        grant(&state, &lire_b, "public");
-        let first = request(&state, &lire_a, "public", read.clone()).await.unwrap();
-        assert!(first.get("resource").is_none(), "un script ne reçoit pas ce champ interne");
-        let announced = loop {
-            let event = events.recv().await.unwrap();
-            if event.name == crate::function_results::CLIENT_READ {
-                break event;
-            }
-        };
-        let resource = announced.payload["resource"].as_str().unwrap().to_string();
-        assert_eq!(announced.payload["function"], json!("crm/lire-mails"));
-        {
-            let _replay = crate::client_reads::replay("suivi/mes-mails");
-            let shared = request(&state, &lire_b, "public", read.clone()).await.unwrap();
-            assert_eq!(shared["body"], json!({ "tickets": ["ALF-1"] }));
-        }
-        assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 3, "la relance n’a rien demandé");
-        // Une relance d’une fonction TypeScript (`reuse`, fixé par le pont) aussi.
-        let mut reused = read.clone();
-        reused["reuse"] = json!(true);
-        let typescript = request(&state, &suivi, "public", reused.clone()).await.unwrap();
-        assert_eq!(typescript["resource"], json!(resource), "même ressource, quel que soit le module");
-        assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 3);
-
         request(&state, &crm, "public", json!({ "method": "POST", "path": "/echo", "body": { "texte": "vu" } }))
             .await
             .unwrap();
@@ -3622,9 +3569,6 @@ mod tests {
         assert_eq!(event.payload["module"], json!("crm"));
         assert_eq!(event.payload["client"], json!("public"));
         assert!(event.payload.get("function").is_none(), "fonction TypeScript : nom inconnu du cœur");
-        // Après une écriture, même une relance rejoint le service : jamais de valeur d’avant l’écriture.
-        request(&state, &suivi, "public", reused).await.unwrap();
-        assert_eq!(remote.state.slow_reads.load(std::sync::atomic::Ordering::SeqCst), 4);
     }
 
     #[tokio::test]

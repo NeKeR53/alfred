@@ -9,7 +9,7 @@ import { SecretRevealHost } from "../features/vault/SecretReveal";
 import { invoke, notifySystem, onNativeEvent } from "../lib/native";
 import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
-import { callFunction, receiveClientChange, receiveClientRead, receiveSharedResult } from "./functionHost";
+import { callFunction, receiveClientChange, receiveStatesChanged } from "./functionHost";
 import { notify } from "./notifications";
 import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
@@ -45,22 +45,21 @@ function bind() {
       input: unknown;
       caller: string;
       examples?: boolean;
+      /** Le cœur alimente lui-même les états avec la sortie (`functions::call_in`). */
+      fed?: boolean;
     };
     // La demande est diffusée à toutes les interfaces ouvertes : seule celle qui la réserve l’exécute.
     const claimed = await invoke<boolean>("ui.claim", { requestId: call.requestId }).catch(() => false);
     if (!claimed) return;
-    callFunction(call.function, call.input, call.caller, call.examples === true).then(
+    callFunction(call.function, call.input, call.caller, call.examples === true, {}, { fed: call.fed === true }).then(
       (output) => resolve(call.requestId, output),
       (error) => reject(call.requestId, error),
     );
   });
-  // Réponse d’une fonction obtenue ailleurs (autre fenêtre, automatisation du cœur) : les pages abonnées la
-  // reçoivent sans nouvelle requête ; une écriture rend caduques les lectures qu’elle touche.
-  onNativeEvent("functions:result", receiveSharedResult);
-  // Écriture chez un service vue par le cœur (script, automatisation, autre fenêtre) : les lectures touchées se relisent.
+  // Un état ou une entité a changé dans le cœur : les pages abonnées qui en dépendent se relisent, sans requête.
+  onNativeEvent("states:changed", receiveStatesChanged);
+  // Écriture chez un service vue par le cœur (script, automatisation) : les états affichés du module se relisent.
   onNativeEvent("clients:changed", receiveClientChange);
-  // Nouvelle réponse d’un service : les lectures affichées qui lisent la même ressource se relancent, sans requête.
-  onNativeEvent("clients:read", receiveClientRead);
   onNativeEvent("agent:frameErrors", (payload) => {
     const request = payload as { requestId: string; module?: string | null };
     const errors = [...frameErrors.entries()]

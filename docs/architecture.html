@@ -870,24 +870,20 @@ modules passent par ces fonctions (<code>"jira/lister-tickets"</code>). Chaque f
 (<code>read</code> ou <code>write</code>) et ses cas de test.</figcaption>
 </figure>
 
-<h3>Lectures partagées entre les pages</h3>
-<p><b>Règle obligatoire : toute lecture d’un service passe par le magasin partagé.</b> Elle tient en trois verrous.
-Dans le cœur, chaque <code>GET</code> ou <code>HEAD</code> d’un client (TypeScript, Python, bash, PowerShell) passe par
-<code>clients::frame_request</code>, seul chemin vers le service : deux lectures identiques en cours n’en font qu’une
-(<code>client_reads.rs</code>), et chaque écriture prévient les coquilles (<code>clients:changed</code>). Dans la coquille,
-le magasin ci-dessous. Dans <code>check</code>, une page qui lit un connecteur par <code>functions.call</code>, une fonction de
-connecteur sans <code>effect</code> et un script qui appelle le réseau lui-même sont refusés.</p>
-<p>Chaque appel d’une fonction de lecture (<code>effect: "read"</code>) passe par un magasin en mémoire de la coquille,
-quel que soit l’appelant. La clé : fonction, entrée normalisée, comptes de l’appel, mode « données d’exemple ». Deux
-appels identiques en cours n’en font qu’un, et chaque réponse est publiée à toutes les pages abonnées
-(<code>useQuery</code> du SDK). Une page qui s’ouvre reçoit tout de suite la dernière réponse ; plus vieille que 30 s,
-elle se relit en fond. Une écriture du même module rend caduques ses lectures, et celles des modules qui en dépendent,
-pour les mêmes comptes. Deux fonctions différentes qui lisent la même ressource d’un service (même compte, même requête) restent liées :
-le cœur garde chaque réponse <code>GET</code> et annonce chaque nouvelle réponse (<code>clients:read</code>) ; la coquille,
-qui sait quelles lectures ont lu quelle ressource, relance les autres lectures affichées, et le cœur leur sert la réponse
-gardée, sans requête. Une écriture sur le compte efface aussitôt les réponses gardées.
-Les autres fenêtres reçoivent les réponses par l’événement <code>functions:result</code>, que le
-cœur émet aussi pour une fonction qu’il lance lui-même (<code>function_results::publish</code>). Décisions :
+<h3>États partagés</h3>
+<p><b>L’état est la seule source de vérité ; l’interface le suit.</b> Le cœur (<code>states.rs</code>) tient des états
+nommés (<code>jira/mes-tickets</code>, <code>jenkins/ci</code> + sous-clé) et des entités normalisées : un objet (ticket,
+mail, job CI) est rangé une seule fois sous sa clé d’entité, un état de liste garde seulement des identifiants. Le module
+qui détient le client déclare ses entités et ses états dans <code>module.json</code> : un contrat entre modules, versionné.
+Une fonction de lecture déclare ce qu’elle alimente (<code>state</code>, ou <code>entity</code> et <code>param</code>) ; sa
+sortie met à jour le magasin, que le cœur l’ait lancée (<code>functions::call_in</code>) ou la coquille
+(<code>states.feed</code>). Chaque changement réel émet <code>states:changed</code> avec les clés touchées ; chaque coquille
+relit seulement les abonnements (<code>useAlfredState</code>) qui en dépendent, sans requête au service, et le bus
+d’événements livre <code>module/etat.&lt;id&gt;</code> aux fonctions abonnées. Portée : espace, compte, mode exemple ; un
+module voit ses états et ceux de ses dépendances. Sans lecture, un état ne change pas : la relecture périodique
+(<code>refreshEvery</code>) est un choix explicite par état, tenue par une seule coquille. <code>check</code> refuse une page
+qui lit une fonction de lecture par <code>functions.call</code>, une lecture d’un service sans état, un état sans lecture.
+Dans le cœur, deux <code>GET</code> identiques en cours ne font qu’une requête (<code>client_reads.rs</code>). Décisions :
 <code>docs/lectures-partagees.md</code>.</p>
 
 <h3>Événements entre modules</h3>
@@ -1242,7 +1238,7 @@ précédente.</p>
 <table class="ref">
   <thead><tr><th>Couche</th><th>Dossier</th><th>À retenir</th></tr></thead>
   <tbody>
-    <tr><td>Coquille</td><td><code>src/shell/</code>, <code>src/features/</code></td><td><code>AppShell.tsx</code>, <code>PageFrame.tsx</code> (le cadre d’une page), <code>frameBridge.ts</code> (le pont), <code>pageMemory.ts</code>, <code>sharedQueries.ts</code> (lectures partagées) ; une fonctionnalité par dossier de <code>features/</code> (agent, modules, clients, setup, vault…).</td></tr>
+    <tr><td>Coquille</td><td><code>src/shell/</code>, <code>src/features/</code></td><td><code>AppShell.tsx</code>, <code>PageFrame.tsx</code> (le cadre d’une page), <code>frameBridge.ts</code> (le pont), <code>pageMemory.ts</code>, <code>sharedStates.ts</code> (abonnements aux états) ; une fonctionnalité par dossier de <code>features/</code> (agent, modules, clients, setup, vault…).</td></tr>
     <tr><td>Bibliothèque d’interface</td><td><code>src/ui/</code></td><td><code>components/</code>, <code>templates/</code> (gabarits), <code>primitives/</code> ; exportée par <code>index.ts</code> sous <code>@alfred/ui</code>.</td></tr>
     <tr><td>Pont des pages</td><td><code>src/sdk/</code></td><td><code>@alfred/sdk</code> : <code>request(méthode)</code> et les espaces <code>db</code>, <code>files</code>, <code>client</code>, <code>ai</code>, <code>shell</code>…</td></tr>
     <tr><td>Environnement du cadre</td><td><code>src/runtime/</code></td><td><code>pageHost.tsx</code>, <code>functionHost.ts</code>, <code>sealNetwork.ts</code> ; compilé par <code>pnpm build:runtime</code> dans <code>src-tauri/runtime/</code>.</td></tr>

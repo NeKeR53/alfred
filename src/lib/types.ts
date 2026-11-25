@@ -172,6 +172,12 @@ export interface ResolvedFunction {
   runtime: FunctionRuntime;
   /** Lecture ou écriture chez le service ; absent, la fonction compte comme une écriture. */
   effect?: FunctionEffect | null;
+  /** État partagé du module que la sortie de cette lecture alimente (`states` du manifeste). */
+  state?: string | null;
+  /** Type d’entité du module que la sortie met à jour (`entities` du manifeste). */
+  entity?: string | null;
+  /** Champ de l’entrée qui porte la sous-clé de l’état, ou l’identifiant de l’entité lue seule. */
+  param?: string | null;
   /** Cas de test déclarés avec la fonction. */
   tests?: FunctionTestCase[];
   /** Nombre de réponses d’exemple déclarées (mode « données d’exemple »). */

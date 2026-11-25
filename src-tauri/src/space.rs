@@ -133,6 +133,61 @@ pub struct ModuleManifest {
     /// Paquets Python du module et version de Python : Alfred leur crée un environnement isolé (`python::env`).
     #[serde(skip_serializing_if = "PythonDecl::is_empty")]
     pub python: PythonDecl,
+    /// Types d’entité du service (un ticket, un mail) : chaque objet est rangé une seule fois dans le magasin des
+    /// états, sous sa clé d’entité (`states.rs`). Contrat entre modules, versionné.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<EntityDecl>,
+    /// États nommés du module (« mes-tickets », « boite-de-reception ») : les pages s’y abonnent (`useAlfredState`),
+    /// ses fonctions de lecture les alimentent. Contrat entre modules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<StateDecl>,
+}
+
+/// Type d’entité déclaré par le module qui détient le client : nom, champ identifiant, forme, version du contrat.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EntityDecl {
+    pub id: String,
+    pub description: String,
+    /// Champ identifiant de l’objet (`id`, `key`) ; par défaut `id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Schéma JSON d’un objet.
+    pub schema: Value,
+    /// Version du contrat : à monter quand la forme change de façon incompatible.
+    pub version: u32,
+    /// Besoin (`clients` du manifeste) dont le compte entre dans la portée ; omis : le seul besoin du module.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+}
+
+impl EntityDecl {
+    pub fn key_field(&self) -> &str {
+        self.key.as_deref().filter(|key| !key.is_empty()).unwrap_or("id")
+    }
+}
+
+/// État nommé : une valeur, ou une liste d’entités (`entity`) dont l’état garde seulement les identifiants.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StateDecl {
+    pub id: String,
+    pub description: String,
+    /// Schéma JSON de la valeur (pour une liste d’entités : la liste rendue, objets compris).
+    pub schema: Value,
+    /// Liste d’entités de ce type : l’état garde les identifiants, le magasin les objets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// Pour une liste d’entités rendue dans un objet par la fonction (`{ "issues": [...] }`) : le champ de la liste.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<String>,
+    /// Besoin dont le compte entre dans la portée ; omis : le seul besoin du module.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    /// Relecture périodique demandée par le module (secondes, 5 au moins) : une seule pour toutes les pages, tant
+    /// qu’une page montre l’état. Absente : l’état change seulement quand quelqu’un le lit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_every: Option<u64>,
 }
 
 /// Dépendances Python d’un module : `requirements` (spécifications pip, « pandas>=2.2 ») et `version` facultative
@@ -431,6 +486,16 @@ pub struct FunctionDecl {
     /// une écriture : ses tests ne se lancent jamais d’office.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<Effect>,
+    /// État nommé du module que la sortie de cette lecture alimente (`states`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Type d’entité du module que la sortie (un objet, ou une liste d’objets) met à jour (`entities`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    /// Champ de l’entrée qui porte la sous-clé de l’état (`job` pour `jenkins/ci/<job>`), ou l’identifiant de
+    /// l’entité lue seule : Alfred s’en sert pour ranger la sortie et pour relancer la lecture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
     /// Cas de test : une entrée d’exemple et ce que la sortie doit montrer.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<FunctionTest>,
@@ -723,6 +788,12 @@ pub struct ResolvedFunction {
     pub uses: Uses,
     pub runtime: Runtime,
     pub effect: Option<Effect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
     pub tests: Vec<FunctionTest>,
     /// Nombre de réponses d’exemple déclarées.
     pub examples: usize,
@@ -1635,6 +1706,9 @@ impl Space {
                     uses: function.uses.clone(),
                     runtime: function.runtime,
                     effect: function.effect,
+                    state: function.state.clone(),
+                    entity: function.entity.clone(),
+                    param: function.param.clone(),
                     tests: function.tests.clone(),
                     examples: function.examples.len(),
                 });

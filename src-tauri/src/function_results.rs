@@ -1,88 +1,22 @@
-//! Réponses des fonctions diffusées à toutes les coquilles d’Alfred (fenêtre principale, fenêtres de page) par
-//! l’événement `functions:result`. Chaque coquille garde un magasin partagé des lectures (`src/shell/sharedQueries.ts`) :
-//! une lecture (`effect: "read"`) y est publiée aux pages abonnées sans nouvelle requête ; une écriture y rend
-//! caduques les lectures du même module et des modules qui en dépendent.
+//! Ce que la coquille et `check` savent des lectures d’un service. Le magasin des états (`states.rs`) est la seule
+//! source de vérité des données : une fonction de lecture l’alimente par sa sortie, une page s’y abonne
+//! (`useAlfredState`). Ici :
 //!
-//! Point d’entrée pour le cœur : une fonction que le cœur exécute lui-même (automatisation, webhook, planification
-//! d’un script) appelle [`publish`] avec sa réponse, pour que les pages qui montrent cette lecture se mettent à jour.
-//! La coquille vérifie l’effet déclaré de la fonction : le cœur n’a pas à le savoir.
+//! - [`client_changed`] : une fonction a écrit chez un service (vu par `clients::frame_request`) ; les coquilles
+//!   relisent les états affichés du module (`clients:changed`).
+//! - Les contrôles de `check` qui font respecter la règle : une page s’abonne à un état, elle n’appelle pas une
+//!   fonction pour afficher une donnée ; toute lecture d’un service alimente un état nommé ; un script passe par le
+//!   client d’Alfred.
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
-use crate::error::{arg, AppResult};
 use crate::state::AppState;
-
-/// Nom de l’événement reçu par les coquilles.
-pub const EVENT: &str = "functions:result";
-/// Une réponse plus grosse n’est pas diffusée : les autres fenêtres la reliront elles-mêmes au besoin.
-const MAX_OUTPUT: usize = 1024 * 1024;
-
-/// Réponse d’une fonction, telle que la reçoivent les coquilles.
-pub struct FunctionResult<'a> {
-    /// `module/fonction`.
-    pub function: &'a str,
-    pub input: &'a Value,
-    /// Comptes passés à la fonction, par besoin de son module (`{ "jira": "acme" }`) ; vide : comptes par défaut.
-    pub accounts: Option<&'a Map<String, Value>>,
-    pub examples: bool,
-    /// Sortie d’une lecture réussie ; `None` pour une écriture (ou un échec) : les lectures touchées se relisent.
-    pub output: Option<&'a Value>,
-    /// Coquille d’où vient la réponse (elle l’ignore) ; `None` pour le cœur.
-    pub origin: Option<&'a str>,
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or_default()
-}
-
-/// Contenu de l’événement, ou `None` si la sortie est trop grosse pour être diffusée.
-fn payload(result: &FunctionResult, at: u64) -> Option<Value> {
-    let mut payload = json!({
-        "function": result.function,
-        "input": result.input,
-        "accounts": result.accounts.cloned().unwrap_or_default(),
-        "examples": result.examples,
-        "at": at,
-    });
-    if let Some(origin) = result.origin {
-        payload["origin"] = json!(origin);
-    }
-    if let Some(output) = result.output {
-        if serde_json::to_string(output).map(|text| text.len()).unwrap_or(usize::MAX) > MAX_OUTPUT {
-            return None;
-        }
-        payload["output"] = output.clone();
-    }
-    Some(payload)
-}
-
-/// Diffuse la réponse d’une fonction à toutes les coquilles.
-pub fn publish(state: &AppState, result: &FunctionResult) {
-    if let Some(payload) = payload(result, now_ms()) {
-        state.emit(EVENT, payload);
-    }
-}
-
-/// Événement d’une nouvelle réponse d’un service (lecture faite sur le réseau), reçu par les coquilles.
-pub const CLIENT_READ: &str = "clients:read";
-
-/// Une fonction vient de lire une ressource sur le réseau : les coquilles relancent les lectures affichées qui en
-/// dépendent, et ces relances prennent la réponse gardée par le cœur (`client_reads`), sans nouvelle requête. Le
-/// nom de la fonction n’est connu que pour un script (`module/fonction`) ; une fonction TypeScript est rattachée à la
-/// ressource par le pont de la coquille, qui voit la réponse passer.
-pub fn client_read(state: &AppState, subject: &crate::permissions::Subject, resource: &str) {
-    let mut payload = json!({ "resource": resource, "module": subject.module });
-    if subject.reference.split_once('/').is_some_and(|(_, id)| id != "*") {
-        payload["function"] = json!(subject.reference);
-    }
-    state.emit(CLIENT_READ, payload);
-}
 
 /// Événement d’une écriture chez un service, reçu par les coquilles.
 pub const CLIENT_CHANGED: &str = "clients:changed";
 
-/// Une fonction a écrit chez un service (méthode autre que `GET` ou `HEAD`) : les coquilles rendent caduques les
-/// lectures du module et des modules qui en dépendent. Rien n’est émis pour une fonction déclarée `effect: "read"`
+/// Une fonction a écrit chez un service (méthode autre que `GET` ou `HEAD`) : les coquilles relisent les états
+/// affichés du module (une lecture par état). Rien n’est émis pour une fonction déclarée `effect: "read"`
 /// (une recherche en `POST`) : sinon la relecture qu’elle déclenche la relancerait sans fin. Le nom de la fonction
 /// n’est connu que pour un script ; pour une fonction TypeScript (`module/*`), la coquille ignore l’événement tant
 /// qu’une fonction de ce module tourne chez elle, et invalide elle-même à la fin d’une écriture.
@@ -161,8 +95,8 @@ fn called_functions(source: &str) -> Vec<String> {
     found
 }
 
-/// Remarques sur une page (ou un panneau) qui lit une fonction de lecture par `functions.call` au lieu de `useQuery` :
-/// la donnée ne suivrait pas les nouvelles réponses ni les écritures. `check` les refuse comme une erreur.
+/// Remarques sur une page (ou un panneau) qui lit une fonction de lecture par `functions.call` au lieu de s’abonner à
+/// un état (`useAlfredState`) : la donnée ne suivrait pas les changements. `check` les refuse comme une erreur.
 pub fn page_read_problems(source: &str, module: &str, functions: &[crate::space::ResolvedFunction]) -> Vec<String> {
     let mut problems: Vec<String> = Vec::new();
     for name in called_functions(source) {
@@ -171,10 +105,10 @@ pub fn page_read_problems(source: &str, module: &str, functions: &[crate::space:
             .iter()
             .any(|function| function.reference == reference && function.effect == Some(crate::space::Effect::Read));
         let problem = format!(
-            "La page lit « {reference} » par `functions.call` : une lecture d’un connecteur passe par le magasin \
-             partagé. Écris `useQuery(\"{name}\", entrée)` (SDK.md, section 3, « useQuery ») : la page reçoit la \
-             dernière réponse, suit chaque nouvelle réponse et se relit après une écriture. `functions.call` reste \
-             pour les écritures."
+            "La page lit « {reference} » par `functions.call` : une page s’abonne à un état, elle n’appelle pas une \
+             fonction pour afficher une donnée. Écris `useAlfredState(\"<module>/<état>\")` sur l’état que cette \
+             lecture alimente (SDK.md, section 3, « États partagés ») : la page reçoit la valeur courante, puis chaque \
+             changement. `functions.call` reste pour les écritures et les actions."
         );
         if read && !problems.contains(&problem) {
             problems.push(problem);
@@ -209,11 +143,31 @@ pub fn function_problem(space: &crate::space::Space, function: &crate::space::Re
     }
     if function.effect.is_none() {
         return Some(
-            "La fonction joint un service sans déclarer `effect` : déclare `effect: \"read\"` pour une lecture (sa \
-             réponse est alors partagée entre les pages par le magasin, `useQuery`), `\"write\"` pour une écriture \
-             (elle fait relire les lectures du module). Redéclare-la avec `declare_function`."
+            "La fonction joint un service sans déclarer `effect` : déclare `effect: \"read\"` pour une lecture (elle \
+             alimente alors un état nommé, `state` ou `entity`), `\"write\"` pour une écriture (elle fait relire les \
+             états affichés du module). Redéclare-la avec `declare_function`."
                 .to_string(),
         );
+    }
+    let manifest = space.module(&function.module).ok()?;
+    if function.effect == Some(crate::space::Effect::Read) && function.state.is_none() && function.entity.is_none() {
+        return Some(
+            "Toute lecture d’un service alimente un état nommé : déclare l’état (`states` du module.json) ou le type \
+             d’entité (`entities`) que la fonction alimente, puis redéclare-la avec `state` (une liste, une valeur) ou \
+             `entity` (un objet lu seul, avec `param`, le champ de l’entrée qui porte son identifiant). Les pages s’y \
+             abonnent avec `useAlfredState` (SDK.md, section 3)."
+                .to_string(),
+        );
+    }
+    if let Some(state) = &function.state {
+        if !manifest.states.iter().any(|declared| &declared.id == state) {
+            return Some(format!("La fonction alimente « {state} », absent de `states` du module.json : déclare-le."));
+        }
+    }
+    if let Some(entity) = &function.entity {
+        if !manifest.entities.iter().any(|declared| &declared.id == entity) {
+            return Some(format!("La fonction met à jour « {entity} », absent de `entities` du module.json : déclare-le."));
+        }
     }
     if function.runtime == crate::scripts::Runtime::Ts {
         return None;
@@ -228,31 +182,33 @@ pub fn function_problem(space: &crate::space::Space, function: &crate::space::Re
     ))
 }
 
-pub async fn handle(state: &AppState, command: &str, args: &Value) -> Option<AppResult<Value>> {
-    match command {
-        // Une coquille a obtenu une réponse : les autres fenêtres la reçoivent. Jamais demandé par un cadre.
-        "functions.shareResult" => Some((|| {
-            let function: String = arg(args, "function")?;
-            let origin: Option<String> = args.get("origin").and_then(Value::as_str).map(str::to_string);
-            let input = args.get("input").cloned().unwrap_or_else(|| json!({}));
-            let accounts = args.get("accounts").and_then(Value::as_object);
-            let examples = args.get("examples").and_then(Value::as_bool).unwrap_or(false);
-            let result = FunctionResult {
-                function: &function,
-                input: &input,
-                accounts,
-                examples,
-                output: args.get("output"),
-                origin: origin.as_deref(),
-            };
-            let at = args.get("at").and_then(Value::as_u64).unwrap_or_else(now_ms);
-            if let Some(payload) = payload(&result, at) {
-                state.emit(EVENT, payload);
+/// Remarques sur les états et entités d’un module : un état qu’aucune lecture n’alimente, une liste d’un type
+/// d’entité non déclaré, un identifiant d’entité vide.
+pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
+    let Ok(manifest) = space.module(module) else { return Vec::new() };
+    let mut problems = Vec::new();
+    for state in &manifest.states {
+        let fed = manifest.functions.iter().any(|function| {
+            function.state.as_deref() == Some(state.id.as_str()) && function.effect == Some(crate::space::Effect::Read)
+        });
+        if !fed {
+            problems.push(json!({ "module": module, "state": state.id, "problem": "Aucune fonction de lecture n’alimente cet état (`state` sur une fonction `effect: \"read\"`) : il resterait vide." }));
+        }
+        if let Some(entity) = &state.entity {
+            if !manifest.entities.iter().any(|declared| &declared.id == entity) {
+                problems.push(json!({ "module": module, "state": state.id, "problem": format!("L’état liste des « {entity} », type absent de `entities`.") }));
             }
-            Ok(Value::Null)
-        })()),
-        _ => None,
+        }
+        if state.refresh_every.is_some_and(|seconds| seconds < 5) {
+            problems.push(json!({ "module": module, "state": state.id, "problem": "`refreshEvery` vaut 5 secondes au moins." }));
+        }
     }
+    for entity in &manifest.entities {
+        if entity.version == 0 {
+            problems.push(json!({ "module": module, "entity": entity.id, "problem": "Donne une `version` au contrat de l’entité (1 pour commencer) : d’autres modules s’y fient." }));
+        }
+    }
+    problems
 }
 
 #[cfg(test)]
@@ -266,7 +222,7 @@ mod tests {
             const b = useAsync(() => functions.call('etat', {}), []);
             const ok = () => functions.call("jira/commenter-ticket", { cle });
             const dynamic = functions.call(`${nom}`, {});
-            const hook = useQuery("jira/lister-tickets", { jql });
+            const hook = useAlfredState("jira/mes-tickets");
         "#;
         assert_eq!(
             called_functions(source),
@@ -286,6 +242,9 @@ mod tests {
             uses: Default::default(),
             runtime: Default::default(),
             effect,
+            state: None,
+            entity: None,
+            param: None,
             tests: Vec::new(),
             examples: 0,
         };
@@ -296,62 +255,7 @@ mod tests {
         ];
         let problems = page_read_problems(source, "ci", &functions);
         assert_eq!(problems.len(), 2, "{problems:?}");
-        assert!(problems[0].contains("« jira/lister-tickets »") && problems[0].contains("useQuery"));
+        assert!(problems[0].contains("« jira/lister-tickets »") && problems[0].contains("useAlfredState"));
         assert!(problems[1].contains("« ci/etat »"));
-    }
-
-    #[tokio::test]
-    async fn a_result_reaches_every_shell_with_its_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = AppState::new(&dir.path().join("data")).unwrap();
-        let mut events = state.events.subscribe();
-
-        let input = json!({ "projet": "ALF" });
-        let output = json!({ "tickets": [{ "cle": "ALF-1" }] });
-        let accounts = json!({ "jira": "acme" });
-        publish(
-            &state,
-            &FunctionResult {
-                function: "jira/lister-tickets",
-                input: &input,
-                accounts: accounts.as_object(),
-                examples: false,
-                output: Some(&output),
-                origin: None,
-            },
-        );
-        let event = events.recv().await.unwrap();
-        assert_eq!(event.name, EVENT);
-        assert_eq!(event.payload["function"], "jira/lister-tickets");
-        assert_eq!(event.payload["accounts"], accounts);
-        assert_eq!(event.payload["output"], output);
-        assert!(event.payload.get("origin").is_none(), "venue du cœur");
-
-        // Une écriture part sans sortie ; la coquille d’origine est nommée.
-        let shared = handle(
-            &state,
-            "functions.shareResult",
-            &json!({ "function": "jira/commenter", "input": { "ticket": "ALF-1" }, "origin": "shell-1", "at": 5 }),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(shared, Value::Null);
-        let event = events.recv().await.unwrap();
-        assert_eq!(event.payload["origin"], "shell-1");
-        assert_eq!(event.payload["at"], 5);
-        assert!(event.payload.get("output").is_none());
-
-        // Une sortie trop grosse n’est pas diffusée.
-        let big = json!("x".repeat(MAX_OUTPUT + 1));
-        let result = FunctionResult {
-            function: "jira/lister-tickets",
-            input: &input,
-            accounts: None,
-            examples: false,
-            output: Some(&big),
-            origin: None,
-        };
-        assert!(payload(&result, 1).is_none());
     }
 }

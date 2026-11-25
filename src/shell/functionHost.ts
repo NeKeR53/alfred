@@ -8,7 +8,7 @@ import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage } from "../sdk/protoc
 import { inExampleMode } from "./examples";
 import { type FrameIdentity, frameServices, handleFrameRequest } from "./frameBridge";
 import { frameKey } from "./frameKeys";
-import { createQueryStore, inputInstance, type QueryCall, queryKey } from "./sharedQueries";
+import { createStateHub, type StateRead, type StateRequest } from "./sharedStates";
 import { useShell } from "./store";
 
 interface Host {
@@ -143,9 +143,9 @@ function hostFor(module: string, examples: boolean, accounts: Record<string, str
 
 /** Ferme les cadres de fonctions : à appeler quand l’espace change ou se ferme. */
 export function resetFunctionHosts() {
-  sharedQueries.clear();
+  stateHub.clear();
   runningByModule.clear();
-  readsByHost.clear();
+  inflightReads.clear();
   for (const host of hosts.values()) {
     for (const settle of host.pending.values())
       settle.reject(new AlfredError({ message: "L’espace de travail a été fermé." }));
@@ -154,16 +154,59 @@ export function resetFunctionHosts() {
   hosts.clear();
 }
 
+/** Identifiant de cette coquille : le cœur lui attribue une relecture périodique (`states.lease`). */
+const ORIGIN = `shell-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+
+/** Module qui déclare un état : « module/etat », ou « etat » dans le module du demandeur. */
+function ownerOf(identity: FrameIdentity, name: string): string {
+  return name.includes("/") ? (name.split("/")[0] ?? "") : identity.module;
+}
+
 /**
- * Lectures partagées : toute fonction `effect: "read"` passe par ce magasin, qui dédoublonne les appels identiques
- * en vol et publie chaque réponse aux pages abonnées (`useQuery`). Voir `sharedQueries.ts`.
+ * Lit ce qui alimente un état : la fonction de lecture du module déclarant qui porte `state` (ou `entity` avec
+ * `param`, pour une entité lue seule), avec les comptes du demandeur. Sa sortie alimente le cœur, qui annonce le
+ * changement à toutes les coquilles (`states:changed`).
  */
-export const sharedQueries = createQueryStore({
-  execute: (call, how) => executeRead(call, how.replay),
+async function loadState(identity: FrameIdentity, request: StateRequest): Promise<void> {
+  const owner = ownerOf(identity, request.name);
+  const id = request.name.includes("/") ? request.name.slice(owner.length + 1) : request.name;
+  const functions = useShell.getState().snapshot?.functions ?? [];
+  const reads = functions.filter((fn) => fn.module === owner && fn.effect === "read");
+  const source =
+    reads.find((fn) => fn.state === id && (!request.key || fn.param)) ??
+    reads.find((fn) => fn.entity === id && fn.param && request.key);
+  if (!source)
+    throw new AlfredError({
+      message: `Aucune fonction de lecture n’alimente « ${owner}/${id} » (\`state\` ou \`entity\`).`,
+    });
+  const input: Record<string, unknown> = {};
+  if (source.param && request.key) input[source.param] = request.key;
+  if (request.instance) input.instance = request.instance;
+  await callFunction(
+    source.reference,
+    input,
+    identity.reference,
+    identity.examples === true,
+    accountsFor(owner, identity.module, identity.accounts),
+  );
+}
+
+/**
+ * États partagés : la page s’abonne (`useAlfredState`), le cœur tient la valeur ; voir `sharedStates.ts` et
+ * `src-tauri/src/states.rs`.
+ */
+export const stateHub = createStateHub<FrameIdentity>({
+  get: (identity, request) => handleFrameRequest(identity, "states.get", { ...request }) as Promise<StateRead>,
+  load: loadState,
+  lease: (key, seconds) => invoke<boolean>("states.lease", { key, origin: ORIGIN, seconds }),
+  moduleOf: (identity, request) => ownerOf(identity, request.name),
 });
 
-/** Identifiant de cette coquille : une réponse qu’elle a diffusée ne lui revient pas. */
-const ORIGIN = `shell-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+/** Le cœur annonce des clés d’état ou d’entité changées : seuls les abonnements qui en dépendent se relisent. */
+export function receiveStatesChanged(payload: unknown) {
+  const keys = (payload as { keys?: unknown } | null)?.keys;
+  if (Array.isArray(keys)) stateHub.changed(keys.filter((key): key is string => typeof key === "string"));
+}
 
 /** Modules dont les lectures dépendent de `module` : lui-même et ceux qui en dépendent (`requires`), de proche en proche. */
 export function dependentModules(module: string): string[] {
@@ -181,85 +224,19 @@ export function dependentModules(module: string): string[] {
   return [...found];
 }
 
-/**
- * Lectures en cours dans chaque cadre de fonctions (clé du cadre → clés des lectures du magasin), et nombre de
- * relances parmi elles. Le pont rattache à ces lectures les ressources que le cadre lit (`clients.request`) et
- * demande au cœur ses réponses gardées pendant une relance.
- */
-const readsByHost = new Map<string, Map<string, boolean>>();
-
-async function executeRead(call: QueryCall, replay = false): Promise<unknown> {
-  const module = call.reference.split("/")[0] ?? "";
-  const sample = call.examples === true;
-  const host = hostKey(module, sample, call.accounts ?? {});
-  const key = queryKey(call);
-  const running = readsByHost.get(host) ?? new Map<string, boolean>();
-  running.set(key, replay);
-  readsByHost.set(host, running);
-  let output: unknown;
-  try {
-    output = await track(module, () =>
-      executeFunction(call.reference, call.input, call.caller ?? "partage", sample, call.accounts ?? {}, replay),
-    );
-  } finally {
-    running.delete(key);
-    if (running.size === 0) readsByHost.delete(host);
-  }
-  shareResult(call, true, output);
-  return output;
+/** JSON stable : clés d’objet triées. */
+function stableJson(value: unknown): string {
+  if (value === undefined || value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, field]) => `${JSON.stringify(name)}:${stableJson(field)}`)
+    .join(",")}}`;
 }
 
-/** Une écriture rend caduques les lectures du module et des modules qui en dépendent, pour les mêmes comptes. */
-function invalidateAfterWrite(call: QueryCall) {
-  sharedQueries.invalidate({
-    modules: dependentModules(call.reference.split("/")[0] ?? ""),
-    accounts: call.accounts,
-    instance: inputInstance(call.input),
-    examples: call.examples === true,
-  });
-}
-
-/** Les autres fenêtres d’Alfred reçoivent la réponse (ou l’écriture) par le cœur : `functions:result`. */
-function shareResult(call: QueryCall, read: boolean, output: unknown) {
-  void invoke("functions.shareResult", {
-    origin: ORIGIN,
-    function: call.reference,
-    input: call.input ?? {},
-    accounts: call.accounts ?? {},
-    examples: call.examples === true,
-    ...(read ? { output } : {}),
-    at: Date.now(),
-  }).catch(() => undefined);
-}
-
-/**
- * Point d’entrée des réponses venues d’ailleurs : une autre fenêtre, ou une automatisation que le cœur a lancée
- * lui-même (`function_results::publish` en Rust). Une lecture est publiée aux abonnés ; une écriture rend caduques
- * les lectures qu’elle touche.
- */
-export function receiveSharedResult(payload: unknown) {
-  const result = payload as {
-    origin?: string;
-    function?: string;
-    input?: unknown;
-    accounts?: Record<string, string>;
-    examples?: boolean;
-    output?: unknown;
-    at?: number;
-  } | null;
-  if (!result?.function || result.origin === ORIGIN) return;
-  const declared = useShell.getState().snapshot?.functions.find((fn) => fn.reference === result.function);
-  if (!declared) return;
-  const call: QueryCall = {
-    reference: result.function,
-    input: result.input ?? {},
-    accounts: result.accounts ?? {},
-    examples: result.examples === true,
-  };
-  if (declared.effect === "read") {
-    if ("output" in result) sharedQueries.publish(call, result.output ?? null, result.at);
-  } else invalidateAfterWrite(call);
-}
+/** Lectures identiques en cours (fonction, entrée, comptes, mode exemple) : une seule exécution. */
+const inflightReads = new Map<string, Promise<unknown>>();
 
 /** Appels de fonctions en cours dans cette coquille, par module. */
 const runningByModule = new Map<string, number>();
@@ -274,37 +251,22 @@ function track<T>(module: string, run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Une fonction a écrit chez un service (le cœur l’a vu passer, `clients:changed`) : les lectures du module et des
- * modules qui en dépendent se relisent. Cela couvre les scripts lancés par le cœur lui-même (automatisation,
- * webhook) : le cœur nomme la fonction et ne prévient jamais pour une lecture. Sans nom de fonction, l’écriture vient
- * d’une fonction TypeScript, donc d’une coquille, qui invalide elle-même à la fin de l’écriture et prévient les
- * autres fenêtres (`functions:result`) : rien à faire ici, et surtout pas pour le `POST` d’une lecture (une
- * recherche), qui relancerait les lectures sans fin. Ignoré aussi tant qu’une fonction du module tourne ici.
+ * Une fonction a écrit chez un service (le cœur l’a vu passer, `clients:changed`) : les états affichés du module se
+ * relisent. Cela couvre les scripts lancés par le cœur (automatisation, webhook) : le cœur nomme la fonction et ne
+ * prévient jamais pour une lecture. Sans nom de fonction, l’écriture vient d’une fonction TypeScript, que la
+ * coquille qui l’a lancée traite elle-même à la fin de l’appel (et le `POST` d’une recherche ne relance rien).
  */
 export function receiveClientChange(payload: unknown) {
   const change = payload as { module?: string; function?: string } | null;
   if (!change?.module || !change.function || runningByModule.has(change.module)) return;
-  sharedQueries.invalidate({ modules: dependentModules(change.module), examples: false });
+  stateHub.refreshModules([change.module]);
 }
 
 /**
- * Une fonction vient de lire une ressource sur le réseau (le cœur l’annonce, `clients:read`) : les lectures
- * affichées qui dépendent de cette ressource se relancent, et le cœur leur sert la réponse gardée, sans requête.
- * Pour un script, le cœur nomme la fonction : ses lectures en cours (ou finies à l’instant) sont rattachées à la
- * ressource et exclues de la relance. Une fonction TypeScript est rattachée par le pont, et sa lecture est en cours.
- */
-export function receiveClientRead(payload: unknown) {
-  const read = payload as { resource?: string; function?: string } | null;
-  if (!read?.resource) return;
-  const readers = read.function ? sharedQueries.readersOf(read.function, 3_000) : [];
-  for (const key of readers) sharedQueries.depend(key, read.resource);
-  sharedQueries.resourceRead(read.resource, readers);
-}
-
-/**
- * Appelle `module/fonction` avec `input`. Une lecture (`effect: "read"`) passe par le magasin partagé : un appel
- * identique déjà en cours est rejoint, et la réponse est publiée à toutes les pages qui la montrent. Une écriture
- * rend ensuite caduques les lectures de son module.
+ * Appelle `module/fonction` avec `input`. Une lecture identique déjà en cours est rejointe. La sortie d’une fonction
+ * TypeScript qui déclare un état ou une entité l’alimente (`states.feed`) ; le cœur alimente lui-même pour un script
+ * et pour une fonction qu’il a demandée (`fed`). Une écriture fait ensuite relire les états affichés de son module,
+ * sauf si elle rend elle-même l’objet modifié (`entity`).
  */
 export async function callFunction(
   reference: string,
@@ -313,21 +275,38 @@ export async function callFunction(
   examples = false,
   /** Comptes de la page qui appelle, par besoin du module de la fonction. */
   accounts: Record<string, string> = {},
+  options: { fed?: boolean } = {},
 ): Promise<unknown> {
-  const [module] = reference.split("/");
+  const [module = ""] = reference.split("/");
   const { snapshot } = useShell.getState();
   const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
-  const sample = examples || (module ? inExampleMode(snapshot, module) : false);
-  const call: QueryCall = { reference, input, accounts, examples: sample, caller };
-  if (declared?.effect === "read") return sharedQueries.run(call);
+  const sample = examples || inExampleMode(snapshot, module);
+  const typescript = (declared?.runtime ?? "ts") === "ts";
+  const run = async () => {
+    const output = await track(module, () => executeFunction(reference, input, caller, examples, accounts));
+    if (declared && typescript && !options.fed && (declared.state || declared.entity))
+      await invoke("states.feed", {
+        function: reference,
+        input: input ?? {},
+        accounts,
+        examples: sample,
+        output,
+      }).catch(() => undefined);
+    return output;
+  };
+  if (declared?.effect === "read") {
+    const key = stableJson([reference, input ?? {}, accounts, sample]);
+    const running = inflightReads.get(key);
+    if (running) return running;
+    const started = run().finally(() => inflightReads.delete(key));
+    inflightReads.set(key, started);
+    return started;
+  }
   try {
-    return await track(module ?? "", () => executeFunction(reference, input, caller, examples, accounts));
+    return await run();
   } finally {
-    // Réussie ou non, l’écriture a pu changer le service : ses lectures se relisent.
-    if (declared && !declared.missing) {
-      invalidateAfterWrite(call);
-      shareResult(call, false, undefined);
-    }
+    // Réussie ou non, l’écriture a pu changer le service : les états affichés du module se relisent.
+    if (declared && !declared.missing && !declared.entity) stateHub.refreshModules([module]);
   }
 }
 
@@ -342,8 +321,6 @@ async function executeFunction(
   caller: string,
   examples: boolean,
   accounts: Record<string, string>,
-  /** Relance d’une lecture : le cœur sert ses réponses gardées (scripts ; pour TypeScript, le pont). */
-  reuse = false,
 ): Promise<unknown> {
   const [module, name] = reference.split("/");
   const { snapshot } = useShell.getState();
@@ -361,7 +338,6 @@ async function executeFunction(
       input,
       caller,
       ...(sample ? { examples: true } : {}),
-      ...(reuse ? { reuse: true } : {}),
     });
   if (active >= MAX_ACTIVE_CALLS)
     throw new AlfredError({
@@ -404,42 +380,9 @@ async function executeFunction(
   }
 }
 
-// Le code d’un module a changé : ses lectures gardées sont caduques (les abonnées se relisent).
-useShell.subscribe((state, previous) => {
-  if (state.revision !== previous.revision) sharedQueries.invalidate();
-});
-
-frameServices.watchFunction = (identity, reference, input, options, listener) => {
-  const [module = ""] = reference.split("/");
-  const { snapshot } = useShell.getState();
-  const declared = snapshot?.functions.find((candidate) => candidate.reference === reference);
-  if (!declared) throw new AlfredError({ message: `La fonction « ${reference} » n’existe pas.` });
-  if (declared.effect !== "read")
-    throw new AlfredError({
-      message: `useQuery suit une lecture : « ${reference} » n’est pas déclarée \`effect: "read"\`. Pour une écriture, functions.call.`,
-    });
-  const call: QueryCall = {
-    reference,
-    input,
-    accounts: accountsFor(module, identity.module, identity.accounts),
-    examples: identity.examples === true || inExampleMode(snapshot, module),
-    caller: identity.reference,
-  };
-  return {
-    unsubscribe: sharedQueries.subscribe(call, listener, options),
-    refresh: () => sharedQueries.refresh(call),
-  };
-};
-
-// Le pont voit chaque requête d’un cadre de fonctions : il rattache la ressource lue aux lectures en cours de ce cadre,
-// et demande au cœur sa réponse gardée quand l’une d’elles est une relance.
-frameServices.recordRead = (identity, resource) => {
-  const running = readsByHost.get(hostKey(identity.module, identity.examples === true, identity.accounts ?? {}));
-  for (const key of running?.keys() ?? []) sharedQueries.depend(key, resource);
-};
-frameServices.replaying = (identity) => {
-  const running = readsByHost.get(hostKey(identity.module, identity.examples === true, identity.accounts ?? {}));
-  return [...(running?.values() ?? [])].some(Boolean);
+frameServices.watchState = (identity, request, listener) => {
+  const id = stateHub.watch(identity, request, listener);
+  return { unsubscribe: () => stateHub.unwatch(id), refresh: () => stateHub.refresh(id) };
 };
 
 frameServices.callFunction = (identity, reference, input) =>

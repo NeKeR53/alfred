@@ -41,6 +41,7 @@ __all__ = [
     "files",
     "secrets",
     "events",
+    "states",
     "channels",
     "functions",
     "jobs",
@@ -388,6 +389,22 @@ class _Events:
 
 
 events = _Events()
+
+
+class _States:
+    """États partagés d’Alfred (``states`` et ``entities`` de ``module.json``) : la seule source de vérité des données
+    d’un service. ``name`` vaut ``"etat"`` dans le module, ``"module/etat"`` pour une dépendance."""
+
+    def get(self, name: str, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
+        """Valeur courante : ``{value, empty, updatedAt, deps, instance}``. Une liste d’entités rend ses objets."""
+        return call("states.get", name=name, key=key, instance=instance)
+
+    def publish(self, name: str, value: Any, key: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
+        """Publie un état ou une entité du module : chaque page abonnée se met à jour. Rend ``{changed}``."""
+        return call("states.publish", name=name, value=value, key=key, instance=instance)
+
+
+states = _States()
 
 
 class _Functions:

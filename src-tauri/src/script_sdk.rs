@@ -42,6 +42,8 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     ("history.list", "frame.history.list", &["table", "key", "limit"]),
     ("history.revert", "frame.history.revert", &["id"]),
     ("events.publish", "frame.events.publish", &["event", "payload", "occurrence"]),
+    ("states.get", "frame.states.get", &["name", "key", "instance"]),
+    ("states.publish", "frame.states.publish", &["name", "key", "instance", "value"]),
     ("jobs.start", "frame.jobs.start", &["function", "input", "title"]),
     ("jobs.get", "frame.jobs.get", &["id"]),
     ("jobs.list", "frame.jobs.list", &["status", "limit"]),

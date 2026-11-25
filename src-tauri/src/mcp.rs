@@ -356,6 +356,9 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "kernel": { "type": "boolean", "description": "Python seulement : la fonction tourne dans le noyau Python du module (`def main(input):` dans son fichier, état gardé entre deux appels) au lieu d’un processus neuf par appel. Facultatif (SDK.md, § 19)." },
                 "uses": { "type": "object", "properties": { "clients": { "type": "array", "items": { "type": "string" } } } },
                 "effect": { "enum": ["read", "write"], "description": "`read` : la fonction ne fait que lire (ses tests se lancent d’office, dans `check` et « Tout vérifier ») ; `write` : elle crée, modifie, envoie ou supprime (ses tests attendent l’accord de l’utilisateur). Toujours le préciser ; omis, gardé à la redéclaration." },
+                "state": { "type": "string", "description": "Lecture : identifiant de l’état du module (`states` du module.json) que sa sortie alimente, une liste ou une valeur. Toute lecture d’un service alimente un état ou une entité. Omis, gardé à la redéclaration." },
+                "entity": { "type": "string", "description": "Type d’entité du module (`entities`) que la sortie met à jour : un objet, ou une liste d’objets (lecture d’un seul ticket, écriture qui rend le ticket modifié). Omis, gardé." },
+                "param": { "type": "string", "description": "Champ de l’entrée qui porte la sous-clé de l’état (`job` pour l’état d’un CI) ou l’identifiant de l’entité lue seule. Omis, gardé." },
                 "tests": {
                     "type": "array",
                     "description": "Cas de test, écrits avec la fonction (au moins un) : une entrée d’exemple réaliste et ce que la sortie doit montrer. Omis, les tests déjà déclarés sont gardés.",
@@ -560,29 +563,13 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
         ),
         tool(
             "create_automation",
-            "Crée (ou modifie, avec `id`) une automatisation de l’utilisateur. Déclencheur (`trigger`) : planning cron (`{ \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }`, heure locale), appel HTTP local avec secret (`{ \"kind\": \"webhook\" }` : un service ou un autre processus du poste) ou script de l’espace (`{ \"kind\": \"script\" }`, SDK `automations.trigger(id, data)`). Action (`action`) : `steps` (fonctions dans l’ordre ; dans `input`, un texte qui vaut `$prev`, `$event` ou `$steps.N`, suivi d’un chemin `.cle.0`, est remplacé par la valeur lue ; `when` et `stopIf` : une seule comparaison, « $prev.total > 0 », opérateurs == != > >= < <= contient existe vide non-vide ; `onError: \"continue\"` pour poursuivre après un échec), `script` (une fonction de module qui enchaîne les autres par le SDK, avec sa logique ; son code fait partie de l’accord) ou `agent` (une conversation avec toi, sans surveillance : consigne fixe, données du déclencheur, appel des fonctions seulement, `maxMinutes` de 1 à 120, 15 par défaut). Forme courte : `function` (+ `input`, `instance`) pour une seule fonction. Chaque fonction reçoit aussi `event`. Elle naît « à valider » et en pause, et y revient à chaque modification (et à chaque modification du fichier d’un script) : seul l’utilisateur la valide et l’active, dans Réglages → Automatisations. Tu ne vois jamais son secret. Rien ne tourne quand Alfred est fermé.",
+            "Crée (ou modifie, avec `id`) une automatisation de l’utilisateur : une fonction de n’importe quel module, lancée par un planning cron (`{ \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }`, heure locale), par un appel HTTP local avec secret (`{ \"kind\": \"webhook\" }` : un service ou un autre processus du poste) ou par un script de l’espace (`{ \"kind\": \"script\" }`, SDK `automations.trigger(id, data)`). La fonction reçoit `input`, plus `instance` (compte d’un client) et `event` (ce qu’apporte le déclencheur). Elle naît « à valider » et en pause, et y revient à chaque modification : seul l’utilisateur la valide et l’active, dans Réglages → Automatisations. Tu ne vois jamais son secret. Rien ne tourne quand Alfred est fermé. Préférer ceci à `declare_schedule` quand l’utilisateur demande d’exécuter une action automatiquement.",
             json!({
                 "id": { "type": "string", "description": "Pour modifier une automatisation existante. Omis : tiré du nom." },
                 "name": { "type": "string", "description": "Ce que fait l’automatisation, en quelques mots." },
-                "action": {
-                    "type": "object",
-                    "description": "{ kind: steps, steps: [{ function, input?, instance?, when?, stopIf?, onError? }] } | { kind: script, function, input? } | { kind: agent, instruction, maxMinutes? }",
-                    "properties": {
-                        "kind": { "enum": ["steps", "script", "agent"] },
-                        "steps": { "type": "array", "maxItems": 20, "items": { "type": "object", "properties": {
-                            "function": { "type": "string" }, "input": { "type": "object" }, "instance": { "type": "string" },
-                            "when": { "type": "string" }, "stopIf": { "type": "string" }, "onError": { "enum": ["stop", "continue"] },
-                        }, "required": ["function"] } },
-                        "function": { "type": "string", "description": "Script : « module/fonction »." },
-                        "input": { "type": "object" },
-                        "instruction": { "type": "string", "description": "Agent : la consigne." },
-                        "maxMinutes": { "type": "integer", "minimum": 1, "maximum": 120 },
-                    },
-                    "required": ["kind"],
-                },
-                "function": { "type": "string", "description": "Forme courte : « module/fonction », une seule étape." },
-                "input": { "type": "object", "description": "Forme courte : entrée fixe ({} par défaut). La clé `event` est réservée." },
-                "instance": { "type": ["string", "null"], "description": "Forme courte : compte du client que vise la fonction (`input.instance`)." },
+                "function": { "type": "string", "description": "« module/fonction »." },
+                "input": { "type": "object", "description": "Entrée fixe de la fonction ({} par défaut). La clé `event` est réservée." },
+                "instance": { "type": ["string", "null"], "description": "Compte du client que vise la fonction (`input.instance`), si elle en a plusieurs." },
                 "trigger": {
                     "type": "object",
                     "properties": { "kind": { "enum": ["cron", "webhook", "script"] }, "cron": { "type": "string", "description": "Cinq champs : minute heure jour mois jour-de-semaine." } },
@@ -1387,7 +1374,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     if !design.is_empty() {
                         pages.push(json!({ "page": page.reference, "design": design }));
                     }
-                    // Lecture partagée obligatoire : une lecture d’un connecteur passe par `useQuery`.
+                    // État partagé obligatoire : une page s’abonne à un état, elle n’appelle pas une lecture.
                     let source = std::fs::read_to_string(&file).unwrap_or_default();
                     let reads = crate::function_results::page_read_problems(&source, &page.module, &snapshot.functions);
                     if !reads.is_empty() {
@@ -1438,6 +1425,10 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let tests = crate::function_tests::check(state, &snapshot, module.as_deref()).await?;
             let (webhooks, schedules) = trigger_problems(&snapshot, &keep);
             let events = crate::module_events::problems(&space, module.as_deref());
+            // États et entités : chaque état est alimenté par une lecture, ses entités sont déclarées.
+            for owner in space.module_ids().into_iter().filter(|owner| keep(owner)) {
+                functions.extend(crate::function_results::state_problems(&space, &owner));
+            }
             // Les clients appartiennent à l’espace, pas à un module : ils ne sont vérifiés qu’à la vérification
             // complète.
             let (clients, user_actions) = if module.is_none() {

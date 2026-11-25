@@ -39,8 +39,7 @@ it("confie un script à Alfred, sans cadre, avec son appelant", async () => {
   await expect(callFunction("outils/saluer", { nom: "Zoé" }, "outils/accueil")).resolves.toEqual({
     message: "Bonjour Zoé",
   });
-  // Seul autre appel : l’écriture annoncée aux autres fenêtres (magasin des lectures partagées).
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["functions.call", "functions.shareResult"]);
+  expect(vi.mocked(invoke)).toHaveBeenCalledTimes(1);
   expect(vi.mocked(invoke)).toHaveBeenCalledWith("functions.call", {
     function: "outils/saluer",
     input: { nom: "Zoé" },

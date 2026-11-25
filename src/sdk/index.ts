@@ -2206,131 +2206,171 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
   return { data: state.data, error: state.error, loading: state.loading, reload };
 }
 
-// --- Lectures partagées ----------------------------------------------------------------------------------------
+// --- États partagés --------------------------------------------------------------------------------------------
 
-export interface QueryOptions {
+export interface AlfredStateOptions<Value, Selected> {
+  /** Sous-clé de l’état (`useAlfredState("jenkins/ci", { key: job })`), ou identifiant d’une entité. */
+  key?: string | number | null;
+  /** Compte visé ; omis : celui de la page pour ce besoin, sinon celui par défaut. */
+  instance?: string | null;
   /**
-   * Âge (secondes) jusqu’auquel la dernière réponse gardée par Alfred s’affiche sans relire. Par défaut 30 ; plus
-   * vieille, elle s’affiche tout de suite et se relit en fond. 0 : relire à chaque affichage.
+   * Partie de la valeur que la page montre (`(boite) => boite.filter((m) => !m.lu).length`). La page ne se redessine
+   * que si cette partie change (comparaison structurelle).
    */
-  staleAfter?: number;
-  /** Relit toutes les `refreshEvery` secondes (5 au moins), une seule fois pour toutes les pages qui la montrent. */
-  refreshEvery?: number;
+  select?: (value: Value) => Selected;
 }
 
-export interface QueryResult<Data> {
-  /** Dernière réponse, gardée pendant une relecture ou après une erreur. */
-  data: Data | undefined;
-  /** La dernière lecture a échoué (la donnée précédente reste dans `data`). */
-  error: Error | undefined;
-  /** Aucune donnée encore : premier chargement. */
+export interface AlfredState<Selected> {
+  /** Valeur courante (la partie choisie par `select`) ; `undefined` tant que l’état est vide. */
+  data: Selected | undefined;
+  /** Aucune valeur encore : la première lecture est en cours. */
   loading: boolean;
-  /** Une lecture est en cours, premier chargement compris. */
+  /** Une lecture de l’état est en cours (`refresh`, ouverture). */
   refreshing: boolean;
-  /** Heure de la dernière réponse. */
+  /** La dernière lecture a échoué ; la valeur précédente reste dans `data`. */
+  error: Error | undefined;
   updatedAt: Date | undefined;
-  /** Relit maintenant, même si la donnée est fraîche. */
+  /** Relit l’état chez le service (la fonction qui l’alimente) : toutes les pages abonnées suivent. */
   refresh: () => Promise<void>;
 }
 
-interface SharedQueryState {
+interface SharedStatePush {
   data?: unknown;
-  error?: { message: string; detail?: unknown };
+  error?: { message: string };
   loading: boolean;
-  fetching: boolean;
+  refreshing: boolean;
   updatedAt?: number;
 }
 
-function stableInput(value: unknown): string {
-  if (value === undefined || value === null || typeof value !== "object") return JSON.stringify(value ?? null);
-  if (Array.isArray(value)) return `[${value.map(stableInput).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .filter(([, field]) => field !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([name, field]) => `${JSON.stringify(name)}:${stableInput(field)}`)
-    .join(",")}}`;
+/** Égalité structurelle : mêmes valeurs, mêmes champs, quel que soit leur ordre. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((item, index) => sameValue(item, b[index]));
+  const left = Object.keys(a as Record<string, unknown>).filter(
+    (key) => (a as Record<string, unknown>)[key] !== undefined,
+  );
+  const right = Object.keys(b as Record<string, unknown>).filter(
+    (key) => (b as Record<string, unknown>)[key] !== undefined,
+  );
+  return (
+    left.length === right.length &&
+    left.every((key) => sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+  );
 }
 
-let watchSequence = 0;
+let stateSequence = 0;
 
 /**
- * Lit une fonction de lecture (`effect: "read"`) d’un connecteur et suit sa réponse, partagée par toute
- * l’application : toutes les pages qui lisent la même fonction, avec la même entrée et les mêmes comptes, voient la
- * même donnée. Une seule requête part, même si dix pages la montrent ; la page affiche tout de suite la dernière
- * réponse connue ; chaque nouvelle réponse (lue par une autre page, une fonction, un agent) la met à jour d’elle-même ;
- * une écriture du connecteur (`effect: "write"`) la fait relire. `reference` à `null` : rien n’est lu.
+ * S’abonne à un état partagé d’Alfred : la seule source de vérité d’une donnée d’un service. La page reçoit la valeur
+ * courante tout de suite, puis chaque changement, d’où qu’il vienne (une autre page, une fonction, une automatisation,
+ * une autre fenêtre) ; aucune requête ne part pour cela. Une liste d’entités (`jira/mes-tickets`) arrive avec ses
+ * objets, chacun rangé une seule fois : relire un ticket met à jour toutes les listes qui le montrent. Un état vide
+ * est lu une fois à l’ouverture ; ensuite il change seulement quand quelqu’un le lit (`refresh`, une action, une
+ * automatisation). `name` à `null` : rien n’est suivi.
  *
  * ```tsx
- * const tickets = useQuery<{ tickets: Ticket[] }>("jira/lister-tickets", { jql: "assignee = currentUser()" });
+ * const nonLus = useAlfredState<Mail[], number>("mail/boite-de-reception", {
+ *   select: (boite) => boite.filter((mail) => !mail.lu).length,
+ * });
  * ```
  */
-export function useQuery<Data = unknown>(
-  reference: string | null | undefined,
-  input: unknown = {},
-  options: QueryOptions = {},
-): QueryResult<Data> {
-  const inputKey = stableInput(input);
-  const [state, setState] = useState<SharedQueryState & { key?: string }>({ loading: true, fetching: true });
+export function useAlfredState<Value = unknown, Selected = Value>(
+  name: string | null | undefined,
+  options: AlfredStateOptions<Value, Selected> = {},
+): AlfredState<Selected> {
+  const key = options.key === null || options.key === undefined ? undefined : String(options.key);
+  const instance = options.instance ?? undefined;
+  const select = useRef(options.select);
+  select.current = options.select;
+  const id = `${name ?? ""}|${key ?? ""}|${instance ?? ""}`;
+  const [view, setView] = useState<{ id: string; data?: Selected; push: SharedStatePush }>({
+    id,
+    push: { loading: Boolean(name), refreshing: false },
+  });
+  const shown = useRef(view);
   const watch = useRef<string | undefined>(undefined);
-  const latestInput = useRef(input);
-  latestInput.current = input;
-  const { staleAfter, refreshEvery } = options;
-  const key = `${reference ?? ""}|${inputKey}`;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: l’entrée est suivie par sa forme stable (`inputKey`).
   useEffect(() => {
-    if (!reference) {
-      setState({ loading: false, fetching: false, key });
+    if (!name) {
+      shown.current = { id, push: { loading: false, refreshing: false } };
+      setView(shown.current);
       return;
     }
-    watchSequence += 1;
-    const id = `w${watchSequence}`;
-    watch.current = id;
-    setState({ loading: true, fetching: true, key });
-    const stop = onShellEvent("query", (payload) => {
-      const message = payload as { watch?: string; state?: SharedQueryState } | null;
-      if (message?.watch === id && message.state) setState({ ...message.state, key });
+    stateSequence += 1;
+    const current = `e${stateSequence}`;
+    watch.current = current;
+    const stop = onShellEvent("state", (payload) => {
+      const message = payload as { watch?: string; state?: SharedStatePush } | null;
+      if (message?.watch !== current || !message.state) return;
+      const push = message.state;
+      const choose = select.current;
+      const data = (push.data === undefined || !choose ? push.data : choose(push.data as Value)) as
+        | Selected
+        | undefined;
+      // La page ne se redessine que si ce qu’elle montre change : sa partie de la valeur, son chargement, son erreur.
+      // La comparaison se fait avant `setView` : React n’est pas même appelé quand rien ne change.
+      const previous = shown.current;
+      const same =
+        previous.id === id &&
+        sameValue(previous.data, data) &&
+        previous.push.loading === push.loading &&
+        previous.push.error?.message === push.error?.message &&
+        (choose !== undefined || previous.push.refreshing === push.refreshing);
+      if (same) return;
+      shown.current = { id, data, push };
+      setView(shown.current);
     });
-    request("functions.watch", {
-      watch: id,
-      function: reference,
-      input: latestInput.current,
-      ...(staleAfter !== undefined ? { staleAfter } : {}),
-      ...(refreshEvery !== undefined ? { refreshEvery } : {}),
-    }).catch((error: unknown) =>
-      setState({
-        loading: false,
-        fetching: false,
-        error: { message: error instanceof Error ? error.message : String(error) },
-        key,
-      }),
+    request("states.watch", { watch: current, name, ...(key ? { key } : {}), ...(instance ? { instance } : {}) }).catch(
+      (error: unknown) => {
+        shown.current = {
+          id,
+          push: {
+            loading: false,
+            refreshing: false,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          },
+        };
+        setView(shown.current);
+      },
     );
     return () => {
       stop();
-      if (watch.current === id) watch.current = undefined;
-      void request("functions.unwatch", { watch: id }).catch(() => undefined);
+      if (watch.current === current) watch.current = undefined;
+      void request("states.unwatch", { watch: current }).catch(() => undefined);
     };
-  }, [reference, inputKey, staleAfter, refreshEvery]);
+  }, [id, name, key, instance]);
   const refresh = useCallback(async () => {
-    if (watch.current) await request("functions.refresh", { watch: watch.current }).catch(() => undefined);
+    if (watch.current) await request("states.refresh", { watch: watch.current }).catch(() => undefined);
   }, []);
-  // Données du module changées ailleurs, ou écriture annoncée par l’autre cadre de la page : la lecture se relit.
-  useEffect(() => onShellEvent("dataChanged", () => void refresh()), [refresh]);
-  useEffect(() => onShellEvent("peer", (message) => isChangeMessage(message) && void refresh()), [refresh]);
-  // Tant que l’état reçu est celui d’une autre clé (entrée changée), la page montre un chargement.
-  const current = state.key === key ? state : { loading: Boolean(reference), fetching: Boolean(reference) };
-  const error = useMemo(
-    () => (current.error ? new AlfredSdkError(current.error.message, current.error.detail) : undefined),
-    [current.error],
-  );
+  const current = view.id === id ? view : { id, data: undefined, push: { loading: Boolean(name), refreshing: false } };
+  const errorMessage = current.push.error?.message;
+  const error = useMemo(() => (errorMessage ? new AlfredSdkError(errorMessage) : undefined), [errorMessage]);
   return {
-    data: current.data as Data | undefined,
+    data: current.data,
+    loading: current.push.loading,
+    refreshing: current.push.refreshing,
     error,
-    loading: current.loading,
-    refreshing: current.fetching,
-    updatedAt: current.updatedAt !== undefined ? new Date(current.updatedAt) : undefined,
+    updatedAt: current.push.updatedAt !== undefined ? new Date(current.push.updatedAt) : undefined,
     refresh,
   };
 }
+
+/** États partagés hors d’un composant : lire une fois, ou publier (module déclarant seulement). */
+export const states = {
+  /** Valeur courante : `{ value, empty, updatedAt }` ; une liste d’entités rend ses objets. */
+  get<Value = unknown>(
+    name: string,
+    options: { key?: string | number; instance?: string } = {},
+  ): Promise<{ value: Value | null; empty: boolean; updatedAt?: number | null }> {
+    return request("states.get", { name, ...options });
+  },
+  /** Publie un état ou une entité du module : chaque page abonnée se met à jour. */
+  publish(name: string, value: unknown, options: { key?: string | number; instance?: string } = {}) {
+    return request<{ changed: number }>("states.publish", { name, value, ...options });
+  },
+};
 
 // --- Entre la page et son panneau ------------------------------------------------------------------------------
 

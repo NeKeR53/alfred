@@ -88,6 +88,36 @@ pub fn publish(space: &Space, module: &str, id: &str, payload: &Value) -> AppRes
     Ok(json!({ "event": event, "subscribers": targets.len() }))
 }
 
+/// Changement d’un état partagé (`module/etat.<id>`) ou d’une entité (`module/entite.<id>`), publié par le magasin
+/// des états (`states.rs`) : livré comme un événement déclaré aux fonctions abonnées (`events.subscribes`).
+pub fn publish_internal(space: &Space, event: &str, payload: &Value) -> AppResult<()> {
+    let targets = subscribers(space, event);
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let db = open(space)?;
+    let now = crate::app_db::now();
+    let text = payload.to_string();
+    for subscriber in &targets {
+        db.execute(
+            "INSERT INTO _alfred_event_deliveries (event, payload, subscriber, status, published_at, updated_at)
+             VALUES (?1, ?2, ?3, 'pending', ?4, ?4)",
+            params![event, text, subscriber, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Événement d’un état ou d’une entité déclaré par le module : `etat.<id>` ou `entite.<id>`.
+fn state_event(space: &Space, module: &str, id: &str) -> bool {
+    let Ok(manifest) = space.module(module) else { return false };
+    match (id.strip_prefix("etat."), id.strip_prefix("entite.")) {
+        (Some(state), _) => manifest.states.iter().any(|declared| declared.id == state),
+        (_, Some(entity)) => manifest.entities.iter().any(|declared| declared.id == entity),
+        _ => false,
+    }
+}
+
 /// Occurrences publiées, pour la règle « une fois par occurrence observée » : la première publication d’un
 /// identifiant d’occurrence rend vrai, les suivantes faux. Les 10 000 dernières sont gardées.
 pub fn first_occurrence(space: &Space, event: &str, occurrence: &str) -> AppResult<bool> {
@@ -141,7 +171,8 @@ pub fn problems(space: &Space, only: Option<&str>) -> Vec<Value> {
     let modules = space.module_ids();
     let declared = |event: &str| -> bool {
         let Some((module, id)) = event.split_once('/') else { return false };
-        space.module(module).is_ok_and(|manifest| manifest.events.publishes.iter().any(|published| published.id == id))
+        state_event(space, module, id)
+            || space.module(module).is_ok_and(|manifest| manifest.events.publishes.iter().any(|published| published.id == id))
     };
     for module in modules.iter().filter(|module| only.is_none_or(|only| only == module.as_str())) {
         let Ok(manifest) = space.module(module) else { continue };

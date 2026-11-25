@@ -273,25 +273,19 @@ function pick(params: Params, names: readonly string[]): Params {
 }
 
 /** Appels que d’autres parties de la coquille fournissent (exécution des fonctions, agents). */
-/** Abonnement d’une page à une lecture partagée (`useQuery`) : voir `sharedQueries.ts`. */
-export interface FunctionWatch {
+/** Abonnement d’une page à un état partagé (`useAlfredState`) : voir `sharedStates.ts`. */
+export interface StateWatch {
   unsubscribe: () => void;
   refresh: () => Promise<unknown>;
 }
 
 export const frameServices: {
   callFunction?: (identity: FrameIdentity, reference: string, input: unknown) => Promise<unknown>;
-  watchFunction?: (
+  watchState?: (
     identity: FrameIdentity,
-    reference: string,
-    input: unknown,
-    options: { staleAfter?: number; refreshEvery?: number },
+    request: { name: string; key?: string; instance?: string },
     listener: (state: unknown) => void,
-  ) => FunctionWatch;
-  /** Un cadre de fonctions a lu la ressource `resource` du cœur (lectures partagées). */
-  recordRead?: (identity: FrameIdentity, resource: string) => void;
-  /** Une lecture en cours dans ce cadre est une relance : le cœur sert ses réponses gardées. */
-  replaying?: (identity: FrameIdentity) => boolean;
+  ) => StateWatch;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   sendToAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;
@@ -314,8 +308,8 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
   };
 }
 
-/** Lectures suivies par chaque cadre (`useQuery`), par identifiant choisi par le cadre. */
-const watches = new WeakMap<FrameIdentity, Map<string, FunctionWatch>>();
+/** États suivis par chaque cadre (`useAlfredState`), par identifiant choisi par le cadre. */
+const watches = new WeakMap<FrameIdentity, Map<string, StateWatch>>();
 const MAX_WATCHES = 200;
 
 /** Événement poussé de la coquille vers le cadre qui a fait la demande. */
@@ -323,7 +317,7 @@ export type FramePush = (name: string, payload: unknown) => void;
 
 /** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
 export function releaseFrame(identity: FrameIdentity) {
-  // Ses abonnements aux lectures partagées se ferment avec lui.
+  // Ses abonnements aux états partagés se ferment avec lui.
   for (const watch of watches.get(identity)?.values() ?? []) watch.unsubscribe();
   watches.delete(identity);
   if (identity.kind === "page" && !identity.capture) {
@@ -394,7 +388,7 @@ export async function handleFrameRequest(
   identity: FrameIdentity,
   method: string,
   params: Params,
-  /** Pousse un événement vers ce cadre (lectures partagées) ; absent, ces demandes sont refusées. */
+  /** Pousse un événement vers ce cadre (états partagés) ; absent, ces demandes sont refusées. */
   push?: FramePush,
 ): Promise<unknown> {
   // Le backend reçoit la page déclarée (les accords valent pour toutes ses instances) et, à part, son instance.
@@ -568,46 +562,46 @@ export async function handleFrameRequest(
       await invoke("frame.functions.authorize", { subject, function: reference });
       return frameServices.callFunction(identity, reference, params.input ?? {});
     }
-    // Lecture partagée (`useQuery`) : la page reçoit l’état tout de suite, puis chaque nouvelle réponse.
-    case "functions.watch": {
-      if (!frameServices.watchFunction || !push)
-        throw new AlfredError({ message: "Les lectures partagées ne sont pas prêtes." });
+    // État partagé (`useAlfredState`) : la page reçoit la valeur courante tout de suite, puis chaque changement.
+    case "states.watch": {
+      if (!frameServices.watchState || !push)
+        throw new AlfredError({ message: "Les états partagés ne sont pas prêts." });
       const watch = String(params.watch ?? "");
-      if (!watch) throw new AlfredError({ message: "Abonnement sans identifiant." });
-      const name = String(params.function ?? "");
-      const reference = name.includes("/") ? name : `${identity.module}/${name}`;
-      await invoke("frame.functions.authorize", { subject, function: reference });
-      const held = watches.get(identity) ?? new Map<string, FunctionWatch>();
+      const name = String(params.name ?? "");
+      if (!watch || !name) throw new AlfredError({ message: "Abonnement sans identifiant ou sans nom d’état." });
+      const held = watches.get(identity) ?? new Map<string, StateWatch>();
       if (!held.has(watch) && held.size >= MAX_WATCHES)
-        throw new AlfredError({ message: `Une page suit au plus ${MAX_WATCHES} lectures à la fois.` });
+        throw new AlfredError({ message: `Une page suit au plus ${MAX_WATCHES} états à la fois.` });
       held.get(watch)?.unsubscribe();
       watches.set(identity, held);
-      const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+      const text = (value: unknown) =>
+        typeof value === "string" || typeof value === "number" ? String(value) : undefined;
       held.set(
         watch,
-        frameServices.watchFunction(
-          identity,
-          reference,
-          params.input ?? {},
-          { staleAfter: number(params.staleAfter), refreshEvery: number(params.refreshEvery) },
-          (state) => push("query", { watch, state }),
+        frameServices.watchState(identity, { name, key: text(params.key), instance: text(params.instance) }, (state) =>
+          push("state", { watch, state }),
         ),
       );
       return null;
     }
-    case "functions.refresh": {
+    case "states.refresh": {
       const held = watches.get(identity)?.get(String(params.watch ?? ""));
       if (!held) return null;
       await held.refresh().catch(() => undefined);
       return null;
     }
-    case "functions.unwatch": {
+    case "states.unwatch": {
       const held = watches.get(identity);
       const watch = String(params.watch ?? "");
       held?.get(watch)?.unsubscribe();
       held?.delete(watch);
       return null;
     }
+    // Le cœur vérifie que l’état est celui du module ou d’une dépendance, et le compte du demandeur.
+    case "states.get":
+      return invoke("frame.states.get", { ...pick(params, ["name", "key", "instance"]), subject });
+    case "states.publish":
+      return invoke("frame.states.publish", { ...pick(params, ["name", "key", "instance", "value"]), subject });
     case "ai.oneShot":
       if (!frameServices.oneShot) throw new AlfredError({ message: "L’IA n’est pas prête." });
       return frameServices.oneShot(identity, params);
@@ -639,23 +633,11 @@ export async function handleFrameRequest(
     case "db.query":
     case "db.execute":
       return invoke(`frame.${method}`, { ...pick(params, ["sql", "params"]), subject });
-    case "clients.request": {
-      // `reuse` est fixé par la coquille seule : une relance d’une lecture prend la réponse gardée par le cœur.
-      const reuse = identity.kind === "function" && frameServices.replaying?.(identity) === true;
-      const response = await invoke<Record<string, unknown> | null>("frame.clients.request", {
+    case "clients.request":
+      return invoke("frame.clients.request", {
         ...pick(params, [...CLIENT_CALL, "responseType", "cache", "sealed"]),
         subject,
-        ...(reuse ? { reuse: true } : {}),
       });
-      // La ressource lue (compte + requête) rattache la lecture en cours ; la fonction ne la voit pas.
-      if (response && typeof response === "object" && "resource" in response) {
-        const { resource, ...rest } = response;
-        if (identity.kind === "function" && typeof resource === "string")
-          frameServices.recordRead?.(identity, resource);
-        return rest;
-      }
-      return response;
-    }
     case "clients.download":
       return invoke("frame.clients.download", { ...pick(params, [...CLIENT_CALL, "name"]), subject });
     case "clients.stream":
