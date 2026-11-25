@@ -44,6 +44,7 @@ __all__ = [
     "channels",
     "functions",
     "jobs",
+    "automations",
     "notify",
     "log",
     "module",
@@ -417,6 +418,21 @@ class _Jobs:
 
 
 jobs = _Jobs()
+
+
+class _Automations:
+    """Automatisations de l’utilisateur (Réglages → Automatisations)."""
+
+    def trigger(self, id: str, data: Any = None) -> Any:
+        """Lance l’automatisation ``id`` et rend la sortie de sa fonction.
+
+        Elle doit se lancer « par un script », être validée et active ; sa fonction reçoit ``data`` dans
+        ``input["event"]["data"]`` et le demandeur dans ``input["event"]["from"]``.
+        """
+        return call("automations.trigger", id=id, event=data)
+
+
+automations = _Automations()
 
 
 # --- Canaux de progression -----------------------------------------------------------------------------------------

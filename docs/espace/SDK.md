@@ -43,7 +43,7 @@ Déclarée avec `runtime` (`bash`, `pwsh` ou `python`), la fonction est un fichi
 - **Sortie** : stdout. S’il contient du JSON, c’est la valeur rendue ; sinon, le texte sans ses blancs finaux ; vide, `null`. Au plus 1 Mo.
 - **Erreur** : un code de sortie non nul. Le message est la fin de stderr (ou le code de sortie) ; stderr entier va au journal.
 - **Cadre** : dossier courant = dossier du module ; environnement réduit (PATH, dossier de l’utilisateur, langue) plus `ALFRED_MODULE`, `ALFRED_FUNCTION`, `ALFRED_CALLER`, `ALFRED_SPACE`, et le pont du SDK (`ALFRED_SDK_URL`, `ALFRED_SDK_TOKEN`, ci-dessous). Jamais de secret : un service passe par `clients.request`. 120 secondes au plus, après quoi le script et tout ce qu’il a lancé sont arrêtés ; 40 appels simultanés au plus.
-- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `channels.open` (`name`), `channels.publish` (`channel`, `text` ou `data`), `channels.close`, `notify` (`title`, `description`, `tone`), `log` (`level`, `message`, `data`), `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
+- **Pont du SDK** : `POST $ALFRED_SDK_URL/<méthode>` avec l’en-tête `Authorization: Bearer $ALFRED_SDK_TOKEN` et les paramètres en JSON (ceux de la méthode TypeScript, nommés : `{"sql": …, "params": […]}`). Réponse `{"ok": valeur}` (statut 200) ou `{"error": {"message": …}}` (400). Méthodes : `db.query`, `db.execute`, `files.save`, `files.list`, `files.get`, `files.read`, `files.readText`, `files.remove`, `documents.pdf`, `documents.csv`, `documents.xlsx`, `documents.extractText`, `search.query`, `semantic.search`, `semantic.status`, `ai.decide`, `history.list`, `history.revert`, `events.publish`, `jobs.start`, `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.resume`, `automations.trigger` (`id`, `event`), `clients.request` (`client`, `path`…), `clients.instances`, `clients.clearCache`, `channels.open` (`name`), `channels.publish` (`channel`, `text` ou `data`), `channels.close`, `notify` (`title`, `description`, `tone`), `log` (`level`, `message`, `data`), `functions.call` (`function`, `input`). Mêmes règles que pour une fonction TypeScript du module (ses tables, ses fichiers, accords). Le jeton ne vaut que pendant cet appel du script.
 - **Interpréteur** : pour `python`, celui de l’environnement du module s’il déclare des paquets (ci-dessous) ; sinon, cherché dans le PATH du shell de connexion. `bash` (sous Windows, Git Bash, jamais le bash de WSL) ; `pwsh` (sous Windows, à défaut `powershell.exe`, lancé avec `-NoProfile -ExecutionPolicy Bypass`) ; `python3`, puis `python` (sous Windows, à défaut `py -3`). Absent, l’appel échoue et `check` le signale.
 
 ```bash
@@ -126,6 +126,7 @@ Le code Python d’un module importe `alfred` sans rien installer : Alfred met l
 | `alfred.channels.open(name=None)` | Canal de progression vers la page : `canal.publish({...})` ou `canal.publish("texte")`, `canal.close()` (ou `with`). Avec `name`, l’identifiant est connu d’avance : `"<module>:<name>"`. La page le lit avec `useChannel("<module>:<name>")`, même avant son ouverture ; chaque événement `data` porte le texte publié (du JSON pour un dictionnaire). `publish` rend `False` quand plus personne ne lit. |
 | `alfred.log(msg, **données)`, `alfred.log.info`, `.warning`, `.error` | Ligne au journal de l’espace (Réglages › Journal, type « Message ») et sur stderr. Le jeton du pont en est effacé ; n’y mets pas de secret. |
 | `alfred.functions.call(nom, input)`, `alfred.jobs.start/get/list/cancel` | Autres fonctions et tâches de fond du module. |
+| `alfred.automations.trigger(id, data=None)` | Lance une automatisation de l’utilisateur qui se déclenche « par un script » (validée et active) et rend la sortie de sa fonction. |
 | `alfred.call("méthode", **paramètres)` | Toute autre méthode du pont (liste ci-dessus). |
 | `alfred.module`, `alfred.examples` | Le module appelant ; vrai en mode données d’exemple. |
 
@@ -1194,6 +1195,19 @@ useEffect(() => {
   return () => clearInterval(minuterie);
 }, [suivi.reload]);
 ```
+
+### Lancer une automatisation : `automations`
+
+L’utilisateur crée ses automatisations dans Réglages → Automatisations (ou l’agent par `create_automation`, qu’il valide ensuite). Une automatisation qui se déclenche « par un script » se lance depuis une page, une fonction TypeScript ou un script :
+
+```ts
+automations.trigger<Sortie>(id: string, data?: unknown): Promise<Sortie>; // rend la sortie de sa fonction
+```
+
+- Elle doit être validée et active ; sinon l’appel échoue, avec la raison, notée au Journal.
+- Sa fonction reçoit son `input`, plus `event: { from: "module/fonction", data }`.
+- Un seul passage à la fois : relancer pendant qu’elle tourne échoue (« le passage précédent n’est pas fini »).
+- Bash ou PowerShell : `POST $ALFRED_SDK_URL/automations.trigger` avec `{"id": …, "event": …}` ; Python : `alfred.automations.trigger(id, data)`.
 
 ## 12. Recherche plein texte : `search`
 

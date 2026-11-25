@@ -162,6 +162,13 @@ class AlfredTest(unittest.TestCase):
             self.assertEqual(self.last()[1], {"channel": "notes:import", "text": "texte"})
         self.assertEqual(self.last()[0], "channels.close")
 
+    def test_automations_trigger(self):
+        FakeBridge.replies["automations.trigger"] = {"fait": True}
+        self.assertEqual(self.alfred.automations.trigger("rapport", {"fichier": "a.csv"}), {"fait": True})
+        self.assertEqual(self.last()[:2], ("automations.trigger", {"id": "rapport", "event": {"fichier": "a.csv"}}))
+        self.alfred.automations.trigger("rapport")
+        self.assertEqual(self.last()[1], {"id": "rapport"})
+
     def test_log_hides_the_token(self):
         self.alfred.log.warning(f"avec {TOKEN}", valeur=TOKEN)
         method, body, _ = self.last()

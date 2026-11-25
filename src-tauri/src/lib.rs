@@ -2,6 +2,7 @@ mod agent_setup;
 mod agent_workspace;
 mod agents;
 mod app_db;
+mod automations;
 mod backups;
 mod badges;
 mod channels;
@@ -240,6 +241,7 @@ pub fn run() {
             agents::watches::start(state.clone());
             module_semantic::start(state.clone());
             team_sync::start(state.clone());
+            automations::start(state.clone());
             schedules::start(state);
             Ok(())
         })
@@ -286,6 +288,7 @@ pub mod testing {
             .merge(crate::clients::routes())
             .merge(crate::mcp::routes())
             .merge(crate::webhooks::routes())
+            .merge(crate::automations::routes())
             .with_state(state.clone());
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;

@@ -12,6 +12,9 @@ use crate::space::Space;
 
 /// Port fixe du serveur local en développement, pour que le navigateur de test retrouve le pont HTTP.
 pub const DEV_PORT: u16 = 14731;
+/// Port de l’application publiée : fixe, pour que l’adresse d’une automatisation ou d’un webhook reste la même
+/// d’un lancement à l’autre. Pris par un autre programme, Alfred en prend un libre (l’adresse change alors).
+pub const RELEASE_PORT: u16 = 14732;
 
 pub struct ServerInfo {
     pub port: u16,

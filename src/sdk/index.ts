@@ -605,6 +605,19 @@ export const jobs = {
   },
 };
 
+// --- Automatisations ------------------------------------------------------------------------------------------
+
+/**
+ * Automatisations de l’utilisateur (Réglages → Automatisations) : une fonction lancée par un planning, un appel
+ * HTTP local ou un script. `trigger` lance celle qui se déclenche « par un script », validée et active, et rend la
+ * sortie de sa fonction ; celle-ci reçoit `data` dans `input.event.data` et le demandeur dans `input.event.from`.
+ */
+export const automations = {
+  trigger<Output = unknown>(id: string, data?: unknown): Promise<Output> {
+    return request("automations.trigger", data === undefined ? { id } : { id, event: data });
+  },
+};
+
 // --- Documents ------------------------------------------------------------------------------------------------
 
 type CellValue = string | number | boolean | null;

@@ -559,6 +559,30 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["schedule"],
         ),
         tool(
+            "create_automation",
+            "Crée (ou modifie, avec `id`) une automatisation de l’utilisateur : une fonction de n’importe quel module, lancée par un planning cron (`{ \"kind\": \"cron\", \"cron\": \"0 8 * * 1-5\" }`, heure locale), par un appel HTTP local avec secret (`{ \"kind\": \"webhook\" }` : un service ou un autre processus du poste) ou par un script de l’espace (`{ \"kind\": \"script\" }`, SDK `automations.trigger(id, data)`). La fonction reçoit `input`, plus `instance` (compte d’un client) et `event` (ce qu’apporte le déclencheur). Elle naît « à valider » et en pause, et y revient à chaque modification : seul l’utilisateur la valide et l’active, dans Réglages → Automatisations. Tu ne vois jamais son secret. Rien ne tourne quand Alfred est fermé. Préférer ceci à `declare_schedule` quand l’utilisateur demande d’exécuter une action automatiquement.",
+            json!({
+                "id": { "type": "string", "description": "Pour modifier une automatisation existante. Omis : tiré du nom." },
+                "name": { "type": "string", "description": "Ce que fait l’automatisation, en quelques mots." },
+                "function": { "type": "string", "description": "« module/fonction »." },
+                "input": { "type": "object", "description": "Entrée fixe de la fonction ({} par défaut). La clé `event` est réservée." },
+                "instance": { "type": ["string", "null"], "description": "Compte du client que vise la fonction (`input.instance`), si elle en a plusieurs." },
+                "trigger": {
+                    "type": "object",
+                    "properties": { "kind": { "enum": ["cron", "webhook", "script"] }, "cron": { "type": "string", "description": "Cinq champs : minute heure jour mois jour-de-semaine." } },
+                    "required": ["kind"],
+                },
+            }),
+            &[],
+        ),
+        tool("list_automations", "Automatisations de l’espace, avec leur état (`active`, `paused`, `toValidate`, `invalid`) et leur dernier passage.", json!({}), &[]),
+        tool(
+            "remove_automation",
+            "Supprime une automatisation que tu as créée. Celles de l’utilisateur ne se suppriment que par lui.",
+            json!({ "id": { "type": "string" } }),
+            &["id"],
+        ),
+        tool(
             "set_visibility",
             "Masque ou réaffiche dans le menu un module entier, une section ou une page, sans rien supprimer : ses pages restent ouvrables par `shell.navigate`, ses fonctions et ses clients servent toujours. L’utilisateur peut revenir dessus dans Réglages → Modules ou Réglages → Ordre du menu. À utiliser quand l’utilisateur le demande, ou pour masquer un module que tu as créé uniquement comme dépendance d’un autre.",
             json!({
@@ -706,7 +730,7 @@ fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "read_journal",
             "Dernières exécutions enregistrées : fonctions, webhooks, requêtes des clients, appels IA, avec leur durée et leur erreur éventuelle.",
             json!({
-                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "job", "event", "command", "agent"] },
+                "kind": { "enum": ["function", "webhook", "client", "ai", "schedule", "automation", "job", "event", "command", "agent"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
             }),
             &[],
@@ -1191,6 +1215,9 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
         }
         "vault_store" => crate::agent_setup::store_secret(state, args).await,
         "validate_client" => crate::agent_setup::validate_client(state, args).await,
+        "create_automation" => crate::automations::agent_save(state, args),
+        "list_automations" => crate::automations::agent_list(state),
+        "remove_automation" => crate::automations::agent_remove(state, args),
         "grant_access" => crate::agent_setup::grant_access(state, args),
         "connect_client" => crate::agent_setup::connect_client(state, args).await,
         "declare_webhook" => {

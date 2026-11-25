@@ -657,6 +657,8 @@ export async function handleFrameRequest(identity: FrameIdentity, method: string
     case "jobs.cancel":
     case "jobs.resume":
       return invoke(`frame.${method}`, { ...pick(params, ["id"]), subject });
+    case "automations.trigger":
+      return invoke("frame.automations.trigger", { ...pick(params, ["id", "event"]), subject });
     case "documents.pdf":
       return invoke("frame.documents.pdf", { ...pick(params, ["name", "title", "blocks"]), subject });
     case "documents.csv":

@@ -100,6 +100,7 @@ const METHODS: &[(&str, &str, &[&str])] = &[
     ("git.createTag", "frame.git.createTag", &["folder", "repo", "name", "ref", "message"]),
     ("git.clone", "frame.git.clone", &["folder", "url", "path"]),
     ("clients.clearCache", "frame.clients.clearCache", &["client"]),
+    ("automations.trigger", "frame.automations.trigger", &["id", "event"]),
 ];
 
 fn tokens() -> &'static Mutex<HashMap<String, Subject>> {

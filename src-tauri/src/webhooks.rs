@@ -148,7 +148,7 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 /// L’appel est accepté si l’une des preuves acceptées est valide ; on n’indique jamais laquelle a échoué.
-fn verified(secret: &str, headers: &HeaderMap, query: &[(String, String)], body: &[u8]) -> bool {
+pub(crate) fn verified(secret: &str, headers: &HeaderMap, query: &[(String, String)], body: &[u8]) -> bool {
     let expected = secret.as_bytes();
     let mut ok = false;
     if let Some(value) = header(headers, "x-alfred-secret") {
@@ -192,7 +192,7 @@ fn not_found() -> Response {
     reply(StatusCode::NOT_FOUND, json!({ "error": "Webhook inconnu." }))
 }
 
-fn input_of(method: &Method, headers: &HeaderMap, query: &[(String, String)], body: &[u8]) -> Value {
+pub(crate) fn input_of(method: &Method, headers: &HeaderMap, query: &[(String, String)], body: &[u8]) -> Value {
     let query: Map<String, Value> =
         query.iter().filter(|(name, _)| name != "secret").map(|(name, value)| (name.clone(), json!(value))).collect();
     let mut visible = Map::new();

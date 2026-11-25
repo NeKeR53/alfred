@@ -12,15 +12,15 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use crate::error::{AppError, AppResult};
-use crate::state::{AppState, ServerInfo, DEV_PORT};
+use crate::state::{AppState, ServerInfo, DEV_PORT, RELEASE_PORT};
 
 type Shared = Arc<AppState>;
 
 pub async fn start(state: Shared) -> AppResult<()> {
-    let wanted = if cfg!(debug_assertions) { DEV_PORT } else { 0 };
+    let wanted = if cfg!(debug_assertions) { DEV_PORT } else { RELEASE_PORT };
     let listener = match tokio::net::TcpListener::bind(("127.0.0.1", wanted)).await {
         Ok(listener) => listener,
-        // Une autre instance de développement tient déjà le port : on en prend un libre.
+        // Une autre instance (ou un autre programme) tient déjà le port : on en prend un libre.
         Err(_) => tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?,
     };
     let port = listener.local_addr()?.port();
@@ -51,6 +51,7 @@ fn router(state: Shared, dev: bool) -> Router {
         .merge(crate::clients::routes())
         .merge(crate::mcp::routes())
         .merge(crate::webhooks::routes())
+        .merge(crate::automations::routes())
         .merge(crate::script_sdk::routes())
         .with_state(state)
 }
