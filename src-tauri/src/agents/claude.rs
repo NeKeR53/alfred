@@ -127,11 +127,12 @@ pub(super) fn claude_arguments(
     }
     if options.sandbox {
         // Bac à sable du système (Seatbelt sous macOS) : les commandes n’écrivent que dans le dossier de travail et
-        // passent sans demande ; ce qui en sortirait reste refusé. La CLI `alfred` en sort : elle ne fait que
-        // parler au cœur, qui applique lui-même le périmètre de la conversation.
+        // passent sans demande ; ce qui en sortirait reste refusé. Le réseau n’y passe que par le proxy du bac à
+        // sable : la CLI `alfred` le prend pour joindre le cœur, seul hôte permis (127.0.0.1, son port seul ; vérifié :
+        // un autre port local reçoit 403). `excludedCommands` ne la fait pas sortir du bac à sable.
         let mut sandbox = json!({ "enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false });
-        if cli_port.is_some() {
-            sandbox["excludedCommands"] = json!(["alfred"]);
+        if let Some(port) = cli_port {
+            sandbox["network"] = json!({ "allowedDomains": [format!("127.0.0.1:{port}")] });
         }
         args.extend(["--settings".to_string(), json!({ "sandbox": sandbox }).to_string()]);
     }
@@ -908,7 +909,7 @@ mod tests {
         let sandboxed = claude_arguments(&ClaudeOptions { sandbox: true, ..ClaudeOptions::default() }, None, None).unwrap();
         assert!(sandboxed.windows(2).any(|pair| pair[0] == "--settings" && pair[1].contains("\"enabled\":true")));
         let with_cli = claude_arguments(&ClaudeOptions { sandbox: true, ..ClaudeOptions::default() }, Some(1), None).unwrap();
-        assert!(with_cli.iter().any(|value| value.contains("\"excludedCommands\":[\"alfred\"]")), "la CLI sort du bac à sable");
+        assert!(with_cli.iter().any(|value| value.contains("\"allowedDomains\":[\"127.0.0.1:1\"]")), "seul le cœur est joignable");
 
         for invalid in [
             ClaudeOptions { model: Some("opus; rm -rf /".into()), ..ClaudeOptions::default() },

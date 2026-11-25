@@ -86,24 +86,41 @@ fn take_option(argv: &mut Vec<String>, name: &str) -> Option<String> {
     (index < argv.len()).then(|| argv.remove(index))
 }
 
+/// Proxy du bac à sable de Claude Code (`HTTP_PROXY` dans son environnement) : la seule porte vers le cœur depuis
+/// ce bac à sable, qui n’y laisse passer que l’adresse du cœur.
+fn sandbox_proxy() -> Option<reqwest::Proxy> {
+    let proxy = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")).ok()?;
+    let local = proxy.contains("@127.0.0.1:") || proxy.contains("//127.0.0.1:") || proxy.contains("localhost:");
+    if !local {
+        return None;
+    }
+    reqwest::Proxy::http(&proxy).ok()
+}
+
 fn send(url: &str, token: &str, body: &Value) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| format!("démarrage impossible : {error}"))?;
     runtime.block_on(async {
-        // Jamais de proxy : le cœur est sur ce poste.
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(CLIENT_TIMEOUT)
+        // D’abord en direct : le cœur est sur ce poste. Si un bac à sable coupe la connexion, par son proxy local.
+        let client = |proxy: Option<reqwest::Proxy>| {
+            let builder = reqwest::Client::builder().no_proxy().timeout(CLIENT_TIMEOUT);
+            match proxy {
+                Some(proxy) => builder.proxy(proxy),
+                None => builder,
+            }
             .build()
-            .map_err(|error| format!("client HTTP indisponible : {error}"))?;
-        let response = client
-            .post(format!("{}/{BRIDGE_METHOD}", url.trim_end_matches('/')))
-            .bearer_auth(token)
-            .json(body)
-            .send()
-            .await
+            .map_err(|error| format!("client HTTP indisponible : {error}"))
+        };
+        let address = format!("{}/{BRIDGE_METHOD}", url.trim_end_matches('/'));
+        let mut sent = client(None)?.post(&address).bearer_auth(token).json(body).send().await;
+        if sent.as_ref().is_err_and(|error| error.is_connect()) {
+            if let Some(proxy) = sandbox_proxy() {
+                sent = client(Some(proxy))?.post(&address).bearer_auth(token).json(body).send().await;
+            }
+        }
+        let response = sent
             .map_err(|error| {
                 format!("Alfred ne répond pas ({error}). Alfred est-il ouvert ? Dans un bac à sable sans réseau, lancer `alfred` hors du bac à sable.")
             })?;
@@ -374,6 +391,7 @@ fn summary(description: &str, limit: usize) -> String {
 fn short_help(state: &AppState, conversation: &str) -> String {
     let mut lines = vec![
         "alfred <commande> [valeurs] [--option valeur]   (alfred help <commande> : le détail ; --json '{…}' accepté)".to_string(),
+        "Lire des données : `alfred api` (types de toutes les fonctions), puis un seul `alfred run` qui enchaîne les appels.".to_string(),
         String::new(),
     ];
     for tool in crate::agent_tools::tools(state, conversation) {

@@ -285,7 +285,13 @@ fn api(state: &Arc<AppState>, conversation: &str, argv: &[String]) -> AppResult<
     match positional.first() {
         None => {
             let mut lines = vec![
-                "Code Mode : `alfred run fichier.ts` exécute du TypeScript sur cette API ; `alfred api <module>` donne les types.".to_string(),
+                "Code Mode. Enchaîne toutes les lectures dans un seul `alfred run` :".to_string(),
+                "  alfred run - <<'EOF'".to_string(),
+                "  const a = await api.module.fonction({ … });".to_string(),
+                "  const b = await api.module.autre({ champ: a[0].champ });".to_string(),
+                "  return b;".to_string(),
+                "  EOF".to_string(),
+                "Types détaillés d’un module : `alfred api <module>`. Options de run : `alfred help run`.".to_string(),
                 String::new(),
             ];
             for function in &functions {
@@ -700,9 +706,14 @@ async fn approve_write(state: &AppState, run: &Run, function: &ResolvedFunction,
         return Ok(());
     }
     let started = Instant::now();
+    // Pendant l’attente, l’échéance recule d’autant : la carte a tout son temps, le calcul garde ses 60 s.
+    let before = run.deadline_at();
+    if let Ok(mut deadline) = run.deadline.lock() {
+        *deadline = before + APPROVAL_WAIT + Duration::from_secs(5);
+    }
     let answer = ask_user(state, &run.conversation, function, input).await;
     if let Ok(mut deadline) = run.deadline.lock() {
-        *deadline += started.elapsed();
+        *deadline = before + started.elapsed();
     }
     match answer.as_deref() {
         Some("once") => Ok(()),
