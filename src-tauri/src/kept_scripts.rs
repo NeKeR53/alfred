@@ -801,6 +801,23 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, options: 
         accept(state, &space, &reference)?;
         return Ok(json!({ "function": reference, "file": file.to_string_lossy(), "status": "accepted", "requires": added, "updated": previous.is_some() }));
     }
+    // « Autonomie totale » : le script est accepté d’office, comme le harnais agit sans demander.
+    if crate::consents::full(state, conversation) {
+        crate::git::commit_all(&space.root, &format!("Script gardé par l’agent : {reference}"))?;
+        accept_because(state, &space, &reference, &format!("Script gardé accepté : {}", crate::consents::FULL_REASON))?;
+        state.emit(
+            "agent:notice",
+            json!({ "title": format!("Fonction « {reference} » gardée"), "description": "Acceptée d’office : la conversation est en « Autonomie totale ». Vous la retrouvez dans Réglages → Scripts de l’agent." }),
+        );
+        return Ok(json!({
+            "function": reference,
+            "file": file.to_string_lossy(),
+            "status": "accepted",
+            "requires": added,
+            "updated": previous.is_some(),
+            "next": "Acceptée d’office (« Autonomie totale ») : une page ou une automatisation peut l’appeler, et elle apparaît dans `alfred api`. Le dire à l’utilisateur.",
+        }));
+    }
     crate::git::commit_all(&space.root, &format!("Script gardé par l’agent : {reference} (à valider)"))?;
     let title = format!("Fonction « {reference} » à valider");
     crate::functions::journal(state, "agent", &reference, true, None, &title, Some(&json!({ "run": run.id })));
@@ -870,6 +887,11 @@ pub fn annotate(state: &AppState, space: &Space, snapshot: &mut Snapshot) {
 
 /// L’utilisateur accepte le script dans son état actuel.
 fn accept(state: &AppState, space: &Space, reference: &str) -> AppResult<()> {
+    accept_because(state, space, reference, "Script gardé accepté par l’utilisateur")
+}
+
+/// Accepte le script dans son état actuel ; `reason` est notée au Journal.
+fn accept_because(state: &AppState, space: &Space, reference: &str, reason: &str) -> AppResult<()> {
     if status_of(state, space, reference).is_none() {
         return Err(AppError::new("Cette fonction n’est pas un script gardé."));
     }
@@ -884,7 +906,7 @@ fn accept(state: &AppState, space: &Space, reference: &str) -> AppResult<()> {
         reference,
         true,
         None,
-        "Script gardé accepté par l’utilisateur",
+        reason,
         None,
     );
     state.emit("space:changed", Value::Null);
@@ -1310,6 +1332,28 @@ mod tests {
         assert!(parametrize(code, &[(3, "x".into())]).is_err());
         assert!(similarity(code, &code.replace("Data", "Ventes")) > 0.99);
         assert!(similarity(code, "return 1;") < 0.5);
+    }
+
+    /// En « Autonomie totale », un script gardé par l’agent est accepté d’office, et le Journal dit pourquoi.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn full_autonomy_accepts_a_kept_script() {
+        use crate::space::{FunctionDecl, ModuleManifest};
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let mut manifest = ModuleManifest { id: "notes".into(), name: "Notes".into(), ..Default::default() };
+        manifest.functions.push(FunctionDecl { id: "lister".into(), effect: Some(crate::space::Effect::Read), ..Default::default() });
+        space.write_module(&manifest).unwrap();
+        state.set_space(Some(space.clone()));
+        crate::consents::TEST_AUTONOMY.lock().unwrap().push(("complete", crate::agents::session::Autonomy::Auto));
+        let id = record(&state, "complete", "return (await api.notes.lister({})).length;", &json!({}), &Ok(json!({ "result": 1 })), &["notes/lister".into()], 4).unwrap();
+        let saved = save(&state, "complete", "notes/compte", KeepOptions::default(), &load(&state, &id).unwrap()).await.unwrap();
+        assert_eq!(saved["status"], "accepted");
+        assert!(ensure_runnable(&state, "notes/compte", "page").is_ok());
+        let journal = crate::functions::handle(&state, "journal.list", &json!({ "limit": 20 })).await;
+        let text = format!("{journal:?}");
+        assert!(text.contains("Autonomie totale"), "{text}");
+        crate::consents::TEST_AUTONOMY.lock().unwrap().retain(|(conversation, _)| *conversation != "complete");
     }
 
     #[test]

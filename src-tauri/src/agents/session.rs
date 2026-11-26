@@ -191,6 +191,17 @@ struct Entry {
     token: Option<String>,
     /// Pour les cartes qu’Alfred ajoute lui-même au tour en cours (accord d’une écriture de Code Mode).
     sink: Sink,
+    /// Autonomie donnée au harnais : les accords d’Alfred la suivent (`consents.rs`).
+    autonomy: Autonomy,
+}
+
+/// Autonomie de la session ouverte pour `conversation` ; `None` sans session.
+pub fn autonomy_of(state: &AppState, conversation: &str) -> Option<Autonomy> {
+    let tokens = state.agent_tokens.lock().ok()?;
+    let all = sessions().lock().ok()?;
+    all.values()
+        .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
+        .map(|entry| entry.autonomy)
 }
 
 /// Cartes d’accord posées par Alfred (et non par le harnais), en attente de la réponse de l’utilisateur.
@@ -309,6 +320,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     let handle = uuid::Uuid::new_v4().to_string();
     let sink = Sink { state: state.clone(), output, handle: handle.clone() };
     let own_sink = sink.clone();
+    let autonomy = options.autonomy;
     let launch = Launch { state: state.clone(), options, program, sink, token: token.clone(), port, handle: handle.clone() };
     let opened = match provider {
         Provider::Claude => claude::Claude::start(launch).map(Driver::Claude),
@@ -330,7 +342,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
         Driver::Codex(codex) => codex.session_id(),
         Driver::Opencode(opencode) => Some(opencode.session_id()),
     };
-    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink }));
+    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy }));
     Ok(json!({ "handle": handle, "sessionId": session_id }))
 }
 

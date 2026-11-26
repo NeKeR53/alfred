@@ -13,6 +13,7 @@ mod clients;
 mod code_mode;
 mod commands;
 mod composer;
+mod consents;
 mod conversations;
 mod decisions;
 mod design_lint;

@@ -992,6 +992,10 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             _ => return Err(out_of_scope()),
         }
     }
+    // « Accord à chaque action » : la CLI passe sans les cartes du harnais ; Alfred demande pour ses commandes sensibles.
+    if scope.is_none() && crate::consents::STRICT_COMMANDS.contains(&name) && crate::consents::strict(state, conversation) {
+        crate::consents::ask_command(state, conversation, name, args).await?;
+    }
     let args = &match &scope {
         Some(scope) if matches!(name, "check" | "db_schema" | "db_query") => {
             let mut scoped = args.clone();
