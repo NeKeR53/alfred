@@ -8,10 +8,10 @@ window.matchMedia ??= ((query: string) => ({ matches: false, media: query })) as
 
 /**
  * Cadre simulé : il s’inscrit comme le vrai PageFrame, se déclare prêt et répond à `describe` avec la description
- * d’un document de test, comme le fait l’hôte d’une page.
+ * d’un document de test, comme le fait l’hôte d’une page, et à `review` avec des mesures démesurées.
  */
 vi.mock("./PageFrame", () => ({
-  PageFrame({ page }: { page: { reference: string } }) {
+  PageFrame({ page, token }: { page: { reference: string }; token?: string }) {
     useEffect(() => {
       let dispose: () => void = () => undefined;
       // Import différé : pageSnapshot importe ce module simulé, l’inverse au chargement bloquerait.
@@ -19,22 +19,35 @@ vi.mock("./PageFrame", () => ({
         const target = registerSnapshotTarget(
           page.reference,
           (message: FrameMessage) => {
-            if (message.kind !== "event" || message.name !== "describe") return;
-            const { id } = message.payload as { id: string };
-            setTimeout(() => target.receive({ id, ...describePage(sample()) }), 0);
+            if (message.kind !== "event") return;
+            const { id, themes } = message.payload as { id: string; themes?: string[] };
+            if (message.name === "describe") setTimeout(() => target.receive({ id, ...describePage(sample()) }), 0);
+            if (message.name === "review") {
+              const layout = {
+                width: 1e9,
+                busy: true,
+                belowFold: [{ kind: "inventé", text: "x".repeat(500), top: 900 }],
+                truncated: Array.from({ length: 50 }, () => ({ text: "coupé", shown: 7 })),
+              };
+              const contrast = (themes ?? []).map((theme) => ({ theme, count: 1, items: [] }));
+              setTimeout(() => target.receive({ id, review: { layout, contrast } }), 0);
+            }
           },
           true,
+          undefined,
+          false,
+          token,
         );
         setTimeout(() => target.ready(), 0);
         dispose = () => target.dispose();
       });
       return () => dispose();
-    }, [page.reference]);
+    }, [page.reference, token]);
     return <div data-testid={`cadre-${page.reference}`} />;
   },
 }));
 
-const { capturePage, SnapshotFrames } = await import("./pageSnapshot");
+const { capturePage, reviewPages, SnapshotFrames } = await import("./pageSnapshot");
 const { useShell } = await import("./store");
 
 function sample(): HTMLElement {
@@ -96,5 +109,34 @@ describe("capture d’une page pour l’agent", () => {
     await vi.waitFor(() => expect(view.queryByTestId("cadre-suivi/detail")).toBeNull());
 
     await expect(capturePage("suivi/absente")).rejects.toThrow("n’existe pas");
+  });
+
+  it("examine une page dans deux cadres invisibles à la taille d’une fenêtre, et borne ce que rend le cadre", async () => {
+    useShell.setState({
+      snapshot: {
+        sections: [{ pages: [{ reference: "suivi/taches", module: "suivi", id: "taches", title: "Tâches" }] }],
+        settingsPages: [],
+      },
+    } as never);
+    const view = render(<SnapshotFrames />);
+    const pending = reviewPages([{ page: "suivi/taches", panel: true }, { page: "suivi/absente" }]);
+    // Les deux tailles se chargent en même temps, chacune dans son cadre.
+    await vi.waitFor(() => expect(view.getAllByTestId("cadre-suivi/taches")).toHaveLength(2));
+    const [taches, absente] = await pending;
+    expect(taches.viewports?.map(({ window, width, height }) => [window, width, height])).toEqual([
+      ["1440 × 900, panneau ouvert", 928, 862],
+      ["1024 × 900", 784, 862],
+    ]);
+    const [wide, narrow] = taches.viewports ?? [];
+    expect(wide.contrast.map((item) => item.theme)).toEqual(["light", "dark"]);
+    expect(narrow.contrast).toEqual([]);
+    // Ce que rend le cadre vient de la page : nombres et textes bornés, listes courtes, genres connus.
+    expect(wide.layout.width).toBe(100_000);
+    expect(wide.layout.belowFold[0].kind).toBe("heading");
+    expect(wide.layout.belowFold[0].text.length).toBeLessThanOrEqual(121);
+    expect(wide.layout.truncated).toHaveLength(8);
+    expect(wide.layout.truncated[0].shown).toBe(1);
+    expect(absente.error).toContain("n’existe pas");
+    await vi.waitFor(() => expect(view.queryByTestId("cadre-suivi/taches")).toBeNull());
   });
 });

@@ -32,6 +32,11 @@ interface Target {
   hidden: boolean;
   /** Le cadre montre des données d’exemple. */
   examples: boolean;
+  /** Jeton du cadre invisible chargé pour une capture : deux captures de la même page ne se confondent pas. */
+  token?: string;
+  /** Requêtes de la page en cours (fonctions, base, services) et heure de la dernière. */
+  inflight: number;
+  lastActivity: number;
   waiting: Map<string, (payload: unknown) => void>;
   onReady: Set<() => void>;
 }
@@ -40,6 +45,23 @@ const targets = new Set<Target>();
 const MAX_TEXT = 30_000;
 /** Laisse aux données de la page le temps d’arriver après son chargement. */
 const SETTLE_MS = 800;
+/** Examen : la page est prête quand elle n’a plus de requête en cours depuis ce délai… */
+const QUIET_MS = 400;
+/** … ou au bout de ce délai, pour une page qui interroge sans cesse. */
+const QUIET_MAX_MS = 6_000;
+
+/**
+ * Tailles des cadres invisibles : celle d’une capture (`page_snapshot`, `page_screenshot`), et celles de l’examen de
+ * `check`, la zone de la page dans une fenêtre de 1440 × 900 (sous la barre du haut de 38 px et à droite du menu de
+ * 240 px ; panneau de 272 px ouvert si la page en a un) et dans une fenêtre de 1024 de large.
+ */
+export const VIEWPORTS = {
+  capture: { width: 1280, height: 800, window: "", className: "h-[800px] w-[1280px]" },
+  wide: { width: 1200, height: 862, window: "1440 × 900", className: "h-[862px] w-[1200px]" },
+  widePanel: { width: 928, height: 862, window: "1440 × 900, panneau ouvert", className: "h-[862px] w-[928px]" },
+  narrow: { width: 784, height: 862, window: "1024 × 900", className: "h-[862px] w-[784px]" },
+} as const;
+export type Viewport = keyof typeof VIEWPORTS;
 
 /**
  * Inscrit le cadre d’une page affichée. PageFrame transmet `ready`, `error` (une page en échec se décrit aussi) et
@@ -51,6 +73,7 @@ export function registerSnapshotTarget(
   hidden = false,
   frame: () => HTMLIFrameElement | null = () => null,
   examples = false,
+  token?: string,
 ) {
   const target: Target = {
     reference,
@@ -60,6 +83,9 @@ export function registerSnapshotTarget(
     readyAt: 0,
     hidden,
     examples,
+    ...(token ? { token } : {}),
+    inflight: 0,
+    lastActivity: 0,
     waiting: new Map(),
     onReady: new Set(),
   };
@@ -75,6 +101,11 @@ export function registerSnapshotTarget(
       const id = (payload as { id?: unknown } | null)?.id;
       if (typeof id !== "string") return;
       target.waiting.get(id)?.(payload);
+    },
+    /** Une requête de la page commence (`1`) ou se termine (`-1`). */
+    busy(delta: 1 | -1) {
+      target.inflight = Math.max(0, target.inflight + delta);
+      target.lastActivity = Date.now();
     },
     dispose() {
       targets.delete(target);
@@ -93,6 +124,8 @@ interface HiddenPage {
   host?: string;
   /** Capture demandée en données d’exemple. */
   examples?: boolean;
+  /** Taille du cadre (`capture` par défaut). */
+  viewport?: Viewport;
 }
 
 function setHidden(next: HiddenPage[]) {
@@ -136,12 +169,14 @@ function waitReady(target: Target, timeout: number): Promise<void> {
   });
 }
 
-function waitTarget(reference: string, timeout: number, examples: boolean): Promise<Target> {
+function waitTarget(reference: string, timeout: number, examples: boolean, token?: string): Promise<Target> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const tick = () => {
       const found = [...targets].find(
-        (target) => target.reference === reference && (!examples || (target.hidden && target.examples)),
+        (target) =>
+          target.reference === reference &&
+          (token ? target.token === token : !examples || (target.hidden && target.examples)),
       );
       if (found) return resolve(found);
       if (Date.now() - started > timeout) return reject(new Error("La page n’a pas pu être chargée pour la capture."));
@@ -153,16 +188,29 @@ function waitTarget(reference: string, timeout: number, examples: boolean): Prom
 
 let sequence = 0;
 
+type FrameRequest = "describe" | "screenshot" | "inspect" | "review";
+
+/** Attend que la page n’ait plus de requête en cours depuis `QUIET_MS`, au plus `QUIET_MAX_MS`. */
+async function waitQuiet(target: Target) {
+  const started = Date.now();
+  while (Date.now() - started < QUIET_MAX_MS) {
+    if (target.inflight === 0 && Date.now() - target.lastActivity >= QUIET_MS) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /** Envoie `name` au cadre `target`, déjà chargé, et rend sa réponse. */
 async function request(
   target: Target,
-  name: "describe" | "screenshot" | "inspect",
+  name: FrameRequest,
   extra: Record<string, unknown>,
   timeout: number,
+  quiet = false,
 ): Promise<unknown> {
   await waitReady(target, timeout);
   const settle = SETTLE_MS - (Date.now() - target.readyAt);
   if (settle > 0) await new Promise((resolve) => setTimeout(resolve, settle));
+  if (quiet) await waitQuiet(target);
   sequence += 1;
   const id = `d${sequence}`;
   const current = target;
@@ -180,30 +228,43 @@ async function request(
   });
 }
 
-/** Charge la page si besoin, lui envoie `name` et rend sa réponse ; `displayed` dit si elle était à l’écran. */
+/**
+ * Charge la page si besoin, lui envoie `name` et rend sa réponse ; `displayed` dit si elle était à l’écran. Avec
+ * `viewport`, la page est toujours chargée dans un cadre invisible de cette taille ; avec `quiet`, la demande attend
+ * que la page ait reçu ses données.
+ */
 async function askFrame(
   reference: string,
-  name: "describe" | "screenshot" | "inspect",
+  name: FrameRequest,
   extra: Record<string, unknown>,
   timeout: number,
   examples = false,
+  options: { viewport?: Viewport; quiet?: boolean } = {},
 ): Promise<{ located: NonNullable<ReturnType<typeof findPage>>; displayed: boolean; answer: Record<string, unknown> }> {
   const located = findPage(useShell.getState().snapshot, reference);
   if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace de travail.`);
   // En données d’exemple, la page affichée ne sert que si elle les montre déjà ; sinon un cadre invisible les charge.
-  const visible = [...targets].find(
-    (target) => target.reference === reference && !target.hidden && (!examples || target.examples),
-  );
+  const visible = options.viewport
+    ? undefined
+    : [...targets].find((target) => target.reference === reference && !target.hidden && (!examples || target.examples));
   let token: string | undefined;
   let target = visible;
   try {
     if (!target) {
       sequence += 1;
       token = `capture-${sequence}`;
-      setHidden([...hiddenPages, { token, ...located, ...(examples ? { examples: true } : {}) }]);
-      target = await waitTarget(reference, timeout, examples);
+      setHidden([
+        ...hiddenPages,
+        {
+          token,
+          ...located,
+          ...(examples ? { examples: true } : {}),
+          ...(options.viewport ? { viewport: options.viewport } : {}),
+        },
+      ]);
+      target = await waitTarget(reference, timeout, examples, token);
     }
-    const payload = await request(target, name, extra, timeout);
+    const payload = await request(target, name, extra, timeout, options.quiet === true);
     return { located, displayed: visible !== undefined, answer: (payload ?? {}) as Record<string, unknown> };
   } finally {
     if (token) setHidden(hiddenPages.filter((item) => item.token !== token));
@@ -328,6 +389,118 @@ export async function inspectRegion(
   return { path, text: bounded(region.text, 8000), truncated: region.truncated === true };
 }
 
+/** Nombre, borné, venu d’un cadre. */
+function count(value: unknown, max = 100_000): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(-max, Math.min(max, Math.round(value * 100) / 100))
+    : 0;
+}
+
+function list<T>(value: unknown, read: (item: Record<string, unknown>) => T, limit = 8): T[] {
+  return Array.isArray(value) ? value.slice(0, limit).map((item) => read((item ?? {}) as Record<string, unknown>)) : [];
+}
+
+/**
+ * Mesures d’un examen, relues champ par champ : elles viennent du cadre, donc du code de la page. Les textes sont
+ * bornés et restent une donnée pour l’agent.
+ */
+export function sanitizeReview(answer: Record<string, unknown>) {
+  if (typeof answer.error === "string") throw new Error(`Examen impossible : ${bounded(answer.error, 500)}`);
+  const review = (answer.review ?? {}) as Record<string, unknown>;
+  const layout = (review.layout ?? {}) as Record<string, unknown>;
+  const text = (value: unknown) => bounded(value, 120);
+  return {
+    layout: {
+      width: count(layout.width),
+      height: count(layout.height),
+      busy: layout.busy === true,
+      contentTop: count(layout.contentTop),
+      contentBottom: count(layout.contentBottom),
+      contentLeft: count(layout.contentLeft),
+      contentRight: count(layout.contentRight),
+      belowFold: list(layout.belowFold, (item) => ({
+        kind: ["heading", "collection", "alert", "action"].includes(String(item.kind)) ? String(item.kind) : "heading",
+        text: text(item.text),
+        top: count(item.top),
+      })),
+      gaps: list(layout.gaps, (item) => ({
+        top: count(item.top),
+        height: count(item.height),
+        above: text(item.above),
+        below: text(item.below),
+      })),
+      truncated: list(layout.truncated, (item) => ({ text: text(item.text), shown: count(item.shown, 1) })),
+      truncatedCount: count(layout.truncatedCount),
+      overflow: list(layout.overflow, (item) => ({
+        kind: item.kind === "page" ? "page" : "table",
+        text: text(item.text),
+        hidden: count(item.hidden),
+      })),
+      filledButtons: list(layout.filledButtons, (item) => ({ text: text(item.text), top: count(item.top) })),
+    },
+    contrast: list(
+      review.contrast,
+      (item) => ({
+        theme: item.theme === "dark" ? "dark" : "light",
+        count: count(item.count),
+        items: list(item.items, (entry) => ({ text: text(entry.text), ratio: count(entry.ratio, 21) })),
+      }),
+      2,
+    ),
+  };
+}
+
+export type PageReviewMeasure = ReturnType<typeof sanitizeReview> & {
+  /** Fenêtre simulée, et taille du cadre de la page. */
+  window: string;
+  width: number;
+  height: number;
+};
+
+export interface PageReviewResult {
+  page: string;
+  viewports?: PageReviewMeasure[];
+  error?: string;
+}
+
+/**
+ * Examen d’une page pour `check` : deux cadres invisibles chargés en même temps, à la taille de la page dans une
+ * fenêtre de 1440 × 900 (panneau ouvert si la page en a un) et de 1024 de large ; contraste en clair et en sombre
+ * dans le premier.
+ */
+export async function reviewPage(
+  reference: string,
+  options: { examples?: boolean; panel?: boolean } = {},
+  timeout = 15_000,
+): Promise<PageReviewResult> {
+  const wide: Viewport = options.panel ? "widePanel" : "wide";
+  const ask = async (viewport: Viewport, themes: string[]): Promise<PageReviewMeasure> => {
+    const { answer } = await askFrame(reference, "review", { themes }, timeout, options.examples === true, {
+      viewport,
+      quiet: true,
+    });
+    const { window, width, height } = VIEWPORTS[viewport];
+    return { window, width, height, ...sanitizeReview(answer) };
+  };
+  const viewports = await Promise.all([ask(wide, ["light", "dark"]), ask("narrow", [])]);
+  return { page: reference, viewports };
+}
+
+/** Examine les pages une à une ; une page qui ne se charge pas rend son erreur sans arrêter les autres. */
+export async function reviewPages(
+  pages: { page: string; examples?: boolean; panel?: boolean }[],
+): Promise<PageReviewResult[]> {
+  const results: PageReviewResult[] = [];
+  for (const item of pages.slice(0, 12)) {
+    try {
+      results.push(await reviewPage(item.page, item));
+    } catch (error) {
+      results.push({ page: item.page, error: bounded(error instanceof Error ? error.message : String(error), 300) });
+    }
+  }
+  return results;
+}
+
 /** Cadres invisibles des captures en cours : hors de la vue, sans focus, ignorés des lecteurs d’écran. */
 export function SnapshotFrames() {
   const [pages, setPages] = useState<HiddenPage[]>(hiddenPages);
@@ -340,20 +513,18 @@ export function SnapshotFrames() {
   }, []);
   if (pages.length === 0) return null;
   return (
-    <div
-      className="pointer-events-none fixed top-0 left-[-20000px] h-[800px] w-[1280px] opacity-0"
-      aria-hidden="true"
-      inert
-    >
+    <div className="pointer-events-none fixed top-0 left-[-20000px] opacity-0" aria-hidden="true" inert>
       {pages.map((item) => (
-        <PageFrame
-          key={item.token}
-          page={item.page}
-          kind={item.kind}
-          host={item.host}
-          capture
-          examples={item.examples === true}
-        />
+        <div key={item.token} className={`flex ${VIEWPORTS[item.viewport ?? "capture"].className}`}>
+          <PageFrame
+            page={item.page}
+            kind={item.kind}
+            host={item.host}
+            capture
+            token={item.token}
+            examples={item.examples === true}
+          />
+        </div>
       ))}
     </div>
   );

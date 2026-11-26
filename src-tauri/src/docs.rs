@@ -170,4 +170,17 @@ mod tests {
             assert!(guide.contains(&format!("`{name}`")), "AGENTS.md ne cite pas {name}");
         }
     }
+
+    #[test]
+    fn les_guides_disent_ou_vivent_les_preferences_de_design() {
+        // Le fichier que lisent `check` et `place_page` est celui que les guides font écrire, hors de `docs/alfred/`.
+        let file = crate::agent_tools::DESIGN_PREFERENCES;
+        assert!(!file.starts_with("docs/alfred/"), "Alfred réécrit docs/alfred/ : {file}");
+        let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
+        for expected in ["## Préférences de design", "0 bis. **Préférences de l’utilisateur.**", "`designPreferences`", "`review`"] {
+            assert!(page.contains(expected), "page.md n’a pas « {expected} »");
+        }
+        assert!(page.contains(&format!("`{file}`")) && GUIDE.contains(&format!("`{file}`")), "les guides ne citent pas {file}");
+        assert!(DESIGN.contains("`review`") && DESIGN.contains("`designPreferences`"));
+    }
 }

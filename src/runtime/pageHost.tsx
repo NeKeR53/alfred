@@ -29,6 +29,7 @@ import {
 import { frameShortcut, isShellShortcut } from "../sdk/protocol";
 import { accentColor } from "./accent";
 import { describePage, describeRegion } from "./describePage";
+import { reviewPage } from "./reviewPage";
 import { screenshotPage } from "./screenshotPage";
 import { sealNetwork } from "./sealNetwork";
 
@@ -263,6 +264,21 @@ onShellEvent("inspect", (payload) => {
       height: number(rect.height),
     }),
   });
+});
+
+// Examen de la page pour l’agent (outil `check`) : mesures de sa mise en page, puis du contraste dans chaque thème.
+onShellEvent("review", (payload) => {
+  const request = (payload ?? {}) as { id?: unknown; themes?: unknown };
+  const id = request.id;
+  if (typeof id !== "string") return;
+  const themes = Array.isArray(request.themes)
+    ? request.themes.filter((theme): theme is "light" | "dark" => theme === "light" || theme === "dark")
+    : [];
+  reviewPage({ themes }).then(
+    (review) => emitToShell("description", { id, review }),
+    (error: unknown) =>
+      emitToShell("description", { id, error: error instanceof Error ? error.message : String(error) }),
+  );
 });
 
 // Capture en image pour l’agent (outil `page_screenshot`) : le cadre se dessine lui-même.

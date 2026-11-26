@@ -11,7 +11,7 @@ import { frameErrors } from "./frameErrors";
 import { type FrameLogQuery, readFrameLogs } from "./frameLogs";
 import { callFunction, cancelAgentCode, receiveStatesChanged, runAgentCode } from "./functionHost";
 import { notify } from "./notifications";
-import { capturePage, SnapshotFrames, screenshotPage } from "./pageSnapshot";
+import { capturePage, reviewPages, SnapshotFrames, screenshotPage } from "./pageSnapshot";
 import { useShell } from "./store";
 
 interface PermissionRequest {
@@ -96,6 +96,19 @@ function bind() {
     if (!claimed) return;
     screenshotPage(request.page, { fullPage: request.fullPage === true, examples: request.examples === true }).then(
       (image) => resolve(request.requestId, image),
+      (error) => reject(request.requestId, error),
+    );
+  });
+  // Examen des pages pour `check` : chaque page mesurée dans des cadres invisibles, une page après l’autre.
+  onNativeEvent("agent:pageReview", async (payload) => {
+    const request = payload as {
+      requestId: string;
+      pages?: { page: string; examples?: boolean; panel?: boolean }[];
+    };
+    const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
+    if (!claimed) return;
+    reviewPages(Array.isArray(request.pages) ? request.pages : []).then(
+      (reviews) => resolve(request.requestId, reviews),
       (error) => reject(request.requestId, error),
     );
   });

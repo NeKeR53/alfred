@@ -30,6 +30,7 @@ export function PageFrame({
   kind,
   host,
   capture = false,
+  token,
   examples: forced = false,
   view = null,
 }: {
@@ -40,6 +41,8 @@ export function PageFrame({
   view?: FrameIdentity["view"] | null;
   /** Cadre invisible chargé pour une capture de l’agent : il ne rejoint pas les pairs de la page affichée. */
   capture?: boolean;
+  /** Jeton de la capture qui a chargé ce cadre invisible. */
+  token?: string;
   /** Montrer les données d’exemple même si le module n’est pas réglé ainsi (capture demandée par l’agent). */
   examples?: boolean;
 }) {
@@ -111,6 +114,7 @@ export function PageFrame({
       capture,
       () => frame.current,
       identity.examples === true,
+      token,
     );
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
@@ -136,16 +140,20 @@ export function PageFrame({
       if (message.kind !== "request") return;
       const params = (message.params ?? {}) as Record<string, unknown>;
       const started = Date.now();
+      // L’examen d’une page attend la fin de ses requêtes : la page affiche alors ses données.
+      snapshot.busy(1);
       handleFrameRequest(identity, message.method, params, (name, payload) =>
         post({ alfred: ALFRED_MESSAGE, kind: "event", name, payload }),
       ).then(
         (result) => {
+          snapshot.busy(-1);
           // Les échanges internes de la coquille (contexte, sélection) ne disent rien de la page.
           if (!message.method.startsWith("shell."))
             addFrameLog(identity.reference, "request", describeRequest(message.method, params, result, started));
           post({ alfred: ALFRED_MESSAGE, kind: "response", id: message.id, result });
         },
         (error: unknown) => {
+          snapshot.busy(-1);
           addFrameLog(
             identity.reference,
             "request",
@@ -237,7 +245,7 @@ export function PageFrame({
       stopEntryActions();
       if (!capture) releaseFrame(identity);
     };
-  }, [identity, capture, kind]);
+  }, [identity, capture, kind, token]);
 
   if (!source) return null;
   return (

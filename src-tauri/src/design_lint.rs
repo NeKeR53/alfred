@@ -3,8 +3,11 @@
 //! couvre déjà, ni l’ancienne `@alfred/ui`), ni `style` ni `className`, ni balise HTML stylée, ni couleur en dur, des
 //! actions décrites par des données, et les noms accessibles des composants qui en demandent un. Une page placée
 //! dans les Réglages a ses règles propres ; une page placée en panneau rend un `Drawer` à sa racine, sans champ de
-//! saisie dans ses lignes ni en-tête détourné (`rows`). Chaque remarque dit quoi écrire à la place.
+//! saisie dans ses lignes ni en-tête détourné (`rows`). Une page de la zone principale reçoit aussi des
+//! avertissements de mise en page (`layout`, D-404) : longue pile de blocs, colonne étroite, zone de dépôt posée en
+//! bloc, plusieurs actions principales, exemples hors d’un état vide. Chaque remarque dit quoi écrire à la place.
 
+mod layout;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -482,6 +485,14 @@ pub fn lint_file(path: &Path, placement: Placement) -> Vec<Diagnostic> {
     lint_with(&source, placement, path, &rows::Sources::new(&read))
 }
 
+/// La page est un texte à lire ou une conversation : l’examen de sa capture ne juge ni sa hauteur ni sa largeur.
+pub fn is_reading_file(path: &Path) -> bool {
+    let Ok(source) = std::fs::read_to_string(path) else { return false };
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, &source, SourceType::tsx()).parse();
+    !parsed.fatal_error && layout::is_reading(&parsed.program)
+}
+
 fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::Sources) -> Vec<Diagnostic> {
     let settings = placement == Placement::Settings;
     let allocator = Allocator::default();
@@ -611,6 +622,11 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
     }
     if placement == Placement::Panel {
         if let Some((offset, message)) = panel_root_problem(&parsed.program.body, &lint.socle) {
+            lint.report(offset, message);
+        }
+    }
+    if placement == Placement::Page {
+        for (offset, message) in layout::check(&parsed.program, &lint.socle, source) {
             lint.report(offset, message);
         }
     }
@@ -1154,7 +1170,8 @@ export default function P() {
   );
 }
 "#;
-        assert!(messages(good).is_empty(), "{:?}", messages(good));
+        let good: Vec<_> = messages(good).into_iter().filter(|m| !m.contains("longue pile")).collect();
+        assert!(good.is_empty(), "{good:?}");
     }
 
     #[test]
@@ -1190,7 +1207,9 @@ export default function P() {
         let found = settings_messages(page);
         assert!(found.iter().any(|m| m.starts_with("5: Une page des Réglages prend toute la largeur")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("7: Pas de `<FormPage>`")), "{found:?}");
-        assert!(messages(page).is_empty(), "hors des Réglages, rien à redire : {:?}", messages(page));
+        // Hors des Réglages, seule la colonne étroite d’un formulaire est relevée.
+        let ailleurs = messages(page);
+        assert!(ailleurs.len() == 1 && ailleurs[0].starts_with("5: Avertissement : `width=\"text\"`"), "{ailleurs:?}");
     }
 
     #[test]
@@ -1394,5 +1413,257 @@ import { Page } from "socle-ui";
 export default function P() { useTopBarActions([]); return <Page />; }
 "#;
         assert!(messages(composee).is_empty(), "{:?}", messages(composee));
+    }
+
+    #[test]
+    fn une_page_empilee_recoit_ses_avertissements_de_mise_en_page() {
+        // La base documentaire de la démo : une colonne de 760 px, quatre blocs, des exemples et une zone de dépôt.
+        let page = r#"
+import { FileUpload, Link, List, Page, PageSection, TextArea } from "socle-ui";
+import { Stack } from "@alfred/kit";
+const QUESTIONS_EXEMPLE = ["Quelle garantie ?", "Quel délai ?", "Peut-on poser l’applique ?"];
+export default function Base() {
+  return (
+    <Page width="text">
+      <PageSection title="Poser une question" actions={[{ id: "demander", label: "Poser la question", primary: true, onPress: demander }]}>
+        <TextArea label="Votre question" value={question} onChange={setQuestion} />
+        <Stack gap="xs">{QUESTIONS_EXEMPLE.map((q) => <Link key={q} onPress={() => demander(q)}>{q}</Link>)}</Stack>
+      </PageSection>
+      {reponse ? <PageSection title="Réponse" /> : null}
+      <PageSection title="Ajouter des PDF">
+        <FileUpload label="Documents PDF" onAdd={deposer} />
+      </PageSection>
+      <PageSection title="Documents indexés" empty={docs.length === 0 ? { title: "Aucun document" } : undefined}>
+        <List aria-label="Documents" items={[]} />
+      </PageSection>
+    </Page>
+  );
+}
+"#;
+        let found = lint(page, Placement::Page);
+        assert!(found.iter().all(|f| is_warning(&f.message)), "des avertissements, pas des erreurs : {found:?}");
+        let found = messages(page);
+        assert!(found.iter().any(|m| m.starts_with("7: Avertissement : longue pile de 4 blocs") && m.contains("PageGrid") && m.contains("D-404")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: Avertissement : `width=\"text\"`") && m.contains("Retirer `width`")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("10: Avertissement : exemples (`QUESTIONS_EXEMPLE`)") && m.contains("état vide")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("14: Avertissement : `<FileUpload>` posé comme un bloc") && m.contains("files.pick")), "{found:?}");
+        assert_eq!(found.len(), 4, "une seule action principale : {found:?}");
+
+        // La même page, rangée comme le disent les remarques : rien à redire.
+        let rangee = r#"
+import { Upload } from "lucide-react";
+import { files } from "@alfred/sdk";
+import { Text } from "@alfred/kit";
+import { EmptyState, Link, List, Page, PageGrid, PageSection, TextArea } from "socle-ui";
+const EXEMPLES = ["Quelle garantie ?", "Quel délai ?"];
+export default function Base() {
+  return (
+    <Page actions={[{ id: "ajouter", label: "Ajouter des PDF", icon: <Upload size={16} />, onPress: () => files.pick({ accept: ["pdf"], multiple: true }) }]}>
+      <PageGrid columns={2}>
+        <PageSection title="Question" actions={[{ id: "demander", label: "Poser la question", primary: true, onPress: demander }]}>
+          <TextArea label="Votre question" value={question} onChange={setQuestion} />
+          {reponse ? <Text>{reponse}</Text> : <EmptyState title="Aucune question" description={<>{EXEMPLES.map((q) => <Link key={q} onPress={() => demander(q)}>{q}</Link>)}</>} />}
+        </PageSection>
+        <PageSection title="Documents"><List aria-label="Documents" items={[]} /></PageSection>
+      </PageGrid>
+    </Page>
+  );
+}
+"#;
+        assert!(messages(rangee).is_empty(), "{:?}", messages(rangee));
+
+        // Les avertissements de mise en page ne valent que dans la zone principale.
+        assert!(!settings_messages(page).iter().any(|m| m.contains("longue pile") || m.contains("exemples")), "{:?}", settings_messages(page));
+    }
+
+    #[test]
+    fn la_pile_compte_les_rangees_de_la_grille_et_les_composants_du_fichier() {
+        let grille = r#"
+import { Card, Page, PageGrid, PageSection } from "socle-ui";
+import { Row } from "@alfred/kit";
+export default function Accueil() {
+  return (
+    <Page>
+      <PageGrid columns={3}>
+        <PageSection title="A" />
+        <PageSection title="B" />
+        <PageSection title="C" />
+      </PageGrid>
+      <Page.Grid columns={4}><Card title="1" /><Card title="2" /><Card title="3" /><Card title="4" /></Page.Grid>
+      <Row><PageSection title="Gauche" /><PageSection title="Droite" /></Row>
+    </Page>
+  );
+}
+"#;
+        assert!(messages(grille).is_empty(), "trois rangées : {:?}", messages(grille));
+
+        let longue = r#"
+import { Card, Page, PageGrid, PageSection } from "socle-ui";
+function Blocs() {
+  return <><PageSection title="A" /><PageSection title="B" /></>;
+}
+export default function Accueil() {
+  return (
+    <Page>
+      <PageGrid>{[1, 2, 3, 4, 5, 6].map((n) => <Card key={n} title={String(n)} />)}<Card title="7" /></PageGrid>
+      <Blocs />
+      {groupes.map((g) => <PageSection key={g.id} title={g.nom} />)}
+    </Page>
+  );
+}
+"#;
+        let found = messages(longue);
+        // Grille de deux colonnes : trois cases au moins, deux rangées ; deux blocs du composant ; deux par la liste.
+        assert!(found.iter().any(|m| m.starts_with("8: Avertissement : longue pile de 6 blocs")), "{found:?}");
+    }
+
+    #[test]
+    fn la_colonne_etroite_convient_a_un_texte_ou_a_une_conversation() {
+        let note = r#"
+import { Page, PageSection } from "socle-ui";
+import { Markdown } from "socle-ui/markdown";
+export default function Note() {
+  return <Page width="text"><PageSection title="Procédure"><Markdown>{texte}</Markdown></PageSection></Page>;
+}
+"#;
+        assert!(messages(note).is_empty(), "{:?}", messages(note));
+        let paragraphes = r#"
+import { Page, PageSection } from "socle-ui";
+import { Text } from "@alfred/kit";
+export default function Charte() {
+  return (
+    <Page width="text">
+      <PageSection title="Charte">
+        <Text as="p">Un.</Text>
+        <Text as="p">Deux.</Text>
+        <Text as="p">Trois.</Text>
+      </PageSection>
+    </Page>
+  );
+}
+"#;
+        assert!(messages(paragraphes).is_empty(), "{:?}", messages(paragraphes));
+        let deux = paragraphes.replace("        <Text as=\"p\">Trois.</Text>\n", "");
+        assert!(messages(&deux).iter().any(|m| m.starts_with("6: Avertissement : `width=\"text\"`")), "{:?}", messages(&deux));
+    }
+
+    #[test]
+    fn une_zone_de_depot_dans_une_fenetre_convient() {
+        let page = r#"
+import { FileUpload, Modal, Page, PageSection } from "socle-ui";
+function Envoi() {
+  return <FileUpload label="Pièces" onAdd={ajouter} />;
+}
+export default function P() {
+  return (
+    <Page>
+      <PageSection title="Pièces jointes">
+        <Envoi />
+      </PageSection>
+      <Modal isOpen={ouvert} title="Ajouter">
+        <FileUpload label="Pièces" onAdd={ajouter} />
+        <Envoi />
+      </Modal>
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("10: Avertissement : `<Envoi>` (il rend un `FileUpload`) posé comme un bloc"), "{found:?}");
+    }
+
+    #[test]
+    fn un_ecran_n_a_qu_une_action_principale() {
+        let deux = r#"
+import { useTopBarActions } from "@alfred/sdk";
+import { Button, Page, PageSection } from "socle-ui";
+export default function Bilan() {
+  useTopBarActions([{ id: "exporter", label: "Exporter", primary: true, onPress: exporter }]);
+  return (
+    <Page>
+      <PageSection title="Ventes" actions={[{ id: "ajouter", label: "Nouvelle vente", primary: true, onPress: ajouter }]} />
+    </Page>
+  );
+}
+"#;
+        let found = messages(deux);
+        assert!(found.iter().any(|m| m.starts_with("8: Avertissement : 2 actions principales sur le même écran (« Exporter », « Nouvelle vente »)") && m.contains("D-220")), "{found:?}");
+
+        let bouton = r#"
+import { Button, Page, PageSection } from "socle-ui";
+const actions = [{ id: "creer", label: "Créer", primary: true, onPress: creer }];
+export default function P() {
+  return (
+    <Page actions={actions}>
+      <PageSection title="Bloc">
+        <Button variant="primary" onPress={envoyer}>Envoyer</Button>
+      </PageSection>
+    </Page>
+  );
+}
+"#;
+        assert!(messages(bouton).iter().any(|m| m.starts_with("8: Avertissement : 2 actions principales sur le même écran (« Créer », « Envoyer »)")), "{:?}", messages(bouton));
+
+        // Une liste de sections qui portent chacune une action principale : plusieurs sur l’écran.
+        let liste = r#"
+import { Page, PageSection } from "socle-ui";
+export default function P() {
+  return <Page>{groupes.map((g) => <PageSection key={g.id} title={g.nom} actions={[{ id: "a", label: "Ajouter", primary: true, onPress: ajouter }]} />)}</Page>;
+}
+"#;
+        assert!(messages(liste).iter().any(|m| m.contains("2 actions principales")), "{:?}", messages(liste));
+
+        // Deux écrans distincts, une condition, une fenêtre et un état vide : une seule à la fois.
+        let ecrans = r#"
+import { usePageContext } from "@alfred/sdk";
+import { Button, DetailPage, EmptyState, ListPage, Modal } from "socle-ui";
+export default function Factures() {
+  const view = usePageContext()?.view ?? null;
+  if (view) return <DetailPage title="F-1" back={{ label: "Factures", onPress: fermer }} actions={[{ id: "payer", label: "Payer", primary: true, onPress: payer }]} />;
+  return (
+    <ListPage
+      title="Factures"
+      rows={[]}
+      columns={[]}
+      empty={{ title: "Aucune facture", action: { id: "creer", label: "Nouvelle facture", primary: true, onPress: creer } }}
+      actions={vide ? [{ id: "creer", label: "Nouvelle facture", primary: true, onPress: creer }] : [{ id: "importer", label: "Importer", primary: true, onPress: importer }, { id: "x", label: "Exporter", primary: false, onPress: exporter }]}
+    />
+  );
+}
+function Fenetre() {
+  return <Modal isOpen title="Envoyer" footer={<Button variant="primary" onPress={envoyer}>Envoyer</Button>}><EmptyState title="Rien" action={<Button variant="primary" onPress={go}>Créer</Button>} /></Modal>;
+}
+"#;
+        assert!(!messages(ecrans).iter().any(|m| m.contains("actions principales")), "{:?}", messages(ecrans));
+    }
+
+    #[test]
+    fn les_exemples_vont_dans_l_etat_vide() {
+        let page = r#"
+import { EmptyState, Link, List, Page, PageSection } from "socle-ui";
+import { Text } from "@alfred/kit";
+const QUESTIONS = ["Quelle garantie ?", "Quel délai ?"];
+const FAQ = [{ question: "Quelle garantie ?", reponse: "Deux ans." }, { question: "Quel délai ?", reponse: "Trois semaines." }];
+const SUGGESTIONS = ["Résume la semaine", "Liste les retards"];
+export default function P() {
+  return (
+    <Page>
+      <PageSection title="Questions" empty={{ title: "Aucune question", description: <>{QUESTIONS.map((q) => <Link key={q} onPress={() => poser(q)}>{q}</Link>)}</> }}>
+        {messages.length === 0 && QUESTIONS.map((q) => <Link key={q} onPress={() => poser(q)}>{q}</Link>)}
+        <List aria-label="FAQ" items={FAQ.map((f) => ({ id: f.question, title: f.question, subtitle: f.reponse }))} />
+        {QUESTIONS.map((q) => <Text key={q}>{q}</Text>)}
+        {QUESTIONS.slice(0, 2).map((q) => <Link key={q} onPress={() => poser(q)}>{q}</Link>)}
+        {SUGGESTIONS.map((s) => <Link key={s} onPress={() => poser(s)}>{s}</Link>)}
+        <EmptyState title="Rien" description={<>{SUGGESTIONS.map((s) => <Link key={s} onPress={() => poser(s)}>{s}</Link>)}</>} />
+      </PageSection>
+    </Page>
+  );
+}
+"#;
+        let found: Vec<_> = messages(page).into_iter().filter(|m| m.contains("exemples")).collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found[0].starts_with("14: Avertissement : exemples (`QUESTIONS`)"), "{found:?}");
+        assert!(found[1].starts_with("15: Avertissement : exemples (`SUGGESTIONS`)"), "{found:?}");
     }
 }

@@ -10,7 +10,7 @@ Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Ce qu
 
 **Une vue d’ensemble, pas une pile.** Une page se comprend d’un coup d’œil, sur toute la largeur. Avant d’écrire un bloc, répartissez la demande dans les zones d’Alfred : les vues dans les onglets de la barre du haut, les actions dans la barre du haut ou l’en-tête du gabarit, l’élément sélectionné dans le panneau de droite, l’élément ouvert dans un onglet (section 2, « Répartir avant de composer »). Le contenu garde le reste. Une page n’est pas une colonne étroite au milieu de l’écran, ni une pile de blocs qu’il faut faire défiler pour la comprendre, ni un bloc qui ne porte qu’une action.
 
-Le transpileur ne vérifie pas les types : une option inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne socle-ui ; chaque remarque se corrige.
+Le transpileur ne vérifie pas les types : une option inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne socle-ui ; chaque remarque se corrige. Il avertit aussi d’une mise en page qui empile ou rétrécit la page (`designWarnings`) et mesure sa capture (`review`) : ces avertissements se corrigent aussi, sauf quand une préférence de l’utilisateur (`designPreferences`) demande ce rendu.
 
 ## 1. Règles non négociables
 
@@ -864,7 +864,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 - [ ] Le gabarit correspond à ce que la page montre (section 2) ; `Page` seulement si aucun ne convient.
 - [ ] Vue d’ensemble (règle 11) : un usage par onglet ; les actions dans la barre du haut ou l’en-tête ; l’élément sélectionné au panneau ; le contenu sur toute la largeur ; les blocs courts côte à côte (`PageGrid`) ; aucun bloc qui ne porte qu’une action ; les exemples dans l’état vide.
 - [ ] Chaque composant vient du catalogue (section 8), sous son nom actuel ; sa spec a été lue.
-- [ ] `check` rend `"ok": true`, sans remarque `design`.
+- [ ] `check` rend `"ok": true`, sans remarque `design`, sans avertissement `designWarnings` ni remarque `review`, sauf ce que demande une préférence de l’utilisateur (`designPreferences`).
 - [ ] Toutes les actions sont des `Action` avec `id` et `onPress` ; une seule `primary` par zone ; une icône pour chaque action courante ; `danger` avec un `confirm` qui nomme l’objet.
 - [ ] `onActionError={notifyActionError}` sur chaque gabarit qui porte des actions.
 - [ ] Les colonnes et les champs ont le bon `type` ; les états ont un `StatusMap` partagé.
