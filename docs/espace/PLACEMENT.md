@@ -109,16 +109,19 @@ Choisir entre les trois :
 | Des éléments de même nature à chercher, filtrer, ouvrir | `ListPage` | D-173 |
 | Un élément ouvert en entier | `DetailPage`, avec `back` | D-210 à D-216 |
 | Un formulaire long (plus de six champs, en sections) | `FormPage` | D-022, D-190 |
-| Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page` et `PageSection` | D-217, D-218 |
+| Un échange de questions et de réponses | `ChatPage` | D-382 |
+| Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page`, `PageSection` et `PageGrid` | D-217, D-218, D-403 |
 
 Une page ne met jamais une liste et un détail côte à côte : la liste dans le contenu, le détail dans le panneau de droite, l’élément entier dans un onglet ouvert. Une `DetailPage` ne montre pas les propriétés : elles vont dans le panneau (D-210).
+
+**Vue d’ensemble d’abord** (layout-rules, D-404 ; DESIGN.md, section 2). Avant le gabarit, répartis la demande : un usage par onglet fixe, l’élément sélectionné au panneau, l’élément entier dans un onglet ouvert, les actions dans l’en-tête du gabarit ou la barre du haut. Le contenu garde le reste, sur toute la largeur, et tient ses informations clés sur un écran. Une page qui empile des blocs dans une colonne étroite (une question, des exemples, une zone de dépôt, une liste, une réponse) mélange plusieurs usages : sépare-les (exemple en section 11.4).
 
 **L’ordre du contenu.** Chaque gabarit a ses zones (layout-rules, « Gabarits ») ; chaque spec a une partie « Contenu » qui dit quoi écrire et dans quel ordre. Lis-les avant de ranger les informations :
 
 - `ListPage` : la première colonne est le nom de l’élément ; puis ce qui sert à choisir (état, échéance, responsable) ; le détail va au panneau. Trois filtres au plus (D-174).
 - `DetailPage` : l’en-tête dit quoi (titre, statut, méta) ; les sections suivent l’ordre de lecture : le contenu principal d’abord, l’historique à la fin (D-210).
 - `Drawer` : l’état et ce qui se modifie souvent en haut ; les blocs longs repliés (`defaultCollapsed`) ; l’ordre est fixe (D-185).
-- `Page` composée : ce qui demande une action d’abord (en retard, à traiter), puis la synthèse, puis le reste (D-217).
+- `Page` composée : ce qui demande une action d’abord (en retard, à traiter), puis la synthèse, puis le reste (D-217) ; les blocs courts de même rang côte à côte dans une `PageGrid`, les informations clés sur un écran (D-403, D-404).
 - `FormPage` et `useOpenForm` : les champs obligatoires d’abord, regroupés par sens (`Fieldset`, sections) ; la largeur du champ annonce la longueur attendue (D-133).
 
 **Le panneau de droite.** Une page a un panneau au plus. Il rend un `Drawer` seul, à sa racine : l’en-tête de l’élément sélectionné, puis ses propriétés en sections (DESIGN.md, section 6). Une propriété se modifie par l’action de sa ligne : un menu de choix, un interrupteur (`Toggle`, D-137) ou une fenêtre (`useOpenForm`). Le panneau ne contient jamais une liste d’éléments, un formulaire ni le contenu principal (layout-rules, `detail`).
@@ -276,22 +279,43 @@ Demande : « Ajoute une synthèse de mes factures. »
 
 - **Onglet fixe** « Synthèse » de l’entrée Factures : une autre vue du même domaine. Pas une nouvelle entrée du menu.
 - **Gabarit** `Page` : aucun autre ne convient (D-217). Dans `toolbar`, un `SegmentedControl` de période (« Mois », « Trimestre », « Année »), qui s’applique tout de suite.
-- **Chiffres clés** : une `Card` `variant="metric"` par chiffre qui mène quelque part (« À encaisser », « En retard »), avec `onPress` qui ouvre la liste (`shell.navigate`). Pas de chiffre sans action, pas de mur de cartes.
-- **Blocs** : `PageSection` « Factures en retard » avec une `Table` et son `empty` (« Aucune facture en retard ») ; un graphique par une librairie npm, aux couleurs `--chart-1` à `--chart-8` (principes de Socle, D-338).
+- **Chiffres clés** : une `Card` `variant="metric"` par chiffre qui mène quelque part (« À encaisser », « En retard », « Encaissé ce mois »), avec `onPress` qui ouvre la liste (`shell.navigate`), côte à côte dans une `PageGrid`. Pas de chiffre sans action, pas de mur de cartes.
+- **Blocs**, côte à côte dans une seconde `PageGrid` : `PageSection` « Factures en retard » avec une `Table` et son `empty` (« Aucune facture en retard ») ; `PageSection` « Encaissements » avec un graphique par une librairie npm, aux couleurs `--chart-1` à `--chart-8` (principes de Socle, D-338). Toute la synthèse tient sur un écran.
 - **Actions** : « Exporter » dans `actions` de `Page` (zone `toolbar`).
 
 ```tsx
 <Page state={…} onRetry={…}
   toolbar={<SegmentedControl label="Période" options={PERIODES} value={periode} onChange={setPeriode} />}
   actions={[{ id: "exporter", label: "Exporter en CSV", icon: <Download size={16} />, onPress: exporter }]}>
-  <Row gap="md" wrap>
+  <PageGrid columns={3}>
     <Card variant="metric" label="À encaisser" value={formatMontant(total)} onPress={() => void shell.navigate("factures/liste")} />
     <Card variant="metric" label="En retard" value={String(retard.length)} onPress={() => void shell.navigate("factures/relances")} />
-  </Row>
-  <PageSection title="Factures en retard" empty={retard.length ? undefined : { title: "Aucune facture en retard" }}>
-    <Table … />
-  </PageSection>
+    <Card variant="metric" label="Encaissé ce mois" value={formatMontant(encaisse)} onPress={() => void shell.navigate("factures/liste")} />
+  </PageGrid>
+  <PageGrid>
+    <PageSection title="Factures en retard" empty={retard.length ? undefined : { title: "Aucune facture en retard" }}>
+      <Table … />
+    </PageSection>
+    <PageSection title="Encaissements">
+      <div ref={graphique} />
+    </PageSection>
+  </PageGrid>
 </Page>
 ```
 
-Vérifie les options exactes de `SegmentedControl`, `Card` et `Table` dans leur spec (`docs/alfred/socle/specs/`).
+Vérifie les options exactes de `SegmentedControl`, `Card`, `PageGrid` et `Table` dans leur spec (`docs/alfred/socle/specs/`).
+
+### 11.4 Une base documentaire : questionner et gérer les documents
+
+Demande : « Une base documentaire : mes PDF indexés, et des réponses à mes questions, avec les sources. »
+
+Deux usages dans une demande : poser des questions, gérer les documents. Deux onglets fixes, pas une page qui empile tout.
+
+- **Entrée du menu** « Base documentaire » : un nouveau domaine.
+- **Onglet fixe** « Questions » : une `ChatPage` (DESIGN.md, section 10). La saisie en bas ; chaque réponse dans le relevé, avec ses sources (document et page) ; une source ouvre son PDF dans un onglet. L’état vide du relevé dit à quoi sert la page et propose deux ou trois questions d’exemple (`Link` dans la phrase de l’`EmptyState`) : ils disparaissent à la première question. Un modèle à installer se dit par un `Alert` dans la zone `alerts` de la `ChatPage`. Les échanges se gardent en base.
+- **Onglet fixe** « Documents » : une `ListPage` des documents sur toute la page (nom, état en `status`, pages, passages, date d’ajout en `date`), recherche et filtre d’état du gabarit. « Ajouter des PDF » en action principale de l’en-tête, qui appelle `files.pick` ; « Actualiser » en icône. Pas de bloc de dépôt. L’état vide de la liste propose « Ajouter des PDF ».
+- **Panneau de droite** de « Documents » : un `Drawer` sur le document sélectionné. En-tête : son nom, son état ; actions « Ouvrir », « Relancer l’indexation », « Supprimer » (`danger`). Sections « Indexation » (pages, passages, date, erreur) et « Fichier ».
+- **Onglet ouvert** sur un document : double-clic → `views.open` ; la page lit `usePageContext()?.view` et rend une `DetailPage` (retour « Documents ») dont le corps est le `DocumentViewer` du PDF (`files.read`, `loadPdf`).
+- **Messages** : une indexation en échec → `badge.set` sur l’entrée, tant qu’elle reste à reprendre.
+
+À ne pas faire : une `Page` de 760 px (`width="text"`) qui empile « Poser une question », des questions d’exemple, une zone de dépôt `FileUpload`, la liste des documents et la réponse.

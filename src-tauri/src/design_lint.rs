@@ -49,7 +49,7 @@ const UI_REPLACEMENTS: [(&str, &str); 44] = [
     ("Text", "`Text` de `@alfred/kit`"),
     ("Heading", "le `title` d’une `PageSection`"),
     ("Surface", "une `PageSection` de `socle-ui`"),
-    ("Grid", "des `PageSection` de `socle-ui`, ou `Stack`/`Row` de `@alfred/kit`"),
+    ("Grid", "`PageGrid` de `socle-ui` (blocs côte à côte, `columns` de 2 à 4), ou des `PageSection` empilées"),
     ("FeedbackBanner", "`Alert` de `socle-ui` (encart dans la zone), ou une notification"),
     ("DataTable", "`Table` de `socle-ui`, ou `ListPage` pour une collection"),
     ("DataGrid", "`Table` de `socle-ui` (`density=\"compact\"`, `groupBy`)"),

@@ -8,11 +8,13 @@ Ce document s’adresse à l’agent qui écrit une page, un panneau de droite o
 
 Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Ce qu’Alfred n’est pas : un tableau de bord décoratif, un mur de cartes identiques, des métriques sans action, des dégradés, des icônes d’ornement.
 
+**Une vue d’ensemble, pas une pile.** Une page se comprend d’un coup d’œil, sur toute la largeur. Avant d’écrire un bloc, répartissez la demande dans les zones d’Alfred : les vues dans les onglets de la barre du haut, les actions dans la barre du haut ou l’en-tête du gabarit, l’élément sélectionné dans le panneau de droite, l’élément ouvert dans un onglet (section 2, « Répartir avant de composer »). Le contenu garde le reste. Une page n’est pas une colonne étroite au milieu de l’écran, ni une pile de blocs qu’il faut faire défiler pour la comprendre, ni un bloc qui ne porte qu’une action.
+
 Le transpileur ne vérifie pas les types : une option inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne socle-ui ; chaque remarque se corrige.
 
 ## 1. Règles non négociables
 
-1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`. `Page` et `PageSection` seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (section 2).
+1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`, un échange de questions et de réponses est une `ChatPage`. `Page`, avec `PageSection` et `PageGrid`, seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (sections 2 et 10).
 2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover` ; `check` avertit ailleurs.
 3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
@@ -22,6 +24,7 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 8. **Français.** Les textes affichés sont en français, avec la typographie française (section 13).
 9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique, une carte, un calendrier, un éditeur riche) passe par une librairie npm (section 8). Pour tout autre manque, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).
 10. **Les noms actuels.** Écrire le nom actuel de chaque composant (catalogue, section 8). Un ancien nom (`Switch`, `TextField`, `Dialog`…) marche encore, mais `check` avertit avec le nouveau nom. Un nom qui n’existe pas dans socle-ui est une erreur de `check`.
+11. **Vue d’ensemble d’abord.** Répartir avant de composer (section 2) : un usage par onglet, les actions dans la barre du haut ou l’en-tête, l’élément sélectionné au panneau, l’élément ouvert en onglet. Le contenu prend toute la largeur et tient ses informations clés sur un écran. Les blocs courts et de même rang se rangent côte à côte (`PageGrid`) : jamais une longue pile de `PageSection` (sauf une page des Réglages, qui se lit de haut en bas, section 7). Une colonne étroite centrée sert seulement à lire un texte (`width="text"`, `DetailPage`) ou à converser (`ChatPage`). Règle de Socle : layout-rules, « Vue d’ensemble d’abord » (D-404).
 
 La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’accent ; les composants les suivent. Une couleur écrite dans une page est illisible dans l’un des thèmes.
 
@@ -62,11 +65,34 @@ Choisir le gabarit d’après ce que la page montre :
 | Un contenu à voir sans quitter la page (aperçu, choix) | `Modal` (section 9) | Modale |
 | Un élément à lire ou traiter en entier depuis une liste | `DetailPage` avec `back` (section 10) | Onglet fermable ouvert sur l’élément (`views.open`) |
 | Une autre page de l’espace | `shell.navigate("module/page")` ; `shell.openWindow` pour une fenêtre à part | L’onglet de cette page |
-| Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page` et `PageSection` (section 10) | Onglet |
+| Un échange de questions et de réponses (avec l’IA, sur des documents) | `ChatPage` (section 10) | Un onglet fixe à lui |
+| Autre chose : tableau de bord, synthèse, éditeur, graphique | `Page`, `PageSection` et `PageGrid` (section 10) | Onglet |
 
 Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `Drawer` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
 
 Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus » ; `check` avertit), ni des boutons accolés.
+
+### Répartir avant de composer
+
+Une page qui fait plusieurs choses ne les empile pas : chacune va dans sa zone. Décidez des zones avant d’écrire un bloc (layout-rules, « Vue d’ensemble d’abord », D-404).
+
+| La demande contient… | Sa place | Pas |
+|---|---|---|
+| Deux usages d’un même domaine (poser des questions, gérer les documents) | Deux onglets fixes de l’entrée (`place_page`, `kind: "tab"`) | Deux blocs l’un sous l’autre |
+| Une collection (documents, factures, tâches) | Une `ListPage` sur toute la page : recherche, filtres, compteur | Une `List` dans un bloc |
+| L’élément sélectionné : son état, ses propriétés, ses actions | Le panneau de droite (`Drawer`) | Un bloc de détail à côté de la liste |
+| Un élément à lire en entier (un PDF, un ticket) | Un onglet ouvert (`views.open`) : `DetailPage`, `DocumentViewer` | Un aperçu dans un bloc |
+| Une action de la page (ajouter, importer, actualiser, exporter) | L’en-tête du gabarit (`actions`) ; pour une `Page`, la barre du haut (`useTopBarActions`) ou la barre d’outils | Un bloc qui ne porte qu’une action |
+| Des fichiers à importer | Une action (« Ajouter des PDF ») qui appelle `files.pick` | Un bloc `FileUpload` : le cadre n’a pas de disque (SDK.md, section 1) |
+| Une question et sa réponse | Un onglet `ChatPage` : la saisie en bas, les réponses et leurs sources dans le relevé | Un champ de texte et un bloc « Réponse » |
+| Des exemples (questions types, premiers pas) | L’état vide de la zone (`EmptyState`, un `Link` par exemple) : ils partent avec lui | Un bloc permanent |
+| Des chiffres clés, des listes courtes de même rang | Une `PageGrid` : côte à côte, sur un écran | Une pile de `PageSection` |
+| Un état durable (modèle à installer, données d’exemple) | Un `Alert` en tête du contenu | Un bandeau, un bloc à part |
+| Ce qui attend l’utilisateur (non lus, échecs à reprendre) | Le compteur de l’entrée du menu (`badge.set`) | Un chiffre dans un titre de bloc |
+
+Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient ses informations clés sur un écran de 1280 × 800, panneau ouvert. Une colonne étroite centrée ne sert qu’à lire un texte (`DetailPage`, `width="text"`) ou à converser (`ChatPage`).
+
+**Exemple : une base documentaire** (des PDF indexés, des questions en langage courant). À ne pas faire : une `Page` de 760 px qui empile « Poser une question », des questions d’exemple, une zone de dépôt, la liste des documents et la réponse. À faire : deux onglets fixes. « Questions » : une `ChatPage`, les questions d’exemple dans l’état vide du relevé, chaque réponse avec ses sources ; une source ouvre son PDF dans un onglet (`DocumentViewer`). « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné au panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »). PLACEMENT.md, section 11.4, détaille ce cas.
 
 ## 3. Imports et structure d’une page
 
@@ -84,7 +110,7 @@ import { Row, Stack, Text } from "@alfred/kit";               // écart et texte
 - **Code Python du module** (`import alfred`) : il ne dessine rien. Une page qui lance un travail Python long montre sa progression en lisant le canal que le code publie (`alfred.channels.open("nom")` → `useChannel("<module>:nom")`), par exemple dans une `ProgressBar` ; la fin se dit par une notification (`alfred.notify`). Référence : SDK.md, section 2, « SDK Python ».
 - **`@alfred/kit`** : de petits composants d’Alfred, là où socle-ui n’a rien :
   - `Stack` (`gap` : `none`, `xs`, `sm`, `md`, `lg`) empile des blocs ;
-  - `Row` (`gap`, `wrap`, `justify` : `start`, `between`, `end`) aligne sur une ligne ;
+  - `Row` (`gap`, `wrap`, `justify` : `start`, `between`, `end`) aligne de petits éléments sur une ligne (badges, boutons d’un `Popover`) ; des blocs côte à côte se rangent dans une `PageGrid` de socle-ui ;
   - `Text` (`as` : `p` ou `span` ; `tone` : `default`, `muted`, `danger`, `warning`, `success` ; `size` : `default` ou `meta` ; `weight` : `normal`, `medium`, `strong`) écrit une phrase ;
   - `Notice` est l’ancien encart : écrire `Alert` de `socle-ui` (`tone`, `title`, `children`, `action`), qui le remplace.
 - L’hôte du cadre enveloppe déjà la page dans `SocleProvider` (thème de l’utilisateur, densité desktop). Ne pas en ajouter un.
@@ -255,13 +281,15 @@ Chaque élément d’une page se prend dans socle-ui. Cette section a deux parts
 
 ### Quand utiliser quoi
 
-Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou le `content` d’une section. Chaque composant marqué ★ demande un nom accessible ; options exactes dans sa spec (`docs/alfred/socle/specs/`).
+Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une `DetailPage` ou le `content` d’une section. Chaque composant marqué ★ demande un nom accessible ; options exactes dans sa spec (`docs/alfred/socle/specs/`).
 
 | Besoin | Composant | À retenir |
 |---|---|---|
 | Une collection entière | `ListPage` (section 5) | Pas une `Table` seule dans une `Page`. |
+| Des blocs côte à côte (chiffres clés, listes courtes de même rang) | `PageGrid` | `columns` : 2 (défaut), 3 ou 4. Les colonnes passent l’une sous l’autre quand la place manque. Jamais `Row` pour des blocs. |
+| Une conversation : une question, sa réponse | `ChatPage`, avec `ChatTranscript`, `ChatMessage` et `ChatComposer` | Section 10. Les exemples dans `empty` du relevé. |
 | Un tableau dans un bloc | `Table` | `density="compact"`, `groupBy`, `rowActions`. |
-| Une liste qui se lit élément par élément | `List` | `items: [{ id, title, subtitle, meta, status, unread }]`. |
+| Une liste qui se lit élément par élément | `List` ★ `label` | `items: [{ id, title, subtitle, meta, status, unread }]`. |
 | Une hiérarchie (dossiers, chemins, catégories) | `TreeView` ★ `aria-label` | `loadChildren` pour un niveau à l’ouverture. Jamais des `List` imbriquées. |
 | Un journal horodaté | `LogViewer` ★ `label` | `lines`, `live`, `fill`. |
 | Une console interactive | `Terminal` ★ `label` | `engine={loadTerminal}`, `{...useTerminalConnection(canal)}`. |
@@ -271,7 +299,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou 
 | Du Markdown à lire, à écrire | `Markdown` (`socle-ui/markdown`), `MarkdownEditor` ★ `label` (`socle-ui/markdown-editor`) | Jamais une `TextArea` pour du Markdown. |
 | L’état d’un élément | `Badge` (libellé), `BadgeDot` (point nommé) | Tons `StatusTone` ; dans un gabarit, le `type: "status"` d’une colonne ou d’un champ. |
 | Une valeur typée hors gabarit | `FormattedValue` | `value`, `type`. La page ne formate rien. |
-| Un chiffre clé qui mène quelque part | `Card` `variant="metric"`, avec `onPress` | Pas de chiffre sans action, pas de mur de cartes (D-361). |
+| Un chiffre clé qui mène quelque part | `Card` `variant="metric"`, avec `onPress` | Pas de chiffre sans action, pas de mur de cartes (D-361). Une rangée de chiffres : une `PageGrid`. |
 | Un encart de message dans le contenu | `Alert` | Au-dessus de ce qu’il concerne ; une action au plus (D-355). |
 | Un avancement, un quota | `ProgressBar` ; `UsageRing` pour une jauge compacte | `label`, `value`, `max`. |
 | Les étapes d’un parcours | `ProgressIndicator` | `label`, `steps`, `current`. |
@@ -282,17 +310,18 @@ Composer ces composants dans une `Page`, une `PageSection`, une `DetailPage` ou 
 | Un menu d’actions, un menu contextuel | `DropdownMenu`, `useContextMenu()` | Dans un gabarit, une `Action` sans icône va d’elle-même dans « … ». |
 | La recherche d’une `Page` composée | `SearchInput` | `ListPage` a la sienne. |
 | Des étiquettes à retirer ou à choisir | `TagGroup` et `Tag` | |
-| Un champ de saisie | `TextInput`, `TextArea`, `NumberField`, `Select`, `ComboBox`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `Toggle`, `Slider`, `FileUpload`, `Fieldset` | Hors formulaire de `useOpenForm` : seulement dans une page des Réglages ou une `Page` composée. Un réglage immédiat : `Toggle` ; une case d’un formulaire qu’on envoie : `Checkbox` (D-137). |
+| Un champ de saisie | `TextInput`, `TextArea`, `NumberField`, `Select`, `ComboBox`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `Toggle`, `Slider`, `Fieldset` | Hors formulaire de `useOpenForm` : seulement dans une page des Réglages ou une `Page` composée. Un réglage immédiat : `Toggle` ; une case d’un formulaire qu’on envoie : `Checkbox` (D-137). Une question à poser : `ChatComposer` d’une `ChatPage`, pas une `TextArea`. |
+| Des fichiers à ajouter | Une `Action` qui appelle `files.pick` (SDK.md, section 9) | Jamais un bloc de dépôt (`FileUpload`) : le cadre n’a pas de disque (SDK.md, section 1). |
 | Une couleur à choisir dans un nuancier | `ColorPicker` | |
 | Un identifiant, une commande | `Code` | `block` pour un extrait. |
 | Une personne | `Avatar` | `name`, `src`. |
 | Un lien | `Link` | `href` externe, ou `onPress`. |
 | Une attente locale | `Skeleton` ; `Spinner` pour une attente courte | Les gabarits ont déjà leurs états. |
-| Un bloc vide | `EmptyState` ; dans un gabarit, `empty` | `action={<Button variant="primary">…</Button>}`. |
+| Un bloc vide | `EmptyState` ; dans un gabarit, `empty` | `action={<Button variant="primary">…</Button>}`. Des exemples à essayer : un `Link` dans sa phrase. |
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.19.1
+### Catalogue de socle-ui 1.20.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -362,7 +391,7 @@ Tous les composants, motifs et gabarits de la version installée, avec leur rôl
 | `DetailPage` | Gabarit | Gabarit de la zone `main` d'AppShell pour un élément ouvert en entier : une demande, une facture, un document. Il montre le contenu principal de l'élément, en sections. | `docs/alfred/socle/specs/DetailPage.md` |
 | `FormPage` | Gabarit | `FormPage` montre un formulaire long, rangé en sections : créer un objet riche, modifier sa fiche, remplir une demande. L'app décrit ses champs par des données ; le gabarit les dessine avec les champs du lot 1 (D-190). | `docs/alfred/socle/specs/FormPage.md` |
 | `ListPage` | Gabarit | Gabarit d'une page qui liste des éléments de même nature : demandes, contacts, factures, fichiers. L'app **décrit** sa page par des données (titre, colonnes typées, filtres, actions) ; le gabarit dessine tout, y compris le chargement, le vide, l'absence de résultat et l'erreur (D-173). Il se place dans la zone `main` d'`AppShell`. | `docs/alfred/socle/specs/ListPage.md` |
-| `Page` | Gabarit | Page composée : gabarit libre de la zone `main` d'AppShell, quand aucun autre gabarit ne convient (tableau de bord, éditeur, graphique, synthèse de quelques blocs). Elle pose les zones standard ; l'app y place des composants du socle, sans HTML stylé (D-217). | `docs/alfred/socle/specs/Page.md` |
+| `Page` | Gabarit | Page composée : gabarit libre de la zone `main` d'AppShell, quand aucun autre gabarit ne convient (tableau de bord, éditeur, graphique, synthèse de quelques blocs). Elle pose les zones standard ; l'app y place des composants du socle, sans HTML stylé (D-217). Ses blocs s'empilent, ou se rangent côte à côte dans `PageGrid` pour tenir sur un écran (D-403, D-404). | `docs/alfred/socle/specs/Page.md` |
 
 Réservés à la coquille d’Alfred ou à l’hôte du cadre, jamais rendus par une page : `SocleProvider`, `useSocle`, `Tabs`, `AppShell`, `NotificationCenter`, `Sidebar`, `LoginPage`, `SettingsPage`.
 
@@ -441,11 +470,32 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 
 ## 10. Page composée et élément ouvert
 
-**`Page` et `PageSection`** : un tableau de bord, une synthèse, un éditeur.
+**`Page`, `PageSection` et `PageGrid`** : un tableau de bord, une synthèse, un éditeur.
 
-- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full` ou `text`), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`.
+- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full`, le défaut ; `text`, une colonne de 760 px, seulement pour un texte à lire : une note, une procédure), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`.
 - `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state`, `onRetry`, `empty: { title, description, action }`.
-- Pas de titre de page : il est dans la barre du haut. Pas de cartes décoratives ni de chiffres sans action.
+- `PageGrid` : `columns` (`2` par défaut, `3` ou `4`). Elle range ses enfants (`PageSection`, `Card`) côte à côte, en colonnes égales, à 24 px ; les blocs d’une ligne ont la même hauteur. Une colonne garde 240 px au moins : panneau ouvert ou fenêtre étroite, la grille prend moins de colonnes, puis une seule. Elle va dans le contenu de la `Page`, ou dans une `PageSection` pour une rangée de `Card` ; jamais dans une `DetailPage`, un `Drawer` ou une autre `PageGrid`.
+- Les informations clés tiennent sur un écran : ce qui demande une action (en retard, à traiter) en haut, côte à côte ; le détail ensuite. Pas de longue pile de `PageSection`.
+- Pas de titre de page : il est dans la barre du haut. Pas de cartes décoratives ni de chiffres sans action. Pas de bloc de texte seul (« À savoir ») : une précision va dans la `description` du bloc qu’elle concerne.
+
+**`ChatPage`** : un échange de questions et de réponses (avec l’IA, sur des documents), dans un onglet fixe à lui. Le relevé défile, la saisie reste en bas, les exemples vont dans l’état vide du relevé :
+
+```tsx
+import { ChatComposer, ChatMessage, ChatPage, ChatTranscript, EmptyState, Link } from "socle-ui";
+import { Markdown } from "socle-ui/markdown";
+
+<ChatPage composer={<ChatComposer label="Question sur les documents" placeholder="Posez une question" isRunning={enCours} onSubmit={(texte) => void demander(texte)} />}>
+  <ChatTranscript label="Questions et réponses" followKey={echanges.length}
+    empty={<EmptyState title="Posez une question" description={<>Par exemple : <Link onPress={() => void demander(EXEMPLE)}>{EXEMPLE}</Link></>} />}>
+    {echanges.flatMap((e) => [
+      <ChatMessage key={`${e.id}-q`} role="user">{e.question}</ChatMessage>,
+      <ChatMessage key={`${e.id}-r`} role="assistant"><Markdown>{e.reponse}</Markdown></ChatMessage>,
+    ])}
+  </ChatTranscript>
+</ChatPage>
+```
+
+Les sources d’une réponse suivent son texte, dans le message : une `List` (`label`, `selectionMode="none"`) dont l’action de chaque source (`itemActions`) ouvre le document dans un onglet (`views.open`). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet.
 
 **`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. `onOpen` ouvre l’élément dans un onglet fermable (`views.open({ id, label, params })`) ; dans cet onglet, `usePageContext()?.view` porte l’élément et la page rend la `DetailPage` à la place de la `ListPage`. Le lien de retour ferme l’onglet et revient à la liste :
 
@@ -727,38 +777,46 @@ export default function Reglages() {
 
 ### 14.4 Page composée : `modules/suivi/pages/semaine.tsx`
 
+La semaine d’un coup d’œil : trois chiffres qui mènent à la liste, puis les deux listes qui demandent une action, côte à côte. Rien n’est caché derrière un choix d’affichage.
+
 ```tsx
-import { useAsync } from "@alfred/sdk";
-import { Text } from "@alfred/kit";
-import { List, Page, PageSection, SegmentedControl } from "socle-ui";
-import { useState } from "react";
-import { ETATS, lister } from "../lib/taches";
+import { shell, useAsync } from "@alfred/sdk";
+import { Card, List, Page, PageGrid, PageSection } from "socle-ui";
+import { ETATS, lister, type Tache } from "../lib/taches";
+
+const elements = (taches: Tache[]) =>
+  taches.map((t) => ({ id: t.id, title: t.titre, subtitle: t.responsable ?? undefined, meta: t.echeance ?? undefined, status: ETATS[t.etat] }));
 
 export default function Semaine() {
   const taches = useAsync(lister, []);
-  const [vue, setVue] = useState("retard");
   const aujourdhui = new Date().toISOString().slice(0, 10);
-  const enRetard = (taches.data ?? []).filter((t) => t.echeance && t.echeance < aujourdhui && t.etat !== "terminee");
-  const bloquees = (taches.data ?? []).filter((t) => t.etat === "bloquee");
-  const montrees = vue === "retard" ? enRetard : bloquees;
+  const dansUneSemaine = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const ouvertes = (taches.data ?? []).filter((t) => t.etat !== "terminee");
+  const enRetard = ouvertes.filter((t) => t.echeance && t.echeance < aujourdhui);
+  const bloquees = ouvertes.filter((t) => t.etat === "bloquee");
+  const aRendre = ouvertes.filter((t) => t.echeance && t.echeance >= aujourdhui && t.echeance <= dansUneSemaine);
+  const voirLaListe = () => void shell.navigate("suivi/taches");
 
   return (
-    <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} onRetry={taches.reload}
-      toolbar={<SegmentedControl label="Tâches à voir" options={[{ value: "retard", label: `En retard (${enRetard.length})` }, { value: "bloquees", label: `Bloquées (${bloquees.length})` }]} value={vue} onChange={setVue} />}>
-      <PageSection title={vue === "retard" ? "Tâches en retard" : "Tâches bloquées"}
-        empty={montrees.length ? undefined : { title: "Rien à rattraper", description: "Toutes les tâches sont à jour." }}>
-        <List selectionMode="none" items={montrees.map((t) => ({ id: t.id, title: t.titre, subtitle: t.responsable ?? undefined,
-          meta: t.echeance ?? undefined, status: ETATS[t.etat] }))} />
-      </PageSection>
-      <PageSection title="À savoir">
-        <Text tone="muted">Une tâche bloquée attend une réponse d’un autre service.</Text>
-      </PageSection>
+    <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} onRetry={taches.reload}>
+      <PageGrid columns={3}>
+        <Card variant="metric" label="En retard" value={String(enRetard.length)} onPress={voirLaListe} />
+        <Card variant="metric" label="Bloquées" value={String(bloquees.length)} onPress={voirLaListe} />
+        <Card variant="metric" label="À rendre sous 7 jours" value={String(aRendre.length)} onPress={voirLaListe} />
+      </PageGrid>
+      <PageGrid>
+        <PageSection title="En retard" empty={enRetard.length ? undefined : { title: "Rien en retard" }}>
+          <List label="Tâches en retard" selectionMode="none" items={elements(enRetard)} />
+        </PageSection>
+        <PageSection title="Bloquées" description="Elles attendent une réponse d’un autre service."
+          empty={bloquees.length ? undefined : { title: "Rien de bloqué" }}>
+          <List label="Tâches bloquées" selectionMode="none" items={elements(bloquees)} />
+        </PageSection>
+      </PageGrid>
     </Page>
   );
 }
 ```
-
-(Vérifier la forme de `status` d’un élément de `List` dans la spec ; à défaut, la mettre dans `meta`.)
 
 ## 15. Correspondance avec l’ancienne `@alfred/ui`
 
@@ -775,7 +833,8 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 | `confirmAction`, `ConfirmDialog` | `useConfirm()`, ou `Action` `danger` |
 | `Action` (`onClick`, `icon: Pencil`, `disabled`, `hidden`) | `Action` (`id`, `onPress`, `icon: <Pencil size={16} />`, `isDisabled`, `isHidden`) ; `success` → `shell.notify` dans `onPress` |
 | `Page` (`search`, `bar`, `actions`, `header`) | `Page` (`toolbar`, `actions`) ; recherche : `ListPage` ou `SearchInput` dans `toolbar` |
-| `Section`, `Surface`, `Heading`, `Grid` | `PageSection` |
+| `Section`, `Surface`, `Heading` | `PageSection` |
+| `Grid` | `PageGrid` (blocs côte à côte) |
 | `Stack`, `Row`, `Text` | `@alfred/kit` |
 | `FeedbackBanner` | `Alert` de `socle-ui` (encart dans la zone), ou une notification |
 | `DataTable`, `DataGrid` | `Table`, ou `ListPage` |
@@ -798,6 +857,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 
 - [ ] Chaque chose est à sa place selon PLACEMENT.md (entrée du menu, onglet, panneau, fenêtre, action, message) ; un doute a été posé en question à l’utilisateur.
 - [ ] Le gabarit correspond à ce que la page montre (section 2) ; `Page` seulement si aucun ne convient.
+- [ ] Vue d’ensemble (règle 11) : un usage par onglet ; les actions dans la barre du haut ou l’en-tête ; l’élément sélectionné au panneau ; le contenu sur toute la largeur ; les blocs courts côte à côte (`PageGrid`) ; aucun bloc qui ne porte qu’une action ; les exemples dans l’état vide.
 - [ ] Chaque composant vient du catalogue (section 8), sous son nom actuel ; sa spec a été lue.
 - [ ] `check` rend `"ok": true`, sans remarque `design`.
 - [ ] Toutes les actions sont des `Action` avec `id` et `onPress` ; une seule `primary` par zone ; une icône pour chaque action courante ; `danger` avec un `confirm` qui nomme l’objet.
@@ -806,7 +866,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 - [ ] Le panneau lit `useSelection()` ; la page publie sa sélection ; une écriture appelle `announceChange()`.
 - [ ] Aucun `style`, `className`, balise HTML ni couleur en dur.
 - [ ] Textes : `empty.title` nomme l’absence, libellés à l’infinitif, typographie française.
-- [ ] `page_snapshot` et `page_screenshot` montrent la page attendue, en clair et en sombre, panneau ouvert et fermé.
+- [ ] `page_snapshot` et `page_screenshot` montrent la page attendue, en clair et en sombre, panneau ouvert et fermé. L’écran se comprend d’un coup d’œil : ni pile de blocs, ni colonne étroite, ni grand vide (guide `page.md`, étape 7 ter).
 
 ## 17. Accueil au premier démarrage
 

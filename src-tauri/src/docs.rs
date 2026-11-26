@@ -101,6 +101,33 @@ mod tests {
     }
 
     #[test]
+    fn les_guides_demandent_une_vue_d_ensemble_et_non_une_pile() {
+        // DESIGN.md : répartir dans les zones avant de composer ; blocs côte à côte ; plus de page qui empile.
+        for expected in [
+            "**Une vue d’ensemble, pas une pile.**",
+            "11. **Vue d’ensemble d’abord.**",
+            "### Répartir avant de composer",
+            "**Exemple : une base documentaire**",
+            "`PageGrid` : `columns`",
+            "**`ChatPage`** : un échange de questions et de réponses",
+        ] {
+            assert!(DESIGN.contains(expected), "DESIGN.md n’a pas « {expected} »");
+        }
+        assert!(!DESIGN.contains("`Page` et `PageSection` seulement quand aucun gabarit ne convient"));
+        assert!(!DESIGN.contains("<Row gap="), "un exemple de DESIGN.md range encore des blocs avec `Row`");
+        // Le guide d’une page : répartir dès le placement, puis juger l’écran avant de rendre compte.
+        let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
+        for expected in ["**Répartis d’abord la demande**", "7 ter. **Juge l’écran avant de rendre compte.**", "`Page` avec `PageGrid`"] {
+            assert!(page.contains(expected), "page.md n’a pas « {expected} »");
+        }
+        assert!(PLACEMENT.contains("### 11.4 Une base documentaire"));
+        assert!(!PLACEMENT.contains("<Row gap="), "un exemple de PLACEMENT.md range encore des blocs avec `Row`");
+        // Les guides citent `PageGrid` : la version de socle-ui installée au build doit l’exporter (1.20.0 au moins).
+        assert!(crate::socle_ui::EXPORTS.contains(&"PageGrid"), "socle-ui {} n’exporte pas PageGrid", crate::socle_ui::VERSION);
+        assert!(crate::socle_ui::DOCS.iter().any(|(path, text)| *path == "docs/layout-rules.md" && text.contains("Vue d'ensemble d'abord")));
+    }
+
+    #[test]
     fn le_guide_de_l_espace_dit_de_travailler_sans_commenter() {
         let root = tempfile::tempdir().unwrap();
         let space = Space::open_or_create(&root.path().join("espace"), Some("Essai")).unwrap();
