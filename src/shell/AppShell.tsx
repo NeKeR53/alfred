@@ -665,6 +665,9 @@ export function AppShell({
       indicator={row.activity ? "activity" : undefined}
       status={row.warning ? "warning" : undefined}
       unread={Boolean(row.unread)}
+      // Une coordinatrice s’ouvre dépliée : ses délégués se voient d’un coup d’œil, reliés par le trait (D-042, D-420).
+      // Si l’utilisateur la replie, Socle mémorise son choix, qui l’emporte.
+      defaultExpanded={Boolean(row.children?.length)}
       // « Archiver » : un bouton-icône au survol, pas une entrée du menu « … » (D-381).
       quickActions={row.actions
         ?.filter((action) => action.id === "archive")

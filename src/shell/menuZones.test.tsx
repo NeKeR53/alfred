@@ -255,19 +255,21 @@ describe("zone dans le menu de gauche", () => {
         agentZone={{ rows: agentZoneRows(headers, () => "idle", false), onOpen, onAction: vi.fn() }}
       />,
     );
-    // Au premier niveau, la coordinatrice et la conversation ordinaire seulement ; repliée, la coordinatrice résume.
+    // Au premier niveau, la coordinatrice et la conversation ordinaire seulement.
     const coordinator = await screen.findByRole("row", { name: /^Ventes Q3/ });
     expect(coordinator).toHaveAttribute("aria-level", "2");
-    expect(screen.queryByRole("row", { name: /^ventes/ })).toBeNull();
-    await user.click(within(coordinator).getByRole("button", { name: /^Déplier Ventes Q3/, hidden: true }));
-    // Dépliée : ses délégués dessous, sans « · délégué », dans l’ordre où elle les a lancés.
-    const delegates = screen
-      .getAllByRole("row")
-      .filter((row) => row.getAttribute("aria-level") === "3")
-      .map((row) => row.getAttribute("aria-label"));
-    expect(delegates).toEqual(["ventes", "demandes", "documentation"]);
+    // Dépliée dès l’ouverture (D-420) : ses délégués dessous, sans « · délégué », dans l’ordre où elle les a lancés,
+    // reliés par le trait ; le dernier finit par le coude (D-042). Pas de ligne résumé.
+    const delegateRows = screen.getAllByRole("row").filter((row) => row.getAttribute("aria-level") === "3");
+    expect(delegateRows.map((row) => row.getAttribute("aria-label"))).toEqual(["ventes", "demandes", "documentation"]);
+    expect(delegateRows.map((row) => row.querySelectorAll(".border-tree-line").length)).toEqual([2, 2, 1]);
+    expect(screen.queryByRole("row", { name: /3 éléments/ })).toBeNull();
     await user.click(screen.getByRole("row", { name: /^demandes/ }));
     expect(onOpen).toHaveBeenCalledWith("d2");
+    // Repliée par l’utilisateur : son choix l’emporte, la ligne résumé revient.
+    await user.click(within(coordinator).getByRole("button", { name: /^Replier Ventes Q3/, hidden: true }));
+    expect(screen.queryByRole("row", { name: /^ventes/ })).toBeNull();
+    expect(screen.getByRole("row", { name: /3 éléments/ })).toBeInTheDocument();
   });
 
   it("conversations : un délégué dont la coordinatrice est archivée reste en haut et dit de qui il est le délégué", async () => {
