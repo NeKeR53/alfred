@@ -14,6 +14,7 @@ import {
   type MentionTrigger,
 } from "socle-ui";
 import { inTauri, pickFolder } from "../../lib/native";
+import { pageTakesDrop } from "../../shell/fileDrop";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { DictationButton } from "../voice/DictationButton";
@@ -391,12 +392,16 @@ export function Composer({
     void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
       const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
         if (lockedRef.current) return;
-        if (event.payload.type === "over" || event.payload.type === "enter") setDragging(true);
-        else if (event.payload.type === "leave") setDragging(false);
-        else if (event.payload.type === "drop") {
+        const { payload } = event;
+        // Une page de l’espace qui reçoit des fichiers (`useFileDrop`) prend ceux déposés sur elle ; la conversation,
+        // ceux déposés ailleurs dans la fenêtre.
+        const toPage = payload.type !== "leave" && pageTakesDrop(payload.position);
+        if (payload.type === "over" || payload.type === "enter") setDragging(!toPage);
+        else if (payload.type === "leave") setDragging(false);
+        else if (payload.type === "drop") {
           setDragging(false);
-          const paths = event.payload.paths;
-          if (paths.length) attach(() => attachmentsFromPaths(paths));
+          const paths = payload.paths;
+          if (!toPage && paths.length) attach(() => attachmentsFromPaths(paths));
         }
       });
       if (cancelled) unlisten();

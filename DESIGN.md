@@ -83,7 +83,7 @@ Une zone de l’écran porte une responsabilité, et une seule : l’entrée du 
 | L’élément sélectionné : sa fiche, une source citée, un PDF | Le panneau de droite (`Drawer`) : la vue détail | Un bloc de détail à côté de la liste |
 | Un élément à lire en entier (un PDF, un ticket) | Un onglet ouvert (`views.open`) : `DetailPage`, `DocumentViewer` | Un aperçu dans un bloc |
 | Une action de la page (ajouter, importer, actualiser, exporter) | L’en-tête du gabarit (`actions`) ; pour une `Page`, la barre du haut (`useTopBarActions`) ou la barre d’outils | Un bloc qui ne porte qu’une action |
-| Des fichiers à importer | Une action (« Ajouter des PDF ») qui appelle `files.pick` | Un bloc `FileUpload` : le cadre n’a pas de disque (SDK.md, section 1) |
+| Des fichiers à importer | Ajout par l’en-tête ou dépôt sur la page : une action « Ajouter des PDF » (`files.pick`), et `useFileDrop` de `@alfred/sdk`, dont `isDraggingFiles` va au gabarit (SDK.md, section 9) | Un bloc `FileUpload`, une zone de dépôt dessinée dans la page |
 | Une question et sa réponse | Un onglet `ChatPage` : la saisie en bas, les réponses et leurs sources dans le relevé | Un champ de texte et un bloc « Réponse » |
 | Des exemples (questions types, premiers pas) | L’état vide de la zone : `suggestions` de l’`EmptyState`, quatre au plus ; ils partent avec lui | Un bloc permanent |
 | Des chiffres clés, des listes courtes de même rang | Une `PageGrid` : côte à côte, sur un écran | Une pile de `PageSection` |
@@ -96,6 +96,7 @@ Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient se
 - Onglet « Questions », le premier : une `ChatPage`. On pose une question en bas, on lit la réponse et ses sources dans le relevé ; les questions d’exemple sont dans l’état vide du relevé (`suggestions` de l’`EmptyState`).
 - Panneau de droite de « Questions » : un clic sur une source l’ouvre là, avec le passage cité puis le PDF à la page citée (`DocumentViewer` avec `page`). Les sources d’une réponse sont des puces (`SourceList`, dans `sources` de `ChatMessage`). Le relevé reste visible à côté.
 - Onglet « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné dans son panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »).
+- Toute la page, dans les deux onglets : un PDF glissé depuis le Finder s’ajoute aux documents (`useFileDrop`, et `isDraggingFiles` de la `ListPage` ou de la `ChatPage`).
 
 PLACEMENT.md, section 11.4, détaille ce cas ; la recette `KnowledgeBase` le montre en entier.
 
@@ -124,7 +125,7 @@ Une recette est écrite pour la coquille de socle-ui (`AppShell`). Dans Alfred, 
 | Le panneau ouvert par la page (`isDetailOpen`) | `shell.setPanelVisible(true)` ; la largeur (`detailWidth`, `detailExpandable`) reste le choix de l’utilisateur |
 | Sous-entrées de la sidebar : naviguer par objet (`children` de `Sidebar.Item`) | `menu.setEntries` (SDK.md, section 8) |
 | Le compteur d’une entrée de la sidebar (`count`) | `badge.set(total)` |
-| Des fichiers déposés sur la page (`onDropFiles`) | Pas de dépôt dans le cadre d’une page : une action « Ajouter… » qui appelle `files.pick` |
+| Des fichiers déposés sur la page (`onDropFiles`) | `useFileDrop({ accept, onFiles })` de `@alfred/sdk`, et `isDraggingFiles` sur le gabarit : Alfred capte le dépôt, copie les fichiers dans ceux du module et les remet à `onFiles`. Jamais `onDropFiles` : le cadre ne voit pas le dépôt |
 | `AppShell`, `Sidebar` | Dessinés par Alfred : une page ne les rend jamais (règle 6) |
 | Le graphique d’un tableau de bord | Une librairie npm et les tokens (section 8) |
 
@@ -227,6 +228,7 @@ La zone fixe la forme. La page ne choisit rien :
 | `pagination` | `{ mode: "more" \| "pages", pageSize }` ; « Afficher plus » de 50 par défaut. |
 | `empty` | `{ title, description, icon }` : obligatoire. |
 | `isLoading`, `hasError`, `onRetry` | États de chargement. |
+| `isDraggingFiles`, `dropLabel` | Dépôt de fichiers sur toute la page : `isDraggingFiles` de `useFileDrop` (SDK.md, section 9) montre le cadre, `dropLabel` dit ce qui se passe (« Déposez les PDF pour les ajouter »). Pendant la copie, `isImporting` va dans `isLoading`. Jamais `onDropFiles` : Alfred capte le dépôt. |
 | `remote`, `total`, `onStateChange` | Données filtrées côté base : le gabarit signale `{ query, filters, sort, page }` et ne filtre rien. |
 | `storageId` | Clé de mémorisation des filtres et du tri. |
 
@@ -350,7 +352,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 | La recherche d’une `Page` composée | `SearchInput` | `ListPage` a la sienne. |
 | Des étiquettes à retirer ou à choisir | `TagGroup` et `Tag` | |
 | Un champ de saisie | `TextInput`, `TextArea`, `NumberField`, `Select`, `ComboBox`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `Toggle`, `Slider`, `Fieldset` | Hors formulaire de `useOpenForm` : seulement dans une page des Réglages ou une `Page` composée. Un réglage immédiat : `Toggle` ; une case d’un formulaire qu’on envoie : `Checkbox` (D-137). Une question à poser : `ChatComposer` d’une `ChatPage`, pas une `TextArea`. |
-| Des fichiers à ajouter | Une `Action` qui appelle `files.pick` (SDK.md, section 9) | Jamais un bloc de dépôt (`FileUpload`) : le cadre n’a pas de disque (SDK.md, section 1). |
+| Des fichiers à ajouter | Une `Action` qui appelle `files.pick`, et le dépôt sur toute la page : `useFileDrop` (SDK.md, section 9) | `isDraggingFiles` de `ListPage`, `Page` ou `ChatPage` montre le cadre de dépôt. Jamais un bloc de dépôt (`FileUpload`) : le dépôt prend toute la page. |
 | Une couleur à choisir dans un nuancier | `ColorPicker` | |
 | Un identifiant, une commande | `Code` | `block` pour un extrait. |
 | Une personne | `Avatar` | `name`, `src`. |
@@ -360,7 +362,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.21.1
+### Catalogue de socle-ui 1.22.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -431,7 +433,7 @@ Tous les composants, motifs et gabarits de la version installée, avec leur rôl
 | `DetailPage` | Gabarit | Gabarit de la zone `main` d'AppShell pour un élément ouvert en entier : une demande, une facture, un document. Il montre le contenu principal de l'élément, en sections. | `docs/alfred/socle/specs/DetailPage.md` |
 | `FormPage` | Gabarit | `FormPage` montre un formulaire long, rangé en sections : créer un objet riche, modifier sa fiche, remplir une demande. L'app décrit ses champs par des données ; le gabarit les dessine avec les champs du lot 1 (D-190). | `docs/alfred/socle/specs/FormPage.md` |
 | `ListPage` | Gabarit | Gabarit d'une page qui liste des éléments de même nature : demandes, contacts, factures, fichiers. L'app **décrit** sa page par des données (titre, colonnes typées, filtres, actions) ; le gabarit dessine tout, y compris le chargement, le vide, l'absence de résultat et l'erreur (D-173). Il se place dans la zone `main` d'`AppShell`. | `docs/alfred/socle/specs/ListPage.md` |
-| `Page` | Gabarit | Page composée : gabarit libre de la zone `main` d'AppShell, quand aucun autre gabarit ne convient (tableau de bord, éditeur, graphique, synthèse de quelques blocs). Elle pose les zones standard ; l'app y place des composants du socle, sans HTML stylé (D-217). Ses blocs s'empilent, ou se rangent côte à côte dans `PageGrid` pour tenir sur un écran (D-403, D-404). | `docs/alfred/socle/specs/Page.md` |
+| `Page` | Gabarit | Page composée : gabarit libre de la zone `main` d'AppShell, quand aucun autre gabarit ne convient (tableau de bord, éditeur, graphique, synthèse de quelques blocs). Elle pose les zones standard ; l'app y place des composants du socle, sans HTML stylé (D-217). Ses blocs s'empilent, ou se rangent côte à côte dans `PageGrid` pour tenir sur un écran (D-403, D-404). Elle reçoit les fichiers déposés n'importe où sur la page (D-418). | `docs/alfred/socle/specs/Page.md` |
 
 Réservés à la coquille d’Alfred ou à l’hôte du cadre, jamais rendus par une page : `SocleProvider`, `useSocle`, `Tabs`, `AppShell`, `NotificationCenter`, `Sidebar`, `LoginPage`, `SettingsPage`.
 
@@ -512,7 +514,7 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 
 **`Page`, `PageSection` et `PageGrid`** : un tableau de bord, une synthèse, un éditeur.
 
-- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full`, le défaut ; `text`, une colonne de 760 px, seulement pour un texte à lire : une note, une procédure), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`.
+- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full`, le défaut ; `text`, une colonne de 760 px, seulement pour un texte à lire : une note, une procédure), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`, `isDraggingFiles` et `dropLabel` (dépôt de fichiers sur toute la page, avec `useFileDrop` : SDK.md, section 9).
 - `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state`, `onRetry`, `empty: { title, description, action }`.
 - `PageGrid` : `columns` (`2` par défaut, `3` ou `4`). Elle range ses enfants (`PageSection`, `Card`) côte à côte, en colonnes égales, à 24 px ; les blocs d’une ligne ont la même hauteur. Une colonne garde 240 px au moins : panneau ouvert ou fenêtre étroite, la grille prend moins de colonnes, puis une seule. Elle va dans le contenu de la `Page`, ou dans une `PageSection` pour une rangée de `Card` ; jamais dans une `DetailPage`, un `Drawer` ou une autre `PageGrid`.
 - Les informations clés tiennent sur un écran : ce qui demande une action (en retard, à traiter) en haut, côte à côte ; le détail ensuite. Pas de longue pile de `PageSection`.
@@ -541,7 +543,7 @@ const ouvrir = (source: Source) => { setOuverte(source.id); void shell.publish(s
 </ChatPage>
 ```
 
-Les sources d’une réponse sont des puces sous son texte : `SourceList` dans `sources` de `ChatMessage` (`id`, `title` : le document, `detail` : « p. 12 », `excerpt` : le passage). Le texte les cite par leur numéro, en lien (`[[1]](#source-1)`) ; `onLinkPress` ouvre la même source. `onOpen` publie la source pour le panneau de droite (`shell.publish`) et l’ouvre (`shell.setPanelVisible(true)`) ; `currentId` marque la source ouverte. Le panneau (un `Drawer`) montre la source : le document et la page en en-tête, le passage cité, puis le PDF à la page citée (`DocumentViewer` avec `page={source.page}`, dans le `content` d’une section). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet. La recette `KnowledgeBase` montre la page finie (section 2, « Partir d’une recette »).
+Les sources d’une réponse sont des puces sous son texte : `SourceList` dans `sources` de `ChatMessage` (`id`, `title` : le document, `detail` : « p. 12 », `excerpt` : le passage). Le texte les cite par leur numéro, en lien (`[[1]](#source-1)`) ; `onLinkPress` ouvre la même source. `onOpen` publie la source pour le panneau de droite (`shell.publish`) et l’ouvre (`shell.setPanelVisible(true)`) ; `currentId` marque la source ouverte. Le panneau (un `Drawer`) montre la source : le document et la page en en-tête, le passage cité, puis le PDF à la page citée (`DocumentViewer` avec `page={source.page}`, dans le `content` d’une section). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet. Un PDF glissé sur la conversation s’ajoute aux documents : `useFileDrop` et `isDraggingFiles` de `ChatPage`, comme pour une `ListPage`. La recette `KnowledgeBase` montre la page finie (section 2, « Partir d’une recette »).
 
 **`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. `onOpen` ouvre l’élément dans un onglet fermable (`views.open({ id, label, params })`) ; dans cet onglet, `usePageContext()?.view` porte l’élément et la page rend la `DetailPage` à la place de la `ListPage`. Le lien de retour ferme l’onglet et revient à la liste :
 
@@ -909,6 +911,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 - [ ] `check` rend `"ok": true`, sans remarque `design`, sans avertissement `designWarnings` ni remarque `review`, sauf ce que demande une préférence de l’utilisateur (`designPreferences`).
 - [ ] Toutes les actions sont des `Action` avec `id` et `onPress` ; une seule `primary` par zone ; une icône pour chaque action courante ; `danger` avec un `confirm` qui nomme l’objet.
 - [ ] `onActionError={notifyActionError}` sur chaque gabarit qui porte des actions.
+- [ ] Une page qui reçoit des fichiers : ajout par l’en-tête (`files.pick`) ou dépôt sur la page (`useFileDrop`, `isDraggingFiles` sur le gabarit) ; aucun bloc de dépôt.
 - [ ] Les colonnes et les champs ont le bon `type` ; les états ont un `StatusMap` partagé.
 - [ ] Le panneau lit `useSelection()` ; la page publie sa sélection ; une écriture appelle `announceChange()`.
 - [ ] Aucun `style`, `className`, balise HTML ni couleur en dur.

@@ -13,7 +13,8 @@ Chaque appel est asynchrone. Un échec rejette la promesse avec une `AlfredSdkEr
 | `<a href>`, `window.open`, `location` | ni navigation ni fenêtre | `shell.navigate`, `shell.openExternal` |
 | `alert`, `confirm`, `prompt` | bloqués | Une `Action` `danger` ou `confirm`, `useConfirm()` (une confirmation), `useOpenForm()` (une saisie), `Modal` (un contenu) de `socle-ui` |
 | `<img src="https://…">` | images extérieures bloquées | un lien `shell.openExternal` ; une image du module : `files.dataUrl` |
-| `<input type="file">`, glisser un fichier | pas de disque | `files.pick` |
+| `<input type="file">` | pas de disque | `files.pick` |
+| `onDrop`, `onDropFiles` (glisser un fichier sur la page) | Alfred capte le dépôt du système : le cadre ne voit aucun glisser | `useFileDrop` (section 9) : Alfred copie les fichiers déposés et les remet à la page |
 | `dangerouslySetInnerHTML`, `innerHTML` (le HTML d’un courriel) | du HTML venu de l’extérieur peut exécuter du code avec les droits de la page | `HtmlContent` de `socle-ui` (DESIGN.md, section 8) |
 | un paquet npm non installé, un `.css`, un `.json` | imports limités (AGENTS.md, règle 3) | `set_libraries` pour le paquet (AGENTS.md), du code dans `lib/` sinon |
 
@@ -1221,6 +1222,11 @@ files.dataUrl(id: string): Promise<string>;  // image de 5 Mo au plus, pour <Ima
 files.pick(options?: { accept?: string[]; multiple?: boolean }): Promise<FileInfo[]>; // accept : ["pdf", "png"] ; [] s’il annule
 files.export(id: string): Promise<boolean>; // « Enregistrer sous… » ; false s’il annule
 files.open(id: string): Promise<void>;      // application du système
+// Page ou panneau : fichiers glissés depuis le Finder n’importe où sur la page (ci-dessous)
+useFileDrop(options: { accept?: string[]; onFiles: (files: FileInfo[]) => void; enabled?: boolean }): {
+  isDraggingFiles: boolean; // à passer au gabarit : cadre de dépôt
+  isImporting: boolean;     // copie en cours
+};
 ```
 
 Alfred range les fichiers du module hors de l’espace versionné (`.alfred/files/<module>/`), les copie avec les sauvegardes et les supprime avec le module. Chaque module ne voit que les siens. 50 Mo par fichier ; `mime` se déduit de l’extension du nom. Garde l’`id` dans une table du module pour relier le fichier à une ligne (une facture, un ticket). `files.open` montre dans le Finder, au lieu de l’ouvrir, un fichier qui s’exécuterait (script, application).
@@ -1235,6 +1241,44 @@ export async function joindreFacture(ticket: number) {
   if (!fichier) return;
   await db.execute("INSERT INTO support_pieces (ticket, fichier, nom) VALUES (?, ?, ?)", [ticket, fichier.id, fichier.name]);
   void shell.notify({ title: "Facture jointe", description: fichier.name, tone: "success" });
+}
+```
+
+### Fichiers déposés sur la page : `useFileDrop`
+
+Un fichier glissé depuis le Finder (ou l’Explorateur) n’importe où sur la page s’ajoute comme par `files.pick`. Alfred capte le dépôt, copie chaque fichier dans ceux du module (50 Mo au plus, types de `accept`), puis appelle `onFiles` avec leurs `FileInfo`. Un fichier refusé (autre type, trop gros, dossier) n’est pas copié : Alfred dit à l’utilisateur pourquoi. Passe `isDraggingFiles` au gabarit (`ListPage`, `Page` ou `ChatPage`) : il montre le cadre « Déposez… » sur toute la page pendant le survol, et `dropLabel` dit ce qui se passe. `isImporting` est vrai pendant la copie (`isLoading` d’une `ListPage`). N’écris jamais `onDropFiles` : le cadre de la page ne voit pas le dépôt.
+
+Le dépôt complète l’action, il ne la remplace pas : garde « Ajouter… » (`files.pick`) dans l’en-tête, pour le clavier et pour qui ne glisse pas. Une page ou un panneau ; dans un cadre, la déclaration la plus récente reçoit les fichiers. Une conversation d’agent ouverte dans le panneau de droite garde les fichiers déposés sur elle. `enabled: false` rend le dépôt (pendant un envoi, ou dans un état où l’ajout n’a pas de sens).
+
+```tsx
+import { db, files, notifyActionError, useAsync, useFileDrop, type FileInfo } from "@alfred/sdk";
+import { Upload } from "lucide-react";
+import { ListPage } from "socle-ui";
+
+export default function Documents() {
+  const documents = useAsync(() => db.query<Document>("SELECT id, nom, etat, ajout FROM docs_documents ORDER BY ajout DESC"), []);
+  const ajouter = async (fichiers: FileInfo[]) => {
+    for (const fichier of fichiers)
+      await db.execute("INSERT INTO docs_documents (id, fichier, nom, etat, ajout) VALUES (?, ?, ?, 'attente', ?)", [
+        crypto.randomUUID(), fichier.id, fichier.name, new Date().toISOString(),
+      ]);
+    documents.reload();
+  };
+  const depot = useFileDrop({ accept: ["pdf"], onFiles: (fichiers) => void ajouter(fichiers) });
+  return (
+    <ListPage
+      title="Documents"
+      rows={documents.data}
+      columns={COLONNES}
+      empty={{ title: "Aucun document", description: "Ajoutez des PDF, ou déposez-les sur la page." }}
+      actions={[{ id: "ajouter", label: "Ajouter des PDF", icon: <Upload size={16} />, primary: true,
+        onPress: async () => ajouter(await files.pick({ accept: ["pdf"], multiple: true })) }]}
+      isDraggingFiles={depot.isDraggingFiles}
+      dropLabel="Déposez les PDF pour les ajouter"
+      isLoading={documents.loading || depot.isImporting}
+      onActionError={notifyActionError}
+    />
+  );
 }
 ```
 

@@ -827,7 +827,7 @@ impl Scan<'_, '_, '_> {
         self.found.push((
             offset,
             format!(
-                "Avertissement : {what} posé comme un bloc de la page : une grande zone de dépôt pour une seule action, et le cadre d’une page n’a pas de disque. Une action n’est jamais un bloc à elle seule (D-404 ; DESIGN.md, section 2). Écrire une `Action` « Ajouter des fichiers » (icône `Upload`) dans `actions` de la `Page` ou de la `ListPage`, qui appelle `files.pick({{ accept, multiple: true }})`, et montrer l’état de chaque fichier dans la liste elle-même (`status` d’un élément). `FileUpload` reste pour un formulaire (`useOpenForm`, `FormPage`) ou une `Modal` (spec FileUpload, « Placement »)."
+                "Avertissement : {what} posé comme un bloc de la page : une grande zone de dépôt pour une seule action, que le cadre d’une page ne reçoit d’ailleurs pas (Alfred capte le dépôt du système). Une action n’est jamais un bloc à elle seule (D-404 ; DESIGN.md, section 2). Ajout par l’en-tête ou dépôt sur la page : une `Action` « Ajouter des fichiers » (icône `Upload`) dans `actions` de la `Page` ou de la `ListPage`, qui appelle `files.pick({{ accept, multiple: true }})`, et `useFileDrop({{ accept, onFiles }})` de `@alfred/sdk`, dont `isDraggingFiles` va au gabarit (SDK.md, section 9) ; l’état de chaque fichier se montre dans la liste elle-même (`status` d’un élément). `FileUpload` reste pour un formulaire (`useOpenForm`, `FormPage`) ou une `Modal` (spec FileUpload, « Placement »)."
             ),
         ));
     }
@@ -851,7 +851,7 @@ impl<'a> Visit<'a> for Scan<'_, '_, 'a> {
                 self.found.push((
                     opening.span.start,
                     format!(
-                        "Avertissement : plusieurs tâches dans la même `<Page>` : {}. Une zone, une responsabilité : le contenu fait le travail de l’onglet, et lui seul. Séparer les tâches dans leurs zones : un usage par onglet fixe (`place_page` avec `{{ \"kind\": \"tab\" }}`, par exemple « Questions » en `ChatPage` et « Documents » en `ListPage`) ; la vue détail de l’élément sélectionné au panneau de droite ; l’envoi de fichiers en action de l’en-tête ou de la barre du haut (`files.pick`) (PLACEMENT.md, principe 4 et section 2 ; DESIGN.md, section 2).",
+                        "Avertissement : plusieurs tâches dans la même `<Page>` : {}. Une zone, une responsabilité : le contenu fait le travail de l’onglet, et lui seul. Séparer les tâches dans leurs zones : un usage par onglet fixe (`place_page` avec `{{ \"kind\": \"tab\" }}`, par exemple « Questions » en `ChatPage` et « Documents » en `ListPage`) ; la vue détail de l’élément sélectionné au panneau de droite ; l’envoi de fichiers en action de l’en-tête ou de la barre du haut (`files.pick`), avec le dépôt sur toute la page (`useFileDrop`) (PLACEMENT.md, principe 4 et section 2 ; DESIGN.md, section 2).",
                         list.join(", ")
                     ),
                 ));

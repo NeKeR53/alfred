@@ -184,6 +184,22 @@ mod tests {
         // Les guides citent `PageGrid` : la version de socle-ui installée au build doit l’exporter (1.20.0 au moins).
         assert!(crate::socle_ui::EXPORTS.contains(&"PageGrid"), "socle-ui {} n’exporte pas PageGrid", crate::socle_ui::VERSION);
         assert!(crate::socle_ui::DOCS.iter().any(|(path, text)| *path == "docs/layout-rules.md" && text.contains("Vue d'ensemble d'abord")));
+        // Des fichiers à ajouter : ajout par l’en-tête ou dépôt sur la page (`useFileDrop`), jamais un bloc de dépôt.
+        assert!(DESIGN.contains("| Des fichiers à importer | Ajout par l’en-tête ou dépôt sur la page"));
+        assert!(PLACEMENT.contains("Ajout par l’en-tête ou dépôt sur la page"));
+        assert!(PLACEMENT.contains("| Toute la page (`useFileDrop`) | Recevoir les fichiers glissés depuis le Finder"));
+        assert!(SDK.contains("### Fichiers déposés sur la page : `useFileDrop`"));
+        for (name, text) in [("DESIGN.md", DESIGN), ("PLACEMENT.md", PLACEMENT)] {
+            assert!(!text.contains("n’a pas de disque (SDK.md"), "{name} dit encore qu’une page ne reçoit pas de dépôt");
+        }
+        // Les gabarits cités montrent le cadre de dépôt : socle-ui 1.22.0 au moins (`Page`, D-418).
+        for spec in ["specs/ListPage.md", "specs/Page.md", "specs/ChatPage.md"] {
+            assert!(
+                crate::socle_ui::DOCS.iter().any(|(path, text)| *path == spec && text.contains("isDraggingFiles")),
+                "socle-ui {} : {spec} sans `isDraggingFiles`",
+                crate::socle_ui::VERSION
+            );
+        }
     }
 
     #[test]

@@ -143,6 +143,89 @@ export const files = {
   },
 };
 
+// --- Fichiers déposés sur la page ----------------------------------------------------------------------------
+
+export interface FileDropOptions {
+  /**
+   * Extensions acceptées, sans point (`["pdf"]`). Absent : tous les types. Un autre fichier n’est pas copié : Alfred
+   * dit à l’utilisateur pourquoi.
+   */
+  accept?: string[];
+  /** Fichiers déposés, déjà copiés dans les fichiers du module (mêmes contrôles que `files.save` : 50 Mo au plus). */
+  onFiles: (files: FileInfo[]) => void;
+  /** Faux : la page ne prend plus de dépôt (le dépôt revient à la conversation de l’agent ouverte à côté). */
+  enabled?: boolean;
+}
+
+export interface FileDrop {
+  /** Des fichiers survolent la page : à passer à `isDraggingFiles` du gabarit (`ListPage`, `Page`, `ChatPage`). */
+  isDraggingFiles: boolean;
+  /** Les fichiers déposés sont en cours de copie : par exemple `isLoading` de `ListPage`. */
+  isImporting: boolean;
+}
+
+interface DeclaredDrop {
+  accept: string[] | undefined;
+  onFiles: (files: FileInfo[]) => void;
+  show: (state: FileDrop) => void;
+}
+
+const IDLE_DROP: FileDrop = { isDraggingFiles: false, isImporting: false };
+/** Dépôts déclarés par le cadre : le plus récent (une sous-vue par-dessus sa page) reçoit les fichiers. */
+const declaredDrops: DeclaredDrop[] = [];
+let listeningDrops = false;
+
+function announceDrop() {
+  const top = declaredDrops.at(-1);
+  const sent = top ? request("files.acceptDrops", { accept: top.accept ?? null }) : request("files.refuseDrops");
+  void sent.catch((error: unknown) => console.warn("Dépôt de fichiers refusé :", error));
+}
+
+function listenDrops() {
+  if (listeningDrops) return;
+  listeningDrops = true;
+  onShellEvent("fileDrag", (payload) => {
+    const state = payload as { dragging?: unknown; importing?: unknown } | null;
+    declaredDrops.at(-1)?.show({ isDraggingFiles: state?.dragging === true, isImporting: state?.importing === true });
+  });
+  onShellEvent("filesDropped", (payload) => {
+    const dropped = (payload as { files?: unknown } | null)?.files;
+    if (Array.isArray(dropped) && dropped.length) declaredDrops.at(-1)?.onFiles(dropped as FileInfo[]);
+  });
+}
+
+/**
+ * Reçoit les fichiers glissés depuis le Finder (ou l’Explorateur) n’importe où sur la page. Alfred montre le survol
+ * (`isDraggingFiles`, à passer au gabarit), copie les fichiers dans ceux du module, puis appelle `onFiles` avec leurs
+ * `FileInfo`. Le dépôt est un geste de souris : la page garde son action « Ajouter… » (`files.pick`) pour le clavier.
+ * Page ou panneau ; une seule déclaration active par cadre, la plus récente.
+ */
+export function useFileDrop({ accept, onFiles, enabled = true }: FileDropOptions): FileDrop {
+  const [state, setState] = useState<FileDrop>(IDLE_DROP);
+  const latest = useRef(onFiles);
+  latest.current = onFiles;
+  const acceptKey = accept ? JSON.stringify(accept) : null;
+  useEffect(() => {
+    if (!enabled) return;
+    listenDrops();
+    const entry: DeclaredDrop = {
+      accept: acceptKey === null ? undefined : (JSON.parse(acceptKey) as string[]),
+      onFiles: (files) => latest.current(files),
+      show: setState,
+    };
+    declaredDrops.at(-1)?.show(IDLE_DROP);
+    declaredDrops.push(entry);
+    announceDrop();
+    return () => {
+      const index = declaredDrops.indexOf(entry);
+      if (index >= 0) declaredDrops.splice(index, 1);
+      setState(IDLE_DROP);
+      if (index === declaredDrops.length) announceDrop();
+    };
+  }, [enabled, acceptKey]);
+  return state;
+}
+
 // --- Historique des données ----------------------------------------------------------------------------------
 
 /** Un changement d’une ligne, gardé pour une table nommée dans `history` du module. */

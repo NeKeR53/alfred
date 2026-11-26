@@ -16,6 +16,7 @@ import {
   pickSaveFile,
 } from "../lib/native";
 import { isKnownPage } from "./badges";
+import { acceptFileDrops, refuseFileDrops } from "./fileDrop";
 import { SECTION_ZONE, sectionZone, takePendingEntryActions, useMenuZones } from "./menuZones";
 import { findPage } from "./navigationLayout";
 import { type NotificationAction, notify } from "./notifications";
@@ -306,6 +307,17 @@ export function registerPeer(identity: FrameIdentity, deliver: (message: unknown
   return () => {
     frames.delete(frame);
   };
+}
+
+/** Types qu’une page accepte au dépôt (`useFileDrop({ accept })`) : des extensions, sans point ; `null` : tous. */
+function dropExtensions(value: unknown): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+    throw new AlfredError({
+      message: 'Les types acceptés sont des extensions : useFileDrop({ accept: ["pdf"], onFiles }).',
+    });
+  const extensions = value.map((item: string) => item.trim().replace(/^\./, "").toLowerCase()).filter(Boolean);
+  return extensions.length ? extensions : null;
 }
 
 /** Paramètres d’un état passés par le cadre : un objet, sinon rien. */
@@ -758,6 +770,25 @@ export async function handleFrameRequest(
       return invoke("frame.documents.xlsx", { ...pick(params, ["name", "sheets"]), subject });
     case "documents.extractText":
       return invoke("frame.documents.extractText", { ...pick(params, ["id"]), subject });
+    // Fichiers déposés depuis le système sur la page (`useFileDrop`) : la page dit les types qu’elle accepte ; la
+    // coquille lui signale le survol, copie les fichiers déposés dans ceux du module et les lui remet (`fileDrop.ts`).
+    // Les chemins viennent du geste de l’utilisateur, jamais du cadre.
+    case "files.acceptDrops":
+      if (identity.kind === "function")
+        throw new AlfredError({
+          message: "Une fonction ne reçoit pas de fichiers déposés : sa page appelle useFileDrop.",
+        });
+      if (identity.capture || !push) return null;
+      acceptFileDrops(identity, {
+        accept: dropExtensions(params.accept),
+        push,
+        subject,
+        source: identity.reference,
+      });
+      return null;
+    case "files.refuseDrops":
+      refuseFileDrops(identity);
+      return null;
     case "files.pick": {
       // Le sélecteur est montré par la coquille : la page ne nomme jamais un chemin du disque.
       if (identity.kind === "function")

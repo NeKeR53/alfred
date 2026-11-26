@@ -4,6 +4,7 @@ import { frameBase, onNativeEvent } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
 import { ALFRED_MESSAGE, type FrameMessage, isFrameMessage, parseFrameShortcut } from "../sdk/protocol";
 import { useExampleMode } from "./examples";
+import { type DropFrameHandle, registerDropFrame } from "./fileDrop";
 import {
   type FrameIdentity,
   frameContext,
@@ -72,6 +73,24 @@ export function PageFrame({
     [kind, page.module, page.reference, host, page.instance, accountsKey, examples, capture, viewJson],
   );
 
+  // Fichiers déposés depuis le système sur la page (`useFileDrop`) : la coquille sait où est son cadre, et quelle
+  // identité il a ; elle peut changer (onglet renommé) sans que son document change.
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const fileDrop = useRef<DropFrameHandle | null>(null);
+  useEffect(() => {
+    if (capture) return;
+    const registered = registerDropFrame(
+      () => frame.current,
+      () => identityRef.current,
+    );
+    fileDrop.current = registered;
+    return () => {
+      registered.dispose();
+      if (fileDrop.current === registered) fileDrop.current = null;
+    };
+  }, [capture]);
+
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
   const initialTheme = useRef({ theme, accent });
   // Clé du module de la page : sans elle, le cadre ne charge aucun code (et jamais celui d’un autre module).
@@ -126,6 +145,8 @@ export function PageFrame({
         }
         if (message.name === "log") addFrameConsole(identity.reference, message.payload);
         if (message.name === "ready") addFrameLog(identity.reference, "info", "Page chargée.");
+        // Un nouveau document dans le cadre : il redemandera le dépôt s’il le veut (avant `ready`, rien n’est monté).
+        if (message.name === "ready") fileDrop.current?.reset();
         // Une page en échec se décrit aussi (son message d’erreur) : elle est prête pour une capture.
         if (message.name === "ready" || message.name === "error") snapshot.ready();
         if (message.name === "description") snapshot.receive(message.payload);

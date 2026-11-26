@@ -227,6 +227,74 @@ pub fn import_paths(space: &Space, module: &str, paths: &[String]) -> AppResult<
     Ok(saved)
 }
 
+/// Fichier déposé sur une page et laissé de côté : son nom, et pourquoi.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Refused {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Fichiers déposés sur une page : ceux copiés dans le module, et ceux laissés de côté.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Dropped {
+    pub files: Vec<FileInfo>,
+    pub refused: Vec<Refused>,
+}
+
+/// Extensions qu’une page accepte (`accept` de `useFileDrop`) : sans point, en minuscules. Vide : tous les types.
+fn accepted_extensions(accept: Option<&[String]>) -> Vec<String> {
+    accept
+        .unwrap_or_default()
+        .iter()
+        .map(|item| item.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// Copie dans le module les fichiers que l’utilisateur a déposés sur une page (glisser-déposer du système), avec
+/// les contrôles de `files.save` : 50 Mo au plus, et seulement les types que la page accepte (`accept`, extensions).
+/// Chaque fichier est traité seul : un dossier, un fichier trop gros ou d’un autre type est laissé de côté, avec sa
+/// raison, et les autres sont copiés.
+pub fn import_dropped(space: &Space, module: &str, paths: &[String], accept: Option<&[String]>) -> AppResult<Dropped> {
+    let extensions = accepted_extensions(accept);
+    let mut dropped = Dropped { files: Vec::new(), refused: Vec::new() };
+    for path in paths {
+        let path = Path::new(path);
+        let name = path.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| path.display().to_string());
+        let refuse = |reason: String| Refused { name: name.clone(), reason };
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                dropped.refused.push(refuse("introuvable sur le disque".into()));
+                continue;
+            }
+        };
+        if metadata.is_dir() {
+            dropped.refused.push(refuse("c’est un dossier : déposez les fichiers qu’il contient".into()));
+            continue;
+        }
+        if !metadata.is_file() {
+            dropped.refused.push(refuse("ce n’est pas un fichier".into()));
+            continue;
+        }
+        let extension = path.extension().map(|extension| extension.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if !extensions.is_empty() && !extensions.contains(&extension) {
+            let names: Vec<String> = extensions.iter().map(|item| item.to_ascii_uppercase()).collect();
+            dropped.refused.push(refuse(format!("cette page n’accepte que les fichiers {}", names.join(", "))));
+            continue;
+        }
+        if metadata.len() as usize > MAX_SIZE {
+            dropped.refused.push(refuse(format!("plus de {} Mo", MAX_SIZE / 1024 / 1024)));
+            continue;
+        }
+        match std::fs::read(path).map_err(AppError::from).and_then(|bytes| save(space, module, &name, None, &bytes)) {
+            Ok(info) => dropped.files.push(info),
+            Err(error) => dropped.refused.push(refuse(error.message)),
+        }
+    }
+    Ok(dropped)
+}
+
 fn bytes_from(args: &Value) -> AppResult<Vec<u8>> {
     if let Some(text) = opt_arg::<String>(args, "text")? {
         return Ok(text.into_bytes());
@@ -285,11 +353,18 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 crate::conversations::open_with_system(&path_of(&space, module, &arg::<String>(args, "id")?)?, false)?;
                 Value::Null
             }
-            // Les deux suivantes ne viennent que de la coquille, après un sélecteur de fichiers montré à l’utilisateur.
+            // Les trois suivantes ne viennent que de la coquille, jamais d’un cadre : après un sélecteur de fichiers montré
+            // à l’utilisateur, ou un dépôt de fichiers qu’il a fait sur la page (glisser-déposer du système).
             "frame.files.importPaths" => {
                 interactive(&subject)?;
                 let paths: Vec<String> = arg(args, "paths")?;
                 json!(import_paths(&space, module, &paths)?)
+            }
+            "frame.files.importDropped" => {
+                interactive(&subject)?;
+                let paths: Vec<String> = arg(args, "paths")?;
+                let accept: Option<Vec<String>> = opt_arg(args, "accept")?;
+                json!(import_dropped(&space, module, &paths, accept.as_deref())?)
             }
             "frame.files.exportTo" => {
                 interactive(&subject)?;
@@ -333,6 +408,44 @@ mod tests {
         remove(&space, "notes", &saved.id).unwrap();
         assert_eq!(list(&space, "notes", None, 10).unwrap(), vec![image]);
         assert!(save(&space, "notes", "gros.bin", None, &vec![0; MAX_SIZE + 1]).is_err());
+    }
+
+    /// Un dépôt sur une page : chaque fichier est contrôlé seul (type accepté, taille, dossier) ; les autres passent.
+    #[test]
+    fn a_drop_keeps_what_the_page_accepts_and_says_why_for_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let disk = dir.path().join("bureau");
+        std::fs::create_dir_all(disk.join("Archives")).unwrap();
+        std::fs::write(disk.join("Notice.PDF"), b"%PDF-1.7").unwrap();
+        std::fs::write(disk.join("contrat.docx"), b"PK").unwrap();
+        std::fs::write(disk.join("gros.pdf"), vec![0; MAX_SIZE + 1]).unwrap();
+        let path = |name: &str| disk.join(name).to_string_lossy().to_string();
+        let paths =
+            [path("Notice.PDF"), path("contrat.docx"), path("Archives"), path("gros.pdf"), path("absent.pdf")];
+
+        let dropped = import_dropped(&space, "docs", &paths, Some(&[".pdf".to_string()])).unwrap();
+        assert_eq!(dropped.files.len(), 1, "{dropped:?}");
+        assert_eq!(dropped.files[0].name, "Notice.PDF");
+        assert_eq!(dropped.files[0].mime, "application/pdf");
+        assert_eq!(read(&space, "docs", &dropped.files[0].id).unwrap().1, b"%PDF-1.7");
+        let reasons: Vec<(&str, &str)> =
+            dropped.refused.iter().map(|refused| (refused.name.as_str(), refused.reason.as_str())).collect();
+        assert_eq!(
+            reasons,
+            [
+                ("contrat.docx", "cette page n’accepte que les fichiers PDF"),
+                ("Archives", "c’est un dossier : déposez les fichiers qu’il contient"),
+                ("gros.pdf", "plus de 50 Mo"),
+                ("absent.pdf", "introuvable sur le disque"),
+            ]
+        );
+        assert_eq!(list(&space, "docs", None, 10).unwrap(), dropped.files, "rien d’autre n’est copié");
+
+        // Sans `accept`, tous les types passent ; le module voit ses seuls fichiers.
+        let all = import_dropped(&space, "notes", &[path("contrat.docx")], None).unwrap();
+        assert_eq!((all.files.len(), all.refused.len()), (1, 0));
+        assert_eq!(list(&space, "docs", None, 10).unwrap().len(), 1);
     }
 
     #[test]

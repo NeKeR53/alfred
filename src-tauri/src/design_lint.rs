@@ -190,8 +190,13 @@ struct Lint<'s> {
     button_allowed: u32,
     /// Composants de socle-ui rendus par la page.
     rendered: BTreeSet<String>,
+    /// Un gabarit de la page montre le cadre de dépôt (`isDraggingFiles`).
+    drop_frame: bool,
     found: Vec<Diagnostic>,
 }
+
+/// Gabarits qui montrent le cadre de dépôt de toute la page (`isDraggingFiles` ; socle-ui D-382, D-416, D-418).
+const DROP_TEMPLATES: [&str; 3] = ["ListPage", "Page", "ChatPage"];
 
 /// Attributs où un `Button` de socle-ui est à sa place : (élément, attribut). Ailleurs, une `Action` passée au
 /// gabarit (DESIGN.md, règle 2 ; spec Button, Modal, EmptyState, Drawer).
@@ -343,6 +348,21 @@ impl Lint<'_> {
                 start,
                 "`<DocumentViewer>` sans `loadPdf` : un PDF resterait en erreur. Passer `loadPdf={loadPdf}` (de `@alfred/sdk`) (DESIGN.md, section 8).".to_string(),
             );
+        }
+
+        // Dans Alfred, le système capte le glisser-déposer : le cadre d’une page ne reçoit jamais `onDropFiles`.
+        if from_socle && DROP_TEMPLATES.contains(&name.as_str()) {
+            if attribute(opening, "onDropFiles").is_some() {
+                self.report(
+                    start,
+                    format!(
+                        "`onDropFiles` de `<{name}>` ne reçoit rien dans Alfred : le système capte le dépôt, le cadre d’une page ne le voit pas. Écrire `const depot = useFileDrop({{ accept, onFiles }})` (de `@alfred/sdk`) et `isDraggingFiles={{depot.isDraggingFiles}}` sur le gabarit (SDK.md, section 9)."
+                    ),
+                );
+            }
+            if attribute(opening, "isDraggingFiles").is_some() {
+                self.drop_frame = true;
+            }
         }
 
         if from_socle {
@@ -514,9 +534,11 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
         stack: Vec::new(),
         button_allowed: 0,
         rendered: BTreeSet::new(),
+        drop_frame: false,
         found: Vec::new(),
     };
     let mut top_bar_actions = None;
+    let mut file_drop = None;
     for statement in &parsed.program.body {
         let oxc::ast::ast::Statement::ImportDeclaration(import) = statement else { continue };
         let source_name = import.source.value.as_str();
@@ -600,6 +622,9 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
             if imported == "useTopBarActions" {
                 top_bar_actions = Some(offset);
             }
+            if imported == "useFileDrop" {
+                file_drop = Some(offset);
+            }
             if imported == "useTopBarSearch" {
                 lint.report(
                     offset,
@@ -609,6 +634,15 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
         }
     }
     lint.visit_program(&parsed.program);
+    if let Some(offset) = file_drop {
+        let template = DROP_TEMPLATES.into_iter().find(|name| lint.rendered.contains(*name));
+        if let (Some(template), false) = (template, lint.drop_frame) {
+            lint.report(
+                offset,
+                format!("Avertissement : `useFileDrop` sans `isDraggingFiles` sur la `{template}` : l’utilisateur ne voit pas où déposer. Passer `isDraggingFiles={{depot.isDraggingFiles}}` au gabarit, et `dropLabel` pour dire ce qui se passe (SDK.md, section 9)."),
+            );
+        }
+    }
     if let Some(offset) = top_bar_actions {
         if let Some(template) = ["ListPage", "DetailPage"].into_iter().find(|name| lint.rendered.contains(*name)) {
             lint.report(
@@ -1448,7 +1482,7 @@ export default function Base() {
         assert!(found.iter().any(|m| m.starts_with("7: Avertissement : longue pile de 4 blocs") && m.contains("PageGrid") && m.contains("D-404")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("7: Avertissement : `width=\"text\"`") && m.contains("Retirer `width`")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("10: Avertissement : exemples (`QUESTIONS_EXEMPLE`)") && m.contains("état vide")), "{found:?}");
-        assert!(found.iter().any(|m| m.starts_with("14: Avertissement : `<FileUpload>` posé comme un bloc") && m.contains("files.pick")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("14: Avertissement : `<FileUpload>` posé comme un bloc") && m.contains("files.pick") && m.contains("useFileDrop")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("7: Avertissement : plusieurs tâches dans la même `<Page>` : saisir ou poser une question (`TextArea`), envoyer des fichiers (`FileUpload`), lister des éléments (`List`).") && m.contains("Une zone, une responsabilité") && m.contains("PLACEMENT.md, principe 4")), "{found:?}");
         assert_eq!(found.len(), 5, "une seule action principale : {found:?}");
 
@@ -1469,9 +1503,10 @@ export default function Questions() {
         assert!(messages(questions).is_empty(), "{:?}", messages(questions));
         let documents = r#"
 import { Upload } from "lucide-react";
-import { files, notifyActionError } from "@alfred/sdk";
+import { files, notifyActionError, useFileDrop } from "@alfred/sdk";
 import { ListPage } from "socle-ui";
 export default function Documents() {
+  const depot = useFileDrop({ accept: ["pdf"], onFiles: ajouter });
   return (
     <ListPage
       title="Documents"
@@ -1480,6 +1515,8 @@ export default function Documents() {
       empty={{ title: "Aucun document", description: "Ajoutez vos PDF." }}
       onActionError={notifyActionError}
       actions={[{ id: "ajouter", label: "Ajouter des PDF", icon: <Upload size={16} />, primary: true, onPress: () => files.pick({ accept: ["pdf"], multiple: true }) }]}
+      isDraggingFiles={depot.isDraggingFiles}
+      dropLabel="Déposez les PDF pour les ajouter"
     />
   );
 }
@@ -1488,6 +1525,45 @@ export default function Documents() {
 
         // Les avertissements de mise en page ne valent que dans la zone principale.
         assert!(!settings_messages(page).iter().any(|m| m.contains("longue pile") || m.contains("exemples")), "{:?}", settings_messages(page));
+    }
+
+    /// Dans Alfred, le dépôt passe par `useFileDrop` : `onDropFiles` ne reçoit rien, et le cadre se montre par
+    /// `isDraggingFiles` (SDK.md, section 9).
+    #[test]
+    fn le_depot_de_fichiers_passe_par_use_file_drop_et_montre_son_cadre() {
+        let ignored = r#"
+import { ListPage } from "socle-ui";
+export default function Photos() {
+  return <ListPage title="Photos" rows={photos} columns={COLONNES} empty={{ title: "Aucune photo" }} onDropFiles={ajouter} />;
+}
+"#;
+        let found = messages(ignored);
+        assert!(found.iter().any(|m| m.starts_with("4: `onDropFiles` de `<ListPage>` ne reçoit rien dans Alfred") && m.contains("useFileDrop")), "{found:?}");
+        assert!(lint(ignored, Placement::Page).iter().any(|f| !is_warning(&f.message)), "une erreur : le dépôt serait perdu");
+
+        let hidden = r#"
+import { useFileDrop } from "@alfred/sdk";
+import { Page, PageSection } from "socle-ui";
+export default function Releves() {
+  const depot = useFileDrop({ accept: ["csv"], onFiles: importer });
+  return <Page><PageSection title="Opérations">{operations}</PageSection></Page>;
+}
+"#;
+        let found = messages(hidden);
+        assert!(found.iter().any(|m| m.starts_with("2: Avertissement : `useFileDrop` sans `isDraggingFiles` sur la `Page`")), "{found:?}");
+
+        let shown = hidden.replace("<Page>", "<Page isDraggingFiles={depot.isDraggingFiles} dropLabel=\"Déposez le relevé pour l’importer\">");
+        assert!(!messages(&shown).iter().any(|m| m.contains("useFileDrop")), "{:?}", messages(&shown));
+        // Un panneau n’a pas de cadre de dépôt : rien à lui reprocher.
+        let panel = r#"
+import { useFileDrop } from "@alfred/sdk";
+import { Drawer } from "socle-ui";
+export default function Ticket() {
+  useFileDrop({ onFiles: joindre });
+  return <Drawer header={{ title: "Ticket" }} sections={[]} />;
+}
+"#;
+        assert!(!panel_messages(panel).iter().any(|m| m.contains("useFileDrop")), "{:?}", panel_messages(panel));
     }
 
     #[test]
