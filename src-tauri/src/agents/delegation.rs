@@ -13,9 +13,16 @@
 //!   celles qui en dépendent.
 //! - Les tâches sont gardées dans la base de l’espace : la coquille lance les conversations des tâches prêtes
 //!   (`agents.tasks.claim`), puis rend leur contrat (`agents.tasks.report`) et relance la coordinatrice.
+//! - Les tâches d’une coordinatrice partent dans l’interface qui tient sa session (ou celle d’un de ses délégués) :
+//!   une autre interface ouverte sur le même Alfred (fenêtre cachée, navigateur par le pont de développement) les
+//!   laisse. Sans cela, les délégués naissaient dans une interface que l’utilisateur ne regarde pas.
+//! - Une tâche dont la session se ferme avant son rapport (rechargement de l’interface, CLI arrêté, Alfred quitté)
+//!   passe « interrompue », avec la raison. L’interface la reprend dans la conversation du délégué, qui garde sa
+//!   session de CLI ; après `MAX_RESUMES` reprises, elle passe en échec et la coordinatrice reçoit le rapport.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
@@ -31,13 +38,19 @@ const MAX_TASKS: usize = 50;
 const SUMMARY_CHARS: usize = 600;
 const REPORT_PAGE: usize = 4000;
 const STATUSES: &[&str] = &["success", "partial", "failed", "needs_information", "cancelled"];
+/// Reprises automatiques d’une tâche interrompue ; à l’interruption suivante, elle passe en échec.
+const MAX_RESUMES: i64 = 2;
+const CLOSED_REASON: &str =
+    "Interrompue : la session du délégué s’est fermée avant son rapport (interface rechargée ou CLI arrêté).";
+const STOPPED_REASON: &str = "Interrompue : Alfred s’est arrêté pendant la tâche.";
 
-/// Colonnes ajoutées avec l’héritage du harnais : une table d’avant les reçoit.
-const ADDED_COLUMNS: &[(&str, &str)] = &[
-    ("_alfred_agent_coordinators", "provider"),
-    ("_alfred_agent_coordinators", "model"),
-    ("_alfred_agent_coordinators", "effort"),
-    ("_alfred_agent_tasks", "effort"),
+/// Colonnes ajoutées après coup (héritage du harnais, reprises) : une table d’avant les reçoit.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("_alfred_agent_coordinators", "provider", "TEXT"),
+    ("_alfred_agent_coordinators", "model", "TEXT"),
+    ("_alfred_agent_coordinators", "effort", "TEXT"),
+    ("_alfred_agent_tasks", "effort", "TEXT"),
+    ("_alfred_agent_tasks", "resumes", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn open(space: &Space) -> AppResult<Connection> {
@@ -54,10 +67,10 @@ fn open(space: &Space) -> AppResult<Connection> {
            position INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, effort TEXT);
          CREATE INDEX IF NOT EXISTS _alfred_agent_tasks_coordinator ON _alfred_agent_tasks (coordinator, position);",
     )?;
-    for (table, column) in ADDED_COLUMNS {
+    for (table, column, kind) in ADDED_COLUMNS {
         let query = format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1");
         if !db.prepare(&query)?.exists([column])? {
-            db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))?;
+            db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
         }
     }
     Ok(db)
@@ -399,35 +412,165 @@ pub fn delegate(state: &AppState, coordinator: &str, args: &Value) -> AppResult<
     }))
 }
 
-/// Tâches prêtes : elles passent « en cours » et la coquille lance leur conversation, avec le harnais, le modèle et
-/// l’effort résolus au départ (`resolved`) : une tâche relancée reprend ceux que la coordinatrice a alors.
-pub fn claim(state: &AppState) -> AppResult<Vec<Value>> {
+/// Tâches parties pendant cette exécution d’Alfred : une tâche « en cours » qui n’en est pas vient d’une exécution
+/// arrêtée, et plus aucune session ne la fait avancer.
+fn claimed_here() -> &'static Mutex<HashSet<String>> {
+    static CLAIMED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CLAIMED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Interface qui ferme la session d’un délégué (rechargement : la nouvelle page ferme celles de l’ancienne). Si sa
+/// tâche en est interrompue, elle reprend chez cette interface, que l’utilisateur regarde, et non dans une autre.
+fn closers() -> &'static Mutex<HashMap<String, String>> {
+    static CLOSERS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    CLOSERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// L’interface `owner` va fermer la session de `conversation` (`session::close`).
+pub fn closing(conversation: &str, owner: &str) {
+    if let Ok(mut closers) = closers().lock() {
+        closers.insert(conversation.to_owned(), owner.to_owned());
+    }
+}
+
+/// Interfaces qui tiennent la session de la coordinatrice ou d’un de ses délégués en cours : ses tâches partent chez
+/// elles. `live_owner` rend l’interface qui a ouvert la session d’une conversation.
+fn holders(db: &Connection, coordinator: &str, live_owner: &dyn Fn(&str) -> Option<String>) -> AppResult<Vec<String>> {
+    let mut statement = db.prepare(
+        "SELECT conversation FROM _alfred_agent_tasks WHERE coordinator = ?1 AND status = 'running' AND conversation IS NOT NULL",
+    )?;
+    let delegates: Vec<String> = statement.query_map([coordinator], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    Ok(std::iter::once(coordinator.to_owned()).chain(delegates).filter_map(|conversation| live_owner(&conversation)).collect())
+}
+
+/// Tâches que l’interface `owner` doit faire avancer (`launch`) : les tâches prêtes (`start`), les tâches
+/// interrompues à reprendre dans la conversation de leur délégué (`resume`), et celles qui ont épuisé leurs reprises,
+/// rendues en échec (`report`, avec le message à déposer dans la coordinatrice). `busy` : les tâches que cette
+/// interface fait déjà avancer.
+///
+/// Le harnais, le modèle et l’effort sont résolus au départ (`resolved`) : une tâche relancée reprend ceux que la
+/// coordinatrice a alors.
+pub fn claim(state: &AppState, owner: Option<&str>, busy: &[String]) -> AppResult<Vec<Value>> {
+    claim_with(state, owner, busy, &|conversation| super::session::owner_of(state, conversation))
+}
+
+fn claim_with(
+    state: &AppState,
+    owner: Option<&str>,
+    busy: &[String],
+    live_owner: &dyn Fn(&str) -> Option<String>,
+) -> AppResult<Vec<Value>> {
     let db = open(&state.space()?)?;
+    let mut here = claimed_here().lock().map_err(|_| AppError::new("La délégation est indisponible."))?;
+    // Une tâche « en cours » laissée par une exécution arrêtée d’Alfred : plus rien ne la fait avancer.
+    let running: Vec<String> = {
+        let mut statement = db.prepare("SELECT id FROM _alfred_agent_tasks WHERE status = 'running'")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for id in running.iter().filter(|id| !here.contains(*id) && !busy.contains(id)) {
+        db.execute(
+            "UPDATE _alfred_agent_tasks SET status = 'interrupted', summary = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, STOPPED_REASON, now_ms()],
+        )?;
+    }
     let mut statement = db.prepare(&format!(
-        "SELECT {TASK_COLUMNS} FROM _alfred_agent_tasks WHERE status = 'ready' ORDER BY coordinator, position"
+        "SELECT {TASK_COLUMNS}, resumes FROM _alfred_agent_tasks WHERE status IN ('ready', 'interrupted')
+         ORDER BY coordinator, position"
     ))?;
-    let ready: Vec<Value> = statement.query_map([], task_row)?.collect::<Result<_, _>>()?;
+    let pending: Vec<(Value, i64)> = statement
+        .query_map([], |row| Ok((task_row(row)?, row.get::<_, Option<i64>>(15)?.unwrap_or(0))))?
+        .collect::<Result<_, _>>()?;
     let mut harnesses: HashMap<String, Option<Harness>> = HashMap::new();
+    let mut allowed: HashMap<String, bool> = HashMap::new();
     let mut claimed = Vec::new();
-    for mut task in ready {
+    for (mut task, resumes) in pending {
+        let id = task["id"].as_str().unwrap_or_default().to_owned();
+        if busy.contains(&id) {
+            continue;
+        }
         let coordinator = task["coordinator"].as_str().unwrap_or_default().to_owned();
+        // Une autre interface tient la coordinatrice ou un de ses délégués : la tâche part chez elle.
+        let mine = *allowed.entry(coordinator.clone()).or_insert_with(|| {
+            let holders = holders(&db, &coordinator, live_owner).unwrap_or_default();
+            holders.is_empty() || owner.is_some_and(|owner| holders.iter().any(|holder| holder == owner))
+        });
+        if !mine {
+            continue;
+        }
+        let resume = task["status"] == "interrupted";
+        // Interrompue par la fermeture qu’une interface a demandée : elle reprend chez celle-ci.
+        if resume {
+            let conversation = task["conversation"].as_str().unwrap_or_default();
+            let closer = closers().lock().ok().and_then(|closers| closers.get(conversation).cloned());
+            if closer.is_some_and(|closer| Some(closer.as_str()) != owner) {
+                continue;
+            }
+            if let Ok(mut closers) = closers().lock() {
+                closers.remove(conversation);
+            }
+        }
+        if resume && (resumes >= MAX_RESUMES || task["conversation"].is_null()) {
+            let reason = task["summary"].as_str().unwrap_or(CLOSED_REASON).to_owned();
+            let summary =
+                format!("{reason} Pas de nouvelle reprise automatique après {resumes} reprises : `relaunch_task` la relance.");
+            let reported = report(state, &id, &json!({ "status": "failed", "summary": summary }), "")?;
+            claimed.push(json!({ "id": id, "coordinator": coordinator, "launch": "report", "message": reported["message"] }));
+            continue;
+        }
         let known = harnesses.entry(coordinator.clone()).or_insert_with(|| coordinator_harness(state, &db, &coordinator));
         let given = |key: &str| task[key].as_str().map(str::to_owned);
         let asked = Harness { provider: given("provider"), model: given("model"), effort: given("effort") };
         let (harness, inherited) = resolved(&asked, known.as_ref());
         db.execute(
-            "UPDATE _alfred_agent_tasks SET status = 'running', updated_at = ?2 WHERE id = ?1",
-            params![task["id"].as_str(), now_ms()],
+            "UPDATE _alfred_agent_tasks SET status = 'running', resumes = resumes + ?3, updated_at = ?2 WHERE id = ?1",
+            params![id, now_ms(), i64::from(resume)],
         )?;
+        here.insert(id);
         task["provider"] = json!(harness.provider);
         task["model"] = json!(harness.model);
         task["effort"] = json!(harness.effort);
         task["inherited"] = json!(inherited);
         task["status"] = json!("running");
         task["autonomy"] = json!(autonomy_of(task["mode"].as_str().unwrap_or_default()));
+        task["launch"] = json!(if resume { "resume" } else { "start" });
         claimed.push(task);
     }
     Ok(claimed)
+}
+
+/// La session d’un délégué s’est fermée : si sa tâche était en cours, elle n’aura pas de rapport. Elle passe
+/// « interrompue », avec la raison, et l’interface qui tient la coordinatrice la reprend (`claim`).
+pub fn session_closed(state: &AppState, conversation: &str) {
+    let closer = closers().lock().ok().and_then(|mut closers| closers.remove(conversation));
+    let Some(db) = state.try_space().and_then(|space| open(&space).ok()) else {
+        return;
+    };
+    let coordinator: Option<String> = db
+        .query_row(
+            "SELECT coordinator FROM _alfred_agent_tasks WHERE conversation = ?1 AND status = 'running'",
+            [conversation],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let Some(coordinator) = coordinator else {
+        return;
+    };
+    let changed = db
+        .execute(
+            "UPDATE _alfred_agent_tasks SET status = 'interrupted', summary = ?2, updated_at = ?3
+             WHERE conversation = ?1 AND status = 'running'",
+            params![conversation, CLOSED_REASON, now_ms()],
+        )
+        .unwrap_or(0);
+    if changed > 0 {
+        if let (Some(closer), Ok(mut closers)) = (closer, closers().lock()) {
+            closers.insert(conversation.to_owned(), closer);
+        }
+        state.emit("agent:tasks", json!({ "coordinator": coordinator }));
+    }
 }
 
 /// La conversation du délégué est créée : elle hérite du périmètre de la coordinatrice (module, fonctions, entrées
@@ -532,7 +675,7 @@ pub fn report(state: &AppState, id: &str, contract: &Value, full: &str) -> AppRe
         message.push_str(&format!("\n\nQuestions :\n- {}", questions.join("\n- ")));
     }
     let remaining: i64 = db.query_row(
-        "SELECT count(*) FROM _alfred_agent_tasks WHERE coordinator = ?1 AND status IN ('waiting', 'ready', 'running')",
+        "SELECT count(*) FROM _alfred_agent_tasks WHERE coordinator = ?1 AND status IN ('waiting', 'ready', 'running', 'interrupted')",
         [&coordinator],
         |row| row.get(0),
     )?;
@@ -568,13 +711,13 @@ pub fn read_report(state: &AppState, coordinator: &str, id: &str, page: usize) -
 pub fn relaunch(state: &AppState, coordinator: &str, id: &str, extra: Option<&str>) -> AppResult<Value> {
     let db = open(&state.space()?)?;
     let changed = db.execute(
-        "UPDATE _alfred_agent_tasks SET status = 'ready', conversation = NULL,
+        "UPDATE _alfred_agent_tasks SET status = 'ready', conversation = NULL, resumes = 0,
            goal = CASE WHEN ?3 IS NULL THEN goal ELSE goal || char(10) || char(10) || 'Précision de la coordinatrice : ' || ?3 END
-         WHERE id = ?1 AND coordinator = ?2 AND status IN ('partial', 'failed', 'needs_information', 'cancelled')",
+         WHERE id = ?1 AND coordinator = ?2 AND status IN ('partial', 'failed', 'needs_information', 'cancelled', 'interrupted')",
         params![id, coordinator, extra],
     )?;
     if changed == 0 {
-        return Err(AppError::new("Seule une tâche terminée sans succès se relance."));
+        return Err(AppError::new("Seule une tâche terminée sans succès, ou interrompue, se relance."));
     }
     state.emit("agent:tasks", json!({ "coordinator": coordinator }));
     Ok(json!({ "relaunched": id }))
@@ -590,7 +733,7 @@ pub fn stop(state: &AppState, coordinator: &str) -> AppResult<Vec<String>> {
     let running: Vec<String> = statement.query_map([coordinator], |row| row.get(0))?.collect::<Result<_, _>>()?;
     db.execute(
         "UPDATE _alfred_agent_tasks SET status = 'cancelled', summary = coalesce(summary, 'Arrêtée avec la coordinatrice.')
-         WHERE coordinator = ?1 AND status IN ('waiting', 'ready', 'running')",
+         WHERE coordinator = ?1 AND status IN ('waiting', 'ready', 'running', 'interrupted')",
         [coordinator],
     )?;
     state.emit("agent:tasks", json!({ "coordinator": coordinator }));
@@ -644,7 +787,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "relaunch_task",
-            "Relance une tâche terminée sans succès, avec une précision facultative.",
+            "Relance une tâche terminée sans succès ou interrompue, avec une précision facultative.",
             json!({ "id": { "type": "string" }, "instruction": { "type": "string" } }),
             &["id"],
         ),
@@ -693,7 +836,11 @@ pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &Valu
             let max_mode: String = opt_arg(args, "maxMode")?.unwrap_or_else(|| "complet".into());
             set_coordinator(state, &conversation, on, &cwd, &max_mode).map(|_| Value::Null)
         })(),
-        "agents.tasks.claim" => claim(state).map(Value::from),
+        "agents.tasks.claim" => (|| {
+            let owner: Option<String> = opt_arg(args, "owner")?;
+            let busy: Vec<String> = opt_arg(args, "busy")?.unwrap_or_default();
+            claim(state, owner.as_deref(), &busy).map(Value::from)
+        })(),
         "agents.tasks.attach" => (|| {
             attach(state, &arg::<String>(args, "id")?, &arg::<String>(args, "conversation")?).map(|_| Value::Null)
         })(),
@@ -787,7 +934,7 @@ mod tests {
         assert_eq!(delegated["tasks"][2]["effort"], "low", "{delegated}");
         let bad = json!({ "tasks": [{ "key": "a", "goal": "x", "effort": "élevé; rm -rf /" }] });
         assert!(delegate(&state, "coord", &bad).is_err(), "un effort se vérifie comme un modèle");
-        let ready = claim(&state).unwrap();
+        let ready = claim(&state, None, &[]).unwrap();
         assert_eq!(
             ready.iter().map(launched).collect::<Vec<_>>(),
             [
@@ -804,7 +951,7 @@ mod tests {
         relaunch(&state, "coord", ready[0]["id"].as_str().unwrap(), None).unwrap();
         relaunch(&state, "coord", ready[2]["id"].as_str().unwrap(), Some("Réessaie")).unwrap();
         assert_eq!(
-            claim(&state).unwrap().iter().map(launched).collect::<Vec<_>>(),
+            claim(&state, None, &[]).unwrap().iter().map(launched).collect::<Vec<_>>(),
             [(Some("claude"), Some("sonnet"), Some("max"), true), (Some("codex"), Some("gpt-5"), Some("low"), false)]
         );
         // Marquer de nouveau la coordinatrice garde son harnais.
@@ -832,7 +979,7 @@ mod tests {
         set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
         remember_harness(&open(&space).unwrap(), "coord", &harness(Some("claude"), Some("opus"), Some("high"))).unwrap();
         delegate(&state, "coord", &json!({ "tasks": [{ "key": "a", "goal": "x", "effort": "max" }] })).unwrap();
-        assert_eq!(launched(&claim(&state).unwrap()[0]), (Some("claude"), Some("opus"), Some("max"), true));
+        assert_eq!(launched(&claim(&state, None, &[]).unwrap()[0]), (Some("claude"), Some("opus"), Some("max"), true));
     }
 
     /// Une conversation ouverte par l’utilisateur délègue sans être marquée : elle devient coordinatrice à son premier
@@ -845,7 +992,7 @@ mod tests {
         let delegated = call(&state, "utilisateur", "delegate", &two).unwrap().unwrap();
         assert_eq!(delegated["tasks"].as_array().map(Vec::len), Some(2), "{delegated}");
         assert!(is_coordinator(&state, "utilisateur"));
-        let ready = claim(&state).unwrap();
+        let ready = claim(&state, None, &[]).unwrap();
         assert_eq!(ready.len(), 2, "deux modules indépendants partent ensemble");
         assert!(ready.iter().all(|task| task["autonomy"] == "workspace"), "hors Autonomie totale : espace de travail");
         // Le délégué ne délègue jamais, et n’a pas les commandes de délégation.
@@ -879,14 +1026,14 @@ mod tests {
         let full = json!({ "tasks": [{ "key": "a", "goal": "x", "mode": "complet" }] });
         assert!(delegate(&state, "coord", &full).is_err());
         assert!(delegate(&state, "coord", &json!({ "tasks": [task("a", "../..", &[])] })).is_err());
-        assert!(claim(&state).unwrap().is_empty(), "un lot refusé ne lance rien");
+        assert!(claim(&state, None, &[]).unwrap().is_empty(), "un lot refusé ne lance rien");
 
         let batch = json!({ "requestId": "r1", "tasks": [
             task("api", "back", &[]), task("ecran", "front", &["api"]), task("doc", "front", &["api", "ecran"]),
         ] });
         delegate(&state, "coord", &batch).unwrap();
         assert_eq!(delegate(&state, "coord", &batch).unwrap()["repeated"], true, "même requestId, même réponse");
-        let ready = claim(&state).unwrap();
+        let ready = claim(&state, None, &[]).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0]["key"], "api");
         assert_eq!(ready[0]["autonomy"], "workspace");
@@ -904,22 +1051,107 @@ mod tests {
         .unwrap();
         assert_eq!(done["coordinator"], "coord");
         assert!(done["message"].as_str().unwrap().contains("Livrables (dans") && !done["message"].as_str().unwrap().contains("absent.md"));
-        let next = claim(&state).unwrap();
+        let next = claim(&state, None, &[]).unwrap();
         assert_eq!(next.iter().map(|task| task["key"].as_str().unwrap()).collect::<Vec<_>>(), ["ecran"]);
         // L’écran échoue : la documentation, qui en dépend, est annulée.
         report(&state, next[0]["id"].as_str().unwrap(), &json!({ "status": "failed", "summary": "Échec" }), "").unwrap();
         let tasks = tasks_of(&open(&state.space().unwrap()).unwrap(), "coord").unwrap();
         assert_eq!(tasks.iter().map(|task| task["status"].as_str().unwrap()).collect::<Vec<_>>(), ["success", "failed", "cancelled"]);
-        assert!(claim(&state).unwrap().is_empty());
+        assert!(claim(&state, None, &[]).unwrap().is_empty());
 
         // Relance de l’écran avec une précision ; la page du rapport se lit.
         relaunch(&state, "coord", next[0]["id"].as_str().unwrap(), Some("Utilise la v2")).unwrap();
-        let again = claim(&state).unwrap();
+        let again = claim(&state, None, &[]).unwrap();
         assert!(again[0]["goal"].as_str().unwrap().ends_with("Utilise la v2"));
         assert_eq!(read_report(&state, "coord", ready[0]["id"].as_str().unwrap(), 0).unwrap()["text"], "Rapport complet");
         assert!(read_report(&state, "autre", ready[0]["id"].as_str().unwrap(), 0).is_err());
         // Arrêter la coordinatrice annule le reste et rend les délégués en cours.
         attach(&state, again[0]["id"].as_str().unwrap(), "delegue-ecran").unwrap();
         assert_eq!(stop(&state, "coord").unwrap(), vec!["delegue-ecran".to_string()]);
+    }
+
+    fn status_of(state: &AppState, id: &str) -> (String, Option<String>) {
+        open(&state.space().unwrap())
+            .unwrap()
+            .query_row("SELECT status, summary FROM _alfred_agent_tasks WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+    }
+
+    /// Deux interfaces sur le même Alfred (fenêtre cachée et navigateur par le pont) : les tâches partent dans celle
+    /// qui tient la session de la coordinatrice, puis dans celle qui tient un de ses délégués. Sans session vivante,
+    /// la première venue les prend.
+    #[test]
+    fn tasks_go_to_the_interface_that_holds_the_coordinator() {
+        let (state, _dir, work) = setup();
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        delegate(&state, "coord", &json!({ "tasks": [task("api", "back", &[]), task("ecran", "front", &[])] })).unwrap();
+        let browser = |conversation: &str| (conversation == "coord").then(|| "navigateur".to_string());
+        assert!(claim_with(&state, Some("fenetre-cachee"), &[], &browser).unwrap().is_empty());
+        assert!(claim_with(&state, None, &[], &browser).unwrap().is_empty(), "une interface sans nom non plus");
+        let mine = claim_with(&state, Some("navigateur"), &[], &browser).unwrap();
+        assert_eq!(mine.iter().map(|task| task["launch"].as_str().unwrap()).collect::<Vec<_>>(), ["start", "start"]);
+
+        // Session de la coordinatrice fermée : un délégué en cours suffit à garder ses tâches dans son interface.
+        attach(&state, mine[0]["id"].as_str().unwrap(), "delegue-api").unwrap();
+        report(&state, mine[1]["id"].as_str().unwrap(), &json!({ "status": "failed", "summary": "Échec" }), "").unwrap();
+        relaunch(&state, "coord", mine[1]["id"].as_str().unwrap(), None).unwrap();
+        let delegate_held = |conversation: &str| (conversation == "delegue-api").then(|| "navigateur".to_string());
+        assert!(claim_with(&state, Some("fenetre-cachee"), &[], &delegate_held).unwrap().is_empty());
+        assert_eq!(claim_with(&state, Some("navigateur"), &[], &delegate_held).unwrap().len(), 1);
+    }
+
+    /// La session d’un délégué se ferme avant son rapport : sa tâche passe « interrompue », avec la raison. Elle est
+    /// reprise deux fois dans la conversation du délégué, puis rendue en échec à la coordinatrice, et se relance.
+    #[test]
+    fn a_closed_delegate_session_interrupts_its_task_which_resumes_then_fails() {
+        let (state, _dir, work) = setup();
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        delegate(&state, "coord", &json!({ "tasks": [task("api", "back", &[])] })).unwrap();
+        let id = claim(&state, None, &[]).unwrap()[0]["id"].as_str().unwrap().to_owned();
+        attach(&state, &id, "delegue-api").unwrap();
+        session_closed(&state, "autre-conversation");
+        assert_eq!(status_of(&state, &id).0, "running", "une autre session ne touche pas la tâche");
+
+        for round in 1..=MAX_RESUMES {
+            session_closed(&state, "delegue-api");
+            assert_eq!(status_of(&state, &id), ("interrupted".to_string(), Some(CLOSED_REASON.to_string())));
+            assert!(claim(&state, None, &[id.clone()]).unwrap().is_empty(), "l’interface qui la fait avancer la garde");
+            let resumed = claim(&state, None, &[]).unwrap();
+            assert_eq!(resumed.len(), 1, "reprise {round}");
+            assert_eq!((resumed[0]["launch"].as_str(), resumed[0]["conversation"].as_str()), (Some("resume"), Some("delegue-api")));
+            assert_eq!(status_of(&state, &id).0, "running");
+        }
+        // Session fermée par l’interface rechargée : la tâche reprend chez elle, pas dans une autre ouverte à côté.
+        closing("delegue-api", "navigateur");
+        session_closed(&state, "delegue-api");
+        assert!(claim(&state, Some("fenetre-cachee"), &[]).unwrap().is_empty());
+        let given_up = claim(&state, Some("navigateur"), &[]).unwrap();
+        assert_eq!(given_up[0]["launch"], "report");
+        assert!(given_up[0]["message"].as_str().unwrap().contains("Interrompue"), "{}", given_up[0]);
+        assert_eq!(status_of(&state, &id).0, "failed");
+        relaunch(&state, "coord", &id, None).unwrap();
+        assert_eq!(claim(&state, None, &[]).unwrap()[0]["launch"], "start", "relancée, elle repart de zéro");
+    }
+
+    /// Une tâche restée « en cours » d’une exécution arrêtée d’Alfred est interrompue, puis reprise ; la coordinatrice
+    /// relance aussi une tâche interrompue.
+    #[test]
+    fn a_task_left_running_by_a_stopped_alfred_resumes() {
+        let (state, _dir, work) = setup();
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        delegate(&state, "coord", &json!({ "tasks": [task("api", "back", &[]), task("ecran", "front", &[])] })).unwrap();
+        let db = open(&state.space().unwrap()).unwrap();
+        db.execute("UPDATE _alfred_agent_tasks SET status = 'running', conversation = 'delegue-' || key", []).unwrap();
+        let resumed = claim(&state, None, &[]).unwrap();
+        assert_eq!(resumed.iter().map(|task| task["launch"].as_str().unwrap()).collect::<Vec<_>>(), ["resume", "resume"]);
+        let api = resumed[0]["id"].as_str().unwrap();
+        assert!(claim(&state, None, &[]).unwrap().is_empty(), "reprise, elle n’est plus interrompue");
+        session_closed(&state, "delegue-api");
+        relaunch(&state, "coord", api, Some("Reprends de zéro")).unwrap();
+        assert_eq!(claim(&state, None, &[]).unwrap()[0]["launch"], "start");
+        // Arrêter la coordinatrice annule aussi une tâche interrompue.
+        session_closed(&state, "delegue-ecran");
+        stop(&state, "coord").unwrap();
+        assert_eq!(status_of(&state, resumed[1]["id"].as_str().unwrap()).0, "cancelled");
     }
 }

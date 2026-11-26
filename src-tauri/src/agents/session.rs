@@ -98,6 +98,9 @@ pub struct StartOptions {
     pub one_shot: bool,
     /// Schéma JSON de la réponse d’un appel unique.
     pub output_schema: Option<Value>,
+    /// Interface qui ouvre la session (un identifiant par chargement de la page) : les tâches déléguées partent chez
+    /// celle qui tient la coordinatrice (`delegation::claim`).
+    pub owner: Option<String>,
 }
 
 impl StartOptions {
@@ -120,6 +123,9 @@ impl StartOptions {
             if let Some(value) = value {
                 super::simple_value(name, value)?;
             }
+        }
+        if let Some(owner) = &self.owner {
+            super::simple_value("interface", owner)?;
         }
         if self.model.as_deref() == Some("default") {
             self.model = None;
@@ -206,6 +212,8 @@ struct Entry {
     cwd: String,
     /// Harnais, modèle et effort reçus par le CLI : ses délégués les reprennent (`delegation.rs`).
     harness: Harness,
+    /// Interface qui a ouvert la session (`StartOptions::owner`).
+    owner: Option<String>,
 }
 
 /// Session ouverte pour `conversation`, retrouvée par le jeton de ses outils.
@@ -231,6 +239,11 @@ pub fn autonomy_of(state: &AppState, conversation: &str) -> Option<Autonomy> {
 /// session.
 pub fn harness_of(state: &AppState, conversation: &str) -> Option<Harness> {
     entry_of(state, conversation).map(|entry| entry.harness.clone())
+}
+
+/// Interface qui tient la session ouverte pour `conversation` ; `None` sans session ou sans interface connue.
+pub fn owner_of(state: &AppState, conversation: &str) -> Option<String> {
+    entry_of(state, conversation).and_then(|entry| entry.owner.clone())
 }
 
 /// Cartes d’accord posées par Alfred (et non par le harnais), en attente de la réponse de l’utilisateur.
@@ -315,10 +328,12 @@ pub fn write_prompt(state: &AppState, handle: &str, prompt: &str) -> AppResult<P
 fn forget(state: &AppState, handle: &str) {
     let _ = std::fs::remove_file(prompt_file(state, handle));
     let removed = sessions().lock().ok().and_then(|mut sessions| sessions.remove(handle));
-    if let Some(token) = removed.and_then(|entry| entry.token.clone()) {
-        if let Ok(mut tokens) = state.agent_tokens.lock() {
-            tokens.remove(&token);
-        }
+    let conversation = removed
+        .and_then(|entry| entry.token.clone())
+        .and_then(|token| state.agent_tokens.lock().ok().and_then(|mut tokens| tokens.remove(&token)));
+    // La session d’un délégué fermée avant son rapport : sa tâche passe « interrompue » et sera reprise.
+    if let Some(conversation) = conversation {
+        super::delegation::session_closed(state, &conversation);
     }
 }
 
@@ -345,6 +360,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     let own_sink = sink.clone();
     let autonomy = options.autonomy;
     let cwd = options.cwd.clone();
+    let owner = options.owner.clone();
     let harness =
         Harness { provider: Some(provider.id().into()), model: options.model.clone(), effort: options.effort.clone() };
     let launch = Launch { state: state.clone(), options, program, sink, token: token.clone(), port, handle: handle.clone() };
@@ -371,7 +387,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     sessions()
         .lock()
         .map_err(|_| gone())?
-        .insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy, cwd, harness }));
+        .insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy, cwd, harness, owner }));
     Ok(json!({ "handle": handle, "sessionId": session_id }))
 }
 
@@ -452,12 +468,18 @@ async fn stop_task(args: &Value) -> AppResult<Value> {
     Ok(Value::Null)
 }
 
-/// Ferme la session et arrête son CLI ; une poignée inconnue est déjà fermée.
+/// Ferme la session et arrête son CLI ; une poignée inconnue est déjà fermée. `owner` : l’interface qui la ferme ;
+/// si c’est la session d’un délégué au travail, sa tâche reprendra chez elle (`delegation::closing`).
 async fn close(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     let handle: String = arg(args, "handle")?;
+    let owner: Option<String> = crate::error::opt_arg(args, "owner")?;
     let Ok(entry) = entry(&handle) else {
         return Ok(Value::Null);
     };
+    let conversation = entry.token.as_ref().and_then(|token| state.agent_tokens.lock().ok()?.get(token).cloned());
+    if let (Some(conversation), Some(owner)) = (conversation, owner) {
+        super::delegation::closing(&conversation, &owner);
+    }
     match &entry.driver {
         Driver::Claude(claude) => {
             let claude = claude.clone();

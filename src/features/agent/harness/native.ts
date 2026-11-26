@@ -4,6 +4,7 @@
  * plus aucun protocole, n’écrit jamais sur l’entrée d’un CLI et ne voit ni jeton, ni mot de passe, ni sortie brute.
  */
 import { inTauri, invoke, onNativeEvent, toError } from "../../../lib/native";
+import { isSecondaryWindow } from "../../../shell/pageWindowMode";
 import type {
   Autonomy,
   HarnessEvent,
@@ -71,13 +72,28 @@ function writeOwned(handles: string[]) {
 const own = (handle: string) => writeOwned([...readOwned().filter((item) => item !== handle), handle]);
 const disown = (handle: string) => writeOwned(readOwned().filter((item) => item !== handle));
 
+/**
+ * Interface de ce chargement de la page, donnée à chaque session qu’elle ouvre. Les tâches déléguées d’une
+ * coordinatrice partent dans l’interface qui tient sa session (`delegation.rs`) : une autre interface ouverte sur le
+ * même Alfred (fenêtre cachée, navigateur par le pont de développement) les laisse. Une fenêtre secondaire ne lance
+ * pas de délégués : ses sessions n’en donnent pas.
+ */
+export const INTERFACE_ID = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `i${Date.now()}`;
+
 let orphansReleased: Promise<void> | undefined;
 
-function releaseOrphans(): Promise<void> {
+/**
+ * Ferme les sessions du chargement précédent. La délégation l’appelle avant de réclamer des tâches : la tâche d’un
+ * délégué ainsi coupé passe « interrompue » et repart dans cette interface.
+ */
+export function releaseOrphans(): Promise<void> {
   orphansReleased ??= (async () => {
     const orphans = readOwned();
     if (!orphans.length) return;
-    await Promise.all(orphans.map((handle) => invoke("agents.close", { handle }).catch(() => undefined)));
+    // La tâche d’un délégué ainsi coupé reprend dans cette interface (`owner`), pas dans une autre ouverte à côté.
+    await Promise.all(
+      orphans.map((handle) => invoke("agents.close", { handle, owner: INTERFACE_ID }).catch(() => undefined)),
+    );
     writeOwned(readOwned().filter((handle) => !orphans.includes(handle)));
   })();
   return orphansReleased;
@@ -112,6 +128,7 @@ export async function createSession(options: NativeSessionOptions): Promise<Harn
     cwd: options.cwd,
     ...(options.spaceDir ? { spaceDir: options.spaceDir } : {}),
     ...(options.conversation && !options.oneShot ? { conversation: options.conversation } : {}),
+    ...(!options.oneShot && !isSecondaryWindow() ? { owner: INTERFACE_ID } : {}),
     ...(options.model ? { model: options.model } : {}),
     ...(options.effort ? { effort: options.effort } : {}),
     ...(options.instructions ? { instructions: options.instructions } : {}),
