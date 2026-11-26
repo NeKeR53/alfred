@@ -117,6 +117,8 @@ mod tests {
         }
         for name in names {
             let text = fs::read_to_string(recipes.join(format!("{name}.md"))).unwrap();
+            // Chaque zone dit sa responsabilité, quand la prendre et pourquoi (socle-ui 1.21.1, D-417).
+            assert!(text.contains("| Zone | Sa responsabilité ici | Composant | Quand, pourquoi |"), "{name}.md n’explique pas ses zones");
             for suffix in ["clair", "sombre"] {
                 let capture = format!("{name}-{suffix}.png");
                 assert!(text.contains(&capture), "{name}.md ne cite pas {capture}");

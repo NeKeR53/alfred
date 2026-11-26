@@ -93,7 +93,7 @@ Une zone de l’écran porte une responsabilité, et une seule : l’entrée du 
 Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient ses informations clés sur un écran : une fenêtre de 1440 × 900, panneau ouvert (la page y a 928 × 862 px). Une colonne étroite centrée ne sert qu’à lire un texte (`DetailPage`, `width="text"`) ou à converser (`ChatPage`).
 
 **Exemple : une base documentaire** (des PDF indexés, des questions en langage courant). À ne pas faire : une `Page` de 760 px qui empile « Poser une question », des questions d’exemple, une zone de dépôt, la liste des documents et la réponse. À faire : une responsabilité par zone.
-- Onglet « Questions », le premier : une `ChatPage`. On pose une question en bas, on lit la réponse et ses sources dans le relevé ; les questions d’exemple sont dans l’état vide du relevé.
+- Onglet « Questions », le premier : une `ChatPage`. On pose une question en bas, on lit la réponse et ses sources dans le relevé ; les questions d’exemple sont dans l’état vide du relevé (`suggestions` de l’`EmptyState`).
 - Panneau de droite de « Questions » : un clic sur une source l’ouvre là, avec le passage cité puis le PDF à la page citée (`DocumentViewer` avec `page`). Les sources d’une réponse sont des puces (`SourceList`, dans `sources` de `ChatMessage`). Le relevé reste visible à côté.
 - Onglet « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné dans son panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »).
 
@@ -101,7 +101,7 @@ PLACEMENT.md, section 11.4, détaille ce cas ; la recette `KnowledgeBase` le mon
 
 ### Partir d’une recette
 
-socle-ui livre des recettes de pages : des pages complètes des types courants, faites seulement de ses gabarits et composants. Chacune dit quand la prendre, ses zones, ses actions, ses états (vide, chargement, erreur), son comportement, un squelette de code, ce qu’il faut éviter, et montre la page finie en deux captures, en clair et en sombre. Elles sont dans `docs/alfred/socle/recipes/` : la fiche (`KnowledgeBase.md`) et ses deux captures (`KnowledgeBase-clair.png`, `KnowledgeBase-sombre.png`), de même pour chaque recette.
+socle-ui livre des recettes de pages : des pages complètes des types courants, faites seulement de ses gabarits et composants. Chacune dit quand la prendre ; puis, pour chaque zone, sa responsabilité dans la page, son composant, quand la prendre et pourquoi (les zones de « Répartir avant de composer ») ; ses actions, ses états (vide, chargement, erreur), son comportement, un squelette de code, ce qu’il faut éviter. Elle montre la page finie en deux captures, en clair et en sombre. Elles sont dans `docs/alfred/socle/recipes/` : la fiche (`KnowledgeBase.md`) et ses deux captures (`KnowledgeBase-clair.png`, `KnowledgeBase-sombre.png`), de même pour chaque recette.
 
 Avant d’écrire une page, partez de la recette la plus proche : lisez sa fiche, regardez sa capture (l’outil de lecture de votre harnais ouvre une image), reprenez ses zones et ses composants. Après `page_screenshot`, comparez votre page à la capture.
 
@@ -117,10 +117,12 @@ Une recette est écrite pour la coquille de socle-ui (`AppShell`). Dans Alfred, 
 
 | Dans la recette | Dans Alfred |
 |---|---|
-| Une vue de la barre du haut (`views`) | Un onglet fixe de la section : une page par vue (`place_page`, `kind: "tab"`) ; un élément ouvert en entier : `views.open` |
-| Les actions de la barre du haut (`ActionBar` zone `topbar`) | `useTopBarActions` |
-| Le panneau de détail (`detail`, un `Drawer`) | La page du panneau (`kind: "panel"`) : un `Drawer` à sa racine, qui lit `useSelection()` ; la page publie sa sélection (`shell.publish`) |
+| Onglet fixe : une vue de la barre du haut (`views`) | Un onglet fixe de la section : une page par vue (`place_page`, `kind: "tab"`) |
+| Onglet ouvert : un élément ouvert en entier (vue fermable) | `views.open({ id, label, params })` ; la page lit `usePageContext()?.view` |
+| Barre du haut : les actions de la page (`ActionBar` zone `topbar`) | `useTopBarActions` ; une `ListPage` garde ses actions dans son en-tête |
+| Panneau de droite : la vue détail (`detail`, un `Drawer`) | La page du panneau (`kind: "panel"`) : un `Drawer` à sa racine, qui lit `useSelection()` ; la page publie sa sélection (`shell.publish`) |
 | Le panneau ouvert par la page (`isDetailOpen`) | `shell.setPanelVisible(true)` ; la largeur (`detailWidth`, `detailExpandable`) reste le choix de l’utilisateur |
+| Sous-entrées de la sidebar : naviguer par objet (`children` de `Sidebar.Item`) | `menu.setEntries` (SDK.md, section 8) |
 | Le compteur d’une entrée de la sidebar (`count`) | `badge.set(total)` |
 | Des fichiers déposés sur la page (`onDropFiles`) | Pas de dépôt dans le cadre d’une page : une action « Ajouter… » qui appelle `files.pick` |
 | `AppShell`, `Sidebar` | Dessinés par Alfred : une page ne les rend jamais (règle 6) |
@@ -358,7 +360,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.21.0
+### Catalogue de socle-ui 1.21.1
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -519,21 +521,27 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 **`ChatPage`** : un échange de questions et de réponses (avec l’IA, sur des documents), dans un onglet fixe à lui. Le relevé défile, la saisie reste en bas, les exemples vont dans l’état vide du relevé :
 
 ```tsx
-import { ChatComposer, ChatMessage, ChatPage, ChatTranscript, EmptyState, Link } from "socle-ui";
+import { ChatComposer, ChatMessage, ChatPage, ChatTranscript, EmptyState, SourceList } from "socle-ui";
 import { Markdown } from "socle-ui/markdown";
+
+const ouvrir = (source: Source) => { setOuverte(source.id); void shell.publish(source); void shell.setPanelVisible(true); };
 
 <ChatPage composer={<ChatComposer label="Question sur les documents" placeholder="Posez une question" isRunning={enCours} onSubmit={(texte) => void demander(texte)} />}>
   <ChatTranscript label="Questions et réponses" followKey={echanges.length}
-    empty={<EmptyState title="Posez une question" description={<>Par exemple : <Link onPress={() => void demander(EXEMPLE)}>{EXEMPLE}</Link></>} />}>
+    empty={<EmptyState title="Posez une question à vos documents" description="La réponse cite ses sources : un clic ouvre le document à la bonne page."
+      suggestions={EXEMPLES.map((q) => ({ id: q, label: q, onPress: () => void demander(q) }))} />}>
     {echanges.flatMap((e) => [
       <ChatMessage key={`${e.id}-q`} role="user">{e.question}</ChatMessage>,
-      <ChatMessage key={`${e.id}-r`} role="assistant"><Markdown>{e.reponse}</Markdown></ChatMessage>,
+      <ChatMessage key={`${e.id}-r`} role="assistant"
+        sources={<SourceList sources={e.sources} currentId={ouverte} onOpen={ouvrir} />}>
+        <Markdown onLinkPress={(lien) => ouvrirParNumero(e, lien)}>{e.reponse}</Markdown>
+      </ChatMessage>,
     ])}
   </ChatTranscript>
 </ChatPage>
 ```
 
-Les sources d’une réponse suivent son texte, dans le message : une `List` (`label`) dont la sélection publie la source pour le panneau de droite (`onSelectionChange` → `shell.publish`). Le panneau (un `Drawer`) montre la source : le document et la page en en-tête, le passage cité, puis le PDF (`DocumentViewer` dans le `content` d’une section). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet.
+Les sources d’une réponse sont des puces sous son texte : `SourceList` dans `sources` de `ChatMessage` (`id`, `title` : le document, `detail` : « p. 12 », `excerpt` : le passage). Le texte les cite par leur numéro, en lien (`[[1]](#source-1)`) ; `onLinkPress` ouvre la même source. `onOpen` publie la source pour le panneau de droite (`shell.publish`) et l’ouvre (`shell.setPanelVisible(true)`) ; `currentId` marque la source ouverte. Le panneau (un `Drawer`) montre la source : le document et la page en en-tête, le passage cité, puis le PDF à la page citée (`DocumentViewer` avec `page={source.page}`, dans le `content` d’une section). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet. La recette `KnowledgeBase` montre la page finie (section 2, « Partir d’une recette »).
 
 **`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. `onOpen` ouvre l’élément dans un onglet fermable (`views.open({ id, label, params })`) ; dans cet onglet, `usePageContext()?.view` porte l’élément et la page rend la `DetailPage` à la place de la `ListPage`. Le lien de retour ferme l’onglet et revient à la liste :
 
