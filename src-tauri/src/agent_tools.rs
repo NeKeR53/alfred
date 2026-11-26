@@ -1298,6 +1298,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                             .flatten()
                             // Lecture partagée obligatoire : `effect` déclaré, et le service par le client d’Alfred.
                             .or_else(|| crate::function_results::function_problem(&space, function))
+                            .or_else(|| crate::kept_scripts::param_problem(state, &space, function))
                             .map(|problem| json!({ "function": function.reference, "problem": problem }))
                     }
                 })

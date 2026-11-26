@@ -2,10 +2,14 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("../../lib/native");
+vi.mock("../../lib/native", async (original) => ({
+  ...(await original<typeof import("../../lib/native")>()),
+  invoke: vi.fn(),
+  onNativeEvent: vi.fn(),
+}));
 vi.mock("../automations/agentRuns", () => ({ openConversation: vi.fn() }));
 
-import { invoke, onNativeEvent } from "../../lib/native";
+import { AlfredError, invoke, onNativeEvent } from "../../lib/native";
 import { useNotifications } from "../../shell/notifications";
 import { openConversation } from "../automations/agentRuns";
 import { renderSections } from "../modules/settingsHarness";
@@ -69,13 +73,19 @@ beforeEach(() => {
           input: { jour: "lundi" },
           output: { result: 12, logs: ["ok"] },
           home: "notes",
+          literals: [{ key: "equipe", value: "Data", function: "notes/lister", start: 33, end: 39 }],
           modules: [
             { id: "notes", name: "Notes" },
             { id: "mes-scripts", name: "Mes scripts" },
           ],
         };
       case "scripts.keep": {
-        const draft = args as { module: string; name: string };
+        const draft = args as { module: string; name: string; new?: boolean };
+        if (draft.name === "proche" && !draft.new)
+          throw new AlfredError({
+            message: "Proche de « mes-scripts/bilan » : généralise-le.",
+            detail: { close: "mes-scripts/bilan" },
+          });
         kept.push({ ...kept[0], reference: `${draft.module}/${draft.name}`, status: "accepted" } as KeptScript);
         return { function: `${draft.module}/${draft.name}`, status: "accepted" };
       }
@@ -175,6 +185,7 @@ it("garde une exécution réussie dans le module proposé : la fonction est cré
       module: "notes",
       name: "total-notes",
       description: "Compte les notes.",
+      params: [],
     }),
   );
   await waitFor(() => expect(notifications()).toContain("Fonction « notes/total-notes » gardée"));
@@ -214,4 +225,30 @@ it("liste les scripts gardés : Accepter, puis Relancer, Créer une automatisati
   await user.click(within(removal).getByRole("button", { name: "Retirer" }));
   await waitFor(() => expect(lastCall("scripts.remove")).toEqual({ reference: "mes-scripts/bilan" }));
   expect(await within(list).findByText(/Aucun script gardé/)).toBeInTheDocument();
+});
+
+it("propose les valeurs en dur comme paramètres, et refuse un script proche sauf à le garder à part", async () => {
+  const user = userEvent.setup();
+  renderSections(useScriptsSections, "Scripts de l’agent");
+  await screen.findByText("notes/lister, crm/clients");
+  await user.click((await menuItem(user, "notes/lister, crm/clients", "Garder…")) as HTMLElement);
+  const form = await screen.findByRole("dialog", { name: "Garder ce script" });
+  const values = within(form).getByRole("group", { name: /Valeurs en dur/ });
+  await user.click(within(values).getByRole("checkbox", { name: /equipe = "Data"/ }));
+  const description = within(form).getByRole("textbox", { name: /Description du paramètre/ });
+  expect(within(form).getByRole("textbox", { name: /Nom du paramètre/ })).toHaveValue("equipe");
+  expect(within(form).getByRole("button", { name: "Garder" })).toBeDisabled();
+  await user.type(description, "Équipe suivie");
+  const name = within(form).getByRole("textbox", { name: /Nom de la fonction/ });
+  await user.clear(name);
+  await user.type(name, "proche");
+  await user.click(within(form).getByRole("button", { name: "Garder" }));
+  expect(await within(form).findByText(/Proche de « mes-scripts\/bilan »/)).toBeInTheDocument();
+  expect(lastCall("scripts.keep")).toMatchObject({
+    name: "proche",
+    params: [{ id: "equipe", description: "Équipe suivie", default: "Data", at: 33 }],
+  });
+  await user.click(within(form).getByRole("button", { name: "Garder à part quand même" }));
+  await waitFor(() => expect(lastCall("scripts.keep")).toMatchObject({ name: "proche", new: true }));
+  await waitFor(() => expect(notifications()).toContain("Fonction « notes/proche » gardée"));
 });

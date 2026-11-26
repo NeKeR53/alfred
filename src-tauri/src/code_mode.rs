@@ -44,8 +44,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "run",
-        "alfred run <fichier.ts | -> [--input '{…}'] [--examples] [--again <id>] [--save module/nom] [--description …]",
-        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Une lecture part tout de suite ; une écriture (fonction qui n’est pas `effect: read`) attend l’accord de l’utilisateur, par une carte dans la conversation (90 s au plus, sinon rien n’est écrit) ; il peut l’accorder pour toute la conversation. Limites : 60 s, 50 appels, 20 000 caractères de sortie. `--examples` : les fonctions de connecteur rendent leurs données d’exemple, sans joindre le service. Écrire le code dans un fichier, ou `alfred run - <<'EOF'` … `EOF` (une commande `alfred` seule passe sans demande d’accord). Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction du module (une écriture si elle a écrit) (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur.",
+        "alfred run <fichier.ts | -> [--input '{…}'] [--examples] [--again <id>] [--save module/nom] [--description …] [--params '[…]'] [--new]",
+        "Code Mode. Exécute du TypeScript qui enchaîne des lectures : `await api.module.fonction(entrée)`, `await api.call(\"module/fonction\", entrée)`, `await api.states.get(\"module/etat\", { params })`. Le code est le corps d’une fonction asynchrone : `await`, `return` et `console.log` permis, `input` vaut `--input`, pas d’import. Il tourne sans réseau ni disque. Rend `result` (la valeur rendue), `logs` et `calls`. Une lecture part tout de suite ; une écriture (fonction qui n’est pas `effect: read`) attend l’accord de l’utilisateur, par une carte dans la conversation (90 s au plus, sinon rien n’est écrit) ; il peut l’accorder pour toute la conversation. Limites : 60 s, 50 appels, 20 000 caractères de sortie. `--examples` : les fonctions de connecteur rendent leurs données d’exemple, sans joindre le service. Écrire le code dans un fichier, ou `alfred run - <<'EOF'` … `EOF` (une commande `alfred` seule passe sans demande d’accord). Chaque exécution est gardée 7 jours (`alfred runs`) : `--again <id>` la relance (avec son entrée, ou `--input`). `--save module/nom` garde une exécution réussie comme vraie fonction du module (une écriture si elle a écrit) (`--save nom` : dans le module le plus appelé, sinon `mes-scripts`) ; elle reste « à valider » jusqu’à l’accord de l’utilisateur. Avant de garder, généraliser : chaque valeur en dur (identifiant, date, seuil, nom de projet, filtre) devient un paramètre lu dans `input`, déclaré par `--params '[{\"id\":\"equipe\",\"description\":\"Équipe suivie\",\"default\":\"Data\",\"example\":\"Ventes\"}]'` : description et défaut obligatoires (le défaut vaut quand l’appelant ne le donne pas). Un script proche d’un script gardé (mêmes appels, code voisin) est refusé : généraliser celui-là et le garder sous son nom. `--save` sur un nom déjà gardé met la fonction à jour : ses paramètres restent, un nouveau champ d’entrée a un défaut, ses anciens tests restent et doivent passer, un test s’ajoute pour les nouveaux paramètres. `--new` : garder à part un script vraiment différent.",
     ),
     ("runs", "alfred runs [--limit n]", "Exécutions de Code Mode gardées 7 jours : id, date, réussite, nombre d’appels, début du code."),
 ];
@@ -427,7 +427,7 @@ async fn run_command(
     stdin: Option<&str>,
     cwd: Option<&Path>,
 ) -> AppResult<Value> {
-    let (positional, named) = options_with(argv, &["input", "again", "save", "description"], &["examples"])?;
+    let (positional, named) = options_with(argv, &["input", "again", "save", "description", "params"], &["examples", "new"])?;
     let text = |name: &str| named.get(name).and_then(Value::as_str).map(str::to_string);
     let input = match text("input") {
         Some(raw) => Some(serde_json::from_str(&raw).map_err(|_| AppError::new("`--input` attend du JSON."))?),
@@ -454,7 +454,14 @@ async fn run_command(
     shown["run"] = json!(id);
     if let (Some(target), Some(id)) = (text("save"), &id) {
         let stored = crate::kept_scripts::load(state, id)?;
-        shown["saved"] = crate::kept_scripts::save(state, conversation, &target, text("description"), &stored).await?;
+        let params = match text("params") {
+            Some(raw) => serde_json::from_str(&raw).map_err(|_| {
+                AppError::new("`--params` attend un tableau JSON : [{\"id\": \"equipe\", \"description\": \"Équipe suivie\", \"default\": \"Data\", \"example\": \"Ventes\"}].")
+            })?,
+            None => Vec::new(),
+        };
+        let options = crate::kept_scripts::KeepOptions { description: text("description"), params, new: named.contains_key("new") };
+        shown["saved"] = crate::kept_scripts::save(state, conversation, &target, options, &stored).await?;
     }
     Ok(shown)
 }

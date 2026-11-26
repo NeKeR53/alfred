@@ -11,7 +11,9 @@ import {
   type Action,
   Alert,
   Button,
+  Checkbox,
   Code,
+  Fieldset,
   type ItemSetting,
   Modal,
   Select,
@@ -20,7 +22,7 @@ import {
   TextInput,
 } from "socle-ui";
 import { Stack, Text } from "../../kit";
-import { onNativeEvent } from "../../lib/native";
+import { AlfredError, onNativeEvent } from "../../lib/native";
 import { notify } from "../../shell/notifications";
 import { AutomationForm, when } from "../automations/AutomationsSettings";
 import { openConversation } from "../automations/agentRuns";
@@ -36,12 +38,14 @@ import {
   loadRun,
   removeKept,
   runKept,
+  type ScriptLiteral,
   type ScriptRun,
   type ScriptRunDetail,
   type ScriptsList,
   shortJson,
   suggestedName,
   VALID_NAME,
+  VALID_PARAM,
 } from "./api";
 
 const pretty = (value: unknown) => (value === undefined ? "(aucune)" : JSON.stringify(value, null, 2));
@@ -115,23 +119,58 @@ function KeepForm({ detail, onClose }: { detail: ScriptRunDetail; onClose: (kept
   const [description, setDescription] = useState("");
   const [module, setModule] = useState<string | null>(detail.home);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<{ message: string; close?: string }>();
+  // Valeurs en dur cochées : elles deviennent des paramètres (nom, description ; la valeur devient le défaut).
+  const [chosen, setChosen] = useState<Record<number, { id: string; description: string }>>({});
   const nameError = name && !VALID_NAME.test(name) ? "Minuscules, chiffres et tirets, sans espace." : undefined;
+  const paramError = (literal: ScriptLiteral) => {
+    const param = chosen[literal.start];
+    if (!param) return {};
+    const ids = Object.values(chosen).map((entry) => entry.id);
+    return {
+      id: !VALID_PARAM.test(param.id)
+        ? "Lettres, chiffres et _, sans espace ni tiret."
+        : ids.filter((id) => id === param.id).length > 1
+          ? "Deux paramètres ont ce nom."
+          : undefined,
+      description: param.description.trim() ? undefined : "Dites ce que ce paramètre choisit.",
+    };
+  };
+  const paramsInvalid = detail.literals.some((literal) => {
+    const errors = paramError(literal);
+    return Boolean(errors.id || errors.description);
+  });
 
-  const submit = async () => {
-    if (!module || !name || nameError) return;
+  const submit = async (separate = false) => {
+    if (!module || !name || nameError || paramsInvalid) return;
     setBusy(true);
     setError(undefined);
     try {
-      const kept = await keepRun({ id: detail.id, module, name, description: description.trim() || undefined });
+      const params = detail.literals
+        .filter((literal) => chosen[literal.start])
+        .map((literal) => ({
+          id: chosen[literal.start]?.id ?? literal.key,
+          description: chosen[literal.start]?.description.trim() ?? "",
+          default: literal.value,
+          at: literal.start,
+        }));
+      const kept = await keepRun({
+        id: detail.id,
+        module,
+        name,
+        description: description.trim() || undefined,
+        params,
+        ...(separate ? { new: true } : {}),
+      });
       notify({
-        title: `Fonction « ${kept.function} » gardée`,
+        title: `Fonction « ${kept.function} » ${kept.updated ? "mise à jour" : "gardée"}`,
         description: "Elle est acceptée : une page ou une automatisation peut l’appeler.",
         tone: "success",
       });
       onClose(kept.function);
     } catch (failure) {
-      setError(errorMessage(failure));
+      const detailOf = failure instanceof AlfredError ? (failure.detail as { close?: string } | undefined) : undefined;
+      setError({ message: errorMessage(failure), close: detailOf?.close });
     } finally {
       setBusy(false);
     }
@@ -155,7 +194,7 @@ function KeepForm({ detail, onClose }: { detail: ScriptRunDetail; onClose: (kept
           <Button
             variant="primary"
             isPending={busy}
-            isDisabled={!name || !!nameError || !module}
+            isDisabled={!name || !!nameError || !module || paramsInvalid}
             onPress={() => void submit()}
           >
             Garder
@@ -165,8 +204,12 @@ function KeepForm({ detail, onClose }: { detail: ScriptRunDetail; onClose: (kept
     >
       <Stack gap="md">
         {error ? (
-          <Alert tone="danger" announce>
-            {error}
+          <Alert
+            tone="danger"
+            announce
+            action={error.close ? { label: "Garder à part quand même", onPress: () => void submit(true) } : undefined}
+          >
+            {error.message}
           </Alert>
         ) : null}
         <TextInput
@@ -196,6 +239,57 @@ function KeepForm({ detail, onClose }: { detail: ScriptRunDetail; onClose: (kept
           }))}
           description="Proposé : le module de la plupart de ses appels, sinon Mes scripts."
         />
+        {detail.literals.length > 0 ? (
+          <Fieldset
+            legend="Valeurs en dur"
+            isOptional
+            description="Cochez celles qui changeront d’un appel à l’autre : elles deviennent des paramètres, avec cette valeur par défaut."
+          >
+            {detail.literals.map((literal) => {
+              const param = chosen[literal.start];
+              const errors = paramError(literal);
+              return (
+                <Stack gap="sm" key={literal.start}>
+                  <Checkbox
+                    isSelected={Boolean(param)}
+                    description={`Passée à ${literal.function}, champ ${literal.key}.`}
+                    onChange={(selected) =>
+                      setChosen((current) => {
+                        const next = { ...current };
+                        if (selected) next[literal.start] = { id: literal.key, description: "" };
+                        else delete next[literal.start];
+                        return next;
+                      })
+                    }
+                  >
+                    {`${literal.key} = ${JSON.stringify(literal.value)}`}
+                  </Checkbox>
+                  {param ? (
+                    <>
+                      <TextInput
+                        label={`Nom du paramètre (${literal.key})`}
+                        isRequired
+                        value={param.id}
+                        error={errors.id}
+                        onChange={(id) => setChosen((current) => ({ ...current, [literal.start]: { ...param, id } }))}
+                      />
+                      <TextInput
+                        label={`Description du paramètre (${literal.key})`}
+                        isRequired
+                        value={param.description}
+                        error={errors.description}
+                        placeholder="Équipe suivie"
+                        onChange={(text) =>
+                          setChosen((current) => ({ ...current, [literal.start]: { ...param, description: text } }))
+                        }
+                      />
+                    </>
+                  ) : null}
+                </Stack>
+              );
+            })}
+          </Fieldset>
+        ) : null}
       </Stack>
     </Modal>
   );

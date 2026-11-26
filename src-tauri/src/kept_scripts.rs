@@ -203,8 +203,36 @@ pub fn home_module(calls: &[String]) -> String {
         .unwrap_or_else(|| PERSONAL_MODULE.to_string())
 }
 
+/// Paramètre d’un script gardé : même forme que les paramètres d’un état, avec sa valeur par défaut.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScriptParam {
+    pub id: String,
+    /// Ce que le paramètre choisit, en mots de l’utilisateur.
+    pub description: String,
+    /// Valeur prise quand l’appelant ne la donne pas : les anciens appels marchent toujours.
+    pub default: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<Value>,
+}
+
+/// Options de `--save` (agent) ou de « Garder » (Réglages).
+#[derive(Debug, Clone, Default)]
+pub struct KeepOptions {
+    pub description: Option<String>,
+    pub params: Vec<ScriptParam>,
+    /// `--new` : garder un script à part, même proche d’un script déjà gardé.
+    pub new: bool,
+}
+
+/// Corps du script dans le fichier d’une fonction gardée : le code de l’agent, sans l’enveloppe.
+const BODY_START: &str = "export default async function (input: any) {\n";
+/// Ligne qui pose les valeurs par défaut des paramètres, en tête du corps.
+const DEFAULTS_LINE: &str = "  input = { ...";
+
 /// Fichier d’une fonction gardée : le code de l’agent, avec la même `api` qu’en Code Mode, branchée sur le SDK.
-fn function_source(code: &str, functions: &[(String, String, String)], date: &str, writes: bool) -> String {
+/// Les paramètres prennent leur valeur par défaut quand l’appelant ne la donne pas.
+fn function_source(code: &str, functions: &[(String, String, String)], date: &str, writes: bool, params: &[ScriptParam]) -> String {
     let mut modules: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
     for (module, id, reference) in functions {
         modules.entry(module).or_default().push(format!(
@@ -217,6 +245,8 @@ fn function_source(code: &str, functions: &[(String, String, String)], date: &st
     for (module, entries) in modules {
         api.push_str(&format!("  {}: {{\n{}\n  }},\n", crate::code_mode::ident(module), entries.join("\n")));
     }
+    let defaults: serde_json::Map<String, Value> = params.iter().map(|param| (param.id.clone(), param.default.clone())).collect();
+    let defaults = if defaults.is_empty() { String::new() } else { format!("{DEFAULTS_LINE}{}, ...(input ?? {{}}) }};\n", Value::Object(defaults)) };
     let body: String = code.lines().map(|line| if line.is_empty() { String::new() } else { format!("  {line}") }).collect::<Vec<_>>().join("\n");
     format!(
         "// Script gardé par l’agent depuis Code Mode (`alfred run`), le {date}. {}\n\
@@ -226,9 +256,350 @@ fn function_source(code: &str, functions: &[(String, String, String)], date: &st
          const api: any = {{\n  call: (reference: string, input?: unknown) => functions.call(reference, input ?? {{}}),\n  \
          states: {{ get: (name: string, options = {{}}) => states.get(name, options) }},\n{api}}};\n\n\
          // biome-ignore lint/suspicious/noExplicitAny: entrée décrite dans module.json.\n\
-         export default async function (input: any) {{\n{body}\n}}\n",
+         {BODY_START}{defaults}{body}\n}}\n",
         if writes { "Il écrit chez un service." } else { "Il ne fait que lire." }
     )
+}
+
+/// Code de l’agent tiré du fichier d’une fonction gardée (sans l’enveloppe ni la ligne des valeurs par défaut).
+fn kept_body(file: &str) -> Option<String> {
+    let start = file.find(BODY_START)? + BODY_START.len();
+    let body = file[start..].trim_end().strip_suffix('}')?;
+    Some(body.lines().filter(|line| !line.starts_with(DEFAULTS_LINE)).map(|line| line.strip_prefix("  ").unwrap_or(line)).collect::<Vec<_>>().join("\n"))
+}
+
+/// Mots du code, les valeurs littérales remplacées par un repère : deux scripts qui ne diffèrent que par un
+/// identifiant, une date ou un seuil ont les mêmes mots.
+fn code_words(code: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut chars = code.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' || c == '\'' || c == '`' {
+            let mut escaped = false;
+            for next in chars.by_ref() {
+                if escaped {
+                    escaped = false;
+                } else if next == '\\' {
+                    escaped = true;
+                } else if next == c {
+                    break;
+                }
+            }
+            words.push("<texte>".into());
+        } else if c.is_ascii_digit() {
+            while chars.peek().is_some_and(|next| next.is_ascii_alphanumeric() || *next == '.' || *next == '_') {
+                chars.next();
+            }
+            words.push("<nombre>".into());
+        } else if c.is_alphanumeric() || c == '_' || c == '$' {
+            let mut word = c.to_string();
+            while let Some(next) = chars.peek().copied().filter(|next| next.is_alphanumeric() || *next == '_' || *next == '$') {
+                word.push(next);
+                chars.next();
+            }
+            words.push(word);
+        } else if !c.is_whitespace() {
+            words.push(c.to_string());
+        }
+    }
+    words
+}
+
+/// Ressemblance de deux codes : part des mots communs (multiensemble), de 0 à 1.
+pub fn similarity(a: &str, b: &str) -> f64 {
+    let (a, b) = (code_words(a), code_words(b));
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let mut counts: std::collections::HashMap<&str, i64> = Default::default();
+    for word in &a {
+        *counts.entry(word).or_default() += 1;
+    }
+    let mut common = 0;
+    for word in &b {
+        if let Some(count) = counts.get_mut(word.as_str()).filter(|count| **count > 0) {
+            *count -= 1;
+            common += 1;
+        }
+    }
+    (2 * common) as f64 / (a.len() + b.len()) as f64
+}
+
+/// Seuil au-delà duquel deux scripts aux mêmes appels sont un seul script à généraliser.
+const CLOSE: f64 = 0.8;
+
+/// Script gardé proche de `code` (mêmes fonctions appelées, code voisin), autre que `except`.
+fn close_script(state: &AppState, space: &Space, called: &[String], code: &str, except: &str) -> Option<String> {
+    let references: Vec<String> = {
+        let db = lock_db(state).ok()?;
+        let mut statement = db.prepare("SELECT reference FROM kept_functions WHERE space = ?1").ok()?;
+        let rows = statement.query_map(params![space_key(space)], |row| row.get(0)).ok()?;
+        rows.filter_map(Result::ok).collect()
+    };
+    let wanted: std::collections::BTreeSet<&String> = called.iter().collect();
+    references.into_iter().filter(|reference| reference != except).find(|reference| {
+        let Some((module, id)) = reference.split_once('/') else { return false };
+        let Some(declared) = space.module(module).ok().and_then(|manifest| manifest.functions.into_iter().find(|declared| declared.id == id)) else {
+            return false;
+        };
+        let same_calls = declared.uses.functions.iter().collect::<std::collections::BTreeSet<_>>() == wanted;
+        same_calls
+            && std::fs::read_to_string(space.function_file(module, id)).ok().and_then(|file| kept_body(&file)).is_some_and(|body| similarity(&body, code) >= CLOSE)
+    })
+}
+
+/// Valeurs littérales passées aux fonctions dans le code : `{ cle: "valeur" }` ou `{ cle: 12 }` dans
+/// `api.module.fonction(…)` ou `api.call(…)`. Chacune peut devenir un paramètre (Réglages, « Garder »).
+pub fn literals(code: &str) -> Vec<Value> {
+    let mut found = Vec::new();
+    let bytes = code.as_bytes();
+    let mut search = 0;
+    while let Some(at) = code[search..].find("api.") {
+        let call_start = search + at;
+        search = call_start + 4;
+        let Some(open) = code[call_start..].find('(').map(|offset| call_start + offset) else { break };
+        // Seulement `api.x.y(` ou `api.call(` : pas d’espace ni de retour à la ligne avant la parenthèse.
+        if code[call_start..open].contains(char::is_whitespace) {
+            continue;
+        }
+        let callee = code[call_start + 4..open].to_string();
+        let mut depth = 0usize;
+        let mut close = None;
+        let mut index = open;
+        let mut quote: Option<u8> = None;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if let Some(q) = quote {
+                if byte == b'\\' {
+                    index += 1;
+                } else if byte == q {
+                    quote = None;
+                }
+            } else if byte == b'"' || byte == b'\'' || byte == b'`' {
+                quote = Some(byte);
+            } else if byte == b'(' {
+                depth += 1;
+            } else if byte == b')' {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+            index += 1;
+        }
+        let Some(close) = close else { break };
+        let args = &code[open + 1..close];
+        for (key, raw, offset) in key_literals(args) {
+            let value = if raw.starts_with('\'') {
+                Value::String(raw[1..raw.len() - 1].replace("\\'", "'"))
+            } else {
+                serde_json::from_str(raw).unwrap_or(Value::String(raw.to_string()))
+            };
+            let start = open + 1 + offset;
+            found.push(json!({
+                "key": key,
+                "value": value,
+                "function": callee.replace('.', "/"),
+                "start": start,
+                "end": start + raw.len(),
+            }));
+        }
+        search = close;
+    }
+    found
+}
+
+/// Paires `cle: littéral` d’un texte (chaîne entre guillemets ou nombre) : (clé, littéral, position du littéral).
+fn key_literals(text: &str) -> Vec<(&str, &str, usize)> {
+    let bytes = text.as_bytes();
+    let ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'"' || byte == b'\'' || byte == b'`' {
+            // Une chaîne qui n’est pas après `cle:` : la sauter entière.
+            index = string_end(bytes, index).unwrap_or(bytes.len());
+            continue;
+        }
+        if !(ident(byte) && !byte.is_ascii_digit()) || (index > 0 && ident(bytes[index - 1])) {
+            index += 1;
+            continue;
+        }
+        let key_start = index;
+        while index < bytes.len() && ident(bytes[index]) {
+            index += 1;
+        }
+        let key = &text[key_start..index];
+        let mut cursor = index;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b':') {
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let literal_start = cursor;
+        let literal_end = match bytes.get(cursor) {
+            Some(b'"') | Some(b'\'') => string_end(bytes, cursor),
+            Some(digit) if digit.is_ascii_digit() || *digit == b'-' => {
+                let mut end = cursor + 1;
+                while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+                    end += 1;
+                }
+                // Un nombre suivi d’un nom (`3px`, `-x`) n’est pas une valeur seule.
+                (end > cursor + usize::from(bytes[cursor] == b'-') && !bytes.get(end).is_some_and(|next| ident(*next))).then_some(end)
+            }
+            _ => None,
+        };
+        if let Some(end) = literal_end {
+            found.push((key, &text[literal_start..end], literal_start));
+            index = end;
+        }
+    }
+    found
+}
+
+/// Fin (exclue) de la chaîne qui commence à `start`.
+fn string_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = bytes[start];
+    let mut index = start + 1;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+            continue;
+        }
+        if bytes[index] == quote {
+            return Some(index + 1);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Remplace des valeurs littérales du code par `input.<paramètre>` (Réglages, « Garder ») ; `at` : position
+/// rendue par `literals`.
+fn parametrize(code: &str, replacements: &[(usize, String)]) -> AppResult<String> {
+    let spots: Vec<Value> = literals(code);
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (at, id) in replacements {
+        let spot = spots
+            .iter()
+            .find(|spot| spot["start"].as_u64() == Some(*at as u64))
+            .ok_or_else(|| AppError::new("Valeur introuvable dans le code : relire le détail de l’exécution."))?;
+        edits.push((*at, spot["end"].as_u64().unwrap_or_default() as usize, format!("input.{id}")));
+    }
+    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut code = code.to_string();
+    for (start, end, text) in edits {
+        code.replace_range(start..end, &text);
+    }
+    Ok(code)
+}
+
+/// Vérifie les paramètres : identifiant, description, valeur par défaut, et le code s’en sert.
+fn check_params(params: &[ScriptParam], code: &str) -> AppResult<()> {
+    for param in params {
+        if crate::code_mode::ident(&param.id) != param.id || param.id.is_empty() {
+            return Err(AppError::new(format!("Paramètre « {} » : un identifiant JavaScript (lettres, chiffres, _).", param.id)));
+        }
+        if param.description.trim().is_empty() {
+            return Err(AppError::new(format!("Paramètre « {} » sans description : dire ce qu’il choisit, en mots de l’utilisateur.", param.id)));
+        }
+        if param.default.is_null() {
+            return Err(AppError::new(format!("Paramètre « {} » sans valeur par défaut (`default`).", param.id)));
+        }
+        if !code.contains(&format!("input.{}", param.id)) && !code.contains(&format!("input?.{}", param.id)) {
+            return Err(AppError::new(format!("Le code ne lit pas `input.{}` : remplacer la valeur en dur par ce paramètre.", param.id)));
+        }
+    }
+    Ok(())
+}
+
+/// Paramètres décrits d’une déclaration : les propriétés d’entrée qui ont une valeur par défaut.
+fn declared_params(input: &Value) -> Vec<ScriptParam> {
+    input["properties"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, schema)| schema.get("default").is_some())
+        .map(|(id, schema)| ScriptParam {
+            id: id.clone(),
+            description: schema["description"].as_str().unwrap_or_default().to_string(),
+            default: schema["default"].clone(),
+            example: schema["examples"].get(0).cloned(),
+        })
+        .collect()
+}
+
+/// Schéma d’entrée : les paramètres (facultatifs, décrits, avec défaut et exemple), puis les champs de l’entrée de
+/// l’exécution qui n’en sont pas (obligatoires).
+fn input_schema(params: &[ScriptParam], run_input: &Value) -> Value {
+    let mut schema = schema_of(run_input, 4);
+    if schema.get("type").is_none() {
+        schema = json!({ "type": "object" });
+    }
+    let mut properties = schema["properties"].as_object().cloned().unwrap_or_default();
+    let mut required: Vec<Value> = schema["required"].as_array().cloned().unwrap_or_default();
+    for param in params {
+        let mut property = shape_of(param.example.as_ref().unwrap_or(&param.default), 3, false);
+        property["description"] = json!(param.description);
+        property["default"] = param.default.clone();
+        if let Some(example) = &param.example {
+            property["examples"] = json!([example]);
+        }
+        properties.insert(param.id.clone(), property);
+        required.retain(|field| field.as_str() != Some(param.id.as_str()));
+    }
+    schema["type"] = json!("object");
+    schema["properties"] = Value::Object(properties);
+    if required.is_empty() {
+        schema.as_object_mut().map(|object| object.remove("required"));
+    } else {
+        schema["required"] = Value::Array(required);
+    }
+    schema
+}
+
+/// Problème de `check` pour un script gardé : un paramètre sans description.
+pub fn param_problem(state: &AppState, space: &Space, function: &crate::space::ResolvedFunction) -> Option<String> {
+    status_of(state, space, &function.reference)?;
+    let missing: Vec<&String> = function.input["properties"]
+        .as_object()?
+        .iter()
+        .filter(|(_, schema)| schema["description"].as_str().is_none_or(|text| text.trim().is_empty()))
+        .map(|(id, _)| id)
+        .collect();
+    (!missing.is_empty()).then(|| {
+        format!(
+            "Script gardé : paramètre(s) sans description ({}). Le regarder avec `alfred run --again <id> --save {} --params '[{{\"id\":…,\"description\":…,\"default\":…,\"example\":…}}]'`.",
+            missing.iter().map(|id| id.as_str()).collect::<Vec<_>>().join(", "),
+            function.reference
+        )
+    })
+}
+
+#[cfg(test)]
+pub static TEST_OLD_TESTS: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Après une mise à jour, les anciens tests de lecture doivent passer : rend les échecs.
+async fn old_tests_failures(state: &Arc<AppState>, reference: &str, tests: &[crate::space::FunctionTest]) -> AppResult<Vec<String>> {
+    #[cfg(test)]
+    if let Some(pass) = *TEST_OLD_TESTS.lock().unwrap() {
+        return Ok(if pass { Vec::new() } else { tests.iter().map(|test| format!("{} : échec simulé", test.name)).collect() });
+    }
+    let mut failures = Vec::new();
+    for test in tests {
+        let outcome = crate::function_tests::run(state, reference, &test.name, false, None).await?;
+        if outcome["status"] == json!("failed") {
+            failures.push(format!("{} : {}", test.name, outcome["message"].as_str().unwrap_or_default()));
+        }
+    }
+    Ok(failures)
 }
 
 /// Crée (au besoin) le module personnel des scripts.
@@ -247,13 +618,17 @@ fn personal_module(space: &Space) -> AppResult<ModuleManifest> {
 }
 
 /// `alfred run --save module/nom` : la fonction est écrite, déclarée et mise « à valider ».
-pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, description: Option<String>, run: &StoredRun) -> AppResult<Value> {
-    keep(state, conversation, target, description, run, false).await
+pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, options: KeepOptions, run: &StoredRun) -> AppResult<Value> {
+    keep(state, conversation, target, options, run, false).await
 }
 
 /// Écrit et déclare la fonction tirée de `run`. Gardée par l’agent, elle attend l’accord ; gardée par
 /// l’utilisateur (Réglages → Scripts de l’agent), elle est acceptée aussitôt : c’est lui qui la garde.
-async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, description: Option<String>, run: &StoredRun, by_user: bool) -> AppResult<Value> {
+///
+/// Un nom déjà gardé : la fonction est mise à jour (nouvelle version). Ses paramètres décrits restent, un nouveau
+/// paramètre a une valeur par défaut, ses anciens tests restent et doivent passer, un test s’ajoute pour la
+/// nouvelle entrée. Un autre nom, proche d’un script gardé (mêmes appels, code voisin) : refusé sans `--new`.
+async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, options: KeepOptions, run: &StoredRun, by_user: bool) -> AppResult<Value> {
     if !run.ok {
         return Err(AppError::new("Seule une exécution réussie se garde : corriger le code, le relancer, puis le garder."));
     }
@@ -276,13 +651,48 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, descripti
         )));
     }
     let reference = format!("{module}/{id}");
-    let previous = manifest.functions.iter().find(|declared| declared.id == id);
+    let previous = manifest.functions.iter().find(|declared| declared.id == id).cloned();
     if previous.is_some() && status_of(state, &space, &reference).is_none() {
         return Err(AppError::new(format!("« {reference} » existe déjà et n’est pas un script gardé : choisir un autre nom.")));
     }
+    let called: Vec<String> = run.calls.iter().filter(|call| !call.starts_with("état ")).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    // Un script proche d’un autre déjà gardé : le généraliser plutôt que d’en garder un presque pareil.
+    if previous.is_none() && !options.new {
+        if let Some(close) = close_script(state, &space, &called, &run.code, &reference) {
+            let message = if by_user {
+                format!("Proche de « {close} » (mêmes appels, code voisin). Pour le mettre à jour, gardez celui-ci sous le même module et le même nom, avec un paramètre à la place de la valeur qui change. Sinon, gardez-le à part.")
+            } else {
+                format!("Proche de « {close} » (mêmes appels, code voisin) : généralise « {close} » avec un paramètre `input` (valeur en dur → paramètre avec défaut), puis garde-le sous le même nom (`--save {close} --params …`). `--new` pour garder quand même un script à part.")
+            };
+            return Err(AppError::with_detail(message, json!({ "close": close })));
+        }
+    }
+    // Paramètres : ceux déjà décrits restent (le nouvel appel les redécrit s’il veut), puis ceux de cet appel.
+    let mut params: Vec<ScriptParam> = previous.as_ref().map(|declared| declared_params(&declared.input)).unwrap_or_default();
+    params.retain(|old| !options.params.iter().any(|new| new.id == old.id));
+    params.retain(|old| run.code.contains(&format!("input.{}", old.id)) || run.code.contains(&format!("input?.{}", old.id)));
+    params.extend(options.params.iter().cloned());
+    check_params(&params, &run.code)?;
+    let input = input_schema(&params, &run.input);
+    // Nouvelle version : un champ obligatoire qui n’existait pas casserait les anciens appels.
+    if let Some(previous) = &previous {
+        let before = previous.input["properties"].as_object().cloned().unwrap_or_default();
+        let new_required: Vec<&str> = input["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|field| !before.contains_key(*field))
+            .collect();
+        if !new_required.is_empty() {
+            return Err(AppError::new(format!(
+                "Nouveau champ d’entrée sans valeur par défaut ({}) : les anciens appels (pages, automatisations) échoueraient. Le déclarer en paramètre avec `--params` et un `default`.",
+                new_required.join(", ")
+            )));
+        }
+    }
     // Fonctions appelées pendant l’exécution, et celles des modules que le code nomme.
     let snapshot = space.snapshot()?;
-    let called: Vec<String> = run.calls.iter().filter(|call| !call.starts_with("état ")).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     let named: Vec<&crate::space::ResolvedFunction> = snapshot
         .functions
         .iter()
@@ -298,15 +708,41 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, descripti
     let mapped: Vec<(String, String, String)> =
         named.iter().map(|function| (function.module.clone(), function.id.clone(), function.reference.clone())).collect();
     let result = run.output.get("result").cloned().unwrap_or(Value::Null);
-    let description = description
+    let description = options
+        .description
+        .clone()
         .filter(|text| !text.trim().is_empty())
+        .or_else(|| previous.as_ref().map(|declared| declared.description.clone()).filter(|text| !text.is_empty()))
         .unwrap_or_else(|| format!("Script gardé par l’agent : {} {}.", if writes { "appelle" } else { "lit" }, if called.is_empty() { "des données".to_string() } else { called.join(", ") }));
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let test = json!({
-        "name": format!("Exécution du {date}"),
-        "input": run.input,
-        "expect": { "schema": true },
-    });
+    // Les anciens tests restent ; un test s’ajoute pour l’entrée de cette exécution, s’il n’y en a pas déjà un.
+    let old_tests: Vec<crate::space::FunctionTest> = previous.as_ref().map(|declared| declared.tests.clone()).unwrap_or_default();
+    let mut tests: Vec<Value> = old_tests.iter().map(|test| serde_json::to_value(test).unwrap_or(Value::Null)).collect();
+    if !old_tests.iter().any(|test| test.input == run.input) {
+        let mut name = format!("Exécution du {date}");
+        let mut index = 2;
+        while old_tests.iter().any(|test| test.name == name) {
+            name = format!("Exécution du {date} ({index})");
+            index += 1;
+        }
+        tests.push(json!({ "name": name, "input": run.input, "expect": { "schema": true } }));
+    }
+    // Un test pour les nouveaux paramètres : leur exemple (sinon leur défaut) à la place de la valeur en dur.
+    let before: Vec<String> = previous.as_ref().map(|declared| declared_params(&declared.input).into_iter().map(|param| param.id).collect()).unwrap_or_default();
+    let fresh: Vec<&ScriptParam> = params.iter().filter(|param| !before.contains(&param.id)).collect();
+    if !fresh.is_empty() {
+        let mut input = if run.input.is_object() { run.input.clone() } else { json!({}) };
+        for param in &fresh {
+            input[param.id.as_str()] = param.example.clone().unwrap_or_else(|| param.default.clone());
+        }
+        let ids: Vec<&str> = fresh.iter().map(|param| param.id.as_str()).collect();
+        let name = format!("Paramètre{} {} ({date})", if ids.len() > 1 { "s" } else { "" }, ids.join(", "));
+        if !old_tests.iter().any(|test| test.name == name) {
+            tests.push(json!({ "name": name, "input": input, "expect": { "schema": true } }));
+        }
+    }
+    let file = space.function_file(&module, &id);
+    let backup = (std::fs::read(&file).ok(), space.module(&module).ok());
     let declared = crate::functions::handle(
         state,
         "functions.declare",
@@ -314,17 +750,32 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, descripti
             "module": module,
             "id": id,
             "description": description,
-            "input": schema_of(&run.input, 4),
+            "input": input,
             "output": shape_of(&result, 3, false),
             "effect": if writes { "write" } else { "read" },
             "uses": { "functions": called },
-            "tests": [test],
+            "tests": tests,
         }),
     )
     .await
     .unwrap_or_else(|| Err(AppError::new("Déclaration impossible.")))?;
-    let file = declared["file"].as_str().map(std::path::PathBuf::from).ok_or_else(|| AppError::new("Fichier de la fonction introuvable."))?;
-    std::fs::write(&file, function_source(&run.code, &mapped, &date, writes))?;
+    let file = declared["file"].as_str().map(std::path::PathBuf::from).unwrap_or(file);
+    std::fs::write(&file, function_source(&run.code, &mapped, &date, writes, &params))?;
+    // Nouvelle version : les anciens tests de lecture doivent passer, sinon l’ancienne version revient.
+    if previous.is_some() && !writes {
+        let failures = old_tests_failures(state, &reference, &old_tests).await?;
+        if !failures.is_empty() {
+            if let (Some(bytes), Some(manifest)) = backup {
+                std::fs::write(&file, bytes)?;
+                space.write_module(&manifest)?;
+            }
+            state.emit("space:changed", Value::Null);
+            return Err(AppError::with_detail(
+                format!("La nouvelle version de « {reference} » casse ses anciens tests : l’ancienne version est gardée. Garder le comportement d’avant quand le nouveau paramètre prend sa valeur par défaut."),
+                json!({ "failed": failures }),
+            ));
+        }
+    }
     // Un autre module appelé : une dépendance déclarée, qui accorde ses fonctions.
     let mut manifest = space.module(&module)?;
     let mut added = Vec::new();
@@ -348,14 +799,14 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, descripti
     if by_user {
         crate::git::commit_all(&space.root, &format!("Script gardé par l’utilisateur : {reference}"))?;
         accept(state, &space, &reference)?;
-        return Ok(json!({ "function": reference, "file": file.to_string_lossy(), "status": "accepted", "requires": added }));
+        return Ok(json!({ "function": reference, "file": file.to_string_lossy(), "status": "accepted", "requires": added, "updated": previous.is_some() }));
     }
     crate::git::commit_all(&space.root, &format!("Script gardé par l’agent : {reference} (à valider)"))?;
     let title = format!("Fonction « {reference} » à valider");
     crate::functions::journal(state, "agent", &reference, true, None, &title, Some(&json!({ "run": run.id })));
     state.emit(
         "agent:notice",
-        json!({ "title": title, "description": "Elle ne tournera qu’après votre accord, dans Réglages → Modules." }),
+        json!({ "title": title, "description": "Elle ne tournera qu’après votre accord, dans Réglages → Scripts de l’agent." }),
     );
     state.emit("space:changed", Value::Null);
     Ok(json!({
@@ -363,7 +814,7 @@ async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, descripti
         "file": file.to_string_lossy(),
         "status": "toValidate",
         "requires": added,
-        "next": "Dis à l’utilisateur que la fonction l’attend dans Réglages → Modules (fiche du module, « Accepter ») : elle ne tourne qu’après son accord. Ensuite, une page ou une automatisation peut l’appeler, et elle apparaît dans `alfred api`.",
+        "next": "Dis à l’utilisateur que la fonction l’attend dans Réglages → Scripts de l’agent (« Accepter ») : elle ne tourne qu’après son accord. Ensuite, une page ou une automatisation peut l’appeler, et elle apparaît dans `alfred api`.",
     }))
 }
 
@@ -404,7 +855,7 @@ pub fn ensure_runnable(state: &AppState, reference: &str, caller: &str) -> AppRe
     let Ok(space) = state.space() else { return Ok(()) };
     if caller != crate::function_tests::CALLER && status_of(state, &space, reference) == Some("toValidate") {
         return Err(AppError::new(format!(
-            "La fonction « {reference} » est un script gardé par l’agent : elle attend l’accord de l’utilisateur (Réglages → Modules, fiche du module)."
+            "La fonction « {reference} » est un script gardé par l’agent : elle attend l’accord de l’utilisateur (Réglages → Scripts de l’agent)."
         )));
     }
     Ok(())
@@ -540,6 +991,7 @@ pub async fn handle(
             let id: String = arg(args, "id")?;
             let run = load(state, &id)?;
             let mut value = run_summary(&run);
+            value["literals"] = json!(literals(&run.code));
             value["code"] = json!(run.code);
             value["input"] = run.input.clone();
             value["output"] = run.output.clone();
@@ -556,17 +1008,21 @@ pub async fn handle(
                     .get("description")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                let run = load(state, &id)?;
+                let mut run = load(state, &id)?;
+                // Valeurs en dur choisies comme paramètres : `input.<id>` dans le code, la valeur devient le défaut.
+                let mut params = Vec::new();
+                let mut replacements = Vec::new();
+                for chosen in args.get("params").and_then(Value::as_array).into_iter().flatten() {
+                    let param: ScriptParam = serde_json::from_value(chosen.clone())
+                        .map_err(|_| AppError::new("Paramètre illisible."))?;
+                    let at = chosen["at"].as_u64().ok_or_else(|| AppError::new("Paramètre sans position."))?;
+                    replacements.push((at as usize, param.id.clone()));
+                    params.push(ScriptParam { example: Some(param.default.clone()), ..param });
+                }
+                run.code = parametrize(&run.code, &replacements)?;
                 let conversation = run.conversation.clone();
-                keep(
-                    state,
-                    &conversation,
-                    &format!("{module}/{name}"),
-                    description,
-                    &run,
-                    true,
-                )
-                .await
+                let options = KeepOptions { description, params, new: args.get("new").and_then(Value::as_bool).unwrap_or(false) };
+                keep(state, &conversation, &format!("{module}/{name}"), options, &run, true).await
             }
             .await;
             Some(outcome)
@@ -623,7 +1079,7 @@ mod tests {
         let id = record(&state, "conv", code, &input, &Ok(json!({ "result": { "total": 3 } })), &calls, 1200).unwrap();
         assert!(list(&state, 10).unwrap().as_str().unwrap().contains(&id));
         let run = load(&state, &id).unwrap();
-        let saved = save(&state, "conv", "total", Some("Total des notes et contacts.".into()), &run).await.unwrap();
+        let saved = save(&state, "conv", "total", KeepOptions { description: Some("Total des notes et contacts.".into()), ..Default::default() }, &run).await.unwrap();
         assert_eq!(saved["function"], "mes-scripts/total", "deux modules à parts égales : le module personnel");
         assert_eq!(saved["requires"], json!(["crm", "notes"]));
         let manifest = space.module(PERSONAL_MODULE).unwrap();
@@ -648,14 +1104,14 @@ mod tests {
         space.write_module(&notes).unwrap();
         let writing = "await api.notes.archiver({ id: 1 });\nreturn 1;";
         let id = record(&state, "conv", writing, &json!({}), &Ok(json!({ "result": 1 })), &["notes/archiver".to_string()], 5).unwrap();
-        let saved = save(&state, "conv", "notes/archiver-tout", None, &load(&state, &id).unwrap()).await.unwrap();
+        let saved = save(&state, "conv", "notes/archiver-tout", KeepOptions::default(), &load(&state, &id).unwrap()).await.unwrap();
         assert_eq!(saved["status"], "toValidate");
         let declared = space.module("notes").unwrap().functions.into_iter().find(|f| f.id == "archiver-tout").unwrap();
         assert_eq!(declared.effect, Some(crate::space::Effect::Write));
         let file = std::fs::read_to_string(space.function_file("notes", "archiver-tout")).unwrap();
         assert!(file.contains("Il écrit") && file.contains("functions.call(\"notes/archiver\""), "{file}");
         let failed = record(&state, "conv", code, &input, &Err(AppError::new("boum")), &[], 3).unwrap();
-        assert!(save(&state, "conv", "x", None, &load(&state, &failed).unwrap()).await.is_err());
+        assert!(save(&state, "conv", "x", KeepOptions::default(), &load(&state, &failed).unwrap()).await.is_err());
     }
 
     /// Réglages → Scripts de l’agent : la liste (durée comprise), le détail, « Garder » (acceptée aussitôt, puisque
@@ -766,6 +1222,94 @@ mod tests {
             call("scripts.list", json!({})).await.unwrap()["kept"],
             json!([])
         );
+    }
+
+    /// Un script presque pareil à un script gardé est refusé ; on généralise le premier avec un paramètre (défaut,
+    /// description, exemple) : les anciens tests restent et doivent passer, un test s’ajoute pour le paramètre.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_close_script_is_generalized_instead_of_duplicated() {
+        use crate::space::{FunctionDecl, ModuleManifest};
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let mut manifest = ModuleManifest { id: "notes".into(), name: "Notes".into(), ..Default::default() };
+        manifest.functions.push(FunctionDecl { id: "lister".into(), effect: Some(crate::space::Effect::Read), ..Default::default() });
+        space.write_module(&manifest).unwrap();
+        state.set_space(Some(space.clone()));
+        let calls = vec!["notes/lister".to_string()];
+        let ran = |code: &str, input: Value| {
+            let id = record(&state, "conv", code, &input, &Ok(json!({ "result": 2 })), &calls, 10).unwrap();
+            load(&state, &id).unwrap()
+        };
+        let data = "const t = await api.notes.lister({ equipe: \"Data\", limite: 5 });\nreturn t.length;";
+        save(&state, "conv", "notes/par-equipe", KeepOptions::default(), &ran(data, json!({}))).await.unwrap();
+        // Presque pareil (autre équipe, autre limite) : refusé, avec le nom du script à généraliser.
+        let ventes = ran(&data.replace("Data", "Ventes").replace('5', "8"), json!({}));
+        let error = save(&state, "conv", "notes/par-equipe-ventes", KeepOptions::default(), &ventes).await.unwrap_err();
+        assert!(error.message.contains("Proche de « notes/par-equipe »"), "{}", error.message);
+        assert_eq!(error.detail.unwrap()["close"], "notes/par-equipe");
+        let forced = save(&state, "conv", "notes/a-part", KeepOptions { new: true, ..Default::default() }, &ventes).await;
+        assert!(forced.is_ok(), "--new garde un script à part");
+        // Un paramètre sans description, ou que le code ne lit pas, est refusé.
+        let general = ran("const t = await api.notes.lister({ equipe: input.equipe, limite: 5 });\nreturn t.length;", json!({}));
+        let param = |description: &str| ScriptParam { id: "equipe".into(), description: description.into(), default: json!("Data"), example: Some(json!("Ventes")) };
+        let missing = save(&state, "conv", "notes/par-equipe", KeepOptions { params: vec![param("")], ..Default::default() }, &general).await;
+        assert!(missing.unwrap_err().message.contains("sans description"));
+        let unused = save(&state, "conv", "notes/par-equipe", KeepOptions { params: vec![param("Équipe")], ..Default::default() }, &ran(data, json!({}))).await;
+        assert!(unused.unwrap_err().message.contains("input.equipe"));
+        // Les anciens tests échouent : l’ancienne version reste.
+        *TEST_OLD_TESTS.lock().unwrap() = Some(false);
+        let broken = save(&state, "conv", "notes/par-equipe", KeepOptions { params: vec![param("Équipe suivie")], ..Default::default() }, &general).await;
+        assert!(broken.unwrap_err().message.contains("casse ses anciens tests"));
+        let declared = |id: &str| space.module("notes").unwrap().functions.into_iter().find(|f| f.id == id).unwrap();
+        assert!(declared("par-equipe").input["properties"].get("equipe").is_none(), "ancienne version gardée");
+        assert!(std::fs::read_to_string(space.function_file("notes", "par-equipe")).unwrap().contains("\"Data\""));
+        // Ils passent : nouvelle version, paramètre décrit avec défaut, ancien test gardé, test du paramètre ajouté.
+        *TEST_OLD_TESTS.lock().unwrap() = Some(true);
+        save(&state, "conv", "notes/par-equipe", KeepOptions { params: vec![param("Équipe suivie")], ..Default::default() }, &general).await.unwrap();
+        *TEST_OLD_TESTS.lock().unwrap() = None;
+        let function = declared("par-equipe");
+        assert_eq!(function.input["properties"]["equipe"]["default"], "Data");
+        assert_eq!(function.input["properties"]["equipe"]["description"], "Équipe suivie");
+        assert_eq!(function.input["properties"]["equipe"]["examples"], json!(["Ventes"]));
+        assert!(function.input.get("required").is_none());
+        assert_eq!(function.tests.len(), 2, "{:?}", function.tests);
+        assert_eq!(function.tests[1].input, json!({ "equipe": "Ventes" }));
+        let file = std::fs::read_to_string(space.function_file("notes", "par-equipe")).unwrap();
+        assert!(file.contains("input = { ...{\"equipe\":\"Data\"}, ...(input ?? {}) };"), "{file}");
+        assert!(crate::transpile::transpile_in(&file, "f.ts", 1, &Default::default()).is_ok());
+        assert_eq!(kept_body(&file).unwrap(), "const t = await api.notes.lister({ equipe: input.equipe, limite: 5 });\nreturn t.length;");
+        // Un nouveau champ obligatoire casserait les anciens appels.
+        let limited = ran("const t = await api.notes.lister({ equipe: input.equipe, limite: input.limite });\nreturn t.length;", json!({ "limite": 3 }));
+        let error = save(&state, "conv", "notes/par-equipe", KeepOptions::default(), &limited).await.unwrap_err();
+        assert!(error.message.contains("Nouveau champ d’entrée sans valeur par défaut (limite)"), "{}", error.message);
+        // `check` : un paramètre de script gardé sans description est un problème.
+        let snapshot = space.snapshot().unwrap();
+        let resolved = |reference: &str| snapshot.functions.iter().find(|f| f.reference == reference).unwrap().clone();
+        assert!(param_problem(&state, &space, &resolved("notes/par-equipe")).is_none());
+        let undocumented = ran("return input.jour;", json!({ "jour": "lundi" }));
+        save(&state, "conv", "notes/jour", KeepOptions { new: true, ..Default::default() }, &undocumented).await.unwrap();
+        let snapshot = space.snapshot().unwrap();
+        let jour = snapshot.functions.iter().find(|f| f.reference == "notes/jour").unwrap();
+        assert!(param_problem(&state, &space, jour).unwrap().contains("(jour)"));
+    }
+
+    /// Réglages, « Garder » : les valeurs en dur passées aux fonctions, et leur remplacement par `input.<id>`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn literal_values_become_parameters() {
+        let code = "const a = await api.notes.lister({ equipe: \"Data\", limite: 5, x: y });\nconst b = await api.call(\"crm/clients\", { pays: 'FR' });\nconst c = { pas: \"ici\" };";
+        let found = literals(code);
+        let keys: Vec<&str> = found.iter().map(|spot| spot["key"].as_str().unwrap()).collect();
+        assert_eq!(keys, vec!["equipe", "limite", "pays"]);
+        assert_eq!(found[0]["function"], "notes/lister");
+        assert_eq!(found[1]["value"], 5);
+        assert_eq!(found[2]["value"], "FR");
+        let at = |index: usize| found[index]["start"].as_u64().unwrap() as usize;
+        let changed = parametrize(code, &[(at(0), "equipe".into()), (at(2), "pays".into())]).unwrap();
+        assert!(changed.contains("{ equipe: input.equipe, limite: 5, x: y }") && changed.contains("{ pays: input.pays }"), "{changed}");
+        assert!(parametrize(code, &[(3, "x".into())]).is_err());
+        assert!(similarity(code, &code.replace("Data", "Ventes")) > 0.99);
+        assert!(similarity(code, "return 1;") < 0.5);
     }
 
     #[test]

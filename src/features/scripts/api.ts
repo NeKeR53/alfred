@@ -23,6 +23,26 @@ export interface ScriptRunDetail extends ScriptRun {
   home: string;
   /** Modules où l’utilisateur peut garder le script. */
   modules: Array<{ id: string; name: string }>;
+  /** Valeurs en dur passées aux fonctions : chacune peut devenir un paramètre. */
+  literals: ScriptLiteral[];
+}
+
+export interface ScriptLiteral {
+  key: string;
+  value: string | number;
+  /** Fonction qui la reçoit (« module/fonction »). */
+  function: string;
+  /** Position dans le code : le cœur la remplace par `input.<paramètre>`. */
+  start: number;
+  end: number;
+}
+
+/** Paramètre choisi dans « Garder » : la valeur en dur devient sa valeur par défaut. */
+export interface ChosenParam {
+  id: string;
+  description: string;
+  default: string | number;
+  at: number;
 }
 
 export interface KeptScript {
@@ -47,12 +67,21 @@ export interface ScriptsList {
 
 export const listScripts = () => invoke<ScriptsList>("scripts.list", { limit: 100 });
 export const loadRun = (id: string) => invoke<ScriptRunDetail>("scripts.run", { id });
-export const keepRun = (draft: { id: string; module: string; name: string; description?: string }) =>
-  invoke<{ function: string; status: string }>("scripts.keep", { ...draft });
+export const keepRun = (draft: {
+  id: string;
+  module: string;
+  name: string;
+  description?: string;
+  params?: ChosenParam[];
+  new?: boolean;
+}) => invoke<{ function: string; status: string; updated?: boolean }>("scripts.keep", { ...draft });
 export const removeKept = (reference: string) => invoke<null>("scripts.remove", { reference });
 export const acceptKept = (reference: string) => invoke("functions.acceptKept", { reference });
 export const runKept = (reference: string, input: unknown) =>
   invoke<unknown>("functions.call", { function: reference, input });
+
+/** Identifiant de paramètre valide : un nom JavaScript, lu dans `input.<id>`. */
+export const VALID_PARAM = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /** Identifiant de fonction valide : minuscules, chiffres et tirets, comme `alfred run --save`. */
 export const VALID_NAME = /^[a-z0-9][a-z0-9-]*$/;
