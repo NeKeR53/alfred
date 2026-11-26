@@ -2,7 +2,7 @@
 
 Ce document s’adresse à l’agent qui écrit une page, un panneau de droite ou une page des Réglages. Il est recopié en lecture seule dans chaque espace.
 
-**Où mettre chaque chose** (entrée du menu, onglet, panneau, fenêtre, action, message, réglage) : lire d’abord `docs/alfred/PLACEMENT.md`, avant `place_page`. Ce document-ci dit comment écrire la page une fois sa place choisie. La doc de socle-ui à la version installée est dans `docs/alfred/socle/` : `AI.md` (liste et options), `specs/<Composant>.md` (une spec par composant), `docs/layout-rules.md` (règles de placement), `docs/decisions.md` (décisions D-xxx). Sa partie « Mise en place » (styles, `SocleProvider`, Tailwind, Biome) concerne Alfred, pas une page.
+**Où mettre chaque chose** (entrée du menu, onglet, panneau, fenêtre, action, message, réglage) : lire d’abord `docs/alfred/PLACEMENT.md`, avant `place_page`. Ce document-ci dit comment écrire la page une fois sa place choisie. La doc de socle-ui à la version installée est dans `docs/alfred/socle/` : `AI.md` (liste et options), `specs/<Composant>.md` (une spec par composant), `docs/layout-rules.md` (règles de placement), `docs/decisions.md` (décisions D-xxx), `recipes/` (recettes de pages, chacune avec sa capture claire et sombre, section 2, « Partir d’une recette »). Sa partie « Mise en place » (styles, `SocleProvider`, Tailwind, Biome) concerne Alfred, pas une page.
 
 **Vous ne dessinez pas : vous décrivez.** Les pages d’Alfred utilisent **socle-ui**, le design system partagé de l’utilisateur. Une page dit quelles données elle montre, de quel type elles sont et quelles actions l’utilisateur peut faire. Un gabarit de `socle-ui` décide du reste : la barre d’outils, la forme de chaque bouton (texte, icône ou menu « … »), le tableau, le format des dates et des montants, les champs d’un formulaire, les états de chargement, d’absence et d’erreur, les confirmations. Deux agents qui décrivent la même chose obtiennent la même page.
 
@@ -10,11 +10,11 @@ Alfred est précis, calme et fiable ; son ton est direct et opérationnel. Ce qu
 
 **Une vue d’ensemble, pas une pile.** Une page se comprend d’un coup d’œil, sur toute la largeur. Avant d’écrire un bloc, répartissez la demande dans les zones d’Alfred : les vues dans les onglets de la barre du haut, les actions dans la barre du haut ou l’en-tête du gabarit, l’élément sélectionné dans le panneau de droite, l’élément ouvert dans un onglet (section 2, « Répartir avant de composer »). Le contenu garde le reste. Une page n’est pas une colonne étroite au milieu de l’écran, ni une pile de blocs qu’il faut faire défiler pour la comprendre, ni un bloc qui ne porte qu’une action.
 
-Le transpileur ne vérifie pas les types : une option inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne socle-ui ; chaque remarque se corrige. Il avertit aussi d’une mise en page qui empile ou rétrécit la page (`designWarnings`) et mesure sa capture (`review`) : ces avertissements se corrigent aussi, sauf quand une préférence de l’utilisateur (`designPreferences`) demande ce rendu.
+Le transpileur ne vérifie pas les types : une option inventée est ignorée en silence, un composant inexistant fait échouer la page. L’outil `check` relit chaque page et signale sous `design` tout ce qui contourne socle-ui ; chaque remarque se corrige. Il avertit aussi d’une page qui mêle plusieurs tâches, empile ses blocs ou se rétrécit (`designWarnings`) et mesure sa capture (`review`) : ces avertissements se corrigent aussi, sauf quand une préférence de l’utilisateur (`designPreferences`) demande ce rendu.
 
 ## 1. Règles non négociables
 
-1. **Un gabarit d’abord.** Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`, un échange de questions et de réponses est une `ChatPage`. `Page`, avec `PageSection` et `PageGrid`, seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (sections 2 et 10).
+1. **Une recette, puis un gabarit.** Avant d’écrire, partir de la recette la plus proche (section 2, « Partir d’une recette »). Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`, un échange de questions et de réponses est une `ChatPage`. `Page`, avec `PageSection` et `PageGrid`, seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (sections 2 et 10).
 2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover` ; `check` avertit ailleurs.
 3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
@@ -85,7 +85,7 @@ Une zone de l’écran porte une responsabilité, et une seule : l’entrée du 
 | Une action de la page (ajouter, importer, actualiser, exporter) | L’en-tête du gabarit (`actions`) ; pour une `Page`, la barre du haut (`useTopBarActions`) ou la barre d’outils | Un bloc qui ne porte qu’une action |
 | Des fichiers à importer | Une action (« Ajouter des PDF ») qui appelle `files.pick` | Un bloc `FileUpload` : le cadre n’a pas de disque (SDK.md, section 1) |
 | Une question et sa réponse | Un onglet `ChatPage` : la saisie en bas, les réponses et leurs sources dans le relevé | Un champ de texte et un bloc « Réponse » |
-| Des exemples (questions types, premiers pas) | L’état vide de la zone (`EmptyState`, un `Link` par exemple) : ils partent avec lui | Un bloc permanent |
+| Des exemples (questions types, premiers pas) | L’état vide de la zone : `suggestions` de l’`EmptyState`, quatre au plus ; ils partent avec lui | Un bloc permanent |
 | Des chiffres clés, des listes courtes de même rang | Une `PageGrid` : côte à côte, sur un écran | Une pile de `PageSection` |
 | Un état durable (modèle à installer, données d’exemple) | Un `Alert` en tête du contenu | Un bandeau, un bloc à part |
 | Ce qui attend l’utilisateur (non lus, échecs à reprendre) | Le compteur de l’entrée du menu (`badge.set`) | Un chiffre dans un titre de bloc |
@@ -94,10 +94,39 @@ Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient se
 
 **Exemple : une base documentaire** (des PDF indexés, des questions en langage courant). À ne pas faire : une `Page` de 760 px qui empile « Poser une question », des questions d’exemple, une zone de dépôt, la liste des documents et la réponse. À faire : une responsabilité par zone.
 - Onglet « Questions », le premier : une `ChatPage`. On pose une question en bas, on lit la réponse et ses sources dans le relevé ; les questions d’exemple sont dans l’état vide du relevé.
-- Panneau de droite de « Questions » : un clic sur une source l’ouvre là, avec le passage cité puis le PDF (`DocumentViewer`). Le relevé reste visible à côté.
+- Panneau de droite de « Questions » : un clic sur une source l’ouvre là, avec le passage cité puis le PDF à la page citée (`DocumentViewer` avec `page`). Les sources d’une réponse sont des puces (`SourceList`, dans `sources` de `ChatMessage`). Le relevé reste visible à côté.
 - Onglet « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné dans son panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »).
 
-PLACEMENT.md, section 11.4, détaille ce cas.
+PLACEMENT.md, section 11.4, détaille ce cas ; la recette `KnowledgeBase` le montre en entier.
+
+### Partir d’une recette
+
+socle-ui livre des recettes de pages : des pages complètes des types courants, faites seulement de ses gabarits et composants. Chacune dit quand la prendre, ses zones, ses actions, ses états (vide, chargement, erreur), son comportement, un squelette de code, ce qu’il faut éviter, et montre la page finie en deux captures, en clair et en sombre. Elles sont dans `docs/alfred/socle/recipes/` : la fiche (`KnowledgeBase.md`) et ses deux captures (`KnowledgeBase-clair.png`, `KnowledgeBase-sombre.png`), de même pour chaque recette.
+
+Avant d’écrire une page, partez de la recette la plus proche : lisez sa fiche, regardez sa capture (l’outil de lecture de votre harnais ouvre une image), reprenez ses zones et ses composants. Après `page_screenshot`, comparez votre page à la capture.
+
+| La page… | Recette |
+|---|---|
+| cherche des réponses dans des documents, avec leurs sources | `KnowledgeBase` (base de connaissances) |
+| donne une vue d’ensemble chiffrée, sur un écran | `Dashboard` (tableau de bord) |
+| traite des éléments un par un jusqu’à vider la file | `TriageQueue` (file de tri) |
+| montre une collection et la fiche de l’élément choisi | `ListDetail` (liste et fiche) |
+| montre des éléments qu’on reconnaît à leur image | `Catalog` (catalogue) |
+
+Une recette est écrite pour la coquille de socle-ui (`AppShell`). Dans Alfred, chaque zone a son équivalent :
+
+| Dans la recette | Dans Alfred |
+|---|---|
+| Une vue de la barre du haut (`views`) | Un onglet fixe de la section : une page par vue (`place_page`, `kind: "tab"`) ; un élément ouvert en entier : `views.open` |
+| Les actions de la barre du haut (`ActionBar` zone `topbar`) | `useTopBarActions` |
+| Le panneau de détail (`detail`, un `Drawer`) | La page du panneau (`kind: "panel"`) : un `Drawer` à sa racine, qui lit `useSelection()` ; la page publie sa sélection (`shell.publish`) |
+| Le panneau ouvert par la page (`isDetailOpen`) | `shell.setPanelVisible(true)` ; la largeur (`detailWidth`, `detailExpandable`) reste le choix de l’utilisateur |
+| Le compteur d’une entrée de la sidebar (`count`) | `badge.set(total)` |
+| Des fichiers déposés sur la page (`onDropFiles`) | Pas de dépôt dans le cadre d’une page : une action « Ajouter… » qui appelle `files.pick` |
+| `AppShell`, `Sidebar` | Dessinés par Alfred : une page ne les rend jamais (règle 6) |
+| Le graphique d’un tableau de bord | Une librairie npm et les tokens (section 8) |
+
+Une page qui ne ressemble à aucune recette suit « Répartir avant de composer ».
 
 ## 3. Imports et structure d’une page
 
@@ -185,7 +214,9 @@ La zone fixe la forme. La page ne choisit rien :
 | `title`, `description` | En-tête de la page. |
 | `rows` | Lignes, chacune avec un `id` texte. `undefined` pendant le premier chargement. |
 | `columns` | `{ id, label, value?, sortable?, type, statuses, currency, decimals, durationUnit }` : `id` est lu dans la ligne, sauf si `value(row)` est donné ; le `type` décide du format, de l’alignement, de la largeur et du tri (section 11). |
-| `layout`, `item` | `"list"` quand chaque élément se lit seul ; `item: { title, subtitle, meta, status }` nomme les colonnes de chaque pièce. |
+| `layout`, `item` | `"list"` quand chaque élément se lit seul ; `"grid"` pour des vignettes, quand on reconnaît les éléments à leur image (recette `Catalog`) ; `item: { title, subtitle, meta, status }` nomme les colonnes de chaque pièce. |
+| `thumbnail` | `(row) => ({ src, type })` : l’image de l’élément (aperçu 4:3 en `grid`, visuel de 40 px en `list`) ; sans image, `type` (« pdf ») montre l’icône du fichier. |
+| `advanceOnRemove` | File de tri : quand la ligne sélectionnée quitte `rows` (traitée), la sélection passe à la suivante à l’écran (recette `TriageQueue`). |
 | `search` | Recherche dans la barre (vrai par défaut). `{ label: "les tâches", text: (row) => … }`. Sans casse ni accents, chaque mot doit apparaître. |
 | `filters` | Trois au plus : `{ id, label, allLabel, options: [{ id, label }], value?: (row) => clé }`. |
 | `actions`, `rowActions` | Actions de la page (zone `header`) et d’une ligne (zone `row`). L’action `primary` revient dans l’état vide. |
@@ -299,7 +330,8 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 | Un journal horodaté | `LogViewer` ★ `label` | `lines`, `live`, `fill`. |
 | Une console interactive | `Terminal` ★ `label` | `engine={loadTerminal}`, `{...useTerminalConnection(canal)}`. |
 | Ce qui a changé entre deux textes | `DiffView` ★ `label` | `before` et `after`, ou `patch`. |
-| Un PDF ou une image à lire | `DocumentViewer` ★ `label` | `data`, `loadPdf={loadPdf}`. Une image seule, en vignette : `ImageThumbnail`. |
+| Un PDF ou une image à lire | `DocumentViewer` ★ `label` | `data`, `loadPdf={loadPdf}` ; `page` l’ouvre à une page (une source citée). Une image seule, en vignette : `ImageThumbnail`. |
+| Les sources d’une réponse | `SourceList` | `sources` (`id`, `title`, `detail` « p. 12 », `excerpt`), `onOpen`, `currentId` ; dans `sources` de `ChatMessage`. |
 | Un HTML reçu (courriel) | `HtmlContent` ★ `label` | Nettoie le HTML. |
 | Du Markdown à lire, à écrire | `Markdown` (`socle-ui/markdown`), `MarkdownEditor` ★ `label` (`socle-ui/markdown-editor`) | Jamais une `TextArea` pour du Markdown. |
 | L’état d’un élément | `Badge` (libellé), `BadgeDot` (point nommé) | Tons `StatusTone` ; dans un gabarit, le `type: "status"` d’une colonne ou d’un champ. |
@@ -322,11 +354,11 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 | Une personne | `Avatar` | `name`, `src`. |
 | Un lien | `Link` | `href` externe, ou `onPress`. |
 | Une attente locale | `Skeleton` ; `Spinner` pour une attente courte | Les gabarits ont déjà leurs états. |
-| Un bloc vide | `EmptyState` ; dans un gabarit, `empty` | `action={<Button variant="primary">…</Button>}`. Des exemples à essayer : un `Link` dans sa phrase. |
+| Un bloc vide | `EmptyState` ; dans un gabarit, `empty` | `action={<Button variant="primary">…</Button>}`. Des exemples à essayer : `suggestions` (`id`, `label`, `onPress`), quatre au plus. |
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.20.0
+### Catalogue de socle-ui 1.21.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -379,6 +411,7 @@ Tous les composants, motifs et gabarits de la version installée, avec leur rôl
 | `Separator` | Composant | Séparer deux groupes d'une même zone par un trait, quand un écart ne suffit pas. | `docs/alfred/socle/specs/Separator.md` |
 | `Skeleton` | Composant | Réserver la place d'un contenu en cours de chargement, avec des formes qui annoncent sa disposition. | `docs/alfred/socle/specs/Skeleton.md` |
 | `Slider` | Composant | `Slider` règle une valeur approximative dans une étendue : un seuil d'alerte, un volume, une opacité, une fourchette de prix. | `docs/alfred/socle/specs/Slider.md` |
+| `SourceList` | Composant | `SourceList` montre les sources citées par une réponse : une puce numérotée par source, sous la réponse. Un clic ouvre la source : le document à la bonne page, la page web citée, l'élément de l'app (D-411). | `docs/alfred/socle/specs/SourceList.md` |
 | `Spinner` | Composant | `Spinner` montre une attente courte et locale : une cellule, un panneau, une ligne qui se met à jour. C'est l'indicateur rotatif de `Button` et `SearchInput` (D-081), exposé. | `docs/alfred/socle/specs/Spinner.md` |
 | `SplitButton` | Composant | `SplitButton` lance une action par défaut et propose ses variantes dans un menu : « Enregistrer », puis « Enregistrer sous… » et « Enregistrer et fermer ». | `docs/alfred/socle/specs/SplitButton.md` |
 | `Table` | Composant | Tableau de données : des éléments en lignes, leurs propriétés en colonnes, avec tri et sélection. Il sert dans la zone `list` du gabarit `ListPage` quand on compare plusieurs propriétés d'un élément à l'autre. | `docs/alfred/socle/specs/Table.md` |
@@ -861,6 +894,7 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 ## 16. Checklist avant de dire qu’une page est terminée
 
 - [ ] Chaque chose est à sa place selon PLACEMENT.md (entrée du menu, onglet, panneau, fenêtre, action, message) ; un doute a été posé en question à l’utilisateur.
+- [ ] La page part de la recette la plus proche (section 2, « Partir d’une recette ») ; sa capture ressemble à celle de la recette.
 - [ ] Le gabarit correspond à ce que la page montre (section 2) ; `Page` seulement si aucun ne convient.
 - [ ] Vue d’ensemble (règle 11) : un usage par onglet ; les actions dans la barre du haut ou l’en-tête ; l’élément sélectionné au panneau ; le contenu sur toute la largeur ; les blocs courts côte à côte (`PageGrid`) ; aucun bloc qui ne porte qu’une action ; les exemples dans l’état vide.
 - [ ] Chaque composant vient du catalogue (section 8), sous son nom actuel ; sa spec a été lue.

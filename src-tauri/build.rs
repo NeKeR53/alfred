@@ -19,8 +19,8 @@ fn main() {
 
 /// Ce qu’Alfred sait de la version installée de socle-ui, lu dans `node_modules/socle-ui` au moment du build : sa
 /// version, ses exports (contrôle `check` : nom inconnu), ses anciens noms (`AI.md`, « Anciens noms ») et sa doc pour
-/// l’IA (`ai/`), recopiée dans chaque espace (`docs/alfred/socle/`). Sans `node_modules`, les listes sont vides et les
-/// contrôles qui en dépendent se taisent.
+/// l’IA (`ai/` : textes, et captures des recettes de pages), recopiée dans chaque espace (`docs/alfred/socle/`). Sans
+/// `node_modules`, les listes sont vides et les contrôles qui en dépendent se taisent.
 mod socle_ui {
     use std::fmt::Write as _;
     use std::fs;
@@ -56,8 +56,10 @@ mod socle_ui {
         let deprecated = fs::read_to_string(ai.join("AI.md")).map(|text| deprecated_names(&text)).unwrap_or_default();
 
         let mut docs = Vec::new();
-        collect_docs(&ai, &ai, &mut docs);
+        let mut images = Vec::new();
+        collect_docs(&ai, &ai, &mut docs, &mut images);
         docs.sort();
+        images.sort();
 
         let mut code = String::new();
         writeln!(code, "/// Version de socle-ui installée au build.").unwrap();
@@ -71,6 +73,12 @@ mod socle_ui {
         writeln!(code, "pub const DOCS: &[(&str, &str)] = &[").unwrap();
         for (relative, absolute) in &docs {
             writeln!(code, "    ({relative:?}, include_str!({absolute:?})),").unwrap();
+        }
+        writeln!(code, "];").unwrap();
+        writeln!(code, "/// Captures livrées avec la doc (recettes de pages, `ai/recipes/*.png`) : chemin relatif à `ai/`, octets.").unwrap();
+        writeln!(code, "pub const IMAGES: &[(&str, &[u8])] = &[").unwrap();
+        for (relative, absolute) in &images {
+            writeln!(code, "    ({relative:?}, include_bytes!({absolute:?})),").unwrap();
         }
         writeln!(code, "];").unwrap();
         fs::write(out, code).expect("socle_ui.rs");
@@ -137,17 +145,23 @@ mod socle_ui {
             .collect()
     }
 
-    fn collect_docs(base: &Path, dir: &Path, docs: &mut Vec<(String, String)>) {
+    /// Textes (`.md`) et captures (`.png`) de la doc pour l’IA, chemins relatifs à `base`.
+    fn collect_docs(base: &Path, dir: &Path, docs: &mut Vec<(String, String)>, images: &mut Vec<(String, String)>) {
         let Ok(entries) = fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                collect_docs(base, &path, docs);
-            } else if path.extension().is_some_and(|extension| extension == "md") {
-                let relative = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
-                let absolute = fs::canonicalize(&path).unwrap_or(path).to_string_lossy().into_owned();
-                docs.push((relative, absolute));
+                collect_docs(base, &path, docs, images);
+                continue;
             }
+            let list = match path.extension().and_then(|extension| extension.to_str()) {
+                Some("md") => &mut *docs,
+                Some("png") => &mut *images,
+                _ => continue,
+            };
+            let relative = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+            let absolute = fs::canonicalize(&path).unwrap_or(path).to_string_lossy().into_owned();
+            list.push((relative, absolute));
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Documents de référence qu’Alfred dépose dans l’espace pour les agents. Ils appartiennent à Alfred : réécrits à
 //! chaque ouverture, donc toujours à la version de l’application. La doc de socle-ui (`docs/alfred/socle/`) est celle
-//! de la version installée au build (`socle_ui::DOCS`) : un fichier qui n’en fait plus partie est retiré.
+//! de la version installée au build (`socle_ui::DOCS`, et les captures des recettes de pages, `socle_ui::IMAGES`) :
+//! un fichier qui n’en fait plus partie est retiré.
 
 use std::fs;
 use std::path::Path;
@@ -21,8 +22,9 @@ const GUIDES: [(&str, &str); 5] = [
     ("module-json.md", include_str!("../../docs/espace/guides/module-json.md")),
 ];
 
-fn write_if_changed(path: &Path, content: &str) -> AppResult<()> {
-    if fs::read_to_string(path).is_ok_and(|current| current == content) {
+fn write_if_changed(path: &Path, content: impl AsRef<[u8]>) -> AppResult<()> {
+    let content = content.as_ref();
+    if fs::read(path).is_ok_and(|current| current == content) {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
@@ -66,7 +68,15 @@ pub fn materialize(space: &Space) -> AppResult<()> {
     for (relative, content) in crate::socle_ui::DOCS {
         write_if_changed(&socle.join(relative), content)?;
     }
-    let keep: Vec<&str> = crate::socle_ui::DOCS.iter().map(|(relative, _)| *relative).collect();
+    // Les recettes de pages citent leurs captures, rangées à côté d’elles (`recipes/<Nom>-clair.png`).
+    for (relative, bytes) in crate::socle_ui::IMAGES {
+        write_if_changed(&socle.join(relative), bytes)?;
+    }
+    let keep: Vec<&str> = crate::socle_ui::DOCS
+        .iter()
+        .map(|(relative, _)| *relative)
+        .chain(crate::socle_ui::IMAGES.iter().map(|(relative, _)| *relative))
+        .collect();
     remove_stale(&socle, &socle, &keep);
     Ok(())
 }
@@ -90,6 +100,40 @@ mod tests {
         assert!(socle.join("AI.md").exists());
         assert!(socle.join("specs/Drawer.md").exists());
         assert!(socle.join("docs/layout-rules.md").exists());
+    }
+
+    #[test]
+    fn les_recettes_de_pages_et_leurs_captures_partent_dans_l_espace() {
+        let root = tempfile::tempdir().unwrap();
+        let space = Space::open_or_create(&root.path().join("espace"), Some("Essai")).unwrap();
+        materialize(&space).unwrap();
+        let recipes = space.root.join("docs/alfred/socle/recipes");
+        let names: Vec<&str> = crate::socle_ui::DOCS
+            .iter()
+            .filter_map(|(relative, _)| relative.strip_prefix("recipes/")?.strip_suffix(".md"))
+            .collect();
+        for name in ["KnowledgeBase", "Dashboard", "TriageQueue", "ListDetail", "Catalog"] {
+            assert!(names.contains(&name), "recette {name} absente de socle-ui {}", crate::socle_ui::VERSION);
+        }
+        for name in names {
+            let text = fs::read_to_string(recipes.join(format!("{name}.md"))).unwrap();
+            for suffix in ["clair", "sombre"] {
+                let capture = format!("{name}-{suffix}.png");
+                assert!(text.contains(&capture), "{name}.md ne cite pas {capture}");
+                let bytes = fs::read(recipes.join(&capture)).unwrap();
+                assert!(bytes.starts_with(b"\x89PNG"), "{capture} n’est pas une image PNG");
+            }
+        }
+        // Une capture qui n’est plus livrée est retirée, comme un texte.
+        fs::write(recipes.join("Ancienne-clair.png"), b"retiree").unwrap();
+        materialize(&space).unwrap();
+        assert!(!recipes.join("Ancienne-clair.png").exists());
+        // Les guides envoient l’agent vers les recettes avant d’écrire une page.
+        let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
+        for text in [DESIGN, page] {
+            assert!(text.contains("docs/alfred/socle/recipes/"), "un guide ne cite pas les recettes");
+        }
+        assert!(DESIGN.contains("### Partir d’une recette"));
     }
 
     #[test]
