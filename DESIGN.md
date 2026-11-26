@@ -24,7 +24,7 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 8. **Français.** Les textes affichés sont en français, avec la typographie française (section 13).
 9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique, une carte, un calendrier, un éditeur riche) passe par une librairie npm (section 8). Pour tout autre manque, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).
 10. **Les noms actuels.** Écrire le nom actuel de chaque composant (catalogue, section 8). Un ancien nom (`Switch`, `TextField`, `Dialog`…) marche encore, mais `check` avertit avec le nouveau nom. Un nom qui n’existe pas dans socle-ui est une erreur de `check`.
-11. **Vue d’ensemble d’abord.** Répartir avant de composer (section 2) : un usage par onglet, les actions dans la barre du haut ou l’en-tête, l’élément sélectionné au panneau, l’élément ouvert en onglet. Le contenu prend toute la largeur et tient ses informations clés sur un écran. Les blocs courts et de même rang se rangent côte à côte (`PageGrid`) : jamais une longue pile de `PageSection` (sauf une page des Réglages, qui se lit de haut en bas, section 7). Une colonne étroite centrée sert seulement à lire un texte (`width="text"`, `DetailPage`) ou à converser (`ChatPage`). Règle de Socle : layout-rules, « Vue d’ensemble d’abord » (D-404).
+11. **Vue d’ensemble d’abord.** Une zone de l’écran, une responsabilité. Répartir avant de composer (section 2) : un usage par onglet, les actions dans la barre du haut ou l’en-tête, l’élément sélectionné au panneau, l’élément ouvert en onglet. Le contenu prend toute la largeur et tient ses informations clés sur un écran. Les blocs courts et de même rang se rangent côte à côte (`PageGrid`) : jamais une longue pile de `PageSection` (sauf une page des Réglages, qui se lit de haut en bas, section 7). Une colonne étroite centrée sert seulement à lire un texte (`width="text"`, `DetailPage`) ou à converser (`ChatPage`). Règle de Socle : layout-rules, « Vue d’ensemble d’abord » (D-404).
 
 La règle 5 est absolue. L’utilisateur règle le mode clair ou sombre et l’accent ; les composants les suivent. Une couleur écrite dans une page est illisible dans l’un des thèmes.
 
@@ -74,13 +74,13 @@ Des vues d’une même page (« À faire », « Terminées », « Planning ») s
 
 ### Répartir avant de composer
 
-Une page qui fait plusieurs choses ne les empile pas : chacune va dans sa zone. Décidez des zones avant d’écrire un bloc (layout-rules, « Vue d’ensemble d’abord », D-404).
+Une zone de l’écran porte une responsabilité, et une seule : l’entrée du menu mène à un domaine, un onglet fixe porte un usage, un onglet ouvert montre un élément, le contenu fait le travail de l’onglet, le panneau de droite montre le détail de l’élément sélectionné, la barre du haut porte les actions. Le pourquoi et le quand de chaque zone : PLACEMENT.md, section 2. Une page qui fait plusieurs choses ne les empile donc pas : chacune va dans sa zone. Décidez des zones avant d’écrire un bloc (layout-rules, « Vue d’ensemble d’abord », D-404).
 
 | La demande contient… | Sa place | Pas |
 |---|---|---|
 | Deux usages d’un même domaine (poser des questions, gérer les documents) | Deux onglets fixes de l’entrée (`place_page`, `kind: "tab"`) | Deux blocs l’un sous l’autre |
 | Une collection (documents, factures, tâches) | Une `ListPage` sur toute la page : recherche, filtres, compteur | Une `List` dans un bloc |
-| L’élément sélectionné : son état, ses propriétés, ses actions | Le panneau de droite (`Drawer`) | Un bloc de détail à côté de la liste |
+| L’élément sélectionné : sa fiche, une source citée, un PDF | Le panneau de droite (`Drawer`) : la vue détail | Un bloc de détail à côté de la liste |
 | Un élément à lire en entier (un PDF, un ticket) | Un onglet ouvert (`views.open`) : `DetailPage`, `DocumentViewer` | Un aperçu dans un bloc |
 | Une action de la page (ajouter, importer, actualiser, exporter) | L’en-tête du gabarit (`actions`) ; pour une `Page`, la barre du haut (`useTopBarActions`) ou la barre d’outils | Un bloc qui ne porte qu’une action |
 | Des fichiers à importer | Une action (« Ajouter des PDF ») qui appelle `files.pick` | Un bloc `FileUpload` : le cadre n’a pas de disque (SDK.md, section 1) |
@@ -90,9 +90,14 @@ Une page qui fait plusieurs choses ne les empile pas : chacune va dans sa zone. 
 | Un état durable (modèle à installer, données d’exemple) | Un `Alert` en tête du contenu | Un bandeau, un bloc à part |
 | Ce qui attend l’utilisateur (non lus, échecs à reprendre) | Le compteur de l’entrée du menu (`badge.set`) | Un chiffre dans un titre de bloc |
 
-Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient ses informations clés sur un écran de 1280 × 800, panneau ouvert. Une colonne étroite centrée ne sert qu’à lire un texte (`DetailPage`, `width="text"`) ou à converser (`ChatPage`).
+Le contenu garde ce qui reste, sur toute la largeur. Une page composée tient ses informations clés sur un écran : une fenêtre de 1440 × 900, panneau ouvert (la page y a 928 × 862 px). Une colonne étroite centrée ne sert qu’à lire un texte (`DetailPage`, `width="text"`) ou à converser (`ChatPage`).
 
-**Exemple : une base documentaire** (des PDF indexés, des questions en langage courant). À ne pas faire : une `Page` de 760 px qui empile « Poser une question », des questions d’exemple, une zone de dépôt, la liste des documents et la réponse. À faire : deux onglets fixes. « Questions » : une `ChatPage`, les questions d’exemple dans l’état vide du relevé, chaque réponse avec ses sources ; une source ouvre son PDF dans un onglet (`DocumentViewer`). « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné au panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »). PLACEMENT.md, section 11.4, détaille ce cas.
+**Exemple : une base documentaire** (des PDF indexés, des questions en langage courant). À ne pas faire : une `Page` de 760 px qui empile « Poser une question », des questions d’exemple, une zone de dépôt, la liste des documents et la réponse. À faire : une responsabilité par zone.
+- Onglet « Questions », le premier : une `ChatPage`. On pose une question en bas, on lit la réponse et ses sources dans le relevé ; les questions d’exemple sont dans l’état vide du relevé.
+- Panneau de droite de « Questions » : un clic sur une source l’ouvre là, avec le passage cité puis le PDF (`DocumentViewer`). Le relevé reste visible à côté.
+- Onglet « Documents » : une `ListPage` (nom, état, pages, date d’ajout ; recherche, filtre d’état), « Ajouter des PDF » en action principale de l’en-tête, le document sélectionné dans son panneau de droite (état, passages, « Ouvrir », « Relancer l’indexation », « Supprimer »).
+
+PLACEMENT.md, section 11.4, détaille ce cas.
 
 ## 3. Imports et structure d’une page
 
@@ -223,7 +228,7 @@ return (
 - `header` : `{ title, subtitle, status: { label, tone }, actions }` (zone `section`). `title` est le nom de l’objet (« ALF-12 · Export en échec »), jamais « Détails · … » : le panneau porte déjà « Détail ». `subtitle` est une ligne de contexte (« Bug · Projet Alfred »), jamais une phrase d’aide (« Chaque changement est enregistré aussitôt. ») ; `check` en avertit.
 - `sections` : `{ id, title, fields, content, empty, actions, summary, defaultCollapsed }`. `id` est stable : il mémorise le repli. `summary` dit l’état d’un mot, lisible replié : « 2 en retard ».
 - `fields` : `{ label, value, type, statuses, hideEmpty, icon, action }`. La valeur est brute ; le `type` la met en forme (section 11). Jamais un élément React en `value` : il s’afficherait « [object Object] » (`check` le refuse).
-- `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`). Un texte devient un paragraphe. Ce qui n’est pas une propriété (une liste, un relevé) va dans le `content` d’une section, pas à côté du `Drawer`.
+- `content` : un composant de socle-ui sous les champs (`Table`, `List`, `Markdown`, `DocumentViewer` pour l’aperçu d’un document). Un texte devient un paragraphe. Ce qui n’est pas une propriété (une liste, un relevé) va dans le `content` d’une section, pas à côté du `Drawer`.
 - L’ordre des sections est fixe : l’utilisateur les replie, il ne les déplace pas (D-185).
 - Après une écriture dans le panneau, `announceChange()` de `@alfred/sdk` prévient la page : ses `useAsync` se relancent. Dans l’autre sens, la page fait de même.
 - **Pas de champ de saisie dans une ligne ni dans une section.** Ni `Select`, `ComboBox`, `TextInput`, `TextArea`, `NumberField`, `DatePicker`, `Checkbox`, `RadioButtonGroup`, `SegmentedControl`, `Slider`… (anciens noms compris) dans `value` d’un champ, dans `PropertyRow`, dans `Drawer.Section` ou dans `content`, écrits là ou rendus par un composant du module. `check` le refuse, en suivant les composants et les fonctions du module importés par `./…`. La valeur se lit en texte (valeur brute et son `type`) ; on la modifie par **l’action de la ligne** : un menu de choix (`action: { type: "icon", icon, label, menu }`, avec un `DropdownMenu.Section` `selectionMode`), un interrupteur (`type: "switch"`), ou un bouton qui ouvre `useOpenForm` pour une saisie (texte, date, personne). `InlineEdit` (texte modifiable sur place) n’existe que dans `PropertyRow`, la forme à composants, sans en-tête : dans `fields`, un texte se modifie par la fenêtre. Une modification s’enregistre tout de suite ; un échec garde l’ancienne valeur et notifie.
@@ -495,7 +500,7 @@ import { Markdown } from "socle-ui/markdown";
 </ChatPage>
 ```
 
-Les sources d’une réponse suivent son texte, dans le message : une `List` (`label`, `selectionMode="none"`) dont l’action de chaque source (`itemActions`) ouvre le document dans un onglet (`views.open`). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet.
+Les sources d’une réponse suivent son texte, dans le message : une `List` (`label`) dont la sélection publie la source pour le panneau de droite (`onSelectionChange` → `shell.publish`). Le panneau (un `Drawer`) montre la source : le document et la page en en-tête, le passage cité, puis le PDF (`DocumentViewer` dans le `content` d’une section). Les échanges se gardent en base : le cadre est recréé à chaque changement d’onglet.
 
 **`DetailPage`** : un élément ouvert en entier, depuis `onOpen` d’une liste. `onOpen` ouvre l’élément dans un onglet fermable (`views.open({ id, label, params })`) ; dans cet onglet, `usePageContext()?.view` porte l’élément et la page rend la `DetailPage` à la place de la `ListPage`. Le lien de retour ferme l’onglet et revient à la liste :
 

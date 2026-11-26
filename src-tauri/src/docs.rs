@@ -117,10 +117,23 @@ mod tests {
         assert!(!DESIGN.contains("<Row gap="), "un exemple de DESIGN.md range encore des blocs avec `Row`");
         // Le guide d’une page : répartir dès le placement, puis juger l’écran avant de rendre compte.
         let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
-        for expected in ["**Répartis d’abord la demande**", "7 ter. **Juge l’écran avant de rendre compte.**", "`Page` avec `PageGrid`"] {
+        for expected in [
+            "**Répartis d’abord la demande.** Une zone de l’écran porte une responsabilité, et une seule",
+            "7 ter. **Juge l’écran avant de rendre compte.**",
+            "`Page` avec `PageGrid`",
+        ] {
             assert!(page.contains(expected), "page.md n’a pas « {expected} »");
         }
-        assert!(PLACEMENT.contains("### 11.4 Une base documentaire"));
+        // PLACEMENT.md : une zone, une responsabilité, avec le pourquoi et le quand de chaque zone.
+        for expected in [
+            "4. **Une zone, une responsabilité.**",
+            "### Pourquoi et quand prendre chaque zone",
+            "| Zone | Sa responsabilité | Quand la prendre | Pourquoi |",
+            "### 11.4 Une base documentaire",
+        ] {
+            assert!(PLACEMENT.contains(expected), "PLACEMENT.md n’a pas « {expected} »");
+        }
+        assert!(DESIGN.contains("Une zone de l’écran, une responsabilité."));
         assert!(!PLACEMENT.contains("<Row gap="), "un exemple de PLACEMENT.md range encore des blocs avec `Row`");
         // Les guides citent `PageGrid` : la version de socle-ui installée au build doit l’exporter (1.20.0 au moins).
         assert!(crate::socle_ui::EXPORTS.contains(&"PageGrid"), "socle-ui {} n’exporte pas PageGrid", crate::socle_ui::VERSION);

@@ -4,11 +4,12 @@ Lis ce guide **avant** `place_page`, à chaque demande qui ajoute ou déplace qu
 
 Ce guide applique les règles de placement de socle-ui, le design system d’Alfred : `docs/alfred/socle/docs/layout-rules.md`, et les décisions citées ici (D-xxx), dans `docs/alfred/socle/docs/decisions.md`. Il ne les contredit jamais. En cas de doute, la règle de Socle gagne.
 
-Trois principes :
+Quatre principes :
 
 1. **Tu ne crées aucune place.** Chaque élément va dans une zone qui existe déjà : le menu, la barre du haut, le gabarit de la page, le panneau de droite, une fenêtre, les Réglages. Une zone accepte certaines choses et en refuse d’autres (tableau de la section 2).
 2. **Tu prends chaque élément dans Socle.** Un composant, un gabarit ou un motif de `socle-ui`, à la version installée : liste dans `DESIGN.md`, section 8, et spec dans `docs/alfred/socle/specs/<Composant>.md`. Jamais un composant inventé, jamais une imitation en HTML.
 3. **Si tu ne sais pas, tu demandes.** Quand ce guide ne tranche pas, pose une question à l’utilisateur, avec ta recommandation (section 9). Tu n’inventes jamais un placement.
+4. **Une zone, une responsabilité.** Chaque zone de l’écran fait une seule chose : l’entrée du menu mène à un domaine, un onglet fixe porte un usage, un onglet ouvert montre un élément, le contenu fait le travail de l’onglet, le panneau de droite montre le détail de l’élément sélectionné, la barre du haut porte les actions. Une demande qui réunit plusieurs tâches (envoyer des PDF, lister les documents, poser une question) les sépare dans ces zones : elle ne les empile pas dans une page (section 2, « Pourquoi et quand prendre chaque zone »).
 
 ## 1. Les mots
 
@@ -22,7 +23,7 @@ L’utilisateur, les outils d’Alfred et Socle ne disent pas toujours la même 
 | **Sous-entrées** : des objets suivis, sous l’entrée du menu | « les produits dans le menu » | zone de la page ; `menu.setEntries` | sous-pages d’un élément, sur un niveau (D-056) |
 | **Section du menu** : un titre repliable, créé par l’usage, avec des entrées dessous | « le projet Atlas dans le menu » | `menu.addSection` | `Sidebar.Section` (D-002, D-045) |
 | **Contenu** : le gabarit de la page | « la page » | le fichier de la page | zone `main` |
-| **Panneau de droite** : les propriétés de l’élément sélectionné | « le détail », « le panneau » | `{ "kind": "panel" }` | zone `detail`, `Drawer` (D-018) |
+| **Panneau de droite** : la vue détail de l’élément sélectionné (sa fiche, une source citée, un aperçu) | « le détail », « le panneau » | `{ "kind": "panel" }` | zone `detail`, `Drawer` (D-018) |
 | **Fenêtre** : une modale sur la page | « une fenêtre », « un formulaire » | `useOpenForm`, `useConfirm`, `Modal` | `Modal` (D-124, D-197) |
 | **Fenêtre à part** : une page seule, dans sa fenêtre du système | « à côté », « dans une autre fenêtre » | `shell.openWindow` | — |
 | **Réglages** : les préférences du module | « les paramètres » | `{ "kind": "settings" }` | Réglages (D-015) |
@@ -51,11 +52,30 @@ Quand l’utilisateur dit « page », il parle d’une entrée du menu, sauf s�
 | Menu → sections | Les éléments d’une notion créée par l’utilisateur (un projet et ses lots) | Des réglages, du contenu de travail | layout-rules, « sidebar → sections » ; D-002 |
 | Barre du haut | Le nom de l’entrée, ses onglets, les actions d’une `Page` composée | Recherche, filtres, résumé, état, actions sur un élément précis | layout-rules, `topbar` ; D-220, D-253 |
 | Contenu | Un seul gabarit | La navigation, un deuxième gabarit, des onglets dans la page | layout-rules, `main` ; spec Tabs, « Exclus » |
-| Panneau de droite | Les propriétés de l’élément sélectionné, modifiables sur place ; l’aide ; les pièces jointes | Le contenu principal, une liste, une action destructrice sans confirmation | layout-rules, `detail` ; D-018 |
+| Panneau de droite | La vue détail de l’élément sélectionné : ses propriétés, modifiables sur place ; une source citée, un aperçu (PDF) ; l’aide ; les pièces jointes | Le contenu principal, une liste, une action destructrice sans confirmation | layout-rules, `detail` ; D-018 |
 | Fenêtre | Une saisie courte, une confirmation, un aperçu | Une page entière, une navigation | layout-rules, « Fenêtre secondaire » ; D-124 |
 | Réglages | Les préférences du module | Le travail de tous les jours, les comptes des services | D-015, D-007 |
 
 La coquille d’Alfred dessine le menu, la barre du haut, la cloche, le bouton du panneau et les Réglages. Une page ne les rend jamais.
+
+### Pourquoi et quand prendre chaque zone
+
+Une zone porte une responsabilité, et une seule. C’est ce qui rend l’écran lisible d’un coup d’œil : l’utilisateur sait où regarder pour chaque chose, et chaque tâche garde toute sa place. Avant d’écrire une page, range chaque partie de la demande dans sa zone.
+
+| Zone | Sa responsabilité | Quand la prendre | Pourquoi |
+|---|---|---|---|
+| Entrée du menu | Un domaine de travail | Un nouveau sujet que l’utilisateur rouvrira (« ma base documentaire », « mes factures ») | Le menu est la carte de l’espace. Une entrée par vue ou par élément le rendrait illisible. |
+| Sous-entrées (`menu.setEntries`) | Aller d’un clic à un objet suivi | L’utilisateur navigue par objet et revient aux mêmes : un client, un projet, un tableau suivi | L’objet devient un lieu ; la page reste une seule, qui lit l’entrée choisie. |
+| Section du menu (`menu.addSection`) | Une notion créée et nommée par l’utilisateur, avec ses éléments | L’utilisateur crée la notion (« le projet Atlas ») et veut la retrouver sous son nom | Le menu suit l’usage, sans une page par élément. |
+| Onglet fixe | Un usage du domaine, un contexte | Deux tâches différentes dans un domaine (« Questions » et « Documents »), ou une autre façon de voir les mêmes données (« Synthèse ») | Chaque contexte garde sa place, son état et son gabarit. On passe de l’un à l’autre d’un clic, sans faire défiler. |
+| Onglet ouvert (`views.open`) | Un élément précis, ouvert en entier | L’utilisateur ouvre un élément pour le lire ou le traiter : un document, un ticket, une conversation | L’élément a sa vue, fermable ; la liste reste intacte dans son onglet. Plusieurs éléments restent ouverts dans la barre. |
+| Contenu (le gabarit) | Le travail de l’onglet, et lui seul | Toujours : c’est la tâche principale de l’onglet | Il prend toute la largeur pour une seule tâche ; le reste va dans les autres zones. |
+| Panneau de droite (`Drawer`) | La vue détail de l’élément sélectionné | L’utilisateur choisit un élément dans le contenu et veut le voir sans quitter sa tâche : une fiche, une source citée, un PDF | Le contenu reste visible à côté ; choisir un autre élément change le détail. |
+| Barre du haut, en-tête du gabarit | Les actions de la page ou de la collection | Ajouter, importer, actualiser, exporter | Une action est toujours au même endroit. Un gros bloc d’action au centre prend la place du travail. Quand la zone est vide, l’action revient dans son état vide. |
+| Fenêtre (`useOpenForm`, `Modal`) | Un geste court qui se termine | Créer, renommer, confirmer | Elle passe devant le travail, puis le rend tel quel. |
+| Fenêtre à part (`shell.openWindow`) | Un élément gardé à côté | Un journal, une console à surveiller pendant un autre travail | Elle vit hors de la fenêtre principale. |
+| Réglages | Les préférences du module | Un choix qui change rarement (« rappel la veille ») | Le travail de tous les jours n’en est pas encombré. |
+| Notification, compteur | Prévenir | Un événement à signaler (notification) ; ce qui attend l’utilisateur (compteur de l’entrée) | L’information arrive sans occuper la page. |
 
 ## 3. L’arbre de décision
 
@@ -114,7 +134,7 @@ Choisir entre les trois :
 
 Une page ne met jamais une liste et un détail côte à côte : la liste dans le contenu, le détail dans le panneau de droite, l’élément entier dans un onglet ouvert. Une `DetailPage` ne montre pas les propriétés : elles vont dans le panneau (D-210).
 
-**Vue d’ensemble d’abord** (layout-rules, D-404 ; DESIGN.md, section 2). Avant le gabarit, répartis la demande : un usage par onglet fixe, l’élément sélectionné au panneau, l’élément entier dans un onglet ouvert, les actions dans l’en-tête du gabarit ou la barre du haut. Le contenu garde le reste, sur toute la largeur, et tient ses informations clés sur un écran. Une page qui empile des blocs dans une colonne étroite (une question, des exemples, une zone de dépôt, une liste, une réponse) mélange plusieurs usages : sépare-les (exemple en section 11.4).
+**Vue d’ensemble d’abord** (layout-rules, D-404 ; DESIGN.md, section 2). Une zone, une responsabilité (section 2). Avant le gabarit, répartis la demande : un usage par onglet fixe, l’élément sélectionné au panneau, l’élément entier dans un onglet ouvert, les actions dans l’en-tête du gabarit ou la barre du haut. Le contenu garde le reste, sur toute la largeur, et tient ses informations clés sur un écran. Une page qui empile des blocs dans une colonne étroite (une question, des exemples, une zone de dépôt, une liste, une réponse) mélange plusieurs usages : sépare-les (exemple en section 11.4).
 
 **L’ordre du contenu.** Chaque gabarit a ses zones (layout-rules, « Gabarits ») ; chaque spec a une partie « Contenu » qui dit quoi écrire et dans quel ordre. Lis-les avant de ranger les informations :
 
@@ -124,7 +144,7 @@ Une page ne met jamais une liste et un détail côte à côte : la liste dans le
 - `Page` composée : ce qui demande une action d’abord (en retard, à traiter), puis la synthèse, puis le reste (D-217) ; les blocs courts de même rang côte à côte dans une `PageGrid`, les informations clés sur un écran (D-403, D-404).
 - `FormPage` et `useOpenForm` : les champs obligatoires d’abord, regroupés par sens (`Fieldset`, sections) ; la largeur du champ annonce la longueur attendue (D-133).
 
-**Le panneau de droite.** Une page a un panneau au plus. Il rend un `Drawer` seul, à sa racine : l’en-tête de l’élément sélectionné, puis ses propriétés en sections (DESIGN.md, section 6). Une propriété se modifie par l’action de sa ligne : un menu de choix, un interrupteur (`Toggle`, D-137) ou une fenêtre (`useOpenForm`). Le panneau ne contient jamais une liste d’éléments, un formulaire ni le contenu principal (layout-rules, `detail`).
+**Le panneau de droite.** C’est la vue détail de ce que l’utilisateur a sélectionné dans le contenu. Une page a un panneau au plus. Il rend un `Drawer` seul, à sa racine : l’en-tête de l’élément sélectionné, puis ses propriétés en sections (DESIGN.md, section 6). Une source citée y montre son passage, puis son document (`DocumentViewer` dans le `content` d’une section). Une propriété se modifie par l’action de sa ligne : un menu de choix, un interrupteur (`Toggle`, D-137) ou une fenêtre (`useOpenForm`). Le panneau ne contient jamais une liste d’éléments, un formulaire ni le contenu principal (layout-rules, `detail`).
 
 ## 6. Les actions
 
@@ -309,13 +329,14 @@ Vérifie les options exactes de `SegmentedControl`, `Card`, `PageGrid` et `Table
 
 Demande : « Une base documentaire : mes PDF indexés, et des réponses à mes questions, avec les sources. »
 
-Deux usages dans une demande : poser des questions, gérer les documents. Deux onglets fixes, pas une page qui empile tout.
+Trois tâches dans une demande : poser une question, consulter une source, gérer les documents. Chacune a sa zone ; aucune page ne les empile.
 
 - **Entrée du menu** « Base documentaire » : un nouveau domaine.
-- **Onglet fixe** « Questions » : une `ChatPage` (DESIGN.md, section 10). La saisie en bas ; chaque réponse dans le relevé, avec ses sources (document et page) ; une source ouvre son PDF dans un onglet. L’état vide du relevé dit à quoi sert la page et propose deux ou trois questions d’exemple (`Link` dans la phrase de l’`EmptyState`) : ils disparaissent à la première question. Un modèle à installer se dit par un `Alert` dans la zone `alerts` de la `ChatPage`. Les échanges se gardent en base.
-- **Onglet fixe** « Documents » : une `ListPage` des documents sur toute la page (nom, état en `status`, pages, passages, date d’ajout en `date`), recherche et filtre d’état du gabarit. « Ajouter des PDF » en action principale de l’en-tête, qui appelle `files.pick` ; « Actualiser » en icône. Pas de bloc de dépôt. L’état vide de la liste propose « Ajouter des PDF ».
-- **Panneau de droite** de « Documents » : un `Drawer` sur le document sélectionné. En-tête : son nom, son état ; actions « Ouvrir », « Relancer l’indexation », « Supprimer » (`danger`). Sections « Indexation » (pages, passages, date, erreur) et « Fichier ».
-- **Onglet ouvert** sur un document : double-clic → `views.open` ; la page lit `usePageContext()?.view` et rend une `DetailPage` (retour « Documents ») dont le corps est le `DocumentViewer` du PDF (`files.read`, `loadPdf`).
+- **Onglet fixe** « Questions », le premier, la vue de tous les jours : une `ChatPage` (DESIGN.md, section 10). On pose une question en bas ; on lit la réponse dans le relevé, avec ses sources (document et page). L’état vide du relevé dit à quoi sert la page et propose deux ou trois questions d’exemple (`Link` dans la phrase de l’`EmptyState`) : elles partent à la première question. Un modèle à installer se dit par un `Alert` dans la zone `alerts`. Les échanges se gardent en base.
+- **Panneau de droite** de « Questions » : un clic sur une source la publie (`shell.publish`) ; le panneau montre cette source : le document et la page en en-tête, le passage cité, puis le PDF (`DocumentViewer`, `files.read`, `loadPdf`). Le relevé reste visible à côté.
+- **Onglet fixe** « Documents » : une `ListPage` sur toute la page (nom, état en `status`, pages, passages, date d’ajout en `date`), recherche et filtre d’état du gabarit. « Ajouter des PDF » est l’action principale de l’en-tête : elle appelle `files.pick`. Une liste vide la propose dans son état vide. Pas de bloc de dépôt : le cadre d’une page n’a pas de disque (SDK.md, section 1).
+- **Panneau de droite** de « Documents » : le document sélectionné. En-tête : son nom, son état ; actions « Ouvrir », « Relancer l’indexation », « Supprimer » (`danger`). Sections « Indexation » (pages, passages, date, erreur) et « Fichier ».
+- **Onglet ouvert** sur un document : double-clic dans la liste → `views.open` ; la page lit `usePageContext()?.view` et rend une `DetailPage` (retour « Documents ») dont le corps est le `DocumentViewer` du PDF.
 - **Messages** : une indexation en échec → `badge.set` sur l’entrée, tant qu’elle reste à reprendre.
 
-À ne pas faire : une `Page` de 760 px (`width="text"`) qui empile « Poser une question », des questions d’exemple, une zone de dépôt `FileUpload`, la liste des documents et la réponse.
+À ne pas faire : une `Page` de 760 px (`width="text"`) qui empile « Poser une question », des questions d’exemple, une zone de dépôt `FileUpload`, la liste des documents et la réponse. Chacune de ces parties a sa zone ci-dessus.
