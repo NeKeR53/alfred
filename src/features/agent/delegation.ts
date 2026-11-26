@@ -15,6 +15,12 @@
  * tâches qu’elle fait déjà avancer. Une tâche dont la session s’est fermée avant son rapport (rechargement, CLI
  * arrêté) revient « à reprendre » : son délégué reçoit un message de reprise dans sa conversation, qui garde sa
  * session de CLI ; s’il avait déjà fini, son contrat est lu sans le relancer.
+ *
+ * La coordinatrice pilote ses délégués (`relaunch_task`, `add_to_task`, `stop_task`, `archive_task`) : Rust garde
+ * l’action dans la tâche et `claim` la rend ici (`message`, `stop`, `archive`, ou `continue` pour une relance dans la
+ * conversation du délégué). Une précision part dans la conversation du délégué sans interrompre sa réponse ; son tour
+ * attendu se prolonge jusqu’à la fin de la précision, si bien que la tâche ne rend qu’un rapport. Le rapport d’une
+ * tâche arrêtée est ignoré par Rust : la coordinatrice n’est pas relancée.
  */
 import { extractJson } from "../../lib/jsonSchema";
 import { invoke, onNativeEvent } from "../../lib/native";
@@ -26,8 +32,12 @@ import { useAgents, waitForTurn } from "./store";
 interface ClaimedTask {
   id: string;
   coordinator: string;
-  /** `start` : nouvelle conversation ; `resume` : reprise dans `conversation` ; `report` : `message` à déposer. */
-  launch?: "start" | "resume" | "report";
+  /**
+   * `start` : nouvelle conversation ; `resume` : reprise dans `conversation` (avec les précisions `message`) ;
+   * `continue` : relance dans `conversation`, avec la consigne `message` ; `report` : `message` à déposer.
+   * Actions de la coordinatrice sur `conversation` : `message` (précision), `stop`, `archive`.
+   */
+  launch?: "start" | "resume" | "continue" | "report" | "message" | "stop" | "archive";
   conversation?: string | null;
   message?: string;
   key: string;
@@ -55,6 +65,13 @@ export const RESUME_MESSAGE = [
   "Reprends ta tâche là où tu t’es arrêté, sans refaire ce qui est déjà fait.",
 ].join(" ");
 
+/** Message d’un délégué relancé dans sa conversation sans consigne. */
+export const RELAUNCH_MESSAGE =
+  "La coordinatrice te relance : reprends ta tâche là où tu t’es arrêté, sans refaire ce qui est déjà fait.";
+
+/** Préfixe des messages de précision d’une tâche dans la conversation de son délégué. */
+const extraId = (taskId: string) => `task-extra:${taskId}:`;
+
 /** Contrat lu dans le dernier message ; sans bloc lisible, la tâche est en échec. */
 export function readContract(message: string): Record<string, unknown> {
   try {
@@ -66,7 +83,10 @@ export function readContract(message: string): Record<string, unknown> {
   return { status: "failed", summary: "Le délégué n’a pas rendu de contrat de retour lisible." };
 }
 
+/** Tâches que cette interface fait avancer. */
 const running = new Set<string>();
+/** Tâches dont cette interface attend le tour du délégué (et pas encore le rapport) : elles reçoivent une précision. */
+const listening = new Map<string, string>();
 
 /** Contrat de retour d’un tour fini du délégué. */
 function contractOf(turn: Turn) {
@@ -93,20 +113,42 @@ async function notifyCoordinator(coordinator: string, message: string, taskId: s
 
 /** Rend le contrat à Rust et relance la coordinatrice avec le rapport. */
 async function reportTask(task: ClaimedTask, contract: Record<string, unknown>, text: string) {
-  const reported = await invoke<{ coordinator: string; message: string }>("agents.tasks.report", {
+  const reported = await invoke<{ coordinator: string; message?: string; ignored?: boolean }>("agents.tasks.report", {
     id: task.id,
     contract,
     text,
   });
+  // Tâche arrêtée par la coordinatrice : elle n’attend pas ce rapport.
+  if (reported.ignored || !reported.message) return;
   await notifyCoordinator(reported.coordinator, reported.message, task.id);
 }
 
-/** Envoie `text` au délégué, attend la fin de son tour et rend son contrat. */
+/**
+ * Envoie `text` au délégué, attend la fin de son tour et rend son contrat. Une précision de la coordinatrice reçue
+ * pendant le tour le prolonge : glissée dans la réponse, ou partie à sa suite, c’est la fin de ce dernier tour qui
+ * fait le rapport.
+ */
 async function runTurn(task: ClaimedTask, conversation: string, text: string) {
   const done = waitForTurn(conversation);
-  await useAgents.getState().send(conversation, { text, attachments: [], contexts: [] });
-  const { contract, message } = contractOf(await done);
-  await reportTask(task, contract, message);
+  listening.set(task.id, conversation);
+  try {
+    await useAgents.getState().send(conversation, { text, attachments: [], contexts: [] });
+    let turn = await done;
+    for (;;) {
+      const last = useAgents.getState().loaded[conversation]?.turns.at(-1);
+      if (last?.status !== "running" || last.id === turn.id) break;
+      turn = await waitForTurn(conversation);
+    }
+    listening.delete(task.id);
+    // Une précision restée dans la file (tour arrêté ou en erreur) n’a plus de tour à suivre.
+    const store = useAgents.getState();
+    for (const item of store.runtime[conversation]?.queued ?? [])
+      if (item.id.startsWith(extraId(task.id))) store.unqueue(conversation, item.id);
+    const { contract, message } = contractOf(turn);
+    await reportTask(task, contract, message);
+  } finally {
+    listening.delete(task.id);
+  }
 }
 
 async function startTask(task: ClaimedTask) {
@@ -154,7 +196,53 @@ async function resumeTask(task: ClaimedTask) {
     await reportTask(task, contract, finished);
     return;
   }
-  await runTurn(task, id, `${RESUME_MESSAGE}\n\n${RETURN_CONTRACT}`);
+  const extra = task.message ? `\n\n${task.message}` : "";
+  await runTurn(task, id, `${RESUME_MESSAGE}${extra}\n\n${RETURN_CONTRACT}`);
+}
+
+/** Relance le délégué dans sa conversation, qui garde son contexte, avec la consigne de la coordinatrice. */
+async function continueTask(task: ClaimedTask) {
+  const id = task.conversation ?? "";
+  await useAgents.getState().ensureLoaded(id);
+  const conversation = useAgents.getState().loaded[id];
+  if (!conversation || conversation.archived) {
+    await reportTask(
+      task,
+      {
+        status: "failed",
+        summary: "La conversation du délégué a été archivée ou supprimée : relance-la avec `fresh`.",
+      },
+      "",
+    );
+    return;
+  }
+  const text = task.message ? `Précision de la coordinatrice : ${task.message}` : RELAUNCH_MESSAGE;
+  await runTurn(task, id, `${text}\n\n${RETURN_CONTRACT}`);
+}
+
+/**
+ * Exécute une action de la coordinatrice sur la conversation de son délégué. Une précision arrivée quand son tour
+ * vient de finir revient à Rust, qui relance le délégué avec elle.
+ */
+async function runAction(task: ClaimedTask) {
+  const conversation = task.conversation ?? "";
+  const store = useAgents.getState();
+  if (task.launch === "message") {
+    if (listening.get(task.id) !== conversation) {
+      await invoke("agents.tasks.defer", { id: task.id, text: task.message ?? "" });
+      return;
+    }
+    await store.send(
+      conversation,
+      { text: `${task.message ?? ""}\n\n${RETURN_CONTRACT}`, attachments: [], contexts: [] },
+      { now: true, keepReply: true, messageId: `${extraId(task.id)}${Date.now()}` },
+    );
+    return;
+  }
+  await store.ensureLoaded(conversation);
+  if (!useAgents.getState().loaded[conversation]) return;
+  if (task.launch === "stop") await store.cancel(conversation);
+  else if (!useAgents.getState().loaded[conversation]?.archived) await store.archive(conversation);
 }
 
 async function runTask(task: ClaimedTask) {
@@ -163,11 +251,14 @@ async function runTask(task: ClaimedTask) {
   try {
     if (task.launch === "report") await notifyCoordinator(task.coordinator, task.message ?? "", task.id);
     else if (task.launch === "resume") await resumeTask(task);
+    else if (task.launch === "continue") await continueTask(task);
     else await startTask(task);
   } finally {
     running.delete(task.id);
   }
 }
+
+const ACTIONS = new Set(["message", "stop", "archive"]);
 
 /**
  * Lance les tâches prêtes et reprend les tâches interrompues de cette interface. Les sessions du chargement précédent
@@ -175,8 +266,18 @@ async function runTask(task: ClaimedTask) {
  */
 export async function runReadyTasks() {
   await releaseOrphans();
-  const ready = await invoke<ClaimedTask[] | null>("agents.tasks.claim", { owner: INTERFACE_ID, busy: [...running] });
-  await Promise.all((ready ?? []).map((task) => runTask(task).catch(() => undefined)));
+  const claimed = await invoke<ClaimedTask[] | null>("agents.tasks.claim", {
+    owner: INTERFACE_ID,
+    busy: [...running],
+    listening: [...listening.keys()],
+  });
+  // Les actions de la coordinatrice d’abord, dans l’ordre (arrêt, puis archivage) ; puis les tâches.
+  const tasks: ClaimedTask[] = [];
+  for (const task of claimed ?? []) {
+    if (ACTIONS.has(task.launch ?? "")) await runAction(task).catch(() => undefined);
+    else tasks.push(task);
+  }
+  await Promise.all(tasks.map((task) => runTask(task).catch(() => undefined)));
 }
 
 let bound = false;

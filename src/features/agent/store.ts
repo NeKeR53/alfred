@@ -94,6 +94,11 @@ export interface SendOptions {
    * après l’avoir interrompue) ; sans `now`, le message rejoint la file.
    */
   now?: boolean;
+  /**
+   * Avec `now` : la réponse en cours n’est jamais interrompue. Si l’agent ne sait pas y glisser le message, il attend
+   * dans la file et part à la fin de la réponse (précision d’une coordinatrice à son délégué).
+   */
+  keepReply?: boolean;
   /** Identifiant du message : un message déjà dans le fil ou dans la file sous cet identifiant est ignoré. */
   messageId?: string;
 }
@@ -168,7 +173,7 @@ interface AgentState {
   /** Avance (-1) ou recule (+1) un message d’un rang dans la file (flèches sur la poignée). */
   moveQueued: (id: string, queuedId: string, offset: -1 | 1) => void;
   /** Envoie tout de suite un message de la file, comme « Envoyer maintenant » dans OneApp. */
-  sendQueuedNow: (id: string, queuedId: string) => Promise<void>;
+  sendQueuedNow: (id: string, queuedId: string, options?: Pick<SendOptions, "keepReply">) => Promise<void>;
   /** Retire un message de la file et le rend, pour le remettre dans la saisie. */
   unqueue: (id: string, queuedId: string) => UserMessage | undefined;
   cancel: (id: string) => Promise<void>;
@@ -838,7 +843,7 @@ export const useAgents = create<AgentState>((set, get) => {
    * « Envoyer maintenant », comme dans OneApp : glissé dans la réponse en cours quand l’agent sait le faire (Codex),
    * sinon la réponse est interrompue et le message part en tête de file, aussitôt après.
    */
-  const deliverNow = async (id: string, queuedId: string) => {
+  const deliverNow = async (id: string, queuedId: string, keepReply = false) => {
     const queued = get().runtime[id]?.queued.find((item) => item.id === queuedId);
     if (!queued) return;
     const running = current(id)?.turns.at(-1)?.status === "running";
@@ -893,6 +898,8 @@ export const useAgents = create<AgentState>((set, get) => {
       }
     }
     if (!get().runtime[id]?.queued.some((item) => item.id === queuedId)) return;
+    // La réponse en cours est gardée : le message attend son tour dans la file.
+    if (keepReply) return;
     // Comme OneApp : la réponse est arrêtée, puis ce message part aussitôt, dans une session neuve.
     if (current(id)?.turns.at(-1)?.status === "running") silentStops.add(id);
     await get().cancel(id);
@@ -1353,7 +1360,7 @@ export const useAgents = create<AgentState>((set, get) => {
       const queuedId = messageId ?? newId();
       setQueue(id, (queued) => [...queued, { id: queuedId, message: prepared }]);
       if (busy) {
-        if (options?.now) await get().sendQueuedNow(id, queuedId);
+        if (options?.now) await get().sendQueuedNow(id, queuedId, { keepReply: options.keepReply });
         return;
       }
       // Comme OneApp, une file restée en attente (après une erreur ou un arrêt) part dans l’ordre : le message le plus
@@ -1435,10 +1442,10 @@ export const useAgents = create<AgentState>((set, get) => {
       setQueue(id, () => queue);
     },
 
-    sendQueuedNow(id, queuedId) {
+    sendQueuedNow(id, queuedId, options) {
       // Un envoi immédiat à la fois par conversation : deux envois rapides partent dans l’ordre.
       const previous = deliveries.get(id) ?? Promise.resolve();
-      const delivery = previous.catch(() => undefined).then(() => deliverNow(id, queuedId));
+      const delivery = previous.catch(() => undefined).then(() => deliverNow(id, queuedId, options?.keepReply));
       deliveries.set(id, delivery);
       void delivery.finally(() => {
         if (deliveries.get(id) === delivery) deliveries.delete(id);
