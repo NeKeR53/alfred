@@ -444,10 +444,12 @@ async fn run_command(
         None => (source(&positional, stdin, cwd)?, input.unwrap_or_else(|| json!({}))),
     };
     let examples = named.contains_key("examples");
+    let started = std::time::Instant::now();
     let (outcome, calls) = execute(state, conversation, &code, input.clone(), examples).await;
+    let ms = started.elapsed().as_millis() as u64;
     // Un code qui ne compile pas n’a pas tourné : il n’est pas gardé.
     let compiled = !matches!(&outcome, Err(error) if error.message == "Le code ne se compile pas.");
-    let id = if compiled { Some(crate::kept_scripts::record(state, conversation, &code, &input, &outcome, &calls)?) } else { None };
+    let id = if compiled { Some(crate::kept_scripts::record(state, conversation, &code, &input, &outcome, &calls, ms)?) } else { None };
     let mut shown = outcome?;
     shown["run"] = json!(id);
     if let (Some(target), Some(id)) = (text("save"), &id) {

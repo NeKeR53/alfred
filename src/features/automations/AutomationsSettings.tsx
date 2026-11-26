@@ -148,25 +148,34 @@ export function parseInput(text: string): { value?: Record<string, unknown>; err
   }
 }
 
-/** Formulaire de création ou de modification, en modale. */
-function AutomationForm({
+/**
+ * Formulaire de création ou de modification, en modale. `preset` préremplit une création (nom et étapes) : depuis
+ * un script gardé (Réglages → Scripts de l’agent, « Créer une automatisation »).
+ */
+export function AutomationForm({
   initial,
+  preset,
   functions,
   maxMinutes,
   onClose,
   onScriptCreated,
 }: {
   initial?: AutomationItem;
+  preset?: { name: string; steps: AutomationStep[] };
   functions: AutomationFunction[];
   maxMinutes: number;
   onClose: () => void;
   onScriptCreated: () => void;
 }) {
   const action = initial?.action;
-  const [name, setName] = useState(initial?.name ?? "");
+  const [name, setName] = useState(initial?.name ?? preset?.name ?? "");
   const [actionKind, setActionKind] = useState<AutomationAction["kind"]>(action?.kind ?? "steps");
   const [steps, setSteps] = useState<StepDraft[]>(
-    action?.kind === "steps" && action.steps.length > 0 ? action.steps.map(stepDraft) : [newStep()],
+    action?.kind === "steps" && action.steps.length > 0
+      ? action.steps.map(stepDraft)
+      : !initial && preset && preset.steps.length > 0
+        ? preset.steps.map(stepDraft)
+        : [newStep()],
   );
   const [script, setScript] = useState<string | null>(action?.kind === "script" ? action.function : null);
   const [scriptFile, setScriptFile] = useState<string | null>(initial?.scriptFile ?? null);

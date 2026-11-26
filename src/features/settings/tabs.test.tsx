@@ -23,7 +23,7 @@ beforeEach(() => {
   useShell.setState({ view: { kind: "agent" }, activeTab: {} });
 });
 
-it("range Général en tête de l’espace de travail, puis Modules, Marketplace, Apparence, Ordre du menu, Automatisations, États et Journal", () => {
+it("range Général en tête de l’espace de travail, puis Modules, Marketplace, Apparence, Ordre du menu, Automatisations, Scripts de l’agent, États et Journal", () => {
   expect(settingsTabs.map((tab) => tab.label)).toEqual([
     "Général",
     "Modules",
@@ -31,6 +31,7 @@ it("range Général en tête de l’espace de travail, puis Modules, Marketplace
     "Apparence",
     "Ordre du menu",
     "Automatisations",
+    "Scripts de l’agent",
     "États",
     "Journal",
     "Agent",

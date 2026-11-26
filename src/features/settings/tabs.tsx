@@ -8,6 +8,7 @@ import {
   Mic,
   Palette,
   ScrollText,
+  SquareCode,
   Store,
   Workflow,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import { useJournalSections } from "../journal/JournalSettings";
 import { useMarketplaceSections } from "../modules/MarketplaceSettings";
 import { useModulesSections } from "../modules/ModulesSettings";
 import { useNavigationSections } from "../navigation/NavigationSettings";
+import { useScriptsSections } from "../scripts/ScriptsSettings";
 import { useAppearanceSections, useSpaceSections } from "../space/SpaceSettings";
 import { useStatesSections } from "../states/StatesSettings";
 import { useVaultSections } from "../vault/VaultSettings";
@@ -78,6 +80,14 @@ export const settingsTabs: BuiltInTab[] = [
     icon: icon(Workflow),
     useSections: useAutomationsSections,
     keywords: ["cron", "planning", "webhook", "déclencheur", "script"],
+  },
+  {
+    id: "scripts",
+    label: "Scripts de l’agent",
+    group: "espace",
+    icon: icon(SquareCode),
+    useSections: useScriptsSections,
+    keywords: ["code mode", "alfred run", "exécution", "script gardé", "fonction"],
   },
   { id: "states", label: "États", group: "espace", icon: icon(Activity), useSections: useStatesSections },
   { id: "journal", label: "Journal", group: "espace", icon: icon(ScrollText), useSections: useJournalSections },

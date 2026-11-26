@@ -32,6 +32,8 @@ pub struct StoredRun {
     pub ok: bool,
     pub output: Value,
     pub calls: Vec<String>,
+    /// Durée de l’exécution, en millisecondes (absente des exécutions gardées avant qu’elle ne soit notée).
+    pub ms: Option<u64>,
 }
 
 fn lock_db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>> {
@@ -45,6 +47,10 @@ fn lock_db(state: &AppState) -> AppResult<std::sync::MutexGuard<'_, Connection>>
             space TEXT NOT NULL, reference TEXT NOT NULL, conversation TEXT NOT NULL, created_at TEXT NOT NULL,
             accepted TEXT, PRIMARY KEY (space, reference));",
     )?;
+    let has_ms: i64 = db.query_row("SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name = 'ms'", [], |row| row.get(0))?;
+    if has_ms == 0 {
+        db.execute("ALTER TABLE agent_runs ADD COLUMN ms INTEGER", [])?;
+    }
     Ok(db)
 }
 
@@ -57,7 +63,7 @@ fn now() -> String {
 }
 
 /// Garde une exécution et retire celles de plus de sept jours. Rend son identifiant.
-pub fn record(state: &AppState, conversation: &str, code: &str, input: &Value, outcome: &AppResult<Value>, calls: &[String]) -> AppResult<String> {
+pub fn record(state: &AppState, conversation: &str, code: &str, input: &Value, outcome: &AppResult<Value>, calls: &[String], ms: u64) -> AppResult<String> {
     let space = state.space()?;
     let id = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
     let (ok, output) = match outcome {
@@ -68,7 +74,7 @@ pub fn record(state: &AppState, conversation: &str, code: &str, input: &Value, o
     let limit = (chrono::Utc::now() - chrono::Duration::days(KEEP_DAYS)).to_rfc3339();
     db.execute("DELETE FROM agent_runs WHERE at < ?1", params![limit])?;
     db.execute(
-        "INSERT INTO agent_runs (id, space, conversation, at, code, input, ok, output, calls) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO agent_runs (id, space, conversation, at, code, input, ok, output, calls, ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             id,
             space_key(&space),
@@ -78,7 +84,8 @@ pub fn record(state: &AppState, conversation: &str, code: &str, input: &Value, o
             input.to_string(),
             ok,
             output.to_string(),
-            serde_json::to_string(calls)?
+            serde_json::to_string(calls)?,
+            ms as i64
         ],
     )?;
     Ok(id)
@@ -95,10 +102,11 @@ fn from_row(row: &rusqlite::Row) -> rusqlite::Result<StoredRun> {
         ok: row.get(5)?,
         output: serde_json::from_str(&text(6)?).unwrap_or(Value::Null),
         calls: serde_json::from_str(&text(7)?).unwrap_or_default(),
+        ms: row.get::<_, Option<i64>>(8)?.map(|ms| ms.max(0) as u64),
     })
 }
 
-const COLUMNS: &str = "id, at, conversation, code, input, ok, output, calls";
+const COLUMNS: &str = "id, at, conversation, code, input, ok, output, calls, ms";
 
 /// Exécution gardée de l’espace ouvert.
 pub fn load(state: &AppState, id: &str) -> AppResult<StoredRun> {
@@ -240,10 +248,16 @@ fn personal_module(space: &Space) -> AppResult<ModuleManifest> {
 
 /// `alfred run --save module/nom` : la fonction est écrite, déclarée et mise « à valider ».
 pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, description: Option<String>, run: &StoredRun) -> AppResult<Value> {
+    keep(state, conversation, target, description, run, false).await
+}
+
+/// Écrit et déclare la fonction tirée de `run`. Gardée par l’agent, elle attend l’accord ; gardée par
+/// l’utilisateur (Réglages → Scripts de l’agent), elle est acceptée aussitôt : c’est lui qui la garde.
+async fn keep(state: &Arc<AppState>, conversation: &str, target: &str, description: Option<String>, run: &StoredRun, by_user: bool) -> AppResult<Value> {
     if !run.ok {
         return Err(AppError::new("Seule une exécution réussie se garde : corriger le code, le relancer, puis le garder."));
     }
-    if crate::agent_tools::scope_of(state, conversation).is_some() {
+    if !by_user && crate::agent_tools::scope_of(state, conversation).is_some() {
         return Err(AppError::new("Une conversation lancée par une page ne crée pas de fonction."));
     }
     let space = state.space()?;
@@ -331,6 +345,11 @@ pub async fn save(state: &Arc<AppState>, conversation: &str, target: &str, descr
             params![space_key(&space), reference, conversation, now()],
         )?;
     }
+    if by_user {
+        crate::git::commit_all(&space.root, &format!("Script gardé par l’utilisateur : {reference}"))?;
+        accept(state, &space, &reference)?;
+        return Ok(json!({ "function": reference, "file": file.to_string_lossy(), "status": "accepted", "requires": added }));
+    }
     crate::git::commit_all(&space.root, &format!("Script gardé par l’agent : {reference} (à valider)"))?;
     let title = format!("Fonction « {reference} » à valider");
     crate::functions::journal(state, "agent", &reference, true, None, &title, Some(&json!({ "run": run.id })));
@@ -398,26 +417,186 @@ pub fn annotate(state: &AppState, space: &Space, snapshot: &mut Snapshot) {
     }
 }
 
-/// `functions.acceptKept` : l’utilisateur accepte le script dans son état actuel (fiche du module).
-pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
-    if command != "functions.acceptKept" {
-        return None;
+/// L’utilisateur accepte le script dans son état actuel.
+fn accept(state: &AppState, space: &Space, reference: &str) -> AppResult<()> {
+    if status_of(state, space, reference).is_none() {
+        return Err(AppError::new("Cette fonction n’est pas un script gardé."));
     }
-    Some((|| {
-        let reference: String = arg(args, "reference")?;
-        let space = state.space()?;
-        if status_of(state, &space, &reference).is_none() {
-            return Err(AppError::new("Cette fonction n’est pas un script gardé."));
-        }
-        let print = fingerprint(&space, &reference);
-        lock_db(state)?.execute(
-            "UPDATE kept_functions SET accepted = ?1 WHERE space = ?2 AND reference = ?3",
-            params![print, space_key(&space), reference],
+    let print = fingerprint(space, reference);
+    lock_db(state)?.execute(
+        "UPDATE kept_functions SET accepted = ?1 WHERE space = ?2 AND reference = ?3",
+        params![print, space_key(space), reference],
+    )?;
+    crate::functions::journal(
+        state,
+        "function",
+        reference,
+        true,
+        None,
+        "Script gardé accepté par l’utilisateur",
+        None,
+    );
+    state.emit("space:changed", Value::Null);
+    Ok(())
+}
+
+/// Une exécution, pour la liste des Réglages : sans le code ni la sortie, lus à l’ouverture du détail.
+fn run_summary(run: &StoredRun) -> Value {
+    json!({ "id": run.id, "at": run.at, "conversation": run.conversation, "ok": run.ok, "calls": run.calls, "ms": run.ms })
+}
+
+/// Modules où l’utilisateur peut garder un script : ceux qu’il peut modifier, et le module personnel.
+fn writable_modules(space: &Space) -> AppResult<Vec<Value>> {
+    let mut modules: Vec<Value> = space
+        .module_ids()
+        .into_iter()
+        .filter_map(|id| space.module(&id).ok())
+        .filter(|manifest| !manifest.read_only() && manifest.id != PERSONAL_MODULE)
+        .map(|manifest| json!({ "id": manifest.id, "name": manifest.name }))
+        .collect();
+    modules.push(json!({ "id": PERSONAL_MODULE, "name": "Mes scripts" }));
+    Ok(modules)
+}
+
+/// Scripts gardés de l’espace ouvert : référence, état, description, entrée de leur premier test.
+fn kept_list(state: &AppState, space: &Space) -> AppResult<Vec<Value>> {
+    let rows: Vec<(String, String, String)> = {
+        let db = lock_db(state)?;
+        let mut statement = db.prepare(
+            "SELECT reference, conversation, created_at FROM kept_functions WHERE space = ?1 ORDER BY created_at DESC",
         )?;
-        crate::functions::journal(state, "function", &reference, true, None, "Script gardé accepté par l’utilisateur", None);
-        state.emit("space:changed", Value::Null);
-        Ok(json!({ "reference": reference, "status": "accepted" }))
-    })())
+        let rows = statement
+            .query_map(params![space_key(space)], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<_, _>>()?;
+        rows
+    };
+    let mut kept = Vec::new();
+    for (reference, conversation, created_at) in rows {
+        let Some((module, id)) = reference.split_once('/') else {
+            continue;
+        };
+        // Une fonction retirée hors d’Alfred (fichier ou déclaration effacés) n’est plus listée.
+        let Ok(manifest) = space.module(module) else {
+            continue;
+        };
+        let Some(declared) = manifest.functions.iter().find(|declared| declared.id == id) else {
+            continue;
+        };
+        kept.push(json!({
+            "reference": reference,
+            "module": module,
+            "moduleName": manifest.name,
+            "id": id,
+            "description": declared.description,
+            "effect": if declared.effect == Some(crate::space::Effect::Read) { "read" } else { "write" },
+            "status": status_of(state, space, &reference).unwrap_or("toValidate"),
+            "conversation": conversation,
+            "createdAt": created_at,
+            "input": declared.tests.first().map(|test| test.input.clone()).unwrap_or_else(|| json!({})),
+        }));
+    }
+    Ok(kept)
+}
+
+/// Commandes de la coquille : `functions.acceptKept` (fiche du module) et `scripts.*` (Réglages → Scripts de
+/// l’agent : exécutions gardées, détail, « Garder », scripts gardés, « Retirer »).
+pub async fn handle(
+    state: &Arc<AppState>,
+    command: &str,
+    args: &Value,
+) -> Option<AppResult<Value>> {
+    match command {
+        "functions.acceptKept" => Some((|| {
+            let reference: String = arg(args, "reference")?;
+            accept(state, &state.space()?, &reference)?;
+            Ok(json!({ "reference": reference, "status": "accepted" }))
+        })()),
+        "scripts.list" => Some((|| {
+            let space = state.space()?;
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(100)
+                .min(500) as i64;
+            let runs: Vec<StoredRun> = {
+                let db = lock_db(state)?;
+                let mut statement = db.prepare(&format!(
+                    "SELECT {COLUMNS} FROM agent_runs WHERE space = ?1 ORDER BY at DESC LIMIT ?2"
+                ))?;
+                let runs = statement
+                    .query_map(params![space_key(&space), limit], from_row)?
+                    .collect::<Result<_, _>>()?;
+                runs
+            };
+            Ok(json!({
+                "runs": runs.iter().map(run_summary).collect::<Vec<_>>(),
+                "kept": kept_list(state, &space)?,
+                "keepDays": KEEP_DAYS,
+            }))
+        })()),
+        "scripts.run" => Some((|| {
+            let id: String = arg(args, "id")?;
+            let run = load(state, &id)?;
+            let mut value = run_summary(&run);
+            value["code"] = json!(run.code);
+            value["input"] = run.input.clone();
+            value["output"] = run.output.clone();
+            value["home"] = json!(home_module(&run.calls));
+            value["modules"] = json!(writable_modules(&state.space()?)?);
+            Ok(value)
+        })()),
+        "scripts.keep" => {
+            let outcome = async {
+                let id: String = arg(args, "id")?;
+                let module: String = arg(args, "module")?;
+                let name: String = arg(args, "name")?;
+                let description: Option<String> = args
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let run = load(state, &id)?;
+                let conversation = run.conversation.clone();
+                keep(
+                    state,
+                    &conversation,
+                    &format!("{module}/{name}"),
+                    description,
+                    &run,
+                    true,
+                )
+                .await
+            }
+            .await;
+            Some(outcome)
+        }
+        "scripts.remove" => {
+            let outcome = async {
+                let reference: String = arg(args, "reference")?;
+                let space = state.space()?;
+                if status_of(state, &space, &reference).is_none() {
+                    return Err(AppError::new("Cette fonction n’est pas un script gardé."));
+                }
+                crate::functions::handle(
+                    state,
+                    "functions.remove",
+                    &json!({ "reference": reference }),
+                )
+                .await
+                .unwrap_or_else(|| Err(AppError::new("Suppression impossible.")))?;
+                lock_db(state)?.execute(
+                    "DELETE FROM kept_functions WHERE space = ?1 AND reference = ?2",
+                    params![space_key(&space), reference],
+                )?;
+                state.emit("space:changed", Value::Null);
+                Ok(Value::Null)
+            }
+            .await;
+            Some(outcome)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -441,7 +620,7 @@ mod tests {
         let code = "const a = await api.notes.lister({});\nconst b = await api.crm.lister({});\nreturn { total: a.length + b.length };";
         let calls = vec!["notes/lister".to_string(), "crm/lister".to_string()];
         let input = json!({ "jour": "lundi" });
-        let id = record(&state, "conv", code, &input, &Ok(json!({ "result": { "total": 3 } })), &calls).unwrap();
+        let id = record(&state, "conv", code, &input, &Ok(json!({ "result": { "total": 3 } })), &calls, 1200).unwrap();
         assert!(list(&state, 10).unwrap().as_str().unwrap().contains(&id));
         let run = load(&state, &id).unwrap();
         let saved = save(&state, "conv", "total", Some("Total des notes et contacts.".into()), &run).await.unwrap();
@@ -468,15 +647,125 @@ mod tests {
         notes.functions.push(FunctionDecl { id: "archiver".into(), effect: Some(crate::space::Effect::Write), ..Default::default() });
         space.write_module(&notes).unwrap();
         let writing = "await api.notes.archiver({ id: 1 });\nreturn 1;";
-        let id = record(&state, "conv", writing, &json!({}), &Ok(json!({ "result": 1 })), &["notes/archiver".to_string()]).unwrap();
+        let id = record(&state, "conv", writing, &json!({}), &Ok(json!({ "result": 1 })), &["notes/archiver".to_string()], 5).unwrap();
         let saved = save(&state, "conv", "notes/archiver-tout", None, &load(&state, &id).unwrap()).await.unwrap();
         assert_eq!(saved["status"], "toValidate");
         let declared = space.module("notes").unwrap().functions.into_iter().find(|f| f.id == "archiver-tout").unwrap();
         assert_eq!(declared.effect, Some(crate::space::Effect::Write));
         let file = std::fs::read_to_string(space.function_file("notes", "archiver-tout")).unwrap();
         assert!(file.contains("Il écrit") && file.contains("functions.call(\"notes/archiver\""), "{file}");
-        let failed = record(&state, "conv", code, &input, &Err(AppError::new("boum")), &[]).unwrap();
+        let failed = record(&state, "conv", code, &input, &Err(AppError::new("boum")), &[], 3).unwrap();
         assert!(save(&state, "conv", "x", None, &load(&state, &failed).unwrap()).await.is_err());
+    }
+
+    /// Réglages → Scripts de l’agent : la liste (durée comprise), le détail, « Garder » (acceptée aussitôt, puisque
+    /// l’utilisateur la garde lui-même), puis « Retirer ».
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_user_keeps_and_removes_a_script() {
+        use crate::space::{FunctionDecl, ModuleManifest};
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        let mut manifest = ModuleManifest {
+            id: "notes".into(),
+            name: "Notes".into(),
+            ..Default::default()
+        };
+        manifest.functions.push(FunctionDecl {
+            id: "lister".into(),
+            effect: Some(crate::space::Effect::Read),
+            ..Default::default()
+        });
+        space.write_module(&manifest).unwrap();
+        state.set_space(Some(space.clone()));
+        let code = "const a = await api.notes.lister({});\nreturn { total: a.length };";
+        let input = json!({ "jour": "lundi" });
+        let id = record(
+            &state,
+            "conv",
+            code,
+            &input,
+            &Ok(json!({ "result": { "total": 2 } })),
+            &["notes/lister".into()],
+            840,
+        )
+        .unwrap();
+        let failed = record(
+            &state,
+            "conv",
+            code,
+            &input,
+            &Err(AppError::new("boum")),
+            &[],
+            12,
+        )
+        .unwrap();
+        let call = |command: &'static str, args: Value| {
+            let state = state.clone();
+            async move { handle(&state, command, &args).await.unwrap() }
+        };
+        let listed = call("scripts.list", json!({})).await.unwrap();
+        assert_eq!(listed["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(listed["runs"][1]["ms"], 840);
+        assert_eq!(listed["runs"][1]["calls"], json!(["notes/lister"]));
+        assert!(
+            listed["runs"][1].get("code").is_none(),
+            "le code se lit au détail"
+        );
+        let detail = call("scripts.run", json!({ "id": id })).await.unwrap();
+        assert_eq!(detail["code"], code);
+        assert_eq!(detail["output"]["result"]["total"], 2);
+        assert_eq!(detail["home"], "notes");
+        assert!(detail["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|module| module["id"] == "notes"));
+        assert!(call(
+            "scripts.keep",
+            json!({ "id": failed, "module": "notes", "name": "x" })
+        )
+        .await
+        .is_err());
+        let kept = call(
+            "scripts.keep",
+            json!({ "id": id, "module": "notes", "name": "total", "description": "Total." }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            kept["status"], "accepted",
+            "gardée par l’utilisateur : acceptée aussitôt"
+        );
+        assert!(ensure_runnable(&state, "notes/total", "page").is_ok());
+        let listed = call("scripts.list", json!({})).await.unwrap();
+        let item = &listed["kept"][0];
+        assert_eq!(
+            (item["reference"].as_str(), item["status"].as_str()),
+            (Some("notes/total"), Some("accepted"))
+        );
+        assert_eq!(item["input"], input);
+        assert_eq!(item["description"], "Total.");
+        assert!(
+            call("scripts.remove", json!({ "reference": "notes/lister" }))
+                .await
+                .is_err(),
+            "pas un script gardé"
+        );
+        call("scripts.remove", json!({ "reference": "notes/total" }))
+            .await
+            .unwrap();
+        assert!(space
+            .module("notes")
+            .unwrap()
+            .functions
+            .iter()
+            .all(|function| function.id != "total"));
+        assert!(!space.function_file("notes", "total").exists());
+        assert_eq!(
+            call("scripts.list", json!({})).await.unwrap()["kept"],
+            json!([])
+        );
     }
 
     #[test]
