@@ -132,7 +132,7 @@ Toute conversation ouverte par l’utilisateur peut répartir son travail entre 
 
 Une coordinatrice a quatre commandes de plus :
 
-- `delegate` : de 1 à 50 tâches, chacune avec `key` (unique), `goal` (complet : le délégué ne voit pas ta conversation), `path` (sous-dossier de ton dossier de travail) ou `folder` (`{ id, path? }`, dossier accordé au module, pour une coordinatrice de page), `mode` (`"espace-de-travail"` par défaut, ou `"complet"` si ta conversation est en « Autonomie totale »), `dependsOn` (clés du lot, sans boucle), `provider` et `model` facultatifs. Tout le lot est vérifié avant le moindre lancement ; donne un `requestId` : répéter la même demande rend la même réponse sans rien relancer.
+- `delegate` : de 1 à 50 tâches, chacune avec `key` (unique), `goal` (complet : le délégué ne voit pas ta conversation), `path` (sous-dossier de ton dossier de travail) ou `folder` (`{ id, path? }`, dossier accordé au module, pour une coordinatrice de page), `mode` (`"espace-de-travail"` par défaut, ou `"complet"` si ta conversation est en « Autonomie totale »), `dependsOn` (clés du lot, sans boucle), `provider`, `model` et `effort` facultatifs (par défaut : le harnais, le modèle et l’effort de ta conversation). Tout le lot est vérifié avant le moindre lancement ; donne un `requestId` : répéter la même demande rend la même réponse sans rien relancer.
 - `task_status` : statut, résumé, livrables et questions de chaque tâche.
 - `read_report` (`id`, `page`) : rapport complet d’une tâche, par pages de 4 000 caractères.
 - `relaunch_task` (`id`, `instruction` facultative) : relance une tâche terminée sans succès.

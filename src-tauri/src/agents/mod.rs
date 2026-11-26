@@ -35,12 +35,18 @@ pub enum Provider {
 }
 
 impl Provider {
-    fn program(self) -> &'static str {
+    /// Identifiant du harnais, celui que gardent les conversations et les tâches déléguées.
+    pub fn id(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Opencode => "opencode",
         }
+    }
+
+    /// Programme du CLI : il porte le nom du harnais.
+    fn program(self) -> &'static str {
+        self.id()
     }
 }
 

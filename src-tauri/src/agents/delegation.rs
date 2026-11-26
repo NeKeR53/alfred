@@ -3,8 +3,11 @@
 //! - Une conversation devient coordinatrice parce que l’utilisateur la marque dans la page Agent, ou parce qu’une
 //!   page la lance avec `coordinator: true`. Elle reçoit les outils `delegate`, `task_status`, `read_report` et
 //!   `relaunch_task` ; ses délégués ne les ont jamais.
-//! - `delegate` reçoit de 1 à 50 tâches (objectif, dossier, mode, dépendances acycliques, harnais et modèle). Le lot
-//!   est validé en entier avant tout lancement ; un `requestId` déjà vu rend la même réponse.
+//! - `delegate` reçoit de 1 à 50 tâches (objectif, dossier, mode, dépendances acycliques, harnais, modèle et effort).
+//!   Le lot est validé en entier avant tout lancement ; un `requestId` déjà vu rend la même réponse.
+//! - Un délégué reprend le harnais, le modèle et l’effort de la coordinatrice, sauf ce que sa tâche précise
+//!   (`resolved`). Ce sont ceux de la session de la coordinatrice ; Alfred les garde à chacun de ses appels, pour les
+//!   tâches qui partent après sa session.
 //! - Chaque délégué finit par un contrat de retour (`status`, `summary`, `artifacts`, `questions`) ; son rapport
 //!   complet est gardé et lu par pages. Une tâche ne part qu’une fois ses dépendances réussies ; un échec annule
 //!   celles qui en dépendent.
@@ -18,6 +21,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use super::session::Harness;
 use crate::app_db::{self, AgentScope};
 use crate::error::{arg, opt_arg, AppError, AppResult};
 use crate::space::Space;
@@ -28,18 +32,34 @@ const SUMMARY_CHARS: usize = 600;
 const REPORT_PAGE: usize = 4000;
 const STATUSES: &[&str] = &["success", "partial", "failed", "needs_information", "cancelled"];
 
+/// Colonnes ajoutées avec l’héritage du harnais : une table d’avant les reçoit.
+const ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("_alfred_agent_coordinators", "provider"),
+    ("_alfred_agent_coordinators", "model"),
+    ("_alfred_agent_coordinators", "effort"),
+    ("_alfred_agent_tasks", "effort"),
+];
+
 fn open(space: &Space) -> AppResult<Connection> {
     let db = crate::space_db::open(space)?;
+    // `provider`, `model`, `effort` : le harnais de la coordinatrice (`remember_harness`), ce que la tâche précise.
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS _alfred_agent_coordinators (
-           conversation TEXT PRIMARY KEY, cwd TEXT NOT NULL, max_mode TEXT NOT NULL, since INTEGER NOT NULL);
+           conversation TEXT PRIMARY KEY, cwd TEXT NOT NULL, max_mode TEXT NOT NULL, since INTEGER NOT NULL,
+           provider TEXT, model TEXT, effort TEXT);
          CREATE TABLE IF NOT EXISTS _alfred_agent_tasks (
            id TEXT PRIMARY KEY, coordinator TEXT NOT NULL, request_id TEXT, key TEXT NOT NULL, goal TEXT NOT NULL,
            cwd TEXT NOT NULL, mode TEXT NOT NULL, depends TEXT NOT NULL, provider TEXT, model TEXT,
            status TEXT NOT NULL, conversation TEXT, summary TEXT, report TEXT, artifacts TEXT, questions TEXT,
-           position INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+           position INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, effort TEXT);
          CREATE INDEX IF NOT EXISTS _alfred_agent_tasks_coordinator ON _alfred_agent_tasks (coordinator, position);",
     )?;
+    for (table, column) in ADDED_COLUMNS {
+        let query = format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1");
+        if !db.prepare(&query)?.exists([column])? {
+            db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT;"))?;
+        }
+    }
     Ok(db)
 }
 
@@ -134,6 +154,48 @@ pub fn is_coordinator(state: &AppState, conversation: &str) -> bool {
     })
 }
 
+/// Garde le harnais de la coordinatrice : ses tâches le reprennent même quand sa session est fermée.
+fn remember_harness(db: &Connection, coordinator: &str, harness: &Harness) -> AppResult<()> {
+    db.execute(
+        "UPDATE _alfred_agent_coordinators SET provider = ?2, model = ?3, effort = ?4 WHERE conversation = ?1",
+        params![coordinator, harness.provider, harness.model, harness.effort],
+    )?;
+    Ok(())
+}
+
+/// Harnais de la coordinatrice : celui de sa session ouverte (gardé au passage), sinon le dernier gardé ; `None` tant
+/// qu’aucun n’est connu.
+fn coordinator_harness(state: &AppState, db: &Connection, coordinator: &str) -> Option<Harness> {
+    if let Some(live) = super::session::harness_of(state, coordinator) {
+        let _ = remember_harness(db, coordinator, &live);
+        return Some(live);
+    }
+    db.query_row(
+        "SELECT provider, model, effort FROM _alfred_agent_coordinators WHERE conversation = ?1 AND provider IS NOT NULL",
+        [coordinator],
+        |row| Ok(Harness { provider: row.get(0)?, model: row.get(1)?, effort: row.get(2)? }),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Harnais d’un délégué : ce que sa tâche précise l’emporte, le reste vient de la coordinatrice. Le modèle ne se
+/// reprend que sur le même harnais, l’effort que pour le même modèle : un effort dépend du modèle (OpenCode refuse
+/// celui que le modèle n’offre pas). Le booléen dit si le délégué garde le modèle de la coordinatrice : la coquille
+/// prend alors modèle et effort tels quels, même absents (choix par défaut du CLI), sans les choix des réglages.
+fn resolved(task: &Harness, coordinator: Option<&Harness>) -> (Harness, bool) {
+    let Some(coordinator) = coordinator.filter(|coordinator| coordinator.provider.is_some()) else {
+        return (task.clone(), false);
+    };
+    let provider = task.provider.clone().or_else(|| coordinator.provider.clone());
+    let same_provider = provider == coordinator.provider;
+    let model = if task.model.is_some() || !same_provider { task.model.clone() } else { coordinator.model.clone() };
+    let same_model = same_provider && model == coordinator.model;
+    let effort = if task.effort.is_some() || !same_model { task.effort.clone() } else { coordinator.effort.clone() };
+    (Harness { provider, model, effort }, same_model)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskInput {
@@ -149,10 +211,13 @@ struct TaskInput {
     mode: Option<String>,
     #[serde(default)]
     depends_on: Vec<String>,
+    /// Harnais, modèle et effort ; absents, ceux de la coordinatrice (`resolved`).
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 /// Ordre topologique des clés ; une dépendance inconnue ou un cycle refuse tout le lot.
@@ -200,11 +265,12 @@ fn task_row(row: &rusqlite::Row) -> rusqlite::Result<Value> {
         "summary": row.get::<_, Option<String>>(11)?,
         "artifacts": parse(row.get(12)?).unwrap_or(json!([])),
         "questions": parse(row.get(13)?).unwrap_or(json!([])),
+        "effort": row.get::<_, Option<String>>(14)?,
     }))
 }
 
-const TASK_COLUMNS: &str =
-    "id, coordinator, key, goal, cwd, mode, depends, provider, model, status, conversation, summary, artifacts, questions";
+const TASK_COLUMNS: &str = "id, coordinator, key, goal, cwd, mode, depends, provider, model, status, conversation, \
+     summary, artifacts, questions, effort";
 
 fn tasks_of(db: &Connection, coordinator: &str) -> AppResult<Vec<Value>> {
     let mut statement = db.prepare(&format!(
@@ -281,6 +347,9 @@ pub fn delegate(state: &AppState, coordinator: &str, args: &Value) -> AppResult<
         if let Some(model) = &task.model {
             super::simple_value("modèle", model)?;
         }
+        if let Some(effort) = &task.effort {
+            super::simple_value("effort", effort)?;
+        }
     }
     let order = topological(&tasks)?;
     let scope = state.app_db.lock().ok().and_then(|db| app_db::agent_scope(&db, coordinator).ok().flatten());
@@ -302,8 +371,8 @@ pub fn delegate(state: &AppState, coordinator: &str, args: &Value) -> AppResult<
         let depends: Vec<&String> = task.depends_on.iter().map(|key| &ids[key]).collect();
         db.execute(
             "INSERT INTO _alfred_agent_tasks (id, coordinator, request_id, key, goal, cwd, mode, depends, provider, model,
-               status, position, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+               status, position, created_at, updated_at, effort)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14)",
             params![
                 id,
                 coordinator,
@@ -318,6 +387,7 @@ pub fn delegate(state: &AppState, coordinator: &str, args: &Value) -> AppResult<
                 status,
                 start + 1 + offset as i64,
                 now,
+                task.effort,
             ],
         )?;
         ids.insert(task.key.clone(), id);
@@ -329,27 +399,35 @@ pub fn delegate(state: &AppState, coordinator: &str, args: &Value) -> AppResult<
     }))
 }
 
-/// Tâches prêtes : elles passent « en cours » et la coquille lance leur conversation.
+/// Tâches prêtes : elles passent « en cours » et la coquille lance leur conversation, avec le harnais, le modèle et
+/// l’effort résolus au départ (`resolved`) : une tâche relancée reprend ceux que la coordinatrice a alors.
 pub fn claim(state: &AppState) -> AppResult<Vec<Value>> {
     let db = open(&state.space()?)?;
     let mut statement = db.prepare(&format!(
         "SELECT {TASK_COLUMNS} FROM _alfred_agent_tasks WHERE status = 'ready' ORDER BY coordinator, position"
     ))?;
     let ready: Vec<Value> = statement.query_map([], task_row)?.collect::<Result<_, _>>()?;
-    for task in &ready {
+    let mut harnesses: HashMap<String, Option<Harness>> = HashMap::new();
+    let mut claimed = Vec::new();
+    for mut task in ready {
+        let coordinator = task["coordinator"].as_str().unwrap_or_default().to_owned();
+        let known = harnesses.entry(coordinator.clone()).or_insert_with(|| coordinator_harness(state, &db, &coordinator));
+        let given = |key: &str| task[key].as_str().map(str::to_owned);
+        let asked = Harness { provider: given("provider"), model: given("model"), effort: given("effort") };
+        let (harness, inherited) = resolved(&asked, known.as_ref());
         db.execute(
             "UPDATE _alfred_agent_tasks SET status = 'running', updated_at = ?2 WHERE id = ?1",
             params![task["id"].as_str(), now_ms()],
         )?;
+        task["provider"] = json!(harness.provider);
+        task["model"] = json!(harness.model);
+        task["effort"] = json!(harness.effort);
+        task["inherited"] = json!(inherited);
+        task["status"] = json!("running");
+        task["autonomy"] = json!(autonomy_of(task["mode"].as_str().unwrap_or_default()));
+        claimed.push(task);
     }
-    Ok(ready
-        .into_iter()
-        .map(|mut task| {
-            task["status"] = json!("running");
-            task["autonomy"] = json!(autonomy_of(task["mode"].as_str().unwrap_or_default()));
-            task
-        })
-        .collect())
+    Ok(claimed)
 }
 
 /// La conversation du délégué est créée : elle hérite du périmètre de la coordinatrice (module, fonctions, entrées
@@ -485,7 +563,8 @@ pub fn read_report(state: &AppState, coordinator: &str, id: &str, page: usize) -
     }))
 }
 
-/// Relance une tâche terminée sans succès (ou sans réponse), avec une consigne de plus.
+/// Relance une tâche terminée sans succès (ou sans réponse), avec une consigne de plus. Elle repart avec le harnais
+/// que la coordinatrice a au moment de la relance, sauf ce que la tâche précise (`claim`).
 pub fn relaunch(state: &AppState, coordinator: &str, id: &str, extra: Option<&str>) -> AppResult<Value> {
     let db = open(&state.space()?)?;
     let changed = db.execute(
@@ -542,7 +621,7 @@ pub fn tools() -> Vec<Value> {
     vec![
         tool(
             "delegate",
-            "Confie de 1 à 50 tâches à d’autres agents. Chaque tâche : `key` unique, `goal` (objectif complet : le délégué ne voit pas cette conversation), `path` (sous-dossier de ton dossier) ou `folder` ({ id, path } d’un dossier accordé au module), `mode` (« espace-de-travail » par défaut, ou « complet »), `dependsOn` (clés du lot), `provider` et `model` facultatifs. Le lot est validé en entier ; une tâche part quand ses dépendances ont réussi. `requestId` rend la même réponse si tu répètes la demande. Termine ton tour ensuite : tu seras relancé avec chaque rapport. À utiliser pour plusieurs parties indépendantes (plusieurs modules) ; pas pour une seule tâche ni un petit travail.",
+            "Confie de 1 à 50 tâches à d’autres agents. Chaque tâche : `key` unique, `goal` (objectif complet : le délégué ne voit pas cette conversation), `path` (sous-dossier de ton dossier) ou `folder` ({ id, path } d’un dossier accordé au module), `mode` (« espace-de-travail » par défaut, ou « complet »), `dependsOn` (clés du lot), `provider`, `model` et `effort` facultatifs (par défaut : ceux de ta conversation). Le lot est validé en entier ; une tâche part quand ses dépendances ont réussi. `requestId` rend la même réponse si tu répètes la demande. Termine ton tour ensuite : tu seras relancé avec chaque rapport. À utiliser pour plusieurs parties indépendantes (plusieurs modules) ; pas pour une seule tâche ni un petit travail.",
             json!({
                 "requestId": { "type": "string" },
                 "tasks": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object",
@@ -550,7 +629,8 @@ pub fn tools() -> Vec<Value> {
                         "key": { "type": "string" }, "goal": { "type": "string" }, "path": { "type": "string" },
                         "folder": { "type": "object" }, "mode": { "enum": ["espace-de-travail", "complet"] },
                         "dependsOn": { "type": "array", "items": { "type": "string" } },
-                        "provider": { "enum": ["claude", "codex", "opencode"] }, "model": { "type": "string" }
+                        "provider": { "enum": ["claude", "codex", "opencode"] }, "model": { "type": "string" },
+                        "effort": { "type": "string" }
                     }, "required": ["key", "goal"] } },
             }),
             &["tasks"],
@@ -582,6 +662,12 @@ pub fn call(state: &AppState, conversation: &str, name: &str, args: &Value) -> O
         }
     } else if !is_coordinator(state, conversation) {
         return Some(Err(AppError::new("Cette conversation n’a encore rien délégué.")));
+    }
+    // La coordinatrice est en plein tour : Alfred garde son harnais pour les tâches qui partiront après sa session.
+    if let Some(live) = super::session::harness_of(state, conversation) {
+        if let Ok(db) = state.space().and_then(|space| open(&space)) {
+            let _ = remember_harness(&db, conversation, &live);
+        }
     }
     Some(match name {
         "delegate" => delegate(state, conversation, args),
@@ -643,6 +729,110 @@ mod tests {
 
     fn task(key: &str, path: &str, depends: &[&str]) -> Value {
         json!({ "key": key, "goal": format!("Faire {key}"), "path": path, "dependsOn": depends })
+    }
+
+    fn harness(provider: Option<&str>, model: Option<&str>, effort: Option<&str>) -> Harness {
+        let owned = |value: Option<&str>| value.map(str::to_owned);
+        Harness { provider: owned(provider), model: owned(model), effort: owned(effort) }
+    }
+
+    /// Harnais, modèle et effort d’une tâche réclamée, et si modèle et effort viennent de la coordinatrice.
+    fn launched(task: &Value) -> (Option<&str>, Option<&str>, Option<&str>, bool) {
+        (task["provider"].as_str(), task["model"].as_str(), task["effort"].as_str(), task["inherited"] == true)
+    }
+
+    /// Un délégué reprend le harnais, le modèle et l’effort de la coordinatrice ; ce que sa tâche précise l’emporte.
+    /// Le modèle ne passe pas à un autre harnais, ni l’effort à un autre modèle.
+    #[test]
+    fn a_delegate_takes_from_its_coordinator_what_its_task_leaves_out() {
+        let opus = harness(Some("claude"), Some("opus"), Some("high"));
+        let cases = [
+            // (tâche, harnais du délégué, modèle et effort repris tels quels)
+            (Harness::default(), harness(Some("claude"), Some("opus"), Some("high")), true),
+            (harness(None, None, Some("max")), harness(Some("claude"), Some("opus"), Some("max")), true),
+            (harness(Some("claude"), Some("opus"), None), harness(Some("claude"), Some("opus"), Some("high")), true),
+            (harness(None, Some("sonnet"), None), harness(Some("claude"), Some("sonnet"), None), false),
+            (harness(None, Some("sonnet"), Some("low")), harness(Some("claude"), Some("sonnet"), Some("low")), false),
+            (harness(Some("codex"), None, None), harness(Some("codex"), None, None), false),
+            (harness(Some("codex"), None, Some("low")), harness(Some("codex"), None, Some("low")), false),
+            (harness(Some("opencode"), Some("a/b"), Some("x")), harness(Some("opencode"), Some("a/b"), Some("x")), false),
+        ];
+        for (task, expected, inherited) in cases {
+            assert_eq!(resolved(&task, Some(&opus)), (expected, inherited), "tâche {task:?}");
+        }
+        // Le modèle par défaut du CLI se reprend aussi, tel quel : pas celui des réglages.
+        let default = harness(Some("codex"), None, Some("medium"));
+        assert_eq!(resolved(&Harness::default(), Some(&default)), (default.clone(), true));
+        // Harnais de la coordinatrice inconnu : la tâche telle quelle.
+        let sonnet = harness(None, Some("sonnet"), None);
+        assert_eq!(resolved(&sonnet, None), (sonnet.clone(), false));
+        assert_eq!(resolved(&sonnet, Some(&Harness::default())), (sonnet, false));
+    }
+
+    /// Le harnais gardé pendant le tour de la coordinatrice part avec chaque tâche prête. Une tâche relancée prend
+    /// celui que la coordinatrice a au moment de la relance ; ce que la tâche précise ne change pas.
+    #[test]
+    fn claimed_and_relaunched_tasks_carry_the_coordinator_harness() {
+        let (state, _dir, work) = setup();
+        // Coordinatrice marquée par l’utilisateur ou lancée par une page (`coordinator: true`).
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        let db = open(&state.space().unwrap()).unwrap();
+        remember_harness(&db, "coord", &harness(Some("claude"), Some("opus"), Some("high"))).unwrap();
+        let batch = json!({ "tasks": [
+            { "key": "notes", "goal": "Module notes" },
+            { "key": "contacts", "goal": "Module contacts", "model": "sonnet" },
+            { "key": "documents", "goal": "Base documentaire", "provider": "codex", "model": "gpt-5", "effort": "low" },
+        ] });
+        let delegated = delegate(&state, "coord", &batch).unwrap();
+        assert_eq!(delegated["tasks"][2]["effort"], "low", "{delegated}");
+        let bad = json!({ "tasks": [{ "key": "a", "goal": "x", "effort": "élevé; rm -rf /" }] });
+        assert!(delegate(&state, "coord", &bad).is_err(), "un effort se vérifie comme un modèle");
+        let ready = claim(&state).unwrap();
+        assert_eq!(
+            ready.iter().map(launched).collect::<Vec<_>>(),
+            [
+                (Some("claude"), Some("opus"), Some("high"), true),
+                (Some("claude"), Some("sonnet"), None, false),
+                (Some("codex"), Some("gpt-5"), Some("low"), false),
+            ]
+        );
+        for task in &ready {
+            report(&state, task["id"].as_str().unwrap(), &json!({ "status": "failed", "summary": "Échec" }), "").unwrap();
+        }
+        // L’utilisateur passe la coordinatrice sur Sonnet · maximal, puis elle relance deux tâches.
+        remember_harness(&db, "coord", &harness(Some("claude"), Some("sonnet"), Some("max"))).unwrap();
+        relaunch(&state, "coord", ready[0]["id"].as_str().unwrap(), None).unwrap();
+        relaunch(&state, "coord", ready[2]["id"].as_str().unwrap(), Some("Réessaie")).unwrap();
+        assert_eq!(
+            claim(&state).unwrap().iter().map(launched).collect::<Vec<_>>(),
+            [(Some("claude"), Some("sonnet"), Some("max"), true), (Some("codex"), Some("gpt-5"), Some("low"), false)]
+        );
+        // Marquer de nouveau la coordinatrice garde son harnais.
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        assert_eq!(coordinator_harness(&state, &db, "coord"), Some(harness(Some("claude"), Some("sonnet"), Some("max"))));
+    }
+
+    /// Une base d’avant l’héritage du harnais reçoit ses colonnes ; ses tâches partent comme les autres.
+    #[test]
+    fn an_older_base_gets_the_harness_columns() {
+        let (state, _dir, work) = setup();
+        let space = state.space().unwrap();
+        crate::space_db::open(&space)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE _alfred_agent_coordinators (
+                   conversation TEXT PRIMARY KEY, cwd TEXT NOT NULL, max_mode TEXT NOT NULL, since INTEGER NOT NULL);
+                 CREATE TABLE _alfred_agent_tasks (
+                   id TEXT PRIMARY KEY, coordinator TEXT NOT NULL, request_id TEXT, key TEXT NOT NULL, goal TEXT NOT NULL,
+                   cwd TEXT NOT NULL, mode TEXT NOT NULL, depends TEXT NOT NULL, provider TEXT, model TEXT,
+                   status TEXT NOT NULL, conversation TEXT, summary TEXT, report TEXT, artifacts TEXT, questions TEXT,
+                   position INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);",
+            )
+            .unwrap();
+        set_coordinator(&state, "coord", true, &work.to_string_lossy(), "espace-de-travail").unwrap();
+        remember_harness(&open(&space).unwrap(), "coord", &harness(Some("claude"), Some("opus"), Some("high"))).unwrap();
+        delegate(&state, "coord", &json!({ "tasks": [{ "key": "a", "goal": "x", "effort": "max" }] })).unwrap();
+        assert_eq!(launched(&claim(&state).unwrap()[0]), (Some("claude"), Some("opus"), Some("max"), true));
     }
 
     /// Une conversation ouverte par l’utilisateur délègue sans être marquée : elle devient coordinatrice à son premier

@@ -7,6 +7,9 @@
  * Toute conversation ouverte par l’utilisateur peut déléguer : elle devient coordinatrice à son premier
  * `alfred delegate` (événement `agent:coordinator`). L’utilisateur peut aussi la marquer (« Répartir le travail »),
  * et une page la lance avec `coordinator: true`. Un délégué ne délègue jamais.
+ *
+ * Un délégué reprend le harnais, le modèle et l’effort de la coordinatrice, sauf ce que sa tâche précise : Rust les
+ * résout quand la tâche part (`claim`), la conversation du délégué les affiche et sa session les reçoit.
  */
 import { extractJson } from "../../lib/jsonSchema";
 import { invoke, onNativeEvent } from "../../lib/native";
@@ -21,8 +24,12 @@ interface ClaimedTask {
   goal: string;
   cwd: string;
   autonomy: Autonomy;
+  /** Harnais, modèle et effort résolus par Rust : ceux de la tâche, sinon ceux de la coordinatrice. */
   provider?: Provider | null;
   model?: string | null;
+  effort?: string | null;
+  /** Modèle et effort repris de la coordinatrice : gardés tels quels, même absents (choix par défaut du CLI). */
+  inherited?: boolean;
 }
 
 /** Consigne de fin d’un délégué : le contrat de retour que la coordinatrice reçoit. */
@@ -57,8 +64,14 @@ async function runTask(task: ClaimedTask) {
       autonomy: task.autonomy,
       ...(task.provider ? { provider: task.provider } : coordinator ? { provider: coordinator.provider } : {}),
       ...(task.model ? { model: task.model } : {}),
+      ...(task.effort ? { effort: task.effort } : {}),
     });
-    store.update(conversation.id, { parent: task.coordinator, taskKey: task.key });
+    store.update(conversation.id, {
+      parent: task.coordinator,
+      taskKey: task.key,
+      // Le modèle par défaut du CLI, repris de la coordinatrice, le reste : les choix des réglages ne le remplacent pas.
+      ...(task.inherited ? { model: task.model ?? undefined, effort: task.effort ?? undefined } : {}),
+    });
     if (coordinator && !coordinator.coordinator) store.update(task.coordinator, { coordinator: true });
     await invoke("agents.tasks.attach", { id: task.id, conversation: conversation.id });
     const done = waitForTurn(conversation.id);

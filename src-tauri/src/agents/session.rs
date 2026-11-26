@@ -45,6 +45,15 @@ pub enum Autonomy {
     Workspace,
 }
 
+/// Harnais, modèle et effort d’un agent. Ce qui manque revient au choix par défaut : pour une session, le modèle et
+/// l’effort par défaut du CLI.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Harness {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
 /// Modèle proposé par un harnais : `id` est celui que garde la conversation.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Model {
@@ -195,24 +204,33 @@ struct Entry {
     autonomy: Autonomy,
     /// Dossier de travail de la conversation : celui d’une coordinatrice implicite (`delegation.rs`).
     cwd: String,
+    /// Harnais, modèle et effort reçus par le CLI : ses délégués les reprennent (`delegation.rs`).
+    harness: Harness,
+}
+
+/// Session ouverte pour `conversation`, retrouvée par le jeton de ses outils.
+fn entry_of(state: &AppState, conversation: &str) -> Option<Arc<Entry>> {
+    let tokens = state.agent_tokens.lock().ok()?;
+    let all = sessions().lock().ok()?;
+    all.values()
+        .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
+        .cloned()
 }
 
 /// Dossier de travail de la session ouverte pour `conversation`.
 pub fn cwd_of(state: &AppState, conversation: &str) -> Option<String> {
-    let tokens = state.agent_tokens.lock().ok()?;
-    let all = sessions().lock().ok()?;
-    all.values()
-        .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
-        .map(|entry| entry.cwd.clone())
+    entry_of(state, conversation).map(|entry| entry.cwd.clone())
 }
 
 /// Autonomie de la session ouverte pour `conversation` ; `None` sans session.
 pub fn autonomy_of(state: &AppState, conversation: &str) -> Option<Autonomy> {
-    let tokens = state.agent_tokens.lock().ok()?;
-    let all = sessions().lock().ok()?;
-    all.values()
-        .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
-        .map(|entry| entry.autonomy)
+    entry_of(state, conversation).map(|entry| entry.autonomy)
+}
+
+/// Harnais, modèle et effort de la session ouverte pour `conversation` : ceux que son CLI a reçus. `None` sans
+/// session.
+pub fn harness_of(state: &AppState, conversation: &str) -> Option<Harness> {
+    entry_of(state, conversation).map(|entry| entry.harness.clone())
 }
 
 /// Cartes d’accord posées par Alfred (et non par le harnais), en attente de la réponse de l’utilisateur.
@@ -234,13 +252,7 @@ pub async fn ask_in_conversation(
     options: Vec<super::event::ApprovalOption>,
     wait: std::time::Duration,
 ) -> Option<String> {
-    let sink = {
-        let tokens = state.agent_tokens.lock().ok()?;
-        let all = sessions().lock().ok()?;
-        all.values()
-            .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
-            .map(|entry| entry.sink.clone())?
-    };
+    let sink = entry_of(state, conversation)?.sink.clone();
     let id = format!("{OWN_APPROVAL}{}", uuid::Uuid::new_v4().simple());
     let (sender, receiver) = tokio::sync::oneshot::channel();
     own_approvals().lock().ok()?.insert(id.clone(), sender);
@@ -333,6 +345,8 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     let own_sink = sink.clone();
     let autonomy = options.autonomy;
     let cwd = options.cwd.clone();
+    let harness =
+        Harness { provider: Some(provider.id().into()), model: options.model.clone(), effort: options.effort.clone() };
     let launch = Launch { state: state.clone(), options, program, sink, token: token.clone(), port, handle: handle.clone() };
     let opened = match provider {
         Provider::Claude => claude::Claude::start(launch).map(Driver::Claude),
@@ -354,7 +368,10 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
         Driver::Codex(codex) => codex.session_id(),
         Driver::Opencode(opencode) => Some(opencode.session_id()),
     };
-    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy, cwd }));
+    sessions()
+        .lock()
+        .map_err(|_| gone())?
+        .insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy, cwd, harness }));
     Ok(json!({ "handle": handle, "sessionId": session_id }))
 }
 
