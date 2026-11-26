@@ -1170,7 +1170,9 @@ export default function P() {
   );
 }
 "#;
-        let good: Vec<_> = messages(good).into_iter().filter(|m| !m.contains("longue pile")).collect();
+        // La page d’essai empile cinq composants de tâches différentes : seule la mise en page est à redire.
+        let good: Vec<_> =
+            messages(good).into_iter().filter(|m| !m.contains("longue pile") && !m.contains("plusieurs tâches")).collect();
         assert!(good.is_empty(), "{good:?}");
     }
 
@@ -1447,30 +1449,42 @@ export default function Base() {
         assert!(found.iter().any(|m| m.starts_with("7: Avertissement : `width=\"text\"`") && m.contains("Retirer `width`")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("10: Avertissement : exemples (`QUESTIONS_EXEMPLE`)") && m.contains("état vide")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("14: Avertissement : `<FileUpload>` posé comme un bloc") && m.contains("files.pick")), "{found:?}");
-        assert_eq!(found.len(), 4, "une seule action principale : {found:?}");
+        assert!(found.iter().any(|m| m.starts_with("7: Avertissement : plusieurs tâches dans la même `<Page>` : saisir ou poser une question (`TextArea`), envoyer des fichiers (`FileUpload`), lister des éléments (`List`).") && m.contains("Une zone, une responsabilité") && m.contains("PLACEMENT.md, principe 4")), "{found:?}");
+        assert_eq!(found.len(), 5, "une seule action principale : {found:?}");
 
-        // La même page, rangée comme le disent les remarques : rien à redire.
-        let rangee = r#"
-import { Upload } from "lucide-react";
-import { files } from "@alfred/sdk";
-import { Text } from "@alfred/kit";
-import { EmptyState, Link, List, Page, PageGrid, PageSection, TextArea } from "socle-ui";
+        // La même demande, rangée comme le disent les remarques : deux onglets, rien à redire.
+        let questions = r#"
+import { ChatComposer, ChatPage, ChatTranscript, EmptyState } from "socle-ui";
 const EXEMPLES = ["Quelle garantie ?", "Quel délai ?"];
-export default function Base() {
+export default function Questions() {
   return (
-    <Page actions={[{ id: "ajouter", label: "Ajouter des PDF", icon: <Upload size={16} />, onPress: () => files.pick({ accept: ["pdf"], multiple: true }) }]}>
-      <PageGrid columns={2}>
-        <PageSection title="Question" actions={[{ id: "demander", label: "Poser la question", primary: true, onPress: demander }]}>
-          <TextArea label="Votre question" value={question} onChange={setQuestion} />
-          {reponse ? <Text>{reponse}</Text> : <EmptyState title="Aucune question" description={<>{EXEMPLES.map((q) => <Link key={q} onPress={() => demander(q)}>{q}</Link>)}</>} />}
-        </PageSection>
-        <PageSection title="Documents"><List aria-label="Documents" items={[]} /></PageSection>
-      </PageGrid>
-    </Page>
+    <ChatPage composer={<ChatComposer label="Votre question" onSend={demander} />}>
+      <ChatTranscript empty={<EmptyState title="Aucune question" suggestions={EXEMPLES.map((q) => ({ id: q, label: q, onPress: () => demander(q) }))} />}>
+        {messages}
+      </ChatTranscript>
+    </ChatPage>
   );
 }
 "#;
-        assert!(messages(rangee).is_empty(), "{:?}", messages(rangee));
+        assert!(messages(questions).is_empty(), "{:?}", messages(questions));
+        let documents = r#"
+import { Upload } from "lucide-react";
+import { files, notifyActionError } from "@alfred/sdk";
+import { ListPage } from "socle-ui";
+export default function Documents() {
+  return (
+    <ListPage
+      title="Documents"
+      rows={documents}
+      columns={[{ id: "nom", label: "Nom" }]}
+      empty={{ title: "Aucun document", description: "Ajoutez vos PDF." }}
+      onActionError={notifyActionError}
+      actions={[{ id: "ajouter", label: "Ajouter des PDF", icon: <Upload size={16} />, primary: true, onPress: () => files.pick({ accept: ["pdf"], multiple: true }) }]}
+    />
+  );
+}
+"#;
+        assert!(messages(documents).is_empty(), "{:?}", messages(documents));
 
         // Les avertissements de mise en page ne valent que dans la zone principale.
         assert!(!settings_messages(page).iter().any(|m| m.contains("longue pile") || m.contains("exemples")), "{:?}", settings_messages(page));
@@ -1665,5 +1679,65 @@ export default function P() {
         assert_eq!(found.len(), 2, "{found:?}");
         assert!(found[0].starts_with("14: Avertissement : exemples (`QUESTIONS`)"), "{found:?}");
         assert!(found[1].starts_with("15: Avertissement : exemples (`SUGGESTIONS`)"), "{found:?}");
+    }
+
+    #[test]
+    fn une_page_ne_porte_qu_une_tache() {
+        let tache = |source: &str| -> Vec<String> { messages(source).into_iter().filter(|m| m.contains("plusieurs tâches")).collect() };
+        // Une question et une liste, même rangées côte à côte, venues de composants du fichier : deux tâches.
+        let deux = r#"
+import { Page, PageGrid, PageSection, Table, TextArea } from "socle-ui";
+function Question() {
+  return <PageSection title="Question"><TextArea label="Votre question" value={q} onChange={setQ} /></PageSection>;
+}
+export default function P() {
+  return (
+    <Page>
+      <PageGrid>
+        <Question />
+        {liste.length > 0 ? <PageSection title="Documents"><Table aria-label="Documents" rows={[]} columns={[]} /></PageSection> : null}
+      </PageGrid>
+    </Page>
+  );
+}
+"#;
+        let found = tache(deux);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].starts_with("8: Avertissement : plusieurs tâches dans la même `<Page>` : saisir ou poser une question (`TextArea`), lister des éléments (`Table`)."), "{found:?}");
+
+        // Une seule tâche : des listes et des tableaux de même rang ; une saisie dans une fenêtre ; une zone de dépôt
+        // pour une liste (relevée par sa propre remarque) ; une saisie à côté d’un relevé de conversation.
+        let une = r#"
+import { Card, ChatTranscript, FileUpload, List, Modal, Page, PageGrid, PageSection, Table, TextArea } from "socle-ui";
+export function Tableau() {
+  return (
+    <Page>
+      <PageGrid columns={3}>
+        <Card title="Ventes" />
+        <PageSection title="Retards"><List aria-label="Retards" items={[]} /></PageSection>
+        <PageSection title="Clients"><Table aria-label="Clients" rows={[]} columns={[]} /></PageSection>
+      </PageGrid>
+      <Modal isOpen={ouvert} title="Note"><TextArea label="Note" value={n} onChange={setN} /></Modal>
+    </Page>
+  );
+}
+export function Envoi() {
+  return <Page><PageSection title="Pièces"><FileUpload label="Pièces" onAdd={ajouter} /><List aria-label="Pièces" items={[]} /></PageSection></Page>;
+}
+export default function Echange() {
+  return <Page><ChatTranscript>{messages}</ChatTranscript><TextArea label="Message" value={m} onChange={setM} /></Page>;
+}
+"#;
+        assert!(tache(une).is_empty(), "{:?}", tache(une));
+        assert!(messages(une).iter().any(|m| m.contains("`<FileUpload>` posé comme un bloc")), "{:?}", messages(une));
+
+        // Des sources listées à part d’une conversation : deux tâches.
+        let sources = r#"
+import { ChatTranscript, List, Page } from "socle-ui";
+export default function P() {
+  return <Page><ChatTranscript>{messages}</ChatTranscript><List aria-label="Sources" items={sources} /></Page>;
+}
+"#;
+        assert!(tache(sources).iter().any(|m| m.contains("lister des éléments (`List`), converser (`ChatTranscript`)")), "{:?}", tache(sources));
     }
 }

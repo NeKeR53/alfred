@@ -8,6 +8,9 @@
 //! - Actions principales : plus d’une action `primary` (ou d’un `Button` plein) sur un même écran, barre du haut
 //!   comprise (`useTopBarActions`).
 //! - Exemples : une liste de questions d’exemple rendue hors d’un état vide.
+//! - Plusieurs tâches dans une `Page` (PLACEMENT.md, principe 4, « Une zone, une responsabilité ») : saisir ou poser
+//!   une question, envoyer des fichiers, lister des éléments, lire un élément, converser. Envoyer des fichiers à une
+//!   liste reste une seule tâche, relevée par la zone de dépôt ; une saisie à côté d’un relevé de conversation aussi.
 //!
 //! Limites : seuls les composants et les constantes du fichier sont suivis, pas ceux d’un autre fichier du module.
 //! Une condition compte pour sa branche la plus chargée ; une liste produite par `.map` compte pour deux blocs. La
@@ -71,6 +74,40 @@ const EXAMPLE_NAMES: [&str; 6] = ["exempl", "exampl", "suggest", "idee", "idée"
 const EXAMPLE_FIELDS: [&str; 7] = ["label", "question", "text", "texte", "title", "titre", "prompt"];
 /// Champs d’une réponse : une liste de questions avec leurs réponses est un contenu (une FAQ), pas des exemples.
 const ANSWER_FIELDS: [&str; 5] = ["reponse", "réponse", "answer", "contenu", "content"];
+
+/// Une tâche que porte le contenu d’une page : chacune a sa zone (PLACEMENT.md, section 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Task {
+    Ask,
+    Send,
+    List,
+    Read,
+    Converse,
+}
+
+impl Task {
+    /// La tâche d’un composant de socle-ui posé dans le contenu.
+    fn of(name: &str) -> Option<Task> {
+        match name {
+            "TextArea" | "TextInput" | "TextField" | "MentionInput" | "MarkdownEditor" | "CodeField" => Some(Task::Ask),
+            "FileUpload" => Some(Task::Send),
+            "List" | "Table" | "TreeView" | "ListPage" => Some(Task::List),
+            "DocumentViewer" | "HtmlContent" | "DiffView" => Some(Task::Read),
+            "ChatTranscript" | "ChatComposer" | "ChatPage" => Some(Task::Converse),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Task::Ask => "saisir ou poser une question",
+            Task::Send => "envoyer des fichiers",
+            Task::List => "lister des éléments",
+            Task::Read => "lire un élément",
+            Task::Converse => "converser",
+        }
+    }
+}
 
 /// `onPress`, `onChange`… : un gestionnaire d’événement, pas un contenu.
 fn is_handler(name: &str) -> bool {
@@ -628,6 +665,78 @@ impl<'b, 'a> Layout<'b, 'a> {
         element.children.iter().any(|child| self.upload_in_child(child, depth))
     }
 
+    // --- Tâches du contenu ---
+
+    /// Tâches que portent les enfants d’une `Page` : (tâche, premier composant qui la porte). Une fenêtre, le panneau,
+    /// un état vide et les attributs (barre d’outils, pied) n’en sont pas ; une condition compte pour ses deux branches.
+    fn tasks_children(&self, children: &[JSXChild<'a>], depth: usize, found: &mut BTreeMap<Task, String>) {
+        for child in children {
+            match child {
+                JSXChild::Element(element) => self.tasks_element(element, depth, found),
+                JSXChild::Fragment(fragment) => self.tasks_children(&fragment.children, depth, found),
+                JSXChild::ExpressionContainer(container) => {
+                    if let Some(expression) = container.expression.as_expression() {
+                        self.tasks_expression(expression, depth, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn tasks_element(&self, element: &JSXElement<'a>, depth: usize, found: &mut BTreeMap<Task, String>) {
+        let name = self.name_of(&element.opening_element.name);
+        if OVERLAYS.contains(&name.as_str()) || name == "EmptyState" {
+            return;
+        }
+        if let Some(task) = Task::of(&name) {
+            found.entry(task).or_insert(name);
+            return;
+        }
+        if let Some(body) = self.component(element) {
+            if depth < MAX_DEPTH {
+                for returned in Returns::of(body) {
+                    self.tasks_expression(returned, depth + 1, found);
+                }
+            }
+            return;
+        }
+        self.tasks_children(&element.children, depth, found);
+    }
+
+    fn tasks_expression(&self, expression: &Expression<'a>, depth: usize, found: &mut BTreeMap<Task, String>) {
+        if let Some(call) = as_call(expression) {
+            if let Some((_, Some(callback))) = map_call(call) {
+                if let Some(body) = super::expression_body(callback) {
+                    for returned in Returns::of(&body) {
+                        self.tasks_expression(returned, depth, found);
+                    }
+                }
+            }
+            return;
+        }
+        match expression.without_parentheses() {
+            Expression::JSXElement(element) => self.tasks_element(element, depth, found),
+            Expression::JSXFragment(fragment) => self.tasks_children(&fragment.children, depth, found),
+            Expression::ConditionalExpression(choice) => {
+                self.tasks_expression(&choice.consequent, depth, found);
+                self.tasks_expression(&choice.alternate, depth, found);
+            }
+            Expression::LogicalExpression(logical) => {
+                if logical.operator != LogicalOperator::And {
+                    self.tasks_expression(&logical.left, depth, found);
+                }
+                self.tasks_expression(&logical.right, depth, found);
+            }
+            Expression::Identifier(reference) if depth < MAX_DEPTH => {
+                if let Some(value) = self.values.get(reference.name.as_str()) {
+                    self.tasks_expression(value, depth + 1, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // --- Exemples ---
 
     /// Liste d’exemples rendue par `call` (`EXEMPLES.map(…)`) : son nom pour la remarque.
@@ -729,6 +838,24 @@ impl<'a> Visit<'a> for Scan<'_, '_, 'a> {
         let opening = &element.opening_element;
         let name = self.layout.name_of(&opening.name);
         if name == "Page" {
+            let mut tasks = BTreeMap::new();
+            self.layout.tasks_children(&element.children, 0, &mut tasks);
+            // Une saisie à côté d’un relevé de conversation, c’est converser ; envoyer des fichiers à une liste, c’est
+            // gérer cette liste (la zone de dépôt a sa propre remarque).
+            if tasks.contains_key(&Task::Converse) {
+                tasks.remove(&Task::Ask);
+            }
+            let only_import = tasks.keys().all(|task| matches!(task, Task::Send | Task::List));
+            if tasks.len() >= 2 && !only_import {
+                let list: Vec<String> = tasks.iter().map(|(task, name)| format!("{} (`{name}`)", task.label())).collect();
+                self.found.push((
+                    opening.span.start,
+                    format!(
+                        "Avertissement : plusieurs tâches dans la même `<Page>` : {}. Une zone, une responsabilité : le contenu fait le travail de l’onglet, et lui seul. Séparer les tâches dans leurs zones : un usage par onglet fixe (`place_page` avec `{{ \"kind\": \"tab\" }}`, par exemple « Questions » en `ChatPage` et « Documents » en `ListPage`) ; la vue détail de l’élément sélectionné au panneau de droite ; l’envoi de fichiers en action de l’en-tête ou de la barre du haut (`files.pick`) (PLACEMENT.md, principe 4 et section 2 ; DESIGN.md, section 2).",
+                        list.join(", ")
+                    ),
+                ));
+            }
             let rows = self.layout.pile_children(&element.children, 0);
             if rows >= LONG_PILE {
                 self.found.push((
@@ -816,7 +943,7 @@ impl<'a> Visit<'a> for Scan<'_, '_, 'a> {
                 self.found.push((
                     call.span.start,
                     format!(
-                        "Avertissement : exemples ({name}) affichés hors d’un état vide : ils restent à l’écran après le premier usage et chargent la page (D-404 ; DESIGN.md, section 2). Les mettre dans l’état vide de la zone, qui disparaît avec lui : `empty` du gabarit, `empty` du relevé d’une `ChatPage`, ou un `EmptyState` (un `Link` par exemple dans sa `description`) montré tant qu’il n’y a rien ; ensuite, le `placeholder` du champ suffit (« Par exemple : … »)."
+                        "Avertissement : exemples ({name}) affichés hors d’un état vide : ils restent à l’écran après le premier usage et chargent la page (D-404 ; DESIGN.md, section 2). Les mettre dans l’état vide de la zone, qui disparaît avec lui : `suggestions` de l’`EmptyState` (`id`, `label`, `onPress`, quatre au plus), posé dans `empty` du gabarit ou du relevé d’une `ChatPage` et montré tant qu’il n’y a rien ; ensuite, le `placeholder` du champ suffit (« Par exemple : … ») (spec EmptyState)."
                     ),
                 ));
             }
