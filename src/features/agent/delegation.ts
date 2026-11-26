@@ -4,8 +4,9 @@
  * coquille lance la conversation de chaque tâche prête, lit son contrat de retour à la fin du tour, le rend à Rust
  * et relance la coordinatrice avec le rapport.
  *
- * La coordinatrice est désignée de deux façons : par l’utilisateur dans la page Agent (« Répartir le travail »), ou
- * par une page qui la lance avec `coordinator: true`.
+ * Toute conversation ouverte par l’utilisateur peut déléguer : elle devient coordinatrice à son premier
+ * `alfred delegate` (événement `agent:coordinator`). L’utilisateur peut aussi la marquer (« Répartir le travail »),
+ * et une page la lance avec `coordinator: true`. Un délégué ne délègue jamais.
  */
 import { extractJson } from "../../lib/jsonSchema";
 import { invoke, onNativeEvent } from "../../lib/native";
@@ -58,6 +59,7 @@ async function runTask(task: ClaimedTask) {
       ...(task.model ? { model: task.model } : {}),
     });
     store.update(conversation.id, { parent: task.coordinator, taskKey: task.key });
+    if (coordinator && !coordinator.coordinator) store.update(task.coordinator, { coordinator: true });
     await invoke("agents.tasks.attach", { id: task.id, conversation: conversation.id });
     const done = waitForTurn(conversation.id);
     await store.send(conversation.id, { text: `${task.goal}\n\n${RETURN_CONTRACT}`, attachments: [], contexts: [] });
@@ -97,6 +99,12 @@ let bound = false;
 export function bindDelegation() {
   if (bound) return;
   bound = true;
+  // Une conversation ouverte par l’utilisateur devient coordinatrice à son premier `alfred delegate`.
+  onNativeEvent("agent:coordinator", (payload) => {
+    const conversation = (payload as { conversation?: string } | null)?.conversation;
+    if (conversation && useAgents.getState().loaded[conversation])
+      useAgents.getState().update(conversation, { coordinator: true });
+  });
   onNativeEvent("agent:tasks", () => void runReadyTasks().catch(() => undefined));
   void runReadyTasks().catch(() => undefined);
 }

@@ -193,6 +193,17 @@ struct Entry {
     sink: Sink,
     /// Autonomie donnée au harnais : les accords d’Alfred la suivent (`consents.rs`).
     autonomy: Autonomy,
+    /// Dossier de travail de la conversation : celui d’une coordinatrice implicite (`delegation.rs`).
+    cwd: String,
+}
+
+/// Dossier de travail de la session ouverte pour `conversation`.
+pub fn cwd_of(state: &AppState, conversation: &str) -> Option<String> {
+    let tokens = state.agent_tokens.lock().ok()?;
+    let all = sessions().lock().ok()?;
+    all.values()
+        .find(|entry| entry.token.as_ref().and_then(|token| tokens.get(token)).map(String::as_str) == Some(conversation))
+        .map(|entry| entry.cwd.clone())
 }
 
 /// Autonomie de la session ouverte pour `conversation` ; `None` sans session.
@@ -321,6 +332,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
     let sink = Sink { state: state.clone(), output, handle: handle.clone() };
     let own_sink = sink.clone();
     let autonomy = options.autonomy;
+    let cwd = options.cwd.clone();
     let launch = Launch { state: state.clone(), options, program, sink, token: token.clone(), port, handle: handle.clone() };
     let opened = match provider {
         Provider::Claude => claude::Claude::start(launch).map(Driver::Claude),
@@ -342,7 +354,7 @@ pub async fn start(state: &Arc<AppState>, args: &Value, output: Output) -> AppRe
         Driver::Codex(codex) => codex.session_id(),
         Driver::Opencode(opencode) => Some(opencode.session_id()),
     };
-    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy }));
+    sessions().lock().map_err(|_| gone())?.insert(handle.clone(), Arc::new(Entry { driver, token, sink: own_sink, autonomy, cwd }));
     Ok(json!({ "handle": handle, "sessionId": session_id }))
 }
 

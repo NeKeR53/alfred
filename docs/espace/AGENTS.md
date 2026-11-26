@@ -126,14 +126,18 @@ Elle n’a que `check`, `db_schema`, `db_query`, `wait_for_event` et `cancel_wai
 
 ## Délégation entre agents
 
-Une conversation **coordinatrice** — désignée par l’utilisateur (« Répartir le travail entre des agents », menu de la conversation dans la page Agent) ou lancée par une page avec `coordinator: true` — reçoit quatre commandes de plus :
+Toute conversation ouverte par l’utilisateur peut répartir son travail entre des agents délégués : elle devient **coordinatrice** à son premier `delegate`, sans que l’utilisateur la marque (une conversation lancée par une page ne le peut que si la page l’a lancée avec `coordinator: true`).
 
-- `delegate` : de 1 à 50 tâches, chacune avec `key` (unique), `goal` (complet : le délégué ne voit pas ta conversation), `path` (sous-dossier de ton dossier de travail) ou `folder` (`{ id, path? }`, dossier accordé au module, pour une coordinatrice de page), `mode` (`"espace-de-travail"` par défaut, ou `"complet"` si tu l’es toi-même), `dependsOn` (clés du lot, sans boucle), `provider` et `model` facultatifs. Tout le lot est vérifié avant le moindre lancement ; donne un `requestId` : répéter la même demande rend la même réponse sans rien relancer.
+**Quand déléguer :** l’utilisateur demande plusieurs modules (« crée-moi trois modules ») : délègue, un délégué par module, même petits ; plus généralement, plusieurs parties indépendantes qui ne touchent pas les mêmes fichiers. **Quand ne pas déléguer :** une seule tâche ; un petit travail (quelques commandes) ; des parties qui modifient les mêmes fichiers ou dépendent fortement l’une de l’autre ; une lecture de données (`alfred run` suffit). Chaque délégué coûte une conversation entière : en cas de doute, fais-le toi-même. **Un délégué ne délègue jamais.**
+
+Une coordinatrice a quatre commandes de plus :
+
+- `delegate` : de 1 à 50 tâches, chacune avec `key` (unique), `goal` (complet : le délégué ne voit pas ta conversation), `path` (sous-dossier de ton dossier de travail) ou `folder` (`{ id, path? }`, dossier accordé au module, pour une coordinatrice de page), `mode` (`"espace-de-travail"` par défaut, ou `"complet"` si ta conversation est en « Autonomie totale »), `dependsOn` (clés du lot, sans boucle), `provider` et `model` facultatifs. Tout le lot est vérifié avant le moindre lancement ; donne un `requestId` : répéter la même demande rend la même réponse sans rien relancer.
 - `task_status` : statut, résumé, livrables et questions de chaque tâche.
 - `read_report` (`id`, `page`) : rapport complet d’une tâche, par pages de 4 000 caractères.
 - `relaunch_task` (`id`, `instruction` facultative) : relance une tâche terminée sans succès.
 
-Une tâche part quand toutes ses dépendances ont réussi ; un échec annule celles qui en dépendent. Chaque délégué finit par un **contrat de retour** (bloc JSON : `status` parmi `success`, `partial`, `failed`, `needs_information`, `cancelled` ; `summary` de 600 caractères au plus ; `artifacts`, chemins relatifs à son dossier, vérifiés ; `questions`). Alfred te relance avec chaque rapport : après `delegate`, termine ton tour. Les délégués apparaissent dans la page Agent (« clé · délégué »), l’utilisateur peut reprendre la main sur l’un d’eux ; archiver la coordinatrice arrête les autres. Un délégué n’a jamais les outils de délégation, et garde le périmètre et la confidentialité de la coordinatrice.
+Une tâche part quand toutes ses dépendances ont réussi ; un échec annule celles qui en dépendent. Chaque délégué finit par un **contrat de retour** (bloc JSON : `status` parmi `success`, `partial`, `failed`, `needs_information`, `cancelled` ; `summary` de 600 caractères au plus ; `artifacts`, chemins relatifs à son dossier, vérifiés ; `questions`). Alfred te relance avec chaque rapport : après `delegate`, termine ton tour. Les délégués apparaissent dans la page Agent (« clé · délégué ») et dans les « Tâches en arrière-plan » de ta conversation ; l’utilisateur peut reprendre la main sur l’un d’eux ; archiver la coordinatrice arrête les autres. Un délégué n’a jamais les outils de délégation, et garde le périmètre et la confidentialité de la coordinatrice.
 
 ## Git de l’espace de travail
 

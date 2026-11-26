@@ -2,6 +2,35 @@ import { useEffect, useState } from "react";
 import { type BackgroundTask, BackgroundTasks, type DetailSection } from "socle-ui";
 import { notify } from "../../../shell/notifications";
 import type { AgentTask } from "../harness";
+import type { ConversationHeader } from "../model";
+import type { ConversationState } from "../summary";
+
+/**
+ * Délégués d’une coordinatrice, comme tâches de fond de sa conversation : en cours tant que leur conversation
+ * travaille ou attend une réponse, puis réussis ou en échec. Le titre est celui de leur conversation (« clé · délégué »).
+ */
+export function delegateTasks(
+  conversations: readonly ConversationHeader[],
+  coordinator: string,
+  stateOf: (id: string) => ConversationState,
+): AgentTask[] {
+  return conversations
+    .filter((header) => header.parent === coordinator)
+    .map((header) => {
+      const state = stateOf(header.id);
+      const running = state === "working" || state === "waiting" || state === "attention";
+      return {
+        taskId: `delegue:${header.id}`,
+        kind: "agent" as const,
+        title: header.title,
+        background: true,
+        status: running ? ("running" as const) : state === "error" ? ("failed" as const) : ("completed" as const),
+        startedAt: header.createdAt,
+        ...(running ? {} : { endedAt: header.updatedAt }),
+        stoppable: false,
+      };
+    });
+}
 
 /** Une commande qui bloque la réponse ne compte comme tâche qu’au-delà de cette durée : un `ls` n’est pas une tâche. */
 export const LONG_COMMAND_MS = 5000;

@@ -7,7 +7,7 @@ import { PROVIDER_LABEL } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
 import { InfoPanelRows } from "./panel/InfoPanel";
 import { planSection } from "./panel/PlanSteps";
-import { tasksSection, useTaskClock } from "./panel/TasksSection";
+import { delegateTasks, tasksSection, useTaskClock } from "./panel/TasksSection";
 import { useAgents } from "./store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "./summary";
 
@@ -249,12 +249,16 @@ export function ConversationList({
   const open = useAgents((state) => state.open);
   const runtime = useAgents((state) => state.runtime);
   const stopTask = useAgents((state) => state.stopTask);
-  const activeTasks = Object.values((active && runtime[active.id]?.tasks) ?? {});
-  const taskClock = useTaskClock(activeTasks);
   const now = Date.now();
   const states = new Map(
     conversations.map((header) => [header.id, rowState(conversationState(header, runtime[header.id]))]),
   );
+  // Tâches de la conversation : celles du harnais, puis les délégués qu’elle a lancés (`alfred delegate`).
+  const activeTasks = [
+    ...Object.values((active && runtime[active.id]?.tasks) ?? {}),
+    ...(active ? delegateTasks(conversations, active.id, (id) => states.get(id) ?? "idle") : []),
+  ];
+  const taskClock = useTaskClock(activeTasks);
   const sorted = [...conversations].sort(compareConversations);
   const attention = sorted.filter(({ id }) => ["attention", "error"].includes(states.get(id) ?? ""));
   const working = sorted.filter(({ id }) => states.get(id) === "working");

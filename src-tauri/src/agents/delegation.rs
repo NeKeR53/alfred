@@ -94,6 +94,36 @@ pub fn set_coordinator(state: &AppState, conversation: &str, on: bool, cwd: &str
 }
 
 /// La conversation reçoit-elle les outils de délégation ?
+/// Une conversation peut déléguer : elle est coordinatrice, ou l’utilisateur l’a ouverte (ni page, ni délégué).
+pub fn may_delegate(state: &AppState, conversation: &str) -> bool {
+    if is_coordinator(state, conversation) {
+        return true;
+    }
+    crate::agent_tools::scope_of(state, conversation).is_none()
+        && state.try_space().and_then(|space| open(&space).ok()).is_some_and(|db| !is_delegate(&db, conversation).unwrap_or(true))
+}
+
+/// Toute conversation ouverte par l’utilisateur devient coordinatrice à son premier `delegate`, sans qu’il la marque :
+/// son dossier de travail, et des délégués bornés à son autonomie (« Autonomie totale » : `complet`, sinon
+/// `espace-de-travail`). Un délégué ne délègue jamais.
+fn ensure_coordinator(state: &AppState, conversation: &str) -> AppResult<()> {
+    if is_coordinator(state, conversation) {
+        return Ok(());
+    }
+    if crate::agent_tools::scope_of(state, conversation).is_some() {
+        return Err(AppError::new("Une conversation lancée par une page ne répartit le travail que si la page l’a lancée avec `coordinator: true`."));
+    }
+    let space = state.space()?;
+    if is_delegate(&open(&space)?, conversation)? {
+        return Err(AppError::new("Un agent délégué ne délègue jamais : fais la tâche toi-même, ou rends `needs_information`."));
+    }
+    let cwd = crate::agents::session::cwd_of(state, conversation).unwrap_or_else(|| space.root.to_string_lossy().to_string());
+    let max_mode = if crate::consents::full(state, conversation) { "complet" } else { "espace-de-travail" };
+    set_coordinator(state, conversation, true, &cwd, max_mode)?;
+    state.emit("agent:coordinator", json!({ "conversation": conversation, "maxMode": max_mode }));
+    Ok(())
+}
+
 pub fn is_coordinator(state: &AppState, conversation: &str) -> bool {
     state.try_space().and_then(|space| open(&space).ok()).is_some_and(|db| {
         db.query_row("SELECT 1 FROM _alfred_agent_coordinators WHERE conversation = ?1", [conversation], |_| Ok(()))
@@ -512,7 +542,7 @@ pub fn tools() -> Vec<Value> {
     vec![
         tool(
             "delegate",
-            "Confie de 1 à 50 tâches à d’autres agents. Chaque tâche : `key` unique, `goal` (objectif complet : le délégué ne voit pas cette conversation), `path` (sous-dossier de ton dossier) ou `folder` ({ id, path } d’un dossier accordé au module), `mode` (« espace-de-travail » par défaut, ou « complet »), `dependsOn` (clés du lot), `provider` et `model` facultatifs. Le lot est validé en entier ; une tâche part quand ses dépendances ont réussi. `requestId` rend la même réponse si tu répètes la demande. Termine ton tour ensuite : tu seras relancé avec chaque rapport.",
+            "Confie de 1 à 50 tâches à d’autres agents. Chaque tâche : `key` unique, `goal` (objectif complet : le délégué ne voit pas cette conversation), `path` (sous-dossier de ton dossier) ou `folder` ({ id, path } d’un dossier accordé au module), `mode` (« espace-de-travail » par défaut, ou « complet »), `dependsOn` (clés du lot), `provider` et `model` facultatifs. Le lot est validé en entier ; une tâche part quand ses dépendances ont réussi. `requestId` rend la même réponse si tu répètes la demande. Termine ton tour ensuite : tu seras relancé avec chaque rapport. À utiliser pour plusieurs parties indépendantes (plusieurs modules) ; pas pour une seule tâche ni un petit travail.",
             json!({
                 "requestId": { "type": "string" },
                 "tasks": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object",
@@ -546,8 +576,12 @@ pub fn call(state: &AppState, conversation: &str, name: &str, args: &Value) -> O
     if !matches!(name, "delegate" | "task_status" | "read_report" | "relaunch_task") {
         return None;
     }
-    if !is_coordinator(state, conversation) {
-        return Some(Err(AppError::new("Cette conversation ne répartit pas le travail.")));
+    if name == "delegate" {
+        if let Err(error) = ensure_coordinator(state, conversation) {
+            return Some(Err(error));
+        }
+    } else if !is_coordinator(state, conversation) {
+        return Some(Err(AppError::new("Cette conversation n’a encore rien délégué.")));
     }
     Some(match name {
         "delegate" => delegate(state, conversation, args),
@@ -609,6 +643,36 @@ mod tests {
 
     fn task(key: &str, path: &str, depends: &[&str]) -> Value {
         json!({ "key": key, "goal": format!("Faire {key}"), "path": path, "dependsOn": depends })
+    }
+
+    /// Une conversation ouverte par l’utilisateur délègue sans être marquée : elle devient coordinatrice à son premier
+    /// `delegate`, bornée à son autonomie. Un délégué ou une conversation de page ne le peut pas.
+    #[test]
+    fn a_user_conversation_delegates_without_being_marked() {
+        let (state, _dir, _work) = setup();
+        assert!(may_delegate(&state, "utilisateur"));
+        let two = json!({ "tasks": [{ "key": "notes", "goal": "Module notes" }, { "key": "contacts", "goal": "Module contacts" }] });
+        let delegated = call(&state, "utilisateur", "delegate", &two).unwrap().unwrap();
+        assert_eq!(delegated["tasks"].as_array().map(Vec::len), Some(2), "{delegated}");
+        assert!(is_coordinator(&state, "utilisateur"));
+        let ready = claim(&state).unwrap();
+        assert_eq!(ready.len(), 2, "deux modules indépendants partent ensemble");
+        assert!(ready.iter().all(|task| task["autonomy"] == "workspace"), "hors Autonomie totale : espace de travail");
+        // Le délégué ne délègue jamais, et n’a pas les commandes de délégation.
+        attach(&state, ready[0]["id"].as_str().unwrap(), "delegue-notes").unwrap();
+        assert!(!may_delegate(&state, "delegue-notes"));
+        let refused = call(&state, "delegue-notes", "delegate", &two).unwrap().unwrap_err();
+        assert!(refused.message.contains("ne délègue jamais"), "{}", refused.message);
+        // Une conversation de page ne devient pas coordinatrice d’elle-même.
+        let scope = AgentScope { module: "notes".into(), ..AgentScope::default() };
+        crate::app_db::set_agent_scope(&state.app_db.lock().unwrap(), "page", &scope).unwrap();
+        assert!(!may_delegate(&state, "page"));
+        assert!(call(&state, "page", "delegate", &two).unwrap().is_err());
+        // En « Autonomie totale », les délégués peuvent l’être aussi.
+        crate::consents::TEST_AUTONOMY.lock().unwrap().push(("totale", crate::agents::session::Autonomy::Auto));
+        let full = json!({ "tasks": [{ "key": "a", "goal": "x", "mode": "complet" }] });
+        assert!(call(&state, "totale", "delegate", &full).unwrap().is_ok());
+        crate::consents::TEST_AUTONOMY.lock().unwrap().retain(|(conversation, _)| *conversation != "totale");
     }
 
     #[test]

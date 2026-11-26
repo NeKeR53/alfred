@@ -660,8 +660,9 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     if scope.is_some() {
         list.retain(|tool| tool["name"].as_str().is_some_and(|name| SCOPED_TOOLS.contains(&name)));
     }
-    // Une coordinatrice répartit son travail entre d’autres agents ; ses délégués n’ont jamais ces outils.
-    if crate::agents::delegation::is_coordinator(state, conversation) {
+    // Une conversation ouverte par l’utilisateur (ou une coordinatrice de page) répartit son travail entre d’autres
+    // agents ; ses délégués n’ont jamais ces outils.
+    if crate::agents::delegation::may_delegate(state, conversation) {
         list.extend(crate::agents::delegation::tools());
     }
     list
