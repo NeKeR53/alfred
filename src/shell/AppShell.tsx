@@ -2,8 +2,8 @@
  * Coquille d’Alfred sur `AppShell` et `Sidebar` de socle-ui.
  *
  * - Menu de gauche : une entrée par section (icône, compteur, menu « … »), les entrées de zone de ses pages en
- *   sous-pages, puis les conversations de l’agent ; en pied, l’entrée Agent, l’espace de travail ouvert et le compte,
- *   qui ouvre les Réglages.
+ *   sous-pages, puis les conversations de l’agent, chaque délégué sous sa coordinatrice ; en pied, l’entrée Agent,
+ *   l’espace de travail ouvert et le compte, qui ouvre les Réglages.
  * - Barre du haut : nom de la section, onglets de ses pages (vues fixes) puis onglets ouverts sur un élément
  *   (`views.open`, fermables, D-021), actions de la page (`ActionBar` zone `topbar`),
  *   outils de la coquille et cloche du centre de notifications. Le mode « données d’exemple » se dit par un encart en
@@ -52,9 +52,23 @@ import { openZoneEntry, runZoneAction } from "./PageZones";
 import { SettingsModal } from "./SettingsModal";
 import { useShell, type View } from "./store";
 import { activateTopBarAction, type TopBarActionDescriptor, useTopBarActionStore } from "./topBarActions";
-import type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
+import type {
+  AgentPanelRenderer,
+  AgentSummary,
+  AgentZone,
+  BuiltInTab,
+  ConversationRow,
+  PageToolsRenderer,
+} from "./types";
 
-export type { AgentPanelRenderer, AgentSummary, AgentZone, BuiltInTab, PageToolsRenderer } from "./types";
+export type {
+  AgentPanelRenderer,
+  AgentSummary,
+  AgentZone,
+  BuiltInTab,
+  ConversationRow,
+  PageToolsRenderer,
+} from "./types";
 
 /** Contenu d’une page de l’espace : son cadre, ou l’état qui explique pourquoi il n’y a encore rien à afficher. */
 function SpacePage({
@@ -635,6 +649,49 @@ export function AppShell({
       if (next && next !== row.label) agentZone?.onAction(row.id, "rename", next);
     });
 
+  /**
+   * Une conversation, et ses délégués en enfants (un seul niveau, D-042 et D-056). `Sidebar` lit les options de ses
+   * enfants directs : les éléments sont rendus tels quels, sans composant intermédiaire.
+   */
+  const conversationItem = (row: ConversationRow, zone: AgentZone) => (
+    <Sidebar.TreeItem
+      key={row.id}
+      id={navId.conversation(row.id)}
+      title={row.label}
+      subtitle={row.details}
+      // Signes existants de Socle (D-044, D-055, D-385) : au travail, le point « En cours » ; réponse attendue ou
+      // échec, l’alerte ; terminée et pas encore lue, le point de non-lu. Une coordinatrice montre aussi ceux de ses
+      // délégués qui travaillent ou attendent une réponse.
+      indicator={row.activity ? "activity" : undefined}
+      status={row.warning ? "warning" : undefined}
+      unread={Boolean(row.unread)}
+      // « Archiver » : un bouton-icône au survol, pas une entrée du menu « … » (D-381).
+      quickActions={row.actions
+        ?.filter((action) => action.id === "archive")
+        .map((action) => ({
+          icon: <NamedIcon name={action.icon} size={14} />,
+          label: `${action.label} ${row.label}`,
+          onPress: () => zone.onAction(row.id, action.id),
+        }))}
+      actions={
+        row.actions?.some((action) => action.id !== "archive")
+          ? row.actions
+              .filter((action) => action.id !== "archive")
+              .map((action) => (
+                <DropdownMenu.Item
+                  key={action.id}
+                  label={action.label}
+                  icon={<NamedIcon name={action.icon} size={16} />}
+                  onAction={() => (action.id === "rename" ? renameConversation(row) : zone.onAction(row.id, action.id))}
+                />
+              ))
+          : undefined
+      }
+    >
+      {row.children?.length ? row.children.map((child) => conversationItem(child, zone)) : undefined}
+    </Sidebar.TreeItem>
+  );
+
   const sidebar = (
     <Sidebar
       selectedId={selectedId}
@@ -685,45 +742,7 @@ export function AppShell({
               : undefined
           }
         >
-          {agentZone.rows.map((row) => (
-            <Sidebar.TreeItem
-              key={row.id}
-              id={navId.conversation(row.id)}
-              title={row.label}
-              subtitle={row.details}
-              // Signes existants de Socle (D-044, D-055, D-385) : au travail, le point vert « En cours » ; réponse
-              // attendue ou échec, l’alerte ; terminée et pas encore lue, le point de non-lu.
-              indicator={row.status === "running" ? "activity" : undefined}
-              status={
-                row.status === "waiting" || row.status === "error" || row.status === "warning" ? "warning" : undefined
-              }
-              unread={row.status === "ok" || Boolean(row.badge)}
-              // « Archiver » : un bouton-icône au survol, pas une entrée du menu « … » (D-381).
-              quickActions={row.actions
-                ?.filter((action) => action.id === "archive")
-                .map((action) => ({
-                  icon: <NamedIcon name={action.icon} size={14} />,
-                  label: `${action.label} ${row.label}`,
-                  onPress: () => agentZone.onAction(row.id, action.id),
-                }))}
-              actions={
-                row.actions?.some((action) => action.id !== "archive")
-                  ? row.actions
-                      .filter((action) => action.id !== "archive")
-                      .map((action) => (
-                        <DropdownMenu.Item
-                          key={action.id}
-                          label={action.label}
-                          icon={<NamedIcon name={action.icon} size={16} />}
-                          onAction={() =>
-                            action.id === "rename" ? renameConversation(row) : agentZone.onAction(row.id, action.id)
-                          }
-                        />
-                      ))
-                  : undefined
-              }
-            />
-          ))}
+          {agentZone.rows.map((row) => conversationItem(row, agentZone))}
         </Sidebar.Section>
       ) : null}
     </Sidebar>

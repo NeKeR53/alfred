@@ -1,10 +1,11 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { AgentPage, ConversationTracking } from "./AgentPage";
-import { compareConversations, type GitSummary, STATE_TONE } from "./ConversationList";
+import { compareConversations, type GitSummary } from "./ConversationList";
 import type { AgentTask } from "./harness";
 import type { Conversation, ConversationHeader } from "./model";
 import { useAgentPreferences } from "./panel/ModelPicker";
@@ -414,7 +415,7 @@ describe("page Agent", () => {
     expect(pill.closest('[role="group"][aria-label="Réglages de la conversation"]')).not.toBeNull();
   });
 
-  it("le suivi liste toutes les conversations comme OneApp : pastille d’état, heure, archiver au survol", async () => {
+  it("le suivi liste toutes les conversations comme OneApp : état ou heure, archiver au survol", async () => {
     const today = new Date();
     today.setHours(14, 2, 0, 0);
     const at = today.getTime();
@@ -431,24 +432,80 @@ describe("page Agent", () => {
     expect(within(panel).queryByRole("region", { name: "À traiter" })).toBeNull();
     expect(within(panel).queryByRole("region", { name: "Terminées" })).toBeNull();
     await waitFor(() => expect(list).toHaveTextContent("1 à traiter"));
-    // La plus récemment créée d’abord, quel que soit son état.
-    const rows = within(list).getAllByRole("row");
+    // La plus récemment créée d’abord, quel que soit son état, dans l’arbre des conversations (TreeView).
+    const tree = within(list).getByRole("treegrid", { name: "Conversations" });
+    const rows = within(tree).getAllByRole("row");
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Plus récente", "Récente", "Lue", "Ancienne"]);
-    // État en Badge de List (point coloré par son ton, libellé), harnais en sous-titre, heure à droite.
-    const failed = within(list).getByRole("row", { name: "Récente" });
-    expect(failed).toHaveTextContent("Claude Code");
-    expect(failed).toHaveTextContent("14:02");
-    expect(failed).toHaveTextContent("En échec");
-    expect(within(list).getByRole("row", { name: "Plus récente" })).toHaveTextContent("À consulter");
-    // Une conversation lue est en veille.
-    const read = within(list).getByRole("row", { name: "Lue" });
-    expect(read).toHaveTextContent("En veille");
+    // L’état à droite de la ligne ; en veille, l’heure de la dernière activité.
+    expect(within(tree).getByRole("row", { name: "Récente" })).toHaveTextContent("En échec");
+    expect(within(tree).getByRole("row", { name: "Plus récente" })).toHaveTextContent("À consulter");
+    const read = within(tree).getByRole("row", { name: "Lue" });
+    expect(read).toHaveTextContent("14:02");
     expect(read).not.toHaveTextContent("En échec");
     // Un autre jour : le jour et le mois.
-    expect(within(list).getByRole("row", { name: "Ancienne" })).toHaveTextContent("5 janv.");
+    expect(within(tree).getByRole("row", { name: "Ancienne" })).toHaveTextContent("5 janv.");
     // Chaque conversation s’archive depuis sa ligne, pas seulement les terminées.
     for (const title of ["Plus récente", "Récente", "Lue", "Ancienne"])
-      expect(within(list).getByRole("button", { name: `Archiver ${title}` })).toBeInTheDocument();
+      expect(within(tree).getByRole("button", { name: `Archiver ${title}`, hidden: true })).toBeInTheDocument();
+  });
+
+  it("le suivi range les délégués sous leur coordinatrice, dépliée tant que l’un d’eux travaille", async () => {
+    const delegate = (id: string, key: string, at: number, patch: Partial<Conversation> = {}) =>
+      stored(id, `${key} · délégué`, at, { parent: "vq3", taskKey: key, ...patch });
+    database = {
+      vq3: stored("vq3", "Ventes Q3", 1_000, { coordinator: true }),
+      d1: delegate("d1", "ventes", 1_100),
+      d2: delegate("d2", "demandes", 1_200, { unread: true, lastStatus: "done" }),
+      d3: delegate("d3", "documentation", 1_300),
+      // La plus récente : la page l’ouvre d’elle-même.
+      demo: stored("demo", "Préparer la démo", 5_000),
+    };
+    render(<AgentPageWithTracking />);
+    await findConversationTitle("Préparer la démo");
+    const panel = await screen.findByLabelText("Suivi des conversations");
+    const tree = await within(panel).findByRole("treegrid", { name: "Conversations" });
+    // Tant qu’aucun délégué ne travaille, la coordinatrice est repliée : ses délégués n’ont pas de ligne.
+    const coordinator = within(tree).getByRole("row", { name: "Ventes Q3" });
+    expect(coordinator).toHaveAttribute("aria-expanded", "false");
+    expect(within(tree).queryByRole("row", { name: "ventes" })).toBeNull();
+
+    // Un délégué se met au travail : elle se déplie, ses délégués dessous, dans l’ordre où elle les a lancés.
+    act(() =>
+      useAgents.setState({ runtime: { d1: { status: "responding", approvals: [], questions: [], queued: [] } } }),
+    );
+    await waitFor(() =>
+      expect(within(tree).getByRole("row", { name: "Ventes Q3" })).toHaveAttribute("aria-expanded", "true"),
+    );
+    const rows = within(tree).getAllByRole("row");
+    expect(rows.map((row) => [row.getAttribute("aria-label"), row.getAttribute("aria-level")])).toEqual([
+      ["Préparer la démo", "1"],
+      ["Ventes Q3", "1"],
+      ["ventes", "2"],
+      ["demandes", "2"],
+      ["documentation", "2"],
+    ]);
+    // La coordinatrice montre le délégué au travail ; chaque délégué garde son état.
+    expect(within(tree).getByRole("row", { name: "Ventes Q3" })).toHaveTextContent("Au travail");
+    expect(within(tree).getByRole("row", { name: "ventes" })).toHaveTextContent("Au travail");
+    expect(within(tree).getByRole("row", { name: "demandes" })).toHaveTextContent("À consulter");
+
+    // Un clic ouvre le délégué.
+    await userEvent.setup().click(within(tree).getByRole("row", { name: "demandes" }));
+    await findConversationTitle("demandes · délégué");
+
+    // Coordinatrice archivée : ses délégués remontent en haut et disent de qui ils sont les délégués.
+    act(() =>
+      useAgents.setState((state) => ({
+        headers: state.headers.map((header) => (header.id === "vq3" ? { ...header, archived: true } : header)),
+      })),
+    );
+    await waitFor(() =>
+      expect(within(tree).getByRole("row", { name: "ventes · délégué de Ventes Q3" })).toHaveAttribute(
+        "aria-level",
+        "1",
+      ),
+    );
+    expect(within(tree).queryByRole("row", { name: "Ventes Q3" })).toBeNull();
   });
 
   it("le suivi résume les conversations au travail quand rien n’attend l’utilisateur", async () => {
@@ -512,18 +569,5 @@ describe("tri du suivi", () => {
     // La plus récemment créée d’abord, même si l’autre vient d’écrire : une ligne ne saute pas à chaque message.
     expect(compareConversations(old, recent)).toBeGreaterThan(0);
     expect(compareConversations(recent, old)).toBeLessThan(0);
-  });
-});
-
-describe("ton des états du suivi", () => {
-  it("donne au Badge de chaque ligne le ton de son état", () => {
-    expect(STATE_TONE).toEqual({
-      working: "info",
-      waiting: "info",
-      attention: "warning",
-      error: "danger",
-      done: "success",
-      idle: "neutral",
-    });
   });
 });

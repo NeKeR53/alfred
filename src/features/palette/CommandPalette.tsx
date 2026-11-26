@@ -14,6 +14,7 @@ import type { ResolvedFunction } from "../../lib/types";
 import { NamedIcon, SectionIcon } from "../../shell/icons";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import { conversationLabel, delegateRole } from "../agent/conversationTree";
 import { useAgents } from "../agent/store";
 import { openSettings, settingsTabs } from "../settings/tabs";
 
@@ -276,8 +277,9 @@ export function CommandPalette() {
         },
         ...conversations.map((conversation) => ({
           id: `agent:conversation:${conversation.id}`,
-          label: conversation.title,
-          description: "Conversation",
+          // Un délégué se cherche par sa tâche (« ventes ») ; la précision dit de qui il est le délégué.
+          label: conversationLabel(conversation),
+          description: delegateRole(conversation, headers) ?? "Conversation",
           section: "Agent",
           icon: icon16(MessageSquare),
           run: run(() => {

@@ -42,9 +42,28 @@ export interface AgentSummary {
   counts?: { attention: number; working: number; unread: number };
 }
 
+/**
+ * Conversation de la zone Agent : une ligne du menu (`Sidebar.TreeItem`), avec ses signes et, pour une
+ * coordinatrice, ses délégués en enfants.
+ */
+export interface ConversationRow extends ZoneRow {
+  /** Point « En cours » : la conversation ou un de ses délégués travaille. */
+  activity?: boolean;
+  /** Alerte : la conversation ou un de ses délégués attend une réponse, ou la conversation a échoué. */
+  warning?: boolean;
+  /** Point de non-lu : la conversation a fini sans être lue. */
+  unread?: boolean;
+  /** Délégués de la coordinatrice, sur un seul niveau, dans l’ordre où elle les a lancés. */
+  children?: ConversationRow[];
+  /** Ligne résumé de la coordinatrice repliée : « 3 délégués · 2 au travail ». */
+  summary?: string;
+  /** Coordinatrice dépliée d’office : un de ses délégués travaille ou attend une réponse. */
+  expanded?: boolean;
+}
+
 /** Zone de la page Agent dans le menu : ses conversations non archivées, sous l’entrée Agent. */
 export interface AgentZone {
-  rows: ZoneRow[];
+  rows: ConversationRow[];
   activeId?: string;
   visible?: number;
   onOpen: (id: string) => void;

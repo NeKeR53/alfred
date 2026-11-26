@@ -75,6 +75,7 @@ export function ConversationTracking({ withList = true }: { withList?: boolean }
   return (
     <ConversationList
       conversations={visible}
+      known={headers}
       activeId={activeId}
       active={conversation}
       git={git}

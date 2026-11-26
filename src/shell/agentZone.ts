@@ -2,17 +2,27 @@
  * Zone de la page Agent dans le menu de gauche, sur le modèle de la section Agents de OneApp : les conversations
  * non archivées, réponse attendue et échec en tête, puis la plus récemment créée d’abord. Chacune porte son état en
  * pastille et trois actions au survol : Renommer (dans la ligne), Ouvrir dans une fenêtre, Archiver.
+ *
+ * Les délégués d’une coordinatrice sont rangés sous elle (`conversationTree`) : elle montre leur état, se trie
+ * d’après lui et reste dépliée tant que l’un d’eux travaille ou attend une réponse.
  */
 import { useMemo } from "react";
+import {
+  type ConversationNode,
+  conversationTree,
+  delegatesActive,
+  delegatesSummary,
+  familyState,
+  nodeSigns,
+} from "../features/agent/conversationTree";
 import { PROVIDER_LABEL } from "../features/agent/harness/types";
 import type { ConversationHeader } from "../features/agent/model";
 import { useAgents } from "../features/agent/store";
 import { CONVERSATION_STATE_LABEL, type ConversationState, conversationState } from "../features/agent/summary";
-import type { ZoneRow } from "./MenuZone";
 import type { MenuEntryStatus } from "./menuZones";
 import { notify } from "./notifications";
 import { useShell } from "./store";
-import type { AgentZone } from "./types";
+import type { AgentZone, ConversationRow } from "./types";
 
 /** État d’une conversation rendu par la pastille d’une entrée du menu ; une conversation en veille n’en a pas. */
 const STATUS: Record<ConversationState, MenuEntryStatus | undefined> = {
@@ -27,26 +37,38 @@ const STATUS: Record<ConversationState, MenuEntryStatus | undefined> = {
 /** Rang dans la zone : réponse attendue, puis échec, puis le reste. */
 const RANK: Record<ConversationState, number> = { attention: 0, error: 1, working: 2, waiting: 2, done: 2, idle: 2 };
 
+function conversationRow(node: ConversationNode, windowAction: boolean): ConversationRow {
+  const { header } = node;
+  const shown = familyState(node);
+  const children = node.delegates.map((delegate) => conversationRow(delegate, windowAction));
+  return {
+    id: header.id,
+    label: node.label,
+    status: STATUS[shown],
+    ...nodeSigns(node),
+    // Un délégué resté en haut dit de qui il est le délégué, à la place du harnais.
+    details: `${node.delegateOf ?? PROVIDER_LABEL[header.provider] ?? header.provider} · ${CONVERSATION_STATE_LABEL[shown]}`,
+    actions: [
+      { id: "rename", label: "Renommer", icon: "pencil" },
+      ...(windowAction ? [{ id: "window", label: "Ouvrir dans une fenêtre", icon: "app-window" }] : []),
+      { id: "archive", label: "Archiver", icon: "archive" },
+    ],
+    ...(children.length ? { children, summary: delegatesSummary(node), expanded: delegatesActive(node) } : {}),
+  };
+}
+
 export function agentZoneRows(
   headers: readonly ConversationHeader[],
   stateOf: (header: ConversationHeader) => ConversationState,
   windowAction = true,
-): ZoneRow[] {
-  return headers
-    .filter((header) => !header.archived && header.started)
-    .map((header) => ({ header, state: stateOf(header) }))
-    .sort((left, right) => RANK[left.state] - RANK[right.state] || right.header.createdAt - left.header.createdAt)
-    .map(({ header, state }) => ({
-      id: header.id,
-      label: header.title || "Nouvelle conversation",
-      status: STATUS[state],
-      details: `${PROVIDER_LABEL[header.provider] ?? header.provider} · ${CONVERSATION_STATE_LABEL[state]}`,
-      actions: [
-        { id: "rename", label: "Renommer", icon: "pencil" },
-        ...(windowAction ? [{ id: "window", label: "Ouvrir dans une fenêtre", icon: "app-window" }] : []),
-        { id: "archive", label: "Archiver", icon: "archive" },
-      ],
-    }));
+): ConversationRow[] {
+  const visible = headers.filter((header) => !header.archived && header.started);
+  return conversationTree(visible, stateOf, headers)
+    .map((node) => ({ node, state: familyState(node) }))
+    .sort(
+      (left, right) => RANK[left.state] - RANK[right.state] || right.node.header.createdAt - left.node.header.createdAt,
+    )
+    .map(({ node }) => conversationRow(node, windowAction));
 }
 
 const failed = (title: string) => (error: unknown) =>

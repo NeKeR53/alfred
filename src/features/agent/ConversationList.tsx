@@ -1,11 +1,16 @@
 import { Archive } from "lucide-react";
 import { useEffect, useState } from "react";
-import { type DetailSection, DiffStat, Drawer, PropertyRow, type StatusTone } from "socle-ui";
+import { type DetailSection, DiffStat, Drawer, PropertyRow, type TreeNode, TreeView } from "socle-ui";
 import { invoke } from "../../lib/native";
 import type { Commit, FileLines } from "../../lib/types";
-import { PROVIDER_LABEL } from "./harness";
+import {
+  type ConversationNode,
+  conversationLabel,
+  conversationTree,
+  delegatesActive,
+  familyState,
+} from "./conversationTree";
 import type { Conversation, ConversationHeader } from "./model";
-import { InfoPanelRows } from "./panel/InfoPanel";
 import { planSection } from "./panel/PlanSteps";
 import { delegateTasks, tasksSection, useTaskClock } from "./panel/TasksSection";
 import { useAgents } from "./store";
@@ -23,16 +28,6 @@ export function compareConversations(left: ConversationHeader, right: Conversati
 function rowState(state: ConversationState): ConversationState {
   return state === "waiting" ? "working" : state;
 }
-
-/** Ton du badge d’état de la ligne : au travail, réponse attendue, échec, à consulter ; en veille, neutre. */
-export const STATE_TONE: Record<ConversationState, StatusTone> = {
-  working: "info",
-  waiting: "info",
-  attention: "warning",
-  error: "danger",
-  done: "success",
-  idle: "neutral",
-};
 
 /** Dernière activité, comme dans OneApp : l’heure aujourd’hui, le jour et le mois avant. */
 export function lastActivity(at: number, now: number) {
@@ -221,12 +216,44 @@ function ChangedFiles({ conversation, git }: { conversation: Conversation; git: 
 }
 
 /**
- * Suivi des conversations dans le panneau de droite, repris de `AgentList` de OneApp : toutes les conversations dans
- * une seule liste, la plus récemment créée d’abord, chacune avec sa pastille d’état, l’heure de sa dernière activité
- * et « Archiver » au survol ; puis l’état Git du dossier de travail de la conversation ouverte.
+ * Méta d’une ligne du suivi : l’état qui compte (au travail, réponse attendue, en échec, à consulter) ; pour une
+ * conversation en veille, l’heure de sa dernière activité.
+ */
+export function conversationMeta(node: ConversationNode, now: number) {
+  const state = rowState(familyState(node));
+  return state === "idle" ? lastActivity(node.header.updatedAt, now) : CONVERSATION_STATE_LABEL[state];
+}
+
+/**
+ * Dépliage des coordinatrices du suivi, comme dans le menu de gauche : dépliée tant qu’un délégué travaille ou attend
+ * une réponse, ou que le délégué ouvert est le sien ; un clic sur le chevron l’emporte, et reste retenu.
+ */
+function useDelegatesExpansion(nodes: readonly ConversationNode[], activeId: string | null) {
+  const [chosen, setChosen] = useState<Record<string, boolean>>({});
+  const parents = nodes.filter((node) => node.delegates.length);
+  const isOpen = (node: ConversationNode) =>
+    chosen[node.header.id] ??
+    (delegatesActive(node) || node.delegates.some((delegate) => delegate.header.id === activeId));
+  return {
+    expandedIds: parents.filter(isOpen).map((node) => node.header.id),
+    onExpandedChange: (ids: string[]) => {
+      const next = { ...chosen };
+      for (const node of parents)
+        if (ids.includes(node.header.id) !== isOpen(node)) next[node.header.id] = ids.includes(node.header.id);
+      setChosen(next);
+    },
+  };
+}
+
+/**
+ * Suivi des conversations dans le panneau de droite, repris de `AgentList` de OneApp : toutes les conversations, la
+ * plus récemment créée d’abord, chacune avec son état (ou, en veille, l’heure de sa dernière activité) et « Archiver »
+ * au survol ; les délégués sous leur coordinatrice, comme dans le menu de gauche (`TreeView`, D-260 de socle-ui) ;
+ * puis l’état Git du dossier de travail de la conversation ouverte.
  */
 export function ConversationList({
   conversations,
+  known = conversations,
   activeId,
   active,
   git = emptyGit,
@@ -234,6 +261,8 @@ export function ConversationList({
   withList = true,
 }: {
   conversations: readonly ConversationHeader[];
+  /** Toutes les conversations, archivées comprises : un délégué dont la coordinatrice est archivée la nomme. */
+  known?: readonly ConversationHeader[];
   activeId: string | null;
   active?: Conversation;
   /** État Git du dossier de travail de la conversation ouverte, lu par la page (`useWorkspaceGit`). */
@@ -262,34 +291,21 @@ export function ConversationList({
   const sorted = [...conversations].sort(compareConversations);
   const attention = sorted.filter(({ id }) => ["attention", "error"].includes(states.get(id) ?? ""));
   const working = sorted.filter(({ id }) => states.get(id) === "working");
-  const rows = sorted.map((header) => {
-    const state = states.get(header.id) ?? "idle";
-    const provider = PROVIDER_LABEL[header.provider];
-    // Le harnais en sous-ligne ; une conversation qui attend une réponse ou a échoué le dit à côté, comme dans OneApp.
-    // Une coordinatrice et ses délégués se reconnaissent dans la sous-ligne.
-    const parent = header.parent ? conversations.find(({ id }) => id === header.parent) : undefined;
-    const role = header.coordinator
-      ? " · coordinatrice"
-      : header.parent
-        ? ` · délégué${parent ? ` de ${parent.title}` : ""}`
-        : "";
-    return {
-      key: header.id,
-      text: header.title,
-      description: `${provider}${role}`,
-      announcement: CONVERSATION_STATE_LABEL[state],
-      tone: STATE_TONE[state],
-      meta: lastActivity(header.updatedAt, now),
-      selected: header.id === activeId,
-      onSelect: () => void open(header.id),
-      action: onArchive
-        ? { icon: <Archive size={14} />, label: `Archiver ${header.title}`, onPress: () => onArchive(header) }
-        : undefined,
-    };
+  const tree = conversationTree(sorted, (header) => states.get(header.id) ?? "idle", known);
+  const expansion = useDelegatesExpansion(tree, activeId);
+  const byId = new Map(sorted.map((header) => [header.id, header]));
+  const treeNode = (node: ConversationNode): TreeNode => ({
+    id: node.header.id,
+    // Un délégué resté en haut dit de qui il est le délégué ; sous sa coordinatrice, sa place le dit.
+    label: node.delegateOf
+      ? `${node.label} · ${node.delegateOf.charAt(0).toLowerCase()}${node.delegateOf.slice(1)}`
+      : node.label,
+    meta: conversationMeta(node, now),
+    ...(node.delegates.length ? { children: node.delegates.map(treeNode) } : {}),
   });
   const listSection: DetailSection[] = [
     {
-      // Une seule liste : la pastille donne l’état, le résumé ce qui demande l’utilisateur, sinon ce qui travaille.
+      // Un seul arbre : la méta donne l’état, le résumé ce qui demande l’utilisateur, sinon ce qui travaille.
       id: "agent-conversations",
       title: "Conversations",
       summary: attention.length
@@ -297,7 +313,33 @@ export function ConversationList({
         : working.length
           ? `${working.length} au travail`
           : undefined,
-      content: <InfoPanelRows rows={rows} />,
+      content: (
+        <TreeView
+          aria-label="Conversations"
+          nodes={tree.map(treeNode)}
+          selectionMode="single"
+          selectedIds={activeId ? [activeId] : []}
+          onSelectionChange={(ids) => {
+            const [id] = ids;
+            if (id && id !== activeId) void open(id);
+          }}
+          expandedIds={expansion.expandedIds}
+          onExpandedChange={expansion.onExpandedChange}
+          actions={(node) => {
+            const header = byId.get(node.id);
+            return onArchive && header
+              ? [
+                  {
+                    id: "archive",
+                    label: `Archiver ${conversationLabel(header)}`,
+                    icon: <Archive size={14} />,
+                    onPress: () => onArchive(header),
+                  },
+                ]
+              : [];
+          }}
+        />
+      ),
     },
   ];
   const plan = planSection(active?.plan);

@@ -5,6 +5,8 @@ import { invoke } from "../../lib/native";
 import type { ResolvedFunction, Snapshot } from "../../lib/types";
 import { useNotifications } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
+import type { ConversationHeader } from "../agent/model";
+import { useAgents } from "../agent/store";
 import { renderWithSocle as render } from "../space/sections.test-helper";
 import { CommandPalette, fold, usePalette } from "./CommandPalette";
 
@@ -161,6 +163,35 @@ describe("palette de commandes", () => {
         description: "Client inconnu.",
       }),
     );
+  });
+
+  it("trouve un délégué par sa tâche, et dit de qui il est le délégué", async () => {
+    const user = userEvent.setup();
+    const conversation = (id: string, title: string, extra: Partial<ConversationHeader> = {}) =>
+      ({
+        id,
+        title,
+        provider: "claude",
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+        started: true,
+        unread: false,
+        ...extra,
+      }) as ConversationHeader;
+    useAgents.setState({
+      headers: [
+        conversation("vq3", "Ventes Q3", { coordinator: true }),
+        conversation("d1", "ventes · délégué", { parent: "vq3" }),
+      ],
+    });
+    render(<CommandPalette />);
+    open();
+    await user.type(search(), "ventes");
+    const delegate = await screen.findByRole("option", { name: /Délégué de Ventes Q3/ });
+    expect(delegate).toHaveTextContent(/^ventes/);
+    expect(delegate).not.toHaveTextContent("· délégué");
+    expect(screen.getByRole("option", { name: /^Ventes Q3/ })).toHaveTextContent("Conversation");
   });
 
   it("bascule le thème", async () => {

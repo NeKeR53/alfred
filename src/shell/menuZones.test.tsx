@@ -226,6 +226,77 @@ describe("zone dans le menu de gauche", () => {
     expect(within(idle).queryByRole("img")).toBeNull();
   });
 
+  it("conversations : les délégués se rangent sous leur coordinatrice, et un clic ouvre le délégué", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const conv = (id: string, title: string, createdAt: number, extra: Partial<ConversationHeader> = {}) =>
+      ({
+        id,
+        title,
+        provider: "claude",
+        createdAt,
+        updatedAt: createdAt,
+        archived: false,
+        started: true,
+        ...extra,
+      }) as unknown as ConversationHeader;
+    const headers = [
+      conv("demo", "Préparer la démo", 1),
+      conv("vq3", "Ventes Q3", 2, { coordinator: true }),
+      conv("d1", "ventes · délégué", 3, { parent: "vq3" }),
+      conv("d2", "demandes · délégué", 4, { parent: "vq3" }),
+      conv("d3", "documentation · délégué", 5, { parent: "vq3" }),
+    ];
+    render(
+      <AppShell
+        agent={<div>Agent</div>}
+        settingsTabs={[]}
+        agentAvailable
+        agentZone={{ rows: agentZoneRows(headers, () => "idle", false), onOpen, onAction: vi.fn() }}
+      />,
+    );
+    // Au premier niveau, la coordinatrice et la conversation ordinaire seulement ; repliée, la coordinatrice résume.
+    const coordinator = await screen.findByRole("row", { name: /^Ventes Q3/ });
+    expect(coordinator).toHaveAttribute("aria-level", "2");
+    expect(screen.queryByRole("row", { name: /^ventes/ })).toBeNull();
+    await user.click(within(coordinator).getByRole("button", { name: /^Déplier Ventes Q3/, hidden: true }));
+    // Dépliée : ses délégués dessous, sans « · délégué », dans l’ordre où elle les a lancés.
+    const delegates = screen
+      .getAllByRole("row")
+      .filter((row) => row.getAttribute("aria-level") === "3")
+      .map((row) => row.getAttribute("aria-label"));
+    expect(delegates).toEqual(["ventes", "demandes", "documentation"]);
+    await user.click(screen.getByRole("row", { name: /^demandes/ }));
+    expect(onOpen).toHaveBeenCalledWith("d2");
+  });
+
+  it("conversations : un délégué dont la coordinatrice est archivée reste en haut et dit de qui il est le délégué", async () => {
+    const headers = [
+      { id: "vq3", title: "Ventes Q3", provider: "claude", createdAt: 1, archived: true, started: true },
+      {
+        id: "d1",
+        title: "ventes · délégué",
+        provider: "claude",
+        createdAt: 2,
+        archived: false,
+        started: true,
+        parent: "vq3",
+      },
+    ] as unknown as ConversationHeader[];
+    render(
+      <AppShell
+        agent={<div>Agent</div>}
+        settingsTabs={[]}
+        agentAvailable
+        agentZone={{ rows: agentZoneRows(headers, () => "idle", false), onOpen: vi.fn(), onAction: vi.fn() }}
+      />,
+    );
+    const orphan = await screen.findByRole("row", { name: /^ventes/ });
+    expect(orphan).toHaveAttribute("aria-level", "2");
+    expect(orphan).toHaveTextContent("Délégué de Ventes Q3 · En veille");
+    expect(screen.queryByRole("row", { name: /^Ventes Q3/ })).toBeNull();
+  });
+
   it("conversations : le « + » du titre de la section lance une nouvelle conversation", async () => {
     const user = userEvent.setup();
     const onNew = vi.fn();
