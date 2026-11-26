@@ -1,4 +1,4 @@
-//! Serveur HTTP local, lié à 127.0.0.1 : outils des agents (MCP), webhooks, retour des connexions SSO et, en
+//! Serveur HTTP local, lié à 127.0.0.1 : pont `/sdk` (pages, fonctions et CLI `alfred` des agents), webhooks, retour des connexions SSO et, en
 //! développement seulement, pont qui laisse un navigateur de test piloter le vrai backend.
 
 use std::sync::Arc;

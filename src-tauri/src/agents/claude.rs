@@ -17,7 +17,6 @@ use super::session::{attached_list, message_text, write_prompt, Autonomy, InputF
 use super::{checked_dir, command, simple_value};
 use crate::error::{AppError, AppResult};
 
-const ALFRED_TOOL_PREFIX: &str = "mcp__alfred__";
 /// Liste de tâches de Claude Code : son plan, montré dans le panneau de la conversation et non dans le relevé.
 const PLAN_TOOL: &str = "TodoWrite";
 
@@ -176,9 +175,8 @@ pub(super) fn tool_activity(id: &str, name: &str, input: &Value) -> Activity {
             running(ActivityKind::Agent, "Agent · délégation").detail(text(&input["description"]).or(text(&input["prompt"])))
         }
         _ => {
-            let title = if let Some(tool) = name.strip_prefix(ALFRED_TOOL_PREFIX) {
-                format!("Outil · Alfred / {tool}")
-            } else if let Some((server, tool)) = name.strip_prefix("mcp__").and_then(|rest| rest.split_once("__")) {
+            // Outil d’un serveur MCP de l’utilisateur (`mcp__<serveur>__<outil>`) ; Alfred passe par la CLI `alfred`.
+            let title = if let Some((server, tool)) = name.strip_prefix("mcp__").and_then(|rest| rest.split_once("__")) {
                 format!("Outil · {server} / {tool}")
             } else {
                 format!("Outil · {name}")
@@ -328,10 +326,6 @@ enum Decision {
 }
 
 fn decide(tool: &str, autonomy: Autonomy, one_shot: bool) -> Decision {
-    if tool.starts_with(ALFRED_TOOL_PREFIX) {
-        // Les outils d’Alfred sont les siens : pas de question pour s’en servir.
-        return Decision::Allow;
-    }
     if tool == PLAN_TOOL && !one_shot {
         // Le plan ne touche à rien : il ne demande jamais d’accord.
         return Decision::Allow;
@@ -665,7 +659,14 @@ impl Claude {
             Some(text) => Some(write_prompt(&launch.state, &launch.handle, text)?),
             None => None,
         };
-        let roots = options.roots();
+        let mut roots = options.roots();
+        // Le dossier d’échange de la conversation (le sien seul) : Claude Code relit ses captures
+        // (`alfred page_screenshot`) sans carte d’accord, en mode espace de travail aussi.
+        if let (Some(conversation), false) = (&options.conversation, options.one_shot) {
+            if let Ok(dir) = crate::conversations::exchange_dir(&launch.state, conversation) {
+                roots.push(dir.to_string_lossy().to_string());
+            }
+        }
         let claude = ClaudeOptions {
             model: options.model.clone(),
             effort: options.effort.clone(),
@@ -942,7 +943,7 @@ mod tests {
         assert_eq!(permission_mode(Autonomy::Auto), "bypassPermissions");
         assert_eq!(permission_mode(Autonomy::Strict), "manual");
         assert_eq!(permission_mode(Autonomy::Workspace), "acceptEdits");
-        assert_eq!(decide("mcp__alfred__lire", Autonomy::Strict, false), Decision::Allow);
+        assert_eq!(decide("mcp__alfred__lire", Autonomy::Strict, false), Decision::Ask, "plus d’outil MCP d’Alfred autorisé d’office");
         assert_eq!(decide("Bash", Autonomy::Ask, false), Decision::Ask);
         assert_eq!(decide("Bash", Autonomy::Auto, false), Decision::Allow);
         assert!(matches!(decide("Write", Autonomy::Workspace, false), Decision::Deny(_)));
@@ -979,7 +980,6 @@ mod tests {
         let grep = tool_activity("t1", "Grep", &json!({ "pattern": "TODO", "path": "src" }));
         assert_eq!(grep.title, "Recherche");
         assert_eq!(grep.detail.as_deref(), Some("TODO · src"));
-        assert_eq!(tool_activity("t2", "mcp__alfred__lire_page", &json!({})).title, "Outil · Alfred / lire_page");
         assert_eq!(tool_activity("t3", "mcp__github__create_issue", &json!({})).title, "Outil · github / create_issue");
         let card = approval_for("c", "Bash", &json!({ "command": "rm -rf build" }), false);
         assert_eq!(card.title, "Exécuter une commande");

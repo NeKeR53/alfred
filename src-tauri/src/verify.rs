@@ -224,7 +224,7 @@ async fn snapshot(
     }
 }
 
-/// Appelle un outil MCP comme un agent d’une conversation ouverte par l’utilisateur (`page_logs`, `check`…).
+/// Appelle une commande de la CLI `alfred` comme un agent d’une conversation ouverte par l’utilisateur (`page_logs`, `check`…).
 async fn tool(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     headers: HeaderMap,

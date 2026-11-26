@@ -1,6 +1,6 @@
 //! OpenCode : `opencode serve` privé (API v2, HTTP + SSE), piloté par le client généré depuis l’OpenAPI vendu
 //! (`generated.rs`, voir `src-tauri/codegen`). Repris de OneApp (ADR 0022), avec un serveur par session d’Alfred : le
-//! jeton des outils d’Alfred est propre à chaque conversation et le MCP d’`opencode serve` se déclare par processus.
+//! jeton de la CLI `alfred` est propre à chaque conversation (variables d’environnement du processus).
 //!
 //! - Le mot de passe du serveur, le jeton d’appairage et le jeton des outils restent dans ce module.
 //! - OpenCode fusionne des demandes envoyées à la suite dans une même exécution : une demande ne part qu’à la fin de
@@ -58,6 +58,11 @@ fn api_error<E>(error: generated::Error<E>) -> AppError {
         Some(400 | 422) => AppError::new("OpenCode a refusé la demande d’Alfred."),
         _ => unavailable(),
     }
+}
+
+/// Lecture et écriture permises dans le dossier d’échange de la conversation.
+fn exchange_rule(dir: &str) -> Value {
+    json!({ "action": "external_directory", "resource": format!("{}/*", dir.trim_end_matches('/')), "effect": "allow" })
 }
 
 fn rule(action: &str, effect: &str) -> Value {
@@ -364,7 +369,14 @@ async fn open_session(server: &Server, launch: &Launch) -> AppResult<String> {
         }
         None => None,
     };
-    let rules = permissions(options.autonomy, options.one_shot, launch.token.is_some());
+    let mut rules = permissions(options.autonomy, options.one_shot, launch.token.is_some());
+    // Le dossier d’échange de la conversation (le sien seul) : OpenCode relit ses captures (`alfred page_screenshot`)
+    // sans carte d’accord. Dernière règle : elle passe avant le refus du mode espace de travail.
+    if let (Some(conversation), false) = (&options.conversation, options.one_shot) {
+        if let Ok(dir) = crate::conversations::exchange_dir(&launch.state, conversation) {
+            rules.push(exchange_rule(&dir.to_string_lossy()));
+        }
+    }
     let id = match &options.resume_session_id {
         Some(resumed) => {
             // Reprise : l’historique reste dans OpenCode ; la politique et le modèle courants remplacent les anciens.
@@ -535,5 +547,6 @@ mod tests {
         assert_eq!(permissions(Autonomy::Ask, false, false), vec![rule("external_directory", "ask")]);
         assert_eq!(permissions(Autonomy::Strict, false, false).len(), 4);
         assert!(permissions(Autonomy::Auto, true, false).iter().all(|rule| rule["effect"] == "deny"));
+        assert_eq!(exchange_rule("/data/echanges/c1/")["resource"], "/data/echanges/c1/*");
     }
 }

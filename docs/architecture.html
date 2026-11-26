@@ -180,7 +180,7 @@ nav.toc li.nonum a::before { content: ""; }
     <li><a href="#fonctions">Fonctions et automatisations</a></li>
     <li><a href="#clients">Services extérieurs et coffre</a></li>
     <li><a href="#configuration">Configuration d’un module</a></li>
-    <li><a href="#agents">Agents de code et MCP</a></li>
+    <li><a href="#agents">Agents de code et CLI alfred</a></li>
     <li><a href="#ia-page">L’IA dans une page</a></li>
     <li><a href="#partage">Partage : git, équipe, marketplace</a></li>
     <li><a href="#confiance">Accords et secrets</a></li>
@@ -218,7 +218,7 @@ l’application ; les données sont fictives.</p>
 accueille les <b>cadres isolés</b>, où tournent les pages et les fonctions que l’agent écrit, sans réseau ni disque.
 Tout ce qui sort d’un cadre passe par un seul <b>pont</b> jusqu’au <b>backend Rust</b>, qui vérifie les accords puis
 rend le service demandé. Le backend seul touche au <b>stockage</b>. À droite, les agents de code agissent sur la
-structure par les outils MCP d’Alfred et écrivent le contenu comme des fichiers.</p>
+structure par les commandes de la CLI <code>alfred</code> et écrivent le contenu comme des fichiers.</p>
 
 <figure class="fig">
 <svg viewBox="0 0 960 716" role="img" aria-labelledby="f1t">
@@ -306,11 +306,11 @@ structure par les outils MCP d’Alfred et écrivent le contenu comme des fichie
   <text x="840" y="156" class="s c">OpenCode</text>
   <path d="M720 135 H738" class="e e2"/>
   <rect x="740" y="376" width="200" height="86" rx="10" class="b3"/>
-  <text x="840" y="406" class="t c">Serveur MCP</text>
-  <text x="840" y="426" class="s c">HTTP, JSON-RPC</text>
+  <text x="840" y="406" class="t c">CLI alfred</text>
+  <text x="840" y="426" class="s c">pont /sdk, HTTP</text>
   <text x="840" y="442" class="m c">127.0.0.1</text>
   <path d="M840 180 V374" class="e"/>
-  <text x="848" y="280" class="s">outils MCP</text>
+  <text x="848" y="280" class="s">commandes alfred</text>
   <path d="M740 420 H722" class="e"/>
   <rect x="740" y="490" width="200" height="72" rx="10" class="box"/>
   <text x="840" y="518" class="t c">Monde extérieur</text>
@@ -453,7 +453,7 @@ page et le lui rend au retour. <code>CollectionPage</code> le fait seule. Ce qui
 <!-- ============================================================ 4 -->
 <h2 id="creation">4. Créer une page</h2>
 <p>L’utilisateur décrit ce qu’il veut ; l’agent fait le reste, sans rien lui laisser à finir. Il agit sur la
-<b>structure</b> par les outils MCP (placer une page, déclarer une fonction) et écrit le <b>contenu</b> comme des fichiers.
+<b>structure</b> par les commandes de la CLI <code>alfred</code> (placer une page, déclarer une fonction ; lire les données en Code Mode) et écrit le <b>contenu</b> comme des fichiers.
 Il ne rend la main qu’une fois <code>check</code> passé et la page vue en capture. Chaque tour d’agent devient un commit de
 l’espace, que l’on peut annuler.</p>
 
@@ -463,7 +463,7 @@ l’espace, que l’on peut annuler.</p>
   <g>
     <rect x="15" y="16" width="130" height="36" rx="8" class="soft"/><text x="80" y="39" class="t c">Vous</text>
     <rect x="205" y="16" width="130" height="36" rx="8" class="b5"/><text x="270" y="39" class="t c">Agent</text>
-    <rect x="405" y="16" width="130" height="36" rx="8" class="b3"/><text x="470" y="39" class="t c">MCP d’Alfred</text>
+    <rect x="405" y="16" width="130" height="36" rx="8" class="b3"/><text x="470" y="39" class="t c">CLI alfred</text>
     <rect x="605" y="16" width="130" height="36" rx="8" class="b4"/><text x="670" y="39" class="t c">Espace (git)</text>
     <rect x="805" y="16" width="130" height="36" rx="8" class="b1"/><text x="870" y="39" class="t c">Coquille</text>
   </g>
@@ -840,7 +840,7 @@ sur stdout, avec un jeton à usage unique pour appeler le même SDK.</p>
   <text x="30" y="20" class="l0">Qui appelle</text>
   <g>
     <rect x="30" y="30" width="230" height="46" rx="9" class="b2"/><text x="44" y="50" class="t2">Une page</text><text x="44" y="66" class="m">functions.call("synchroniser")</text>
-    <rect x="30" y="90" width="230" height="46" rx="9" class="b5"/><text x="44" y="110" class="t2">Un agent</text><text x="44" y="126" class="m">outil MCP · "tool": true</text>
+    <rect x="30" y="90" width="230" height="46" rx="9" class="b5"/><text x="44" y="110" class="t2">Un agent</text><text x="44" y="126" class="m">alfred run (Code Mode)</text>
     <rect x="30" y="150" width="230" height="46" rx="9" class="box"/><text x="44" y="170" class="t2">Un webhook</text><text x="44" y="186" class="m">POST /hooks/module/id</text>
     <rect x="30" y="210" width="230" height="46" rx="9" class="box"/><text x="44" y="230" class="t2">L’horloge</text><text x="44" y="246" class="m">everyMinutes · at "08:30"</text>
     <rect x="30" y="270" width="230" height="46" rx="9" class="box"/><text x="44" y="290" class="t2">Un événement</text><text x="44" y="306" class="m">abonné à "ticket-cree"</text>
@@ -1010,14 +1010,14 @@ depuis le menu « … » du module, ou par l’agent (<code>open_onboarding</cod
 </figure>
 
 <!-- ============================================================ 15 -->
-<h2 id="agents">15. Agents de code et MCP</h2>
+<h2 id="agents">15. Agents de code et CLI alfred</h2>
 <p>Alfred ne contient pas son propre modèle de code : il pilote les agents déjà installés sur le poste (Claude Code, Codex,
 OpenCode). La coquille parle le protocole de chaque CLI ligne à ligne, à travers un processus lancé par Rust ; elle nomme un
-harnais et des options connues, jamais un programme ou des arguments libres. L’agent atteint Alfred par un serveur MCP local.</p>
+harnais et des options connues, jamais un programme ou des arguments libres. L’agent atteint Alfred par la CLI <code>alfred</code>, placée dans son PATH : elle passe par le pont <code>/sdk</code> du serveur local, avec un jeton propre à la conversation.</p>
 
 <figure class="fig">
 <svg viewBox="0 0 960 380" role="img" aria-labelledby="f15t">
-  <title id="f15t">Page Agent, harnais, processus et outils MCP</title>
+  <title id="f15t">Page Agent, harnais, processus et CLI alfred</title>
   <rect x="20" y="30" width="220" height="64" rx="10" class="b1"/>
   <text x="130" y="56" class="t c">Page Agent</text><text x="130" y="76" class="s c">conversations, saisie @ / $</text>
   <path d="M130 94 V122" class="e"/>
@@ -1028,9 +1028,9 @@ harnais et des options connues, jamais un programme ou des arguments libres. L�
   <text x="130" y="244" class="t c">Processus du CLI</text><text x="130" y="264" class="m c">agents.rs · process_tree.rs</text>
   <path d="M240 250 H298" class="e"/>
   <rect x="300" y="110" width="200" height="180" rx="12" class="b3"/>
-  <text x="400" y="150" class="t c">Serveur MCP</text>
-  <text x="400" y="170" class="m c">« alfred »</text>
-  <text x="400" y="200" class="s c">HTTP, JSON-RPC</text>
+  <text x="400" y="150" class="t c">CLI alfred</text>
+  <text x="400" y="170" class="m c">pont /sdk</text>
+  <text x="400" y="200" class="s c">HTTP, jeton par conversation</text>
   <text x="400" y="216" class="s c">127.0.0.1 seulement</text>
   <text x="400" y="246" class="s c">outils selon qui</text>
   <text x="400" y="262" class="s c">a ouvert la conversation</text>
@@ -1246,7 +1246,7 @@ précédente.</p>
     <tr><td>Bibliothèque d’interface</td><td><code>src/ui/</code></td><td><code>components/</code>, <code>templates/</code> (gabarits), <code>primitives/</code> ; exportée par <code>index.ts</code> sous <code>@alfred/ui</code>.</td></tr>
     <tr><td>Pont des pages</td><td><code>src/sdk/</code></td><td><code>@alfred/sdk</code> : <code>request(méthode)</code> et les espaces <code>db</code>, <code>files</code>, <code>client</code>, <code>ai</code>, <code>shell</code>…</td></tr>
     <tr><td>Environnement du cadre</td><td><code>src/runtime/</code></td><td><code>pageHost.tsx</code>, <code>functionHost.ts</code>, <code>sealNetwork.ts</code> ; compilé par <code>pnpm build:runtime</code> dans <code>src-tauri/runtime/</code>.</td></tr>
-    <tr><td>Backend</td><td><code>src-tauri/src/</code></td><td><code>dispatch.rs</code> (entrée unique), <code>mcp.rs</code> (outils des agents), <code>server.rs</code> (serveur local), <code>pages.rs</code> et <code>transpile.rs</code> (servir les cadres), un fichier par service.</td></tr>
+    <tr><td>Backend</td><td><code>src-tauri/src/</code></td><td><code>dispatch.rs</code> (entrée unique), <code>agent_tools.rs</code>, <code>agent_cli.rs</code> et <code>code_mode.rs</code> (commandes des agents), <code>server.rs</code> (serveur local), <code>pages.rs</code> et <code>transpile.rs</code> (servir les cadres), un fichier par service.</td></tr>
     <tr><td>Docs de l’agent</td><td><code>DESIGN.md</code>, <code>docs/espace/</code></td><td>Recopiés dans chaque espace à l’ouverture (<code>docs.rs</code>) : le design, la marche à suivre (<code>AGENTS.md</code>), le SDK.</td></tr>
   </tbody>
 </table>

@@ -25,7 +25,7 @@ fn space_key(state: &AppState) -> AppResult<String> {
 }
 
 /// Dossier d’échange d’une conversation : collages longs, images collées, fichiers déposés sans chemin.
-fn exchange_dir(state: &AppState, conversation: &str) -> AppResult<PathBuf> {
+pub(crate) fn exchange_dir(state: &AppState, conversation: &str) -> AppResult<PathBuf> {
     if !conversation.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') || conversation.is_empty() {
         return Err(AppError::new("Identifiant de conversation invalide."));
     }

@@ -295,8 +295,8 @@ pub mod testing {
     pub use crate::events::AppEvent;
     pub use crate::state::AppState;
 
-    /// Démarre les routes HTTP locales (outils MCP, webhooks, retour OAuth) sur un port libre et le déclare, comme
-    /// `server::start`, sans prendre le port fixe de l’instance de développement.
+    /// Démarre les routes HTTP locales (pont `/sdk` et CLI des agents, webhooks, retour OAuth) sur un port libre et
+    /// le déclare, comme `server::start`, sans prendre le port fixe de l’instance de développement.
     pub async fn start_server(state: &Arc<AppState>) -> u16 {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("port local libre");
         let port = listener.local_addr().expect("adresse locale").port();
@@ -305,6 +305,7 @@ pub mod testing {
             .merge(crate::clients::routes())
             .merge(crate::webhooks::routes())
             .merge(crate::automations::routes())
+            .merge(crate::script_sdk::routes())
             .with_state(state.clone());
         tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;

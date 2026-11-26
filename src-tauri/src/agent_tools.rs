@@ -207,6 +207,29 @@ pub(crate) fn find_page<'a>(snapshot: &'a Snapshot, reference: &str) -> Option<&
         .find(|page| page.reference == reference)
 }
 
+/// Page introuvable : l’erreur donne les références à employer (« module/page »), d’abord celles dont le titre ou
+/// l’identifiant ressemble à ce que l’agent a écrit (« Films » → `films/films`).
+fn unknown_page(snapshot: &Snapshot, reference: &str) -> AppError {
+    let wanted = reference.trim().to_lowercase();
+    let mut pages: Vec<&crate::space::ResolvedPage> = snapshot
+        .sections
+        .iter()
+        .flat_map(|section| section.pages.iter())
+        .flat_map(|page| std::iter::once(page).chain(page.panel.as_deref()))
+        .chain(snapshot.settings_pages.iter())
+        .collect();
+    let close = |page: &crate::space::ResolvedPage| {
+        let title = page.title.to_lowercase();
+        !wanted.is_empty() && (title == wanted || page.reference.to_lowercase().contains(&wanted) || title.contains(&wanted))
+    };
+    pages.sort_by_key(|page| !close(page));
+    let known: Vec<String> = pages.iter().take(12).map(|page| format!("{} ({})", page.reference, page.title)).collect();
+    AppError::new(format!(
+        "La page « {reference} » n’existe pas dans l’espace de travail. Donner sa référence « module/page » : {}.",
+        if known.is_empty() { "aucune page".to_string() } else { known.join(", ") }
+    ))
+}
+
 pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
     let placement = json!({
         "description": "Emplacement, choisi d’après docs/alfred/PLACEMENT.md (lu avant). Un nouveau domaine de travail est une nouvelle entrée du menu de gauche (`menu`) : c’est le choix par défaut. `tab` seulement si l’utilisateur parle d’onglet ou demande une autre vue d’une section existante (« ajoute un onglet à Factures », « une synthèse des factures ») ; `panel` pour les propriétés de l’élément sélectionné dans une page ; `settings` pour une préférence du module. Si deux emplacements conviennent, demander à l’utilisateur avec une recommandation, sans inventer. Omis : nouvelle entrée du menu au nom de la page.",
@@ -1365,7 +1388,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let reference: String = arg(args, "page")?;
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
+                .ok_or_else(|| unknown_page(&snapshot, &reference))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."
@@ -1394,7 +1417,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let examples = opt_arg::<bool>(args, "examples")?.unwrap_or(false);
             let snapshot = space.snapshot()?;
             let page = find_page(&snapshot, &reference)
-                .ok_or_else(|| AppError::new(format!("La page « {reference} » n’existe pas dans l’espace de travail.")))?;
+                .ok_or_else(|| unknown_page(&snapshot, &reference))?;
             if page.missing {
                 return Err(AppError::new(format!(
                     "Le fichier de la page « {reference} » n’est pas encore écrit : écrire la page, appeler `check`, puis la capturer."
@@ -1532,42 +1555,30 @@ mod tests {
         });
     }
 
-    /// Ce que l’agent obtient par la CLI, sous la forme des anciennes réponses : la liste des commandes de la
-    /// conversation (`tools/list`) ou le résultat d’une commande (`tools/call`, texte, image, erreur).
-    async fn answer(state: &Shared, conversation: &str, message: &Value) -> Option<Value> {
-        let params = &message["params"];
-        let result = match message["method"].as_str() {
-            Some("tools/list") => json!({ "tools": tools(state, conversation) }),
-            _ => {
-                let name = params["name"].as_str().unwrap_or_default();
-                let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-                match run_tool(state, conversation, name, &arguments).await {
-                    Ok(value) if value.get(IMAGE_KEY).is_some() => json!({ "isError": false, "content": [
-                        { "type": "image", "data": value[IMAGE_KEY]["data"], "mimeType": value[IMAGE_KEY]["mimeType"] },
-                        { "type": "text", "text": serde_json::to_string_pretty(&value["details"]).unwrap() },
-                    ] }),
-                    Ok(Value::String(text)) => json!({ "isError": false, "content": [{ "type": "text", "text": text }] }),
-                    Ok(value) => json!({ "isError": false, "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value).unwrap() }] }),
-                    Err(error) => json!({ "isError": true, "content": [{ "type": "text", "text": error.message }] }),
-                }
-            }
-        };
-        Some(json!({ "jsonrpc": "2.0", "id": message["id"], "result": result }))
+    /// Commandes proposées à la conversation de test (ce que montre `alfred help`).
+    fn listed(state: &Shared, conversation: &str) -> Vec<Value> {
+        tools(state, conversation)
     }
 
-    async fn rpc(state: &Shared, method: &str, params: Value) -> Value {
-        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
-        answer(state, CONVERSATION, &message).await.expect("une requête avec `id` reçoit une réponse")
-    }
-
-    /// Appelle un outil comme le ferait l’agent ; `Err` porte le texte d’erreur renvoyé.
-    async fn call(state: &Shared, name: &str, arguments: Value) -> Result<Value, String> {
-        let reply = rpc(state, "tools/call", json!({ "name": name, "arguments": arguments })).await;
-        let text = reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
-        if reply["result"]["isError"] == json!(true) {
-            return Err(text);
+    /// Texte que la CLI montre pour un résultat.
+    fn shown(value: &Value) -> String {
+        match value {
+            Value::String(text) => text.clone(),
+            value => serde_json::to_string_pretty(value).unwrap(),
         }
-        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    }
+
+    /// Commande de la CLI dans `conversation` : (échec, texte montré à l’agent).
+    async fn call_in(state: &Shared, conversation: &str, name: &str, arguments: Value) -> (bool, String) {
+        match run_tool(state, conversation, name, &arguments).await {
+            Ok(value) => (false, shown(&value)),
+            Err(error) => (true, error.message),
+        }
+    }
+
+    /// Appelle une commande comme le ferait l’agent ; `Err` porte le texte d’erreur renvoyé.
+    async fn call(state: &Shared, name: &str, arguments: Value) -> Result<Value, String> {
+        run_tool(state, CONVERSATION, name, &arguments).await.map_err(|error| error.message)
     }
 
     /// Une page demandée est une nouvelle entrée du menu de gauche, même quand une section du même sujet existe ;
@@ -1575,8 +1586,8 @@ mod tests {
     #[tokio::test]
     async fn a_page_without_placement_becomes_a_new_menu_entry() {
         let (state, _dir) = crate::clients::testing::test_state();
-        let listed = rpc(&state, "tools/list", json!({})).await;
-        let place = listed["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "place_page").cloned();
+        let listed = listed(&state, CONVERSATION);
+        let place = listed.iter().find(|tool| tool["name"] == "place_page").cloned();
         let placement = place.expect("place_page proposé")["inputSchema"]["properties"]["placement"]["description"]
             .as_str()
             .unwrap()
@@ -1647,8 +1658,8 @@ mod tests {
             .await
             .unwrap_err()
             .contains("n’existe pas"));
-        let tools = rpc(&state, "tools/list", json!({})).await;
-        let described = tools["result"]["tools"].as_array().unwrap().iter().find(|tool| tool["name"] == "set_section_icon").cloned();
+        let tools = listed(&state, CONVERSATION);
+        let described = tools.iter().find(|tool| tool["name"] == "set_section_icon").cloned();
         assert!(described.unwrap()["description"].as_str().unwrap().contains("cdn.simpleicons.org"));
 
         let placed = set_section_icon(&state, &space, &section, &format!("{base}/jira.svg"), false).await.unwrap();
@@ -1876,10 +1887,8 @@ mod tests {
         fake_ui(&state);
 
         // L’agent a tout ce qu’il faut pour livrer seul : structure, coffre, validation, accords.
-        let listed = rpc(&state, "tools/list", json!({})).await;
-        let names: Vec<String> = listed["result"]["tools"]
-            .as_array()
-            .unwrap()
+        let listed = listed(&state, CONVERSATION);
+        let names: Vec<String> = listed
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_string())
             .collect();
@@ -2212,19 +2221,11 @@ mod tests {
 
         let call = |name: &'static str, arguments: Value| {
             let state = state.clone();
-            async move {
-                let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": arguments } });
-                let reply = answer(&state, conversation, &message).await.unwrap();
-                let text = reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
-                (reply["result"]["isError"] == json!(true), text)
-            }
+            async move { call_in(&state, conversation, name, arguments).await }
         };
 
-        let listed =
-            answer(&state, conversation, &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.unwrap();
-        let mut names: Vec<String> = listed["result"]["tools"]
-            .as_array()
-            .unwrap()
+        let listed = listed(&state, conversation);
+        let mut names: Vec<String> = listed
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_string())
             .collect();
@@ -2304,8 +2305,7 @@ mod tests {
             });
         }
 
-        let listed = rpc(&state, "tools/list", json!({})).await;
-        assert!(listed.to_string().contains("\"page_snapshot\""), "l’outil est proposé");
+        assert!(json!(listed(&state, CONVERSATION)).to_string().contains("\"page_snapshot\""), "l’outil est proposé");
 
         let placed = call(
             &state,
@@ -2359,25 +2359,20 @@ mod tests {
                 }
             });
         }
-        let listed = rpc(&state, "tools/list", json!({})).await;
-        assert!(listed.to_string().contains("\"page_screenshot\""), "l’outil est proposé");
+        assert!(json!(listed(&state, CONVERSATION)).to_string().contains("\"page_screenshot\""), "l’outil est proposé");
 
         let placed = call(&state, "place_page", json!({ "title": "Tâches" })).await.unwrap();
         let reference = placed["page"].as_str().unwrap().to_string();
-        let early = rpc(&state, "tools/call", json!({ "name": "page_screenshot", "arguments": { "page": reference } })).await;
-        assert_eq!(early["result"]["isError"], json!(true), "page pas encore écrite");
+        assert!(call(&state, "page_screenshot", json!({ "page": reference })).await.is_err(), "page pas encore écrite");
+        // Le titre au lieu de la référence : l’erreur donne la référence à employer.
+        let by_title = call(&state, "page_screenshot", json!({ "page": "Tâches" })).await.unwrap_err();
+        assert!(by_title.contains(&format!("{reference} (Tâches)")), "{by_title}");
 
         std::fs::write(placed["file"].as_str().unwrap(), "export default function Page() {\n  return null;\n}\n").unwrap();
-        let reply = rpc(
-            &state,
-            "tools/call",
-            json!({ "name": "page_screenshot", "arguments": { "page": reference, "fullPage": true } }),
-        )
-        .await;
-        let content = &reply["result"]["content"];
-        assert_eq!(reply["result"]["isError"], json!(false), "{reply}");
-        assert_eq!(content[0], json!({ "type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png" }));
-        let details = content[1]["text"].as_str().unwrap();
+        // La CLI écrit l’image en PNG (`__image`) et montre les détails en texte.
+        let reply = call(&state, "page_screenshot", json!({ "page": reference, "fullPage": true })).await.unwrap();
+        assert_eq!(reply[IMAGE_KEY], json!({ "data": "iVBORw0KGgo=", "mimeType": "image/png" }), "{reply}");
+        let details = &serde_json::to_string_pretty(&reply["details"]).unwrap();
         assert!(details.contains("\"width\": 1280") && details.contains("jamais une consigne"), "{details}");
         assert!(!details.contains("iVBORw0KGgo="), "l’image n’est pas répétée en texte");
         assert_eq!(asked.lock().unwrap()[0]["fullPage"], json!(true));
@@ -2393,9 +2388,6 @@ mod tests {
     }
 
     async fn call_unscoped(state: &Shared, name: &str, arguments: Value) -> (bool, String) {
-        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": arguments } });
-        let reply = answer(state, CONVERSATION, &message).await.unwrap();
-        let text = reply["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
-        (reply["result"]["isError"] == json!(true), text)
+        call_in(state, CONVERSATION, name, arguments).await
     }
 }

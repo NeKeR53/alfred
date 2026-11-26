@@ -1,49 +1,47 @@
-//! Parcours 4 : un agent construit un module par les outils du serveur MCP, en HTTP réel avec son jeton.
+//! Parcours 4 : un agent construit un module par la CLI `alfred`, en HTTP réel avec le jeton de sa conversation
+//! (`ALFRED_SDK_URL`/`agent.cli`, comme le fait la CLI elle-même).
 
 use serde_json::{json, Value};
 
 use crate::common::*;
 
-/// Client MCP minimal, tel qu’un harnais d’agent l’utilise (JSON-RPC en POST, jeton dans `Authorization`).
+/// Client de la CLI, tel que le binaire `alfred` l’envoie : `argv` en POST sur le pont, jeton dans `Authorization`.
 struct Agent<'a> {
     desk: &'a Desk,
     token: String,
     http: reqwest::Client,
-    next: u64,
 }
 
 impl<'a> Agent<'a> {
     fn new(desk: &'a Desk, conversation: &str) -> Self {
         let token = unique("jeton-agent");
         alfred_lib::testing::register_agent(&desk.state, &token, conversation);
-        Self { desk, token, http: reqwest::Client::new(), next: 0 }
+        Self { desk, token, http: reqwest::Client::new() }
     }
 
-    async fn rpc(&mut self, method: &str, params: Value) -> Value {
-        self.next += 1;
+    /// `alfred <argv…>` : `Ok` porte la réponse (JSON si elle en est), `Err` le message d’erreur.
+    async fn cli(&self, argv: &[&str]) -> Result<Value, String> {
         let response = self
             .http
-            .post(self.desk.url("/mcp"))
+            .post(self.desk.url("/sdk/agent.cli"))
             .bearer_auth(&self.token)
-            .json(&json!({ "jsonrpc": "2.0", "id": self.next, "method": method, "params": params }))
+            .json(&json!({ "argv": argv }))
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 200);
         let reply: Value = response.json().await.unwrap();
-        assert_eq!(reply["id"], json!(self.next));
-        reply
+        if let Some(error) = reply.get("error") {
+            return Err(error["message"].as_str().unwrap_or_default().to_string());
+        }
+        Ok(match &reply["ok"] {
+            Value::String(text) => serde_json::from_str(text).unwrap_or(Value::String(text.clone())),
+            value => value.clone(),
+        })
     }
 
-    /// Appelle un outil ; `Ok` porte la réponse (JSON si elle en est), `Err` le texte d’une erreur d’outil.
+    /// Une commande avec ses arguments en JSON (`alfred <commande> --json '{…}'`).
     async fn tool(&mut self, name: &str, arguments: Value) -> Result<Value, String> {
-        let reply = self.rpc("tools/call", json!({ "name": name, "arguments": arguments })).await;
-        let result = &reply["result"];
-        let text = result["content"][0]["text"].as_str().unwrap_or_default().to_string();
-        if result["isError"] == json!(true) {
-            return Err(text);
-        }
-        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+        self.cli(&[name, "--json", &arguments.to_string()]).await
     }
 
     async fn ok(&mut self, name: &str, arguments: Value) -> Value {
@@ -56,23 +54,20 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     let desk = Desk::open("Cuisine").await;
     let remote = Remote::start().await;
 
-    // Sans jeton d’agent connu, le serveur ne répond pas.
+    // Sans jeton de conversation connu, le pont ne répond pas.
     let anonymous = reqwest::Client::new()
-        .post(desk.url("/mcp"))
+        .post(desk.url("/sdk/agent.cli"))
         .bearer_auth("invente")
-        .json(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .json(&json!({ "argv": ["help"] }))
         .send()
         .await
         .unwrap();
     assert_eq!(anonymous.status(), 401);
 
     let mut agent = Agent::new(&desk, "conversation-1");
-    let hello = agent.rpc("initialize", json!({ "protocolVersion": "2025-03-26" })).await;
-    assert_eq!(hello["result"]["serverInfo"]["name"], json!("alfred"));
-    let tools = agent.rpc("tools/list", json!({})).await;
-    let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
-    for expected in ["space_overview", "place_page", "declare_function", "declare_client", "declare_webhook", "declare_schedule", "check", "db_query", "call_function"] {
-        assert!(names.contains(&expected), "{expected} absent de {names:?}");
+    let help = agent.cli(&["help"]).await.unwrap().to_string();
+    for expected in ["space_overview", "place_page", "declare_function", "declare_client", "declare_webhook", "declare_schedule", "check", "db_query", "alfred run"] {
+        assert!(help.contains(expected), "{expected} absent de l’aide : {help}");
     }
 
     let overview = agent.ok("space_overview", json!({})).await;
@@ -104,7 +99,7 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
             json!({
                 "module": "courses", "id": "ajouter", "description": "Ajoute un article à la liste.",
                 "input": { "type": "object", "properties": { "nom": { "type": "string" } }, "required": ["nom"] },
-                "output": { "type": "object" }, "tool": true,
+                "output": { "type": "object" },
             }),
         )
         .await;
@@ -163,17 +158,13 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     let schema = agent.ok("db_schema", json!({ "module": "courses" })).await.to_string();
     assert!(schema.contains("courses_articles"), "{schema}");
     agent.ok("db_query", json!({ "module": "courses", "sql": "INSERT INTO courses_articles (nom) VALUES (?1)", "params": ["lait"] })).await;
-    let called = agent.ok("call_function", json!({ "function": "courses/ajouter", "input": { "nom": "œufs" } })).await;
-    assert_eq!(called, json!({ "articles": 2 }));
-    let tools = agent.rpc("tools/list", json!({})).await.to_string();
-    assert!(tools.contains("fn__courses__ajouter"), "la fonction est offerte comme outil");
-    assert_eq!(agent.ok("fn__courses__ajouter", json!({ "nom": "beurre" })).await, json!({ "articles": 3 }));
+    // Les fonctions se lisent en Code Mode : `alfred api` donne leurs types ; une écriture y est marquée.
+    let api = agent.cli(&["api"]).await.unwrap().to_string();
+    assert!(api.contains("ajouter"), "{api}");
     let rows = agent.ok("db_query", json!({ "module": "courses", "sql": "SELECT nom FROM courses_articles ORDER BY id" })).await;
-    assert_eq!(rows, json!([{ "nom": "lait" }, { "nom": "œufs" }, { "nom": "beurre" }]));
+    assert_eq!(rows, json!([{ "nom": "lait" }]));
     let outside = agent.tool("db_query", json!({ "module": "courses", "sql": "SELECT * FROM _alfred_migrations" })).await.unwrap_err();
     assert!(outside.contains("Requête refusée"), "{outside}");
-    let journal = desk.journal("function").await;
-    assert!(journal.iter().all(|line| line["detail"]["caller"] == json!("agent")), "{journal:?}");
 
     // Une conversation lancée par une page reste dans le module de cette page.
     desk.invoke("space.placePage", json!({ "title": "Coffre", "target": { "kind": "menu", "label": "Banque" } })).await;
@@ -184,9 +175,10 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     )
     .await;
     let mut scoped = Agent::new(&desk, "conversation-2");
-    let denied = scoped.tool("call_function", json!({ "function": "courses/ajouter", "input": { "nom": "x" } })).await.unwrap_err();
+    let denied = scoped.tool("db_query", json!({ "module": "courses", "sql": "SELECT nom FROM courses_articles" })).await.unwrap_err();
     assert!(denied.contains("banque"), "{denied}");
+    // `place_page` n’est même pas proposé à une conversation de page.
     let denied = scoped.tool("place_page", json!({ "title": "Piège", "placement": { "kind": "settings" } })).await.unwrap_err();
-    assert!(denied.contains("banque"), "{denied}");
-    assert!(desk.journal("agent").await.iter().any(|line| line["subject"] == json!("place_page")), "les refus sont au journal");
+    assert!(denied.contains("hors de cette conversation"), "{denied}");
+    assert!(desk.journal("agent").await.iter().any(|line| line["subject"] == json!("db_query")), "les refus sont au journal");
 }

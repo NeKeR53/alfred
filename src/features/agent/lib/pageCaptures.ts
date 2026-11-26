@@ -22,8 +22,8 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 
 /**
- * Détails de la capture dans la sortie de l’outil, quel que soit le harnais : le texte JSON lui-même (Claude Code,
- * OpenCode) ou ce texte imbriqué dans le résultat MCP sérialisé (Codex).
+ * Détails de la capture dans la sortie de la commande, quel que soit le harnais : le texte JSON rendu par
+ * `alfred page_screenshot` (chemin du PNG gardé par Alfred dans `capture`), seul ou imbriqué dans la sortie du harnais.
  */
 function captureDetails(value: unknown, depth = 0): Details | undefined {
   if (depth > 6) return undefined;

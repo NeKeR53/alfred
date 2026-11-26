@@ -31,7 +31,7 @@ export function imageFileType(name: string): string | undefined {
   return types.get(extension ?? "");
 }
 
-/** Extrait uniquement les blocs image des réponses MCP et des outils dynamiques. */
+/** Extrait uniquement les blocs image des réponses d’outils (serveurs MCP de l’utilisateur, outils dynamiques). */
 export function activityImageOutput(content: string): { text: string; images: string[] } {
   const images: string[] = [];
   const block = (value: unknown): unknown => {

@@ -93,7 +93,7 @@ Raison : Alfred n’installe aucun service système. Un service macOS (launchd) 
 
 ### A-10. Agent
 
-Outils MCP : `create_automation` (créer ou modifier ; naît à valider), `list_automations`, `remove_automation` (seulement celles qu’il a créées). Une création affiche une notification « Automatisation … à valider ». `read_journal` accepte `kind: "automation"`. Instructions : `docs/espace/AGENTS.md` (section 2).
+Commandes de la CLI `alfred` : `create_automation` (créer ou modifier ; naît à valider), `list_automations`, `remove_automation` (seulement celles qu’il a créées). Une création affiche une notification « Automatisation … à valider ». `read_journal` accepte `kind: "automation"`. Instructions : `docs/espace/AGENTS.md` (section 2).
 
 ### A-11. Interface
 
