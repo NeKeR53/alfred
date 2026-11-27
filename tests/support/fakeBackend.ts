@@ -292,7 +292,12 @@ export class FakeBackend {
     const page: FakePage = { id: slug(title), title, icon, placement: { kind: "settings" }, missing: true };
     let module: FakeModule;
     if (target.kind === "menu") {
-      module = { id: slug(target.label), name: target.label, sections: [], pages: [], functions: [] };
+      // Comme `unique_module_id` du backend : un second « Recettes » devient `recettes-2`.
+      const wanted = slug(target.label);
+      const taken = new Set(space.modules.map((existing) => existing.id));
+      let id = wanted;
+      for (let index = 2; taken.has(id); index++) id = `${wanted}-${index}`;
+      module = { id, name: target.label, sections: [], pages: [], functions: [] };
       module.sections.push({ id: "principal", label: target.label, icon: target.icon, color: target.color });
       space.modules.push(module);
       page.placement = { kind: "tab", section: "principal" };

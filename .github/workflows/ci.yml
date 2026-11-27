@@ -83,11 +83,12 @@ jobs:
       - name: Contrôles (Biome, CSS, composants)
         run: pnpm check
 
-      - name: Tests de l'interface
-        run: pnpm test
-
+      # Avant les tests : certains lisent la feuille du runtime des pages, produite par `pnpm build:runtime`.
       - name: Build de l'interface
         run: pnpm build
+
+      - name: Tests de l'interface
+        run: pnpm test
 
       - name: Tests Rust
         run: cargo test --manifest-path src-tauri/Cargo.toml
