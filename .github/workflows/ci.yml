@@ -37,6 +37,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          mkdir -p "$RUNNER_TEMP/socle"
           npm pack --pack-destination "$RUNNER_TEMP/socle"
 
       - uses: actions/upload-artifact@v4
