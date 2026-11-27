@@ -65,11 +65,15 @@ impl Repo {
 
     /// Réglages remis tels que l’utilisateur les a, après ceux, neutres, du git de l’espace.
     fn user_settings(&self) -> Vec<String> {
+        // Fichier par fichier, du dépôt au système : un simple `config --get` lirait aussi les `-c` neutres que git
+        // reçoit ici (`core.autocrlf=false`), et jamais le réglage de l’utilisateur.
         let read = |key: &str| {
-            git::run_unchecked(&self.dir, &["config", "--get", key], &self.env())
-                .ok()
-                .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_string())
-                .filter(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric()))
+            ["--local", "--global", "--system"].iter().find_map(|scope| {
+                git::run_unchecked(&self.dir, &["config", scope, "--get", key], &self.env())
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_string())
+                    .filter(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric()))
+            })
         };
         let mut settings = vec![
             "-c".to_string(),
@@ -931,6 +935,17 @@ mod tests {
         }
         assert!(clone_url("https://git.example.com/equipe/alpha.git").is_ok());
         assert!(clone_url("git@github.com:equipe/alpha.git").is_ok());
+    }
+
+    /// Les fins de ligne réglées par l’utilisateur passent, malgré le `core.autocrlf=false` neutre du git de l’espace :
+    /// sinon, sous Windows (`autocrlf=true` par défaut), chaque fichier extrait en CRLF paraît modifié.
+    #[test]
+    fn the_user_line_endings_win_over_the_neutral_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_remote, mine, _theirs) = team(dir.path());
+        sh(&mine, &["config", "core.autocrlf", "input"]);
+        let repo = Repo::open(&mine.parent().unwrap().canonicalize().unwrap(), "api").unwrap();
+        assert!(repo.user_settings().contains(&"core.autocrlf=input".to_string()), "{:?}", repo.user_settings());
     }
 
     /// Parcours complet sur des dépôts réels : lire l’état, écrire un fichier partagé, enregistrer, pousser ; un
