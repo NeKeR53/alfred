@@ -946,7 +946,7 @@ mod tests {
         let clean = status(&repo).unwrap();
         assert_eq!(clean.branch.as_deref(), Some("main"));
         assert_eq!(clean.upstream.as_deref(), Some("origin/main"));
-        assert!(clean.clean);
+        assert!(clean.clean, "{clean:?}");
         assert_eq!(clean.repo, "api");
 
         // Le dossier du produit lui-même n’est pas un dépôt, même s’il est dans un autre dépôt plus haut.

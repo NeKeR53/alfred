@@ -182,16 +182,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // Une adresse `file://` sans lecteur n’est pas un chemin sous Windows : chaque système a la sienne.
+    #[cfg(windows)]
+    const TMP: (&str, &str) = ("file:///C:/tmp/", "C:\\tmp\\");
+    #[cfg(not(windows))]
+    const TMP: (&str, &str) = ("file:///tmp/", "/tmp/");
+
     #[test]
     fn binary_content_becomes_a_placeholder() {
+        let (url, path) = TMP;
         let found = content_files(&json!([
             { "type": "text", "text": "Voici" },
             { "type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png" },
-            { "type": "resource_link", "uri": "file:///tmp/rapport.pdf", "name": "rapport.pdf" },
-            { "type": "resource", "resource": { "uri": "file:///tmp/capture.png" } },
+            { "type": "resource_link", "uri": format!("{url}rapport.pdf"), "name": "rapport.pdf" },
+            { "type": "resource", "resource": { "uri": format!("{url}capture.png") } },
         ]));
-        assert_eq!(found.images, vec!["data:image/png;base64,iVBORw0KGgo=".to_string(), "/tmp/capture.png".into()]);
-        assert_eq!(found.files, vec!["/tmp/rapport.pdf".to_string()]);
+        assert_eq!(found.images, vec!["data:image/png;base64,iVBORw0KGgo=".to_string(), format!("{path}capture.png")]);
+        assert_eq!(found.files, vec![format!("{path}rapport.pdf")]);
         assert_eq!(found.content[1], IMAGE_PLACEHOLDER);
         assert_eq!(found.content[3], IMAGE_PLACEHOLDER);
         assert_eq!(local_path("https://exemple.fr/a.png"), None);
