@@ -12,8 +12,16 @@
 //! - **Garde-fous** : période minimale ([`MIN_EVERY`]), quatre lectures au plus à la fois, un écart entre deux départs
 //!   ([`GAP`]), un recul progressif après un échec (période × 2ⁿ, 30 minutes au plus), et l’état du dernier
 //!   rafraîchissement (heure, erreur, prochain passage) rendu aux abonnés avec la valeur.
-//! - **Sans politique** : un état vide est lu une fois au premier abonnement (sa fonction de lecture) ; ensuite il
-//!   change seulement quand quelqu’un le lit, ou quand le module écrit (une écriture fait relire ses états suivis).
+//! - **Fraîcheur** (`maxAge` de l’état, choisi par le fournisseur ; l’utilisateur peut le changer dans Réglages →
+//!   États) : à l’abonnement, à l’ouverture d’une page et au retour sur une page (`states.revisit`), l’état est relu
+//!   seulement si sa valeur (gardée sur le disque, `states_disk.rs`) est plus vieille que cet âge. Une valeur fraîche
+//!   s’affiche telle quelle, sans requête. Omis : `refresh.every`, sinon [`DEFAULT_MAX_AGE`].
+//! - **Période** (`refresh.every`) : tant qu’il a un abonné, un état à politique se relit à cette période, comptée
+//!   depuis sa dernière lecture réussie, même d’un lancement précédent.
+//! - **Sans politique** : l’état est lu à l’abonnement s’il est vide ou périmé ; ensuite il change seulement quand
+//!   quelqu’un le lit, ou quand le module écrit (une écriture fait relire ses états suivis).
+//! - **Relecture demandée** (`refresh()`, « Actualiser ») : toujours, une seule pour tous les abonnés ; une lecture en
+//!   cours en tient lieu.
 //!
 //! Tout cela tourne tant qu’Alfred est ouvert, avec ou sans page affichée. Alfred fermé, rien ne tourne.
 
@@ -44,6 +52,10 @@ const SCRIPT_TTL: Duration = Duration::from_secs(600);
 const MAX_SCRIPT_TTL: Duration = Duration::from_secs(86_400);
 /// Réveil de la boucle.
 const WAKE_EVERY: Duration = Duration::from_secs(1);
+/// Âge maximal d’une valeur quand le fournisseur n’en dit rien (ni `maxAge`, ni `refresh.every`).
+pub const DEFAULT_MAX_AGE: Duration = Duration::from_secs(600);
+/// « Jamais » : une échéance lointaine.
+const FAR: Duration = Duration::from_secs(86_400 * 365);
 
 struct Subscription {
     target: StateTarget,
@@ -69,19 +81,64 @@ struct Status {
 }
 
 impl Status {
-    fn new() -> Self {
+    /// Une cible qu’on se met à suivre : sa prochaine lecture dépend de l’âge de sa valeur connue (disque compris).
+    fn for_target(target: &StateTarget) -> Self {
+        let checked = crate::states::checked_of(target);
         Self {
-            next: Instant::now(),
+            next: Instant::now() + due_in(target, checked),
             running: false,
             runs: 0,
             failures: 0,
             last_run_at: None,
-            last_ok_at: None,
+            last_ok_at: checked,
             last_error: None,
             loaded: false,
             forced: false,
         }
     }
+}
+
+/// Âge maximal d’une valeur : celui choisi par l’utilisateur (Réglages → États), sinon celui du fournisseur
+/// (`maxAge`), sinon sa période (`refresh.every`), sinon [`DEFAULT_MAX_AGE`].
+pub(crate) fn max_age(target: &StateTarget) -> Duration {
+    crate::states_disk::override_of(&target.scope.space, &target.name())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| provider_max_age(&target.declared))
+        .max(MIN_EVERY)
+}
+
+/// Âge maximal choisi par le fournisseur.
+pub(crate) fn provider_max_age(declared: &crate::space::StateDecl) -> Duration {
+    declared
+        .max_age
+        .or(declared.refresh.as_ref().map(|refresh| refresh.every))
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_MAX_AGE)
+        .max(MIN_EVERY)
+}
+
+/// Dans combien de temps la cible est à relire, d’après sa dernière lecture réussie (`checked`, ms). Vide ou
+/// périmée : maintenant. Fraîche : à sa période s’il en a une (comptée depuis cette lecture), sinon jamais.
+fn due_in(target: &StateTarget, checked: Option<u64>) -> Duration {
+    let Some(checked) = checked else { return Duration::ZERO };
+    let age = Duration::from_millis(now_ms().saturating_sub(checked));
+    let max_age = max_age(target);
+    if age >= max_age {
+        return Duration::ZERO;
+    }
+    match &target.declared.refresh {
+        Some(refresh) => {
+            let every = Duration::from_secs(refresh.every).max(MIN_EVERY);
+            let period = if age < every { every - age } else { every };
+            period.min(max_age - age)
+        }
+        None => FAR,
+    }
+}
+
+/// La cible est-elle périmée (ou vide) ?
+fn is_stale(target: &StateTarget) -> bool {
+    due_in(target, crate::states::checked_of(target)).is_zero()
 }
 
 #[derive(Default)]
@@ -118,17 +175,61 @@ pub fn status_of(key: &str) -> Value {
         "lastError": status.last_error,
         "failures": status.failures,
         "nextAt": now_ms() + next_in,
+        "runs": status.runs,
     })
 }
 
 /// Abonne `by` à un état : rend l’identifiant de l’abonnement. Le premier abonné d’une cible lance sa lecture.
+/// Une cible déjà suivie (par un autre abonné) mais périmée se relit pour le nouveau venu.
 pub fn subscribe(target: StateTarget, by: &str, ttl: Duration) -> String {
     let id = new_id();
+    let stale = is_stale(&target);
     let mut registry = registry();
     let key = target.key.clone();
+    match registry.statuses.get_mut(&key) {
+        Some(status) if stale && !status.running => status.next = Instant::now(),
+        Some(_) => {}
+        None => {
+            let status = Status::for_target(&target);
+            registry.statuses.insert(key, status);
+        }
+    }
     registry.subscriptions.insert(id.clone(), Subscription { target, by: by.to_string(), expires: Instant::now() + ttl });
-    registry.statuses.entry(key).or_insert_with(Status::new);
     id
+}
+
+/// Retour sur une page (ou ouverture) : ses états périmés se relisent ; les frais ne bougent pas.
+pub fn revisit(ids: &[String]) -> usize {
+    let targets: Vec<StateTarget> = {
+        let registry = registry();
+        ids.iter().filter_map(|id| registry.subscriptions.get(id)).map(|subscription| subscription.target.clone()).collect()
+    };
+    let stale: Vec<String> = targets.iter().filter(|target| is_stale(target)).map(|target| target.key.clone()).collect();
+    let mut registry = registry();
+    let mut count = 0;
+    for key in stale {
+        if let Some(status) = registry.statuses.get_mut(&key).filter(|status| !status.running) {
+            status.next = Instant::now();
+            count += 1;
+        }
+    }
+    count
+}
+
+/// L’âge maximal d’un état a changé : ses cibles suivies recalculent leur prochaine lecture.
+fn rescheduled(name: &str) {
+    let targets: Vec<StateTarget> = {
+        let registry = registry();
+        registry.subscriptions.values().filter(|subscription| subscription.target.name() == name).map(|subscription| subscription.target.clone()).collect()
+    };
+    let due: Vec<(String, Duration)> =
+        targets.iter().map(|target| (target.key.clone(), due_in(target, crate::states::checked_of(target)))).collect();
+    let mut registry = registry();
+    for (key, due) in due {
+        if let Some(status) = registry.statuses.get_mut(&key).filter(|status| !status.running) {
+            status.next = Instant::now() + due;
+        }
+    }
 }
 
 pub fn unsubscribe(id: &str) -> bool {
@@ -231,7 +332,11 @@ pub fn tick(state: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
     registry.statuses.retain(|key, status| !key.contains(&marker) || targets.contains_key(key) || status.running);
     let mut running = registry.statuses.iter().filter(|(key, status)| key.contains(&marker) && status.running).count();
     for (key, watched) in targets {
-        let status = registry.statuses.entry(key.clone()).or_insert_with(Status::new).clone();
+        // Automatisation, état `always` : suivis sans abonnement, leur échéance part de l’âge de leur valeur.
+        if !registry.statuses.contains_key(&key) {
+            registry.statuses.insert(key.clone(), Status::for_target(&watched.target));
+        }
+        let Some(status) = registry.statuses.get(&key).cloned() else { continue };
         let now = Instant::now();
         if status.running || status.next > now || running >= MAX_RUNNING {
             continue;
@@ -240,19 +345,16 @@ pub fn tick(state: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
             break;
         }
         let policy = watched.target.declared.refresh.clone();
-        // Sans politique : une seule lecture, si l’état est vide au premier abonnement.
-        if policy.is_none() && !status.forced && (status.loaded || !crate::states::is_empty(&key)) {
-            if let Some(status) = registry.statuses.get_mut(&key) {
-                status.loaded = true;
-                status.next = now + Duration::from_secs(86_400 * 365);
-            }
-            continue;
-        }
         let Some(function) = policy
             .as_ref()
             .map(|refresh| (refresh.function.clone(), None))
             .or_else(|| feeder(&watched.target))
         else {
+            // Personne ne sait lire cet état : il attend une publication.
+            if let Some(status) = registry.statuses.get_mut(&key) {
+                status.next = now + FAR;
+                status.forced = false;
+            }
             continue;
         };
         if let Some(status) = registry.statuses.get_mut(&key) {
@@ -333,7 +435,7 @@ fn finish(state: &Arc<AppState>, target: &StateTarget, reference: &str, started:
                     status.failures = 0;
                     status.last_ok_at = Some(started);
                     status.last_error = None;
-                    status.next = Instant::now() + every.unwrap_or(Duration::from_secs(86_400 * 365));
+                    status.next = Instant::now() + every.unwrap_or(FAR);
                 }
                 Err(error) => {
                     status.failures += 1;
@@ -345,6 +447,10 @@ fn finish(state: &Arc<AppState>, target: &StateTarget, reference: &str, started:
             }
         }
     }
+    // La valeur date du départ de cette lecture, même inchangée : c’est son âge, gardé sur le disque.
+    if outcome.is_ok() {
+        crate::states::mark_checked(&target.key, started);
+    }
     if let Err(error) = &outcome {
         crate::functions::journal(state, "function", reference, false, None, &format!("Rafraîchissement de {} en échec : {}", target.name(), error.message), None);
     }
@@ -353,13 +459,21 @@ fn finish(state: &Arc<AppState>, target: &StateTarget, reference: &str, started:
     state.emit("states:refreshers", Value::Null);
 }
 
-/// Relit maintenant une cible suivie (« Actualiser ») : elle part au prochain passage de la boucle.
+/// Relit maintenant une cible suivie (« Actualiser ») : elle part au prochain passage de la boucle. Une lecture en
+/// cours en tient lieu : une seule pour tous.
 pub fn refresh_now(key: &str) -> bool {
     let mut registry = registry();
     let Some(status) = registry.statuses.get_mut(key) else { return false };
-    status.next = Instant::now();
-    status.forced = true;
+    if !status.running {
+        status.next = Instant::now();
+        status.forced = true;
+    }
     true
+}
+
+/// Lectures terminées d’une cible : la page attend la suivante après « Actualiser ».
+fn runs_of(key: &str) -> u64 {
+    registry().statuses.get(key).map(|status| status.runs).unwrap_or(0)
 }
 
 /// Une écriture du module : ses états suivis se relisent (une lecture par cible).
@@ -401,6 +515,8 @@ pub fn overview(state: &AppState) -> AppResult<Value> {
                 "examples": watched.target.scope.examples,
                 "subscribers": watched.subscribers,
                 "every": policy.map(|refresh| refresh.every.max(MIN_EVERY.as_secs())),
+                "maxAge": max_age(&watched.target).as_secs(),
+                "checkedAt": crate::states::checked_of(&watched.target),
                 "incremental": policy.is_some_and(|refresh| refresh.incremental),
                 "mode": policy.map(|refresh| refresh.mode),
                 "function": policy.map(|refresh| refresh.function.clone()),
@@ -414,6 +530,31 @@ pub fn overview(state: &AppState) -> AppResult<Value> {
         .collect();
     rows.sort_by(|a, b| a["state"].as_str().cmp(&b["state"].as_str()).then(a["key"].as_str().cmp(&b["key"].as_str())));
     Ok(json!({ "refreshers": rows }))
+}
+
+/// Âge maximal le plus court qu’on peut choisir dans les Réglages.
+const MIN_AGE_SETTING: u64 = 10;
+
+/// Chaque état déclaré de l’espace, avec l’âge maximal du fournisseur et celui choisi par l’utilisateur.
+fn freshness(state: &AppState) -> AppResult<Value> {
+    let space = state.space()?;
+    let overrides = crate::states_disk::overrides(&space.root.to_string_lossy());
+    let mut rows = Vec::new();
+    for module in space.module_ids() {
+        let Ok(manifest) = space.module(&module) else { continue };
+        for declared in &manifest.states {
+            let name = format!("{module}/{}", declared.id);
+            rows.push(json!({
+                "state": name,
+                "module": manifest.name,
+                "description": declared.description,
+                "defaultMaxAge": provider_max_age(declared).as_secs(),
+                "maxAge": overrides.get(&name),
+                "every": declared.refresh.as_ref().map(|refresh| refresh.every.max(MIN_EVERY.as_secs())),
+            }));
+        }
+    }
+    Ok(json!({ "states": rows }))
 }
 
 /// Démarre la boucle ; appelée une fois au lancement d’Alfred.
@@ -459,12 +600,38 @@ pub fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppR
             let space = state.space()?;
             let target = crate::states::state_target(state, &space, &subject, args)?;
             let key = target.key.clone();
+            let runs = runs_of(&key);
+            let reading = target.declared.refresh.is_some() || feeder(&target).is_some();
             if !refresh_now(&key) {
                 // Pas encore suivi : un abonnement court le temps de la lecture.
                 subscribe(target, &format!("actualisation {}", subject.reference), Duration::from_secs(30));
                 refresh_now(&key);
             }
-            Ok(Value::Null)
+            // La page attend la fin de la lecture (`runs` dépassé) ; sans fonction de lecture, rien ne part.
+            Ok(json!({ "key": key, "runs": runs, "reading": reading }))
+        })(),
+        "states.revisit" => (|| {
+            let ids: Vec<String> = arg(args, "ids")?;
+            Ok(json!({ "stale": revisit(&ids) }))
+        })(),
+        // Réglages → États : l’âge maximal de chaque état déclaré, celui du fournisseur et celui choisi.
+        "states.freshness" => freshness(state),
+        "states.setMaxAge" => (|| {
+            let name: String = arg(args, "name")?;
+            let seconds: Option<u64> = opt_arg(args, "seconds")?;
+            let space = state.space()?;
+            let (owner, id) = name.split_once('/').ok_or_else(|| AppError::new(format!("État inconnu : « {name} ».")))?;
+            let manifest = space.module(owner)?;
+            if !manifest.states.iter().any(|declared| declared.id == id) {
+                return Err(AppError::new(format!("Le module « {owner} » ne déclare pas l’état « {id} ».")));
+            }
+            if let Some(seconds) = seconds.filter(|seconds| *seconds < MIN_AGE_SETTING) {
+                return Err(AppError::new(format!("{seconds} s : l’âge maximal vaut {MIN_AGE_SETTING} secondes au moins.")));
+            }
+            crate::states_disk::set_override(&space.root.to_string_lossy(), &name, seconds)?;
+            rescheduled(&name);
+            state.emit("states:refreshers", Value::Null);
+            freshness(state)
         })(),
         "states.written" => (|| {
             let module: String = arg(args, "module")?;
@@ -480,6 +647,14 @@ pub fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppR
 #[cfg(test)]
 pub(crate) fn is_tracked(key: &str) -> bool {
     registry().statuses.contains_key(key)
+}
+
+/// Redémarrage d’Alfred, pour les tests : plus d’abonnement ni de rafraîchissement dans cet espace.
+#[cfg(test)]
+pub(crate) fn drop_registry_for_tests(root: &str) {
+    let mut registry = registry();
+    registry.subscriptions.retain(|_, subscription| subscription.target.scope.space != root);
+    registry.statuses.retain(|key, _| crate::states_disk::space_of(key) != Some(root));
 }
 
 #[cfg(all(test, unix))]
@@ -671,5 +846,200 @@ mod tests {
         call("automations.setEnabled", json!({ "id": id, "enabled": false })).await.unwrap();
         passage(&state).await;
         assert_eq!(overview(&state).unwrap()["refreshers"], json!([]));
+    }
+
+    /// Alfred redémarre : la mémoire se vide, le disque reste ; l’espace se rouvre.
+    fn restart(state: &Arc<AppState>, space: &Space) {
+        let root = space.root.to_string_lossy().to_string();
+        state.set_space(None);
+        crate::states::drop_memory_for_tests(&root);
+        drop_registry_for_tests(&root);
+        state.set_space(Some(space.clone()));
+    }
+
+    /// Un état sans politique, lu par une fonction qui compte ses passages, et gardé 10 minutes.
+    fn mes_tickets(space: &Space, max_age: Option<u64>) {
+        let mut jira = space.module("jira").unwrap();
+        jira.states.push(StateDecl { id: "mes-tickets".into(), entity: Some("ticket".into()), max_age, ..Default::default() });
+        jira.functions.push(FunctionDecl {
+            id: "lire-mes-tickets".into(),
+            runtime: Runtime::Bash,
+            effect: Some(crate::space::Effect::Read),
+            state: Some("mes-tickets".into()),
+            ..Default::default()
+        });
+        space.write_module(&jira).unwrap();
+        std::fs::write(
+            space.module_dir("jira").join("functions").join("lire-mes-tickets.sh"),
+            "n=$(cat lectures 2>/dev/null || echo 0); n=$((n+1)); echo $n > lectures\nprintf '[{\"cle\":\"ALF-7\",\"lecture\":%s}]' \"$n\"\n",
+        )
+        .unwrap();
+    }
+
+    fn lectures(space: &Space) -> String {
+        std::fs::read_to_string(space.module_dir("jira").join("lectures")).unwrap_or_default().trim().to_string()
+    }
+
+    fn mine(state: &Arc<AppState>) -> Value {
+        crate::states::read_for_tests(state, &json!({ "subject": page("sprint", "tableau"), "name": "jira/mes-tickets" }))
+    }
+
+    fn subscribe_mine(state: &Arc<AppState>) -> Value {
+        handle(state, "frame.states.subscribe", &json!({ "subject": page("sprint", "tableau"), "name": "jira/mes-tickets" })).unwrap().unwrap()
+    }
+
+    /// La valeur survit au redémarrage : la page l’a tout de suite, sans lecture tant qu’elle est fraîche. Une valeur
+    /// d’une demi-heure se relit ; une de deux minutes, non.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_last_known_value_survives_a_restart_and_is_reread_only_when_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        mes_tickets(&space, Some(600));
+        let first = subscribe_mine(&state);
+        let key = first["key"].as_str().unwrap().to_string();
+        assert_eq!(passage(&state).await, 1, "vide : lu au premier abonnement");
+        assert_eq!(mine(&state)["value"], json!([{ "cle": "ALF-7", "lecture": 1 }]));
+        assert!(space.local_dir().join(crate::states_disk::FILE).is_file(), "gardé sur le disque");
+
+        restart(&state, &space);
+        let after = mine(&state);
+        assert_eq!(after["empty"], json!(false), "la dernière valeur connue est là tout de suite");
+        assert_eq!(after["value"], json!([{ "cle": "ALF-7", "lecture": 1 }]), "liste et objets reviennent du disque");
+        assert!(after["updatedAt"].is_u64() && after["checkedAt"].is_u64());
+        let second = subscribe_mine(&state);
+        assert_eq!(passage(&state).await, 0, "fraîche : aucune relecture");
+        assert_eq!(lectures(&space), "1");
+
+        // Deux minutes : encore fraîche (âge maximal de 10 minutes), même au retour sur la page.
+        crate::states::mark_checked(&key, now_ms() - 2 * 60_000);
+        restart(&state, &space);
+        let third = subscribe_mine(&state);
+        assert_eq!(revisit(&[third["id"].as_str().unwrap().to_string()]), 0);
+        assert_eq!(passage(&state).await, 0, "2 minutes : pas de relecture");
+
+        // Une demi-heure : périmée. Le retour sur la page la relit, une fois.
+        crate::states::mark_checked(&key, now_ms() - 30 * 60_000);
+        assert_eq!(revisit(&[third["id"].as_str().unwrap().to_string()]), 1);
+        assert_eq!(passage(&state).await, 1, "30 minutes : relue");
+        assert_eq!(passage(&state).await, 0);
+        assert_eq!(lectures(&space), "2");
+        assert_eq!(mine(&state)["value"][0]["lecture"], json!(2));
+
+        // Et après un redémarrage, une valeur périmée se relit dès l’abonnement.
+        crate::states::mark_checked(&key, now_ms() - 30 * 60_000);
+        restart(&state, &space);
+        assert_eq!(mine(&state)["value"][0]["lecture"], json!(2), "affichée d’abord");
+        subscribe_mine(&state);
+        assert_eq!(passage(&state).await, 1, "puis relue");
+        assert_eq!(lectures(&space), "3");
+        let _ = (first, second);
+    }
+
+    /// L’utilisateur choisit l’âge maximal d’un état (Réglages → États) : il prime sur celui du fournisseur.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_user_max_age_overrides_the_provider_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        mes_tickets(&space, Some(3600));
+        let subscribed = subscribe_mine(&state);
+        let key = subscribed["key"].as_str().unwrap().to_string();
+        passage(&state).await;
+        crate::states::mark_checked(&key, now_ms() - 5 * 60_000);
+        let ids = [subscribed["id"].as_str().unwrap().to_string()];
+        assert_eq!(revisit(&ids), 0, "1 heure chez le fournisseur : fraîche");
+
+        let listed = handle(&state, "states.setMaxAge", &json!({ "name": "jira/mes-tickets", "seconds": 60 })).unwrap().unwrap();
+        let row = listed["states"].as_array().unwrap().iter().find(|row| row["state"] == json!("jira/mes-tickets")).unwrap().clone();
+        assert_eq!(row["defaultMaxAge"], json!(3600));
+        assert_eq!(row["maxAge"], json!(60));
+        assert_eq!(passage(&state).await, 1, "1 minute choisie : la valeur de 5 minutes se relit");
+        // Le choix survit au redémarrage ; le retirer rend la valeur du fournisseur.
+        restart(&state, &space);
+        assert_eq!(crate::states_disk::override_of(&space.root.to_string_lossy(), "jira/mes-tickets"), Some(60));
+        handle(&state, "states.setMaxAge", &json!({ "name": "jira/mes-tickets", "seconds": null })).unwrap().unwrap();
+        assert_eq!(crate::states_disk::override_of(&space.root.to_string_lossy(), "jira/mes-tickets"), None);
+        let refused = handle(&state, "states.setMaxAge", &json!({ "name": "jira/mes-tickets", "seconds": 2 })).unwrap();
+        assert!(refused.unwrap_err().message.contains("10 secondes"));
+    }
+
+    /// « Actualiser » relit toujours, même une valeur fraîche ; une lecture en cours en tient lieu.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_always_rereads_once_for_everyone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        mes_tickets(&space, Some(3600));
+        subscribe_mine(&state);
+        subscribe_mine(&state);
+        assert_eq!(passage(&state).await, 1);
+        let asked = handle(&state, "frame.states.refresh", &json!({ "subject": page("sprint", "tableau"), "name": "jira/mes-tickets" })).unwrap().unwrap();
+        assert_eq!(asked["reading"], json!(true));
+        assert_eq!(asked["runs"], json!(1));
+        handle(&state, "frame.states.refresh", &json!({ "subject": page("jira", "liste"), "name": "jira/mes-tickets" })).unwrap().unwrap();
+        assert_eq!(passage(&state).await, 1, "deux demandes, deux abonnés : une lecture");
+        assert_eq!(lectures(&space), "2");
+        assert_eq!(mine(&state)["refresh"]["runs"], json!(2));
+    }
+
+    /// Jamais sur le disque : une réponse scellée, un état `persist: false`. Oubliés : une autre version du contrat,
+    /// un compte supprimé, un module retiré.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn secrets_other_versions_and_removed_owners_are_not_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        let mut jira = space.module("jira").unwrap();
+        jira.states.push(StateDecl { id: "coffre".into(), ..Default::default() });
+        jira.states.push(StateDecl { id: "jetons".into(), persist: Some(false), ..Default::default() });
+        jira.states.push(StateDecl { id: "profil".into(), ..Default::default() });
+        space.write_module(&jira).unwrap();
+        let publish = |name: &str, value: Value| {
+            crate::states::publish_for_tests(&state, &json!({ "subject": page("jira", "liste"), "name": name, "value": value }));
+        };
+        let read = |name: &str| crate::states::read_for_tests(&state, &json!({ "subject": page("jira", "liste"), "name": name }));
+        publish("coffre", json!({ "motDePasse": format!("{}{}", crate::secret_refs::PREFIX, "a".repeat(43)) }));
+        publish("jetons", json!(["t1"]));
+        publish("profil", json!({ "nom": "Ada" }));
+        assert_eq!(read("coffre")["empty"], json!(false), "en mémoire pendant le lancement");
+
+        restart(&state, &space);
+        assert_eq!(read("coffre")["empty"], json!(true), "une réponse scellée n’est pas gardée");
+        assert_eq!(read("jetons")["empty"], json!(true), "`persist: false` n’est pas gardé");
+        assert_eq!(read("profil")["value"], json!({ "nom": "Ada" }));
+
+        // Le contrat change de version : la valeur gardée est oubliée, au lancement comme pendant.
+        let mut jira = space.module("jira").unwrap();
+        jira.states.iter_mut().find(|declared| declared.id == "profil").unwrap().version = 2;
+        space.write_module(&jira).unwrap();
+        assert_eq!(read("profil")["empty"], json!(true), "autre version : oubliée tout de suite");
+        publish("profil", json!({ "nom": "Ada", "role": "admin" }));
+        restart(&state, &space);
+        assert_eq!(read("profil")["value"]["role"], json!("admin"), "la nouvelle version se garde");
+
+        // Un module retiré : ses valeurs partent, du disque aussi.
+        crate::states::forget_module(&state, &space, "jira");
+        restart(&state, &space);
+        assert_eq!(read("profil")["empty"], json!(true));
+    }
+
+    /// Un état à période : après un redémarrage, sa valeur fraîche s’affiche sans lecture ; la lecture suivante reste
+    /// incrémentale (`since` et `current` lus sur le disque).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_periodic_state_resumes_incrementally_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        let subscribe = || {
+            handle(&state, "frame.states.subscribe", &json!({ "subject": page("sprint", "tableau"), "name": "jira/tickets-du-filtre", "params": { "jql": "assignee = moi" } })).unwrap().unwrap()
+        };
+        subscribe();
+        assert_eq!(passage(&state).await, 1);
+        restart(&state, &space);
+        let shown = value(&state, &page("sprint", "tableau"));
+        assert_eq!(shown["value"], json!([{ "cle": "ALF-1", "etat": "ouvert" }, { "cle": "ALF-2", "etat": "ouvert" }]));
+        let key = subscribe()["key"].as_str().unwrap().to_string();
+        assert_eq!(passage(&state).await, 0, "plus jeune que sa période : pas de lecture");
+        assert!(refresh_now(&key));
+        assert_eq!(passage(&state).await, 1);
+        assert_eq!(passages(&space), "2");
+        let merged = value(&state, &page("sprint", "tableau"));
+        assert_eq!(merged["value"], json!([{ "cle": "ALF-3", "etat": "nouveau" }, { "cle": "ALF-2", "etat": "fermé" }]), "fusion incrémentale");
     }
 }

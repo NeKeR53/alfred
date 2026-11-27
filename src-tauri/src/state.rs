@@ -91,11 +91,17 @@ impl AppState {
 
     pub fn set_space(&self, space: Option<Space>) {
         // Un autre espace (ou aucun) : les noyaux Python des modules de l’ancien s’arrêtent.
-        if let Some(previous) = self.try_space().map(|current| current.root) {
-            if space.as_ref().is_none_or(|space| space.root != previous) {
+        let previous = self.try_space().map(|current| current.root);
+        if let Some(previous) = &previous {
+            if space.as_ref().is_none_or(|space| &space.root != previous) {
                 crate::python::kernel::kernels()
-                    .stop_under(&previous, "L’espace de travail a été fermé : le noyau Python s’est arrêté.");
+                    .stop_under(previous, "L’espace de travail a été fermé : le noyau Python s’est arrêté.");
+                crate::states::close_space(&previous.to_string_lossy());
             }
+        }
+        // Les états gardés sur le disque reviennent dans le magasin : les pages s’affichent tout de suite.
+        if let Some(space) = space.as_ref().filter(|space| previous.as_ref() != Some(&space.root)) {
+            crate::states::open_space(space);
         }
         if let Ok(mut current) = self.space.write() {
             *current = space;

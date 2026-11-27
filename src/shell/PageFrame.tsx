@@ -8,6 +8,7 @@ import { type DropFrameHandle, registerDropFrame } from "./fileDrop";
 import {
   type FrameIdentity,
   frameContext,
+  frameServices,
   handleFrameRequest,
   onSelectionChange,
   registerPeer,
@@ -197,6 +198,7 @@ export function PageFrame({
     const appeared = shown && !wasShown.current;
     wasShown.current = shown;
     if (!appeared || capture || kind !== "page") return;
+    frameServices.revisitStates?.(identity);
     for (const { method, params } of presented.current.values())
       void handleFrameRequest(identity, method, params, () => undefined).catch(() => undefined);
     if (presented.current.get("search")?.method === "shell.search.declare")

@@ -217,6 +217,9 @@ pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
             }
             None => {}
         }
+        if state.max_age.is_some_and(|seconds| seconds < 10) {
+            problems.push(json!({ "module": module, "state": state.id, "problem": "`maxAge` vaut 10 secondes au moins : choisis l’âge le plus long que le métier permet (des tickets : 10 à 30 minutes ; un job CI : 30 s à 2 minutes)." }));
+        }
         // Un paramètre se décrit : c’est ce que lit un module consommateur pour savoir quoi passer.
         for param in &state.params {
             if param.description().trim().is_empty() {

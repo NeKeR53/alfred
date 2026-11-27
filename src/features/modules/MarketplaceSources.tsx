@@ -2,6 +2,7 @@ import { RefreshCw } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Accordion, type Action, Button, Code, type SettingsSection, TextInput } from "socle-ui";
 import { Row, Stack } from "../../kit";
+import { useLastKnown } from "../../shell/lastKnown";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
 import { errorMessage, type Marketplace, type ModulePublication, marketplaceApi } from "./api";
@@ -35,8 +36,8 @@ export function useMarketplaceSourcesSection({
   const updates = useModuleUpdatesStore((state) => state.updates);
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
   const spaceOpen = useShell((state) => Boolean(state.snapshot));
-  const [marketplaces, setMarketplaces] = useState<Marketplace[] | null>(null);
-  const [publications, setPublications] = useState<ModulePublication[]>([]);
+  const [marketplaces, setMarketplaces] = useLastKnown<Marketplace[] | null>("marketplace/sources", null);
+  const [publications, setPublications] = useLastKnown<ModulePublication[]>("marketplace/publications", []);
   const [url, setUrl] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -49,7 +50,7 @@ export function useMarketplaceSourcesSection({
       notify({ title: "Marketplaces illisibles", description: errorMessage(failure), tone: "error" });
     }
     setPublications(await marketplaceApi.publications().catch(() => []));
-  }, []);
+  }, [setPublications, setMarketplaces]);
 
   useEffect(() => {
     if (!active) return;

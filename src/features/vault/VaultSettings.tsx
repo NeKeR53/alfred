@@ -2,6 +2,7 @@ import { Pencil, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { SettingsSection, SettingTag } from "socle-ui";
 import { onNativeEvent } from "../../lib/native";
+import { useLastKnown } from "../../shell/lastKnown";
 import { notify } from "../../shell/notifications";
 import { deleteVaultEntry, errorMessage, listVault, type VaultEntry, vaultKindLabel } from "./api";
 import { VaultEntryDialog } from "./VaultEntryDialog";
@@ -25,7 +26,7 @@ export function entryTag(entry: VaultEntry): SettingTag {
 
 /** Rubrique « Mots de passe et clés » : inventaire des secrets du poste, sans jamais en afficher la valeur. */
 export function useVaultSections(): SettingsSection[] {
-  const [entries, setEntries] = useState<VaultEntry[]>();
+  const [entries, setEntries] = useLastKnown<VaultEntry[] | undefined>("reglages/coffre", undefined);
   const [error, setError] = useState<string>();
   /** `{}` pour une création, `{ entry }` pour une édition. */
   const [editing, setEditing] = useState<{ entry?: VaultEntry }>();
@@ -37,7 +38,7 @@ export function useVaultSections(): SettingsSection[] {
     } catch (failure) {
       setError(errorMessage(failure));
     }
-  }, []);
+  }, [setEntries]);
 
   useEffect(() => {
     void load();

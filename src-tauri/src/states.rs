@@ -20,7 +20,12 @@
 //!   jeu de valeurs normalisé (clés triées) est un état à part, partagé par tous les abonnés qui le demandent.
 //! - **Fournisseur.** Le module déclarant tient l’état à jour par sa politique de rafraîchissement (`refresh`),
 //!   dans le cœur : voir `state_refresh.rs`.
-//! - **En mémoire.** Le magasin vit le temps du lancement d’Alfred. Sans lecture, un état ne change pas.
+//! - **Gardé sur le disque.** Le magasin vit en mémoire et se recopie dans `<espace>/.alfred/etats.sqlite`
+//!   (`states_disk.rs`) : au lancement, chaque abonné reçoit tout de suite la dernière valeur connue, avec l’heure de
+//!   son dernier changement (`updatedAt`) et de sa dernière lecture réussie (`checkedAt`). Jamais une réponse scellée
+//!   (référence de secret), ni un état `persist: false`. Une valeur d’une autre version du contrat (`version` de
+//!   l’état ou de l’entité), d’un module retiré ou d’un compte supprimé est oubliée. Sans lecture, un état ne change
+//!   pas.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -36,15 +41,30 @@ pub const CHANGED: &str = "states:changed";
 /// Une valeur plus grosse n’est pas rangée.
 const MAX_VALUE: usize = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 20_000;
+/// Taille totale du magasin (et de sa copie sur le disque) : au-delà, les valeurs les plus anciennes partent.
+const MAX_TOTAL: usize = 64 * 1024 * 1024;
 
 struct Stored {
     value: Value,
+    /// Dernier changement de la valeur.
     at: u64,
+    /// Dernière lecture réussie (ou publication), même sans changement : l’âge de la valeur.
+    checked: Option<u64>,
+    /// Taille de la valeur en JSON.
+    size: usize,
+    module: String,
+    /// Client du compte (vide sans compte) : un compte supprimé oublie ses valeurs.
+    client: String,
+    /// Version du contrat (état, entité) au moment de l’écriture.
+    version: String,
+    /// La valeur se garde sur le disque (ni secret, ni état `persist: false`).
+    persist: bool,
 }
 
 #[derive(Default)]
 struct Store {
     entries: HashMap<String, Stored>,
+    total: usize,
 }
 
 fn store() -> std::sync::MutexGuard<'static, Store> {
@@ -62,6 +82,8 @@ pub struct Scope {
     pub space: String,
     pub examples: bool,
     pub instance: String,
+    /// Client du compte (vide sans compte) : n’entre pas dans les clés.
+    pub client: String,
 }
 
 pub(crate) fn state_key(scope: &Scope, owner: &str, id: &str, sub: &str) -> String {
@@ -122,13 +144,49 @@ fn need_of(manifest: &ModuleManifest, declared: Option<&str>) -> Option<String> 
     }
 }
 
-/// Instance réelle du compte : celle demandée, sinon celle par défaut du client relié au besoin.
-fn resolve_instance(space: &Space, owner: &str, need: Option<&str>, wanted: Option<String>) -> String {
-    let Some(need) = need else { return String::new() };
-    crate::clients::client_for(space, owner, need)
-        .and_then(|def| def.effective(wanted.as_deref()))
-        .map(|client| client.instance)
-        .unwrap_or_else(|_| wanted.unwrap_or_default())
+/// Client et instance réelle du compte : celle demandée, sinon celle par défaut du client relié au besoin.
+fn resolve_instance(space: &Space, owner: &str, need: Option<&str>, wanted: Option<String>) -> (String, String) {
+    let Some(need) = need else { return (String::new(), String::new()) };
+    match crate::clients::client_for(space, owner, need) {
+        Ok(def) => {
+            let instance = def.effective(wanted.as_deref()).map(|client| client.instance).unwrap_or_else(|_| wanted.unwrap_or_default());
+            (def.id, instance)
+        }
+        Err(_) => (String::new(), wanted.unwrap_or_default()),
+    }
+}
+
+/// Version du contrat d’un état : la sienne, et celle de son entité pour une liste.
+pub(crate) fn state_version(manifest: &ModuleManifest, declared: &StateDecl) -> String {
+    let entity = declared
+        .entity
+        .as_ref()
+        .and_then(|id| manifest.entities.iter().find(|entity| &entity.id == id))
+        .map(|entity| format!("/e{}", entity.version))
+        .unwrap_or_default();
+    format!("s{}{entity}", declared.version)
+}
+
+pub(crate) fn entity_version(entity: &EntityDecl) -> String {
+    format!("e{}", entity.version)
+}
+
+/// Ce qu’une écriture range avec la valeur : son module, son compte, sa version, et si elle se garde sur le disque.
+pub(crate) struct Meta<'a> {
+    module: &'a str,
+    client: &'a str,
+    version: String,
+    persist: bool,
+}
+
+impl<'a> Meta<'a> {
+    fn state(manifest: &'a ModuleManifest, scope: &'a Scope, declared: &StateDecl) -> Self {
+        Self { module: &manifest.id, client: &scope.client, version: state_version(manifest, declared), persist: declared.persist != Some(false) }
+    }
+
+    fn entity(module: &'a str, scope: &'a Scope, entity: &EntityDecl) -> Self {
+        Self { module, client: &scope.client, version: entity_version(entity), persist: true }
+    }
 }
 
 /// Ce que désigne un nom : un état ou un type d’entité du module.
@@ -151,24 +209,180 @@ pub(crate) struct Changes {
     events: Vec<(String, Value)>,
 }
 
-fn set(changes: &mut Changes, key: String, value: Value, event: Option<(String, Value)>) {
-    if value.to_string().len() > MAX_VALUE {
+fn set(changes: &mut Changes, key: String, value: Value, event: Option<(String, Value)>, meta: &Meta) {
+    let text = value.to_string();
+    let size = text.len();
+    if size > MAX_VALUE {
         return;
     }
+    let now = now_ms();
     let mut store = store();
-    if store.entries.get(&key).is_some_and(|stored| stored.value == value) {
+    crate::states_disk::mark(&key);
+    if let Some(stored) = store.entries.get_mut(&key).filter(|stored| stored.value == value) {
+        // Même valeur : rien ne change pour les abonnés, mais elle vient d’être lue.
+        stored.checked = Some(now);
+        stored.version = meta.version.clone();
         return;
     }
-    if store.entries.len() >= MAX_ENTRIES && !store.entries.contains_key(&key) {
-        if let Some(oldest) = store.entries.iter().min_by_key(|(_, stored)| stored.at).map(|(key, _)| key.clone()) {
-            store.entries.remove(&oldest);
-        }
+    // Une réponse scellée (référence de secret) ne se garde jamais sur le disque.
+    let persist = meta.persist && !crate::secret_refs::contains_reference(&text);
+    if let Some(old) = store.entries.remove(&key) {
+        store.total -= old.size;
     }
-    store.entries.insert(key.clone(), Stored { value, at: now_ms() });
+    while (store.entries.len() >= MAX_ENTRIES || store.total + size > MAX_TOTAL) && !store.entries.is_empty() {
+        let Some(oldest) = store.entries.iter().min_by_key(|(_, stored)| stored.at).map(|(key, _)| key.clone()) else { break };
+        if let Some(old) = store.entries.remove(&oldest) {
+            store.total -= old.size;
+        }
+        crate::states_disk::mark(&oldest);
+    }
+    store.total += size;
+    store.entries.insert(
+        key.clone(),
+        Stored {
+            value,
+            at: now,
+            checked: Some(now),
+            size,
+            module: meta.module.to_string(),
+            client: meta.client.to_string(),
+            version: meta.version.clone(),
+            persist,
+        },
+    );
     changes.keys.push(key);
     if let Some(event) = event {
         changes.events.push(event);
     }
+}
+
+/// Ligne du disque d’une clé du magasin : à garder, ou à effacer (absente, ou qui ne se garde pas).
+fn disk_row(key: &str) -> Option<Option<crate::states_disk::Row>> {
+    let store = store();
+    Some(store.entries.get(key).filter(|stored| stored.persist).map(|stored| crate::states_disk::Row {
+        key: key.to_string(),
+        module: stored.module.clone(),
+        client: stored.client.clone(),
+        version: stored.version.clone(),
+        value: stored.value.to_string(),
+        at: stored.at,
+        checked: stored.checked,
+    }))
+}
+
+/// Écrit sur le disque ce qui a changé.
+pub(crate) fn flush() {
+    crate::states_disk::flush(disk_row);
+}
+
+/// Ouvre la mémoire de l’espace sur le disque et la charge dans le magasin : appelé quand l’espace s’ouvre. Une
+/// valeur d’un module retiré, d’un état ou d’une entité qui n’existe plus, ou d’une autre version, est oubliée.
+pub fn open_space(space: &Space) {
+    let root = space.root.to_string_lossy().to_string();
+    let manifests: HashMap<String, ModuleManifest> =
+        space.module_ids().into_iter().filter_map(|id| space.module(&id).ok().map(|manifest| (id, manifest))).collect();
+    let keep = |row: &crate::states_disk::Row| expected_version(&manifests, &row.key).is_some_and(|version| version == row.version);
+    let rows = match crate::states_disk::open(&root, &space.local_dir(), keep) {
+        Ok(rows) => rows,
+        Err(error) => {
+            log::error!("états gardés sur le disque, {root} : {}", error.message);
+            return;
+        }
+    };
+    let mut store = store();
+    for row in rows {
+        let Ok(value) = serde_json::from_str::<Value>(&row.value) else { continue };
+        let size = row.value.len();
+        if store.entries.contains_key(&row.key) || store.total + size > MAX_TOTAL || store.entries.len() >= MAX_ENTRIES {
+            continue;
+        }
+        store.total += size;
+        store.entries.insert(
+            row.key,
+            Stored { value, at: row.at, checked: row.checked, size, module: row.module, client: row.client, version: row.version, persist: true },
+        );
+    }
+}
+
+/// Ferme la mémoire d’un espace sur le disque (un autre s’ouvre) : ce qui restait à écrire l’est.
+pub fn close_space(root: &str) {
+    crate::states_disk::close(root, disk_row);
+}
+
+/// Version attendue d’une clé, d’après les manifestes : `None` si son module, son état ou son entité n’existe plus.
+fn expected_version(manifests: &HashMap<String, ModuleManifest>, key: &str) -> Option<String> {
+    let mut parts = key.split('\u{1f}');
+    let kind = parts.next()?;
+    let name = parts.nth(2)?;
+    let (owner, id) = name.split_once('/')?;
+    let manifest = manifests.get(owner)?;
+    match kind {
+        "etat" => manifest.states.iter().find(|state| state.id == id).map(|state| state_version(manifest, state)),
+        "entite" => manifest.entities.iter().find(|entity| entity.id == id).map(entity_version),
+        _ => None,
+    }
+}
+
+/// Oublie les valeurs du magasin d’un espace qui répondent à `matches`, et prévient leurs abonnés.
+fn forget(state: &AppState, root: &str, matches: impl Fn(&str, &Stored) -> bool) {
+    let gone: Vec<String> = {
+        let mut store = store();
+        let gone: Vec<String> = store
+            .entries
+            .iter()
+            .filter(|(key, stored)| crate::states_disk::space_of(key) == Some(root) && matches(key, stored))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &gone {
+            if let Some(old) = store.entries.remove(key) {
+                store.total -= old.size;
+            }
+        }
+        gone
+    };
+    if !gone.is_empty() {
+        state.emit(CHANGED, json!({ "keys": gone }));
+    }
+}
+
+/// Oublie les valeurs d’un module (retiré de l’espace), en mémoire et sur le disque.
+pub fn forget_module(state: &AppState, space: &Space, module: &str) {
+    let root = space.root.to_string_lossy().to_string();
+    crate::states_disk::delete_where(&root, "module = ?1", &[module]);
+    forget(state, &root, |_, stored| stored.module == module);
+}
+
+/// Oublie les valeurs d’un compte supprimé (`instance`), ou de tous les comptes d’un client supprimé (`None`).
+pub fn forget_client(state: &AppState, space: &Space, client: &str, instance: Option<&str>) {
+    let root = space.root.to_string_lossy().to_string();
+    match instance {
+        Some(instance) => {
+            crate::states_disk::delete_where(&root, "client = ?1 AND instance = ?2", &[client, instance]);
+            forget(state, &root, |key, stored| stored.client == client && crate::states_disk::instance_of(key) == Some(instance));
+        }
+        None => {
+            crate::states_disk::delete_where(&root, "client = ?1", &[client]);
+            forget(state, &root, |_, stored| stored.client == client);
+        }
+    }
+}
+
+/// Dernière lecture réussie de la valeur d’une cible, si elle suit la version de son contrat.
+pub(crate) fn checked_of(target: &StateTarget) -> Option<u64> {
+    let version = match &target.entity {
+        Some(entity) => entity_version(entity),
+        None => state_version(&target.manifest, &target.declared),
+    };
+    store().entries.get(&target.key).filter(|stored| stored.version == version).and_then(|stored| stored.checked)
+}
+
+/// Une lecture du fournisseur a réussi : la valeur date de son départ (`at`), même si elle n’a pas changé.
+pub(crate) fn mark_checked(key: &str, at: u64) {
+    if let Some(stored) = store().entries.get_mut(key) {
+        stored.checked = Some(at);
+        crate::states_disk::mark(key);
+    }
+    flush();
 }
 
 /// Range un objet sous sa clé d’entité, fusionné champ par champ avec celui déjà rangé (une liste qui rend moins de
@@ -177,7 +391,7 @@ fn upsert(changes: &mut Changes, scope: &Scope, owner: &str, entity: &EntityDecl
     let fields = object.as_object()?;
     let id = id_text(fields.get(entity.key_field())?)?;
     let key = entity_key(scope, owner, &entity.id, &id);
-    let merged = match store().entries.get(&key).map(|stored| stored.value.clone()) {
+    let merged = match valid_entry(&key, &entity_version(entity)).map(|(value, _, _)| value) {
         Some(Value::Object(mut old)) => {
             for (name, value) in fields {
                 old.insert(name.clone(), value.clone());
@@ -190,7 +404,7 @@ fn upsert(changes: &mut Changes, scope: &Scope, owner: &str, entity: &EntityDecl
         format!("{owner}/entite.{}", entity.id),
         json!({ "entity": format!("{owner}/{}", entity.id), "id": id, "instance": scope.instance, "examples": scope.examples }),
     );
-    set(changes, key, merged, Some(event));
+    set(changes, key, merged, Some(event), &Meta::entity(owner, scope, entity));
     Some(id)
 }
 
@@ -215,7 +429,7 @@ pub(crate) fn merge_state(
 ) -> AppResult<()> {
     let owner = manifest.id.as_str();
     let key = state_key(scope, owner, &declared.id, sub);
-    let current = store().entries.get(&key).map(|stored| stored.value.clone());
+    let current = valid_entry(&key, &state_version(manifest, declared)).map(|(value, _, _)| value);
     let merged = match &declared.entity {
         Some(entity_id) => {
             let entity = manifest.entities.iter().find(|entity| &entity.id == entity_id).ok_or_else(|| {
@@ -250,7 +464,7 @@ pub(crate) fn merge_state(
         },
     };
     let event = state_event(owner, declared, scope, sub);
-    set(changes, key, merged, Some(event));
+    set(changes, key, merged, Some(event), &Meta::state(manifest, scope, declared));
     Ok(())
 }
 
@@ -292,12 +506,13 @@ pub(crate) fn write_state(
         None => value.clone(),
     };
     let event = state_event(owner, declared, scope, sub);
-    set(changes, state_key(scope, owner, &declared.id, sub), stored, Some(event));
+    set(changes, state_key(scope, owner, &declared.id, sub), stored, Some(event), &Meta::state(manifest, scope, declared));
     Ok(())
 }
 
 /// Annonce les changements aux coquilles, au bus d’événements et aux automatisations déclenchées par un état.
 pub(crate) fn announce(state: &std::sync::Arc<AppState>, space: &Space, changes: Changes) {
+    flush();
     if changes.keys.is_empty() {
         return;
     }
@@ -341,11 +556,8 @@ pub fn feed(
     };
     let scope_for = |client: Option<&str>| {
         let need = need_of(&manifest, client);
-        Scope {
-            space: space.root.to_string_lossy().to_string(),
-            examples,
-            instance: resolve_instance(space, owner, need.as_deref(), wanted(need.as_deref())),
-        }
+        let (client, instance) = resolve_instance(space, owner, need.as_deref(), wanted(need.as_deref()));
+        Scope { space: space.root.to_string_lossy().to_string(), examples, instance, client }
     };
     let mut changes = Changes::default();
     // Une liste (ou une valeur) : seulement une lecture la remplace.
@@ -397,11 +609,35 @@ pub(crate) fn subject_scope(state: &AppState, space: &Space, subject: &Subject, 
         let named = if manifest.id == subject.module { need.to_string() } else { format!("{}/{need}", manifest.id) };
         subject.accounts.get(&named).cloned().or_else(|| subject.instance.clone())
     });
+    let (client, instance) = resolve_instance(space, &manifest.id, need.as_deref(), wanted);
     Ok(Scope {
         space: space.root.to_string_lossy().to_string(),
         examples: subject.examples || crate::examples::is_on(state, &manifest.id),
-        instance: resolve_instance(space, &manifest.id, need.as_deref(), wanted),
+        instance,
+        client,
     })
+}
+
+/// Valeur d’une clé, si elle suit la version du contrat : `(valeur, dernier changement, dernière lecture)`. Une
+/// valeur d’une autre version est oubliée : elle sera relue.
+fn valid_entry(key: &str, version: &str) -> Option<(Value, u64, Option<u64>)> {
+    let mut store = store();
+    match store.entries.get(key) {
+        Some(stored) if stored.version == version => Some((stored.value.clone(), stored.at, stored.checked)),
+        Some(_) => {
+            if let Some(old) = store.entries.remove(key) {
+                store.total -= old.size;
+            }
+            crate::states_disk::mark(key);
+            None
+        }
+        None => None,
+    }
+}
+
+/// Objets d’une liste d’entités, dans l’ordre de ses identifiants (un objet d’une autre version manque).
+fn listed(keys: &[String], version: &str) -> Vec<Value> {
+    keys.iter().filter_map(|key| valid_entry(key, version)).map(|(object, _, _)| object).collect()
 }
 
 /// Valeur courante d’un état (liste rendue avec ses objets) ou d’une entité, avec les clés dont elle dépend.
@@ -412,37 +648,31 @@ fn read(state: &AppState, args: &Value) -> AppResult<Value> {
     let space = state.space()?;
     let (manifest, id) = visible(&space, &subject, &name)?;
     let owner = manifest.id.clone();
-    let entries = |keys: &[String]| -> Vec<Option<(Value, u64)>> {
-        let store = store();
-        keys.iter().map(|key| store.entries.get(key).map(|stored| (stored.value.clone(), stored.at))).collect()
-    };
     match target(&manifest, &id) {
         Some(Target::State(declared)) => {
             let scope = subject_scope(state, &space, &subject, &manifest, declared.client.as_deref(), args)?;
             let key = state_key(&scope, &owner, &id, &request_sub(declared, args));
             let refresh = crate::state_refresh::status_of(&key);
-            let Some((stored, at)) = entries(std::slice::from_ref(&key)).remove(0) else {
+            let Some((stored, at, checked)) = valid_entry(&key, &state_version(&manifest, declared)) else {
                 return Ok(json!({ "value": null, "empty": true, "deps": [key], "refresh": refresh, "instance": scope.instance }));
             };
             let mut deps = vec![key];
             let value = match (&declared.entity, &stored) {
                 (Some(entity_id), Value::Array(ids)) => {
-                    let entity_scope = manifest
-                        .entities
-                        .iter()
-                        .find(|entity| &entity.id == entity_id)
+                    let entity = manifest.entities.iter().find(|entity| &entity.id == entity_id);
+                    let entity_scope = entity
                         .map(|entity| subject_scope(state, &space, &subject, &manifest, entity.client.as_deref(), args))
                         .transpose()?
                         .unwrap_or_else(|| scope.clone());
                     let keys: Vec<String> =
                         ids.iter().filter_map(id_text).map(|id| entity_key(&entity_scope, &owner, entity_id, &id)).collect();
-                    let objects = entries(&keys).into_iter().flatten().map(|(object, _)| object).collect();
+                    let objects = listed(&keys, &entity.map(entity_version).unwrap_or_default());
                     deps.extend(keys);
                     Value::Array(objects)
                 }
                 _ => stored,
             };
-            Ok(json!({ "value": value, "empty": false, "updatedAt": at, "deps": deps, "refresh": refresh, "instance": scope.instance }))
+            Ok(json!({ "value": value, "empty": false, "updatedAt": at, "checkedAt": checked, "deps": deps, "refresh": refresh, "instance": scope.instance }))
         }
         Some(Target::Entity(entity)) => {
             if sub.is_empty() {
@@ -450,12 +680,15 @@ fn read(state: &AppState, args: &Value) -> AppResult<Value> {
             }
             let scope = subject_scope(state, &space, &subject, &manifest, entity.client.as_deref(), args)?;
             let key = entity_key(&scope, &owner, &id, &sub);
-            let found = entries(std::slice::from_ref(&key)).remove(0);
+            let refresh = crate::state_refresh::status_of(&key);
+            let found = valid_entry(&key, &entity_version(entity));
             Ok(json!({
-                "value": found.as_ref().map(|(value, _)| value.clone()),
+                "value": found.as_ref().map(|(value, _, _)| value.clone()),
                 "empty": found.is_none(),
-                "updatedAt": found.map(|(_, at)| at),
+                "updatedAt": found.as_ref().map(|(_, at, _)| *at),
+                "checkedAt": found.as_ref().and_then(|(_, _, checked)| *checked),
                 "deps": [key],
+                "refresh": refresh,
                 "instance": scope.instance,
             }))
         }
@@ -496,15 +729,15 @@ fn publish(state: &std::sync::Arc<AppState>, args: &Value) -> AppResult<Value> {
 /// Valeur courante d’un état, telle que la lit un abonné (liste rendue avec ses objets) : la `current` d’une lecture
 /// incrémentale.
 pub(crate) fn current_value(manifest: &ModuleManifest, scope: &Scope, declared: &StateDecl, sub: &str) -> Value {
-    let store = store();
-    let Some(stored) = store.entries.get(&state_key(scope, &manifest.id, &declared.id, sub)) else { return Value::Null };
-    match (&declared.entity, &stored.value) {
-        (Some(entity_id), Value::Array(ids)) => Value::Array(
-            ids.iter()
-                .filter_map(id_text)
-                .filter_map(|id| store.entries.get(&entity_key(scope, &manifest.id, entity_id, &id)).map(|o| o.value.clone()))
-                .collect(),
-        ),
+    let Some((stored, _, _)) = valid_entry(&state_key(scope, &manifest.id, &declared.id, sub), &state_version(manifest, declared)) else {
+        return Value::Null;
+    };
+    match (&declared.entity, &stored) {
+        (Some(entity_id), Value::Array(ids)) => {
+            let version = manifest.entities.iter().find(|entity| &entity.id == entity_id).map(entity_version).unwrap_or_default();
+            let keys: Vec<String> = ids.iter().filter_map(id_text).map(|id| entity_key(scope, &manifest.id, entity_id, &id)).collect();
+            Value::Array(listed(&keys, &version))
+        }
         (_, value) => value.clone(),
     }
 }
@@ -596,6 +829,7 @@ pub fn agent_overview(space: &Space) -> Value {
                 "params": declared.params.iter().map(|param| json!({ "id": param.id(), "description": param.description() })).collect::<Vec<_>>(),
                 "entity": declared.entity.as_ref().map(|entity| format!("{module}/{entity}")),
                 "refresh": declared.refresh,
+                "maxAge": crate::state_refresh::provider_max_age(declared).as_secs(),
                 "subscribe": call,
             }));
         }
@@ -612,15 +846,24 @@ pub fn agent_overview(space: &Space) -> Value {
     json!({ "states": states, "entities": entities })
 }
 
+/// Redémarrage d’Alfred, pour les tests : le magasin d’un espace se vide (le disque reste).
+#[cfg(test)]
+pub(crate) fn drop_memory_for_tests(root: &str) {
+    let mut store = store();
+    store.entries.retain(|key, _| crate::states_disk::space_of(key) != Some(root));
+    store.total = store.entries.values().map(|stored| stored.size).sum();
+}
+
+#[cfg(test)]
+pub(crate) fn publish_for_tests(state: &std::sync::Arc<AppState>, args: &Value) -> Value {
+    publish(state, args).unwrap()
+}
+
 #[cfg(test)]
 pub(crate) fn read_for_tests(state: &AppState, args: &Value) -> Value {
     read(state, args).unwrap()
 }
 
-/// L’état est-il vide (personne ne l’a encore lu) ?
-pub(crate) fn is_empty(key: &str) -> bool {
-    !store().entries.contains_key(key)
-}
 
 pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &Value) -> Option<AppResult<Value>> {
     if let Some(result) = crate::state_refresh::handle(state, command, args) {
@@ -640,6 +883,7 @@ pub async fn handle(state: &std::sync::Arc<AppState>, command: &str, args: &Valu
                         "description": declared.description,
                         "params": declared.params,
                         "refresh": declared.refresh,
+                        "maxAge": crate::state_refresh::provider_max_age(declared).as_secs(),
                     }));
                 }
             }
@@ -802,5 +1046,36 @@ mod tests {
         assert!(refused.unwrap_err().message.contains("Seul le module"));
         publish(&state, &json!({ "subject": page("jira"), "name": "ci", "key": "alfred", "value": { "etat": "rouge" } })).unwrap();
         assert_eq!(get(&state, &page("sprint"), "jira/ci", Some("alfred")).unwrap()["value"]["etat"], json!("rouge"));
+    }
+
+    /// Un compte supprimé oublie ses valeurs (mémoire et disque) ; un autre compte du même client garde les siennes.
+    #[tokio::test]
+    async fn a_deleted_account_forgets_its_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(&dir.path().join("data")).unwrap();
+        let space = Space::open_or_create(&dir.path().join("espace"), Some("Test")).unwrap();
+        jira(&space);
+        state.set_space(Some(space.clone()));
+        let manifest = space.module("jira").unwrap();
+        let declared = manifest.states.iter().find(|state| state.id == "mes-tickets").unwrap().clone();
+        let root = space.root.to_string_lossy().to_string();
+        let scope = |instance: &str| Scope { space: root.clone(), examples: false, instance: instance.into(), client: "jira-cloud".into() };
+        let mut changes = Changes::default();
+        write_state(&mut changes, &manifest, &scope("acme"), &declared, "", &json!([{ "cle": "A-1" }])).unwrap();
+        write_state(&mut changes, &manifest, &scope("perso"), &declared, "", &json!([{ "cle": "P-1" }])).unwrap();
+        announce(&state, &space, changes);
+        let key = |instance: &str| state_key(&scope(instance), "jira", "mes-tickets", "");
+        assert!(store().entries.contains_key(&key("acme")));
+
+        forget_client(&state, &space, "jira-cloud", Some("acme"));
+        assert!(!store().entries.contains_key(&key("acme")), "le compte supprimé est oublié");
+        assert!(store().entries.contains_key(&key("perso")), "l’autre compte garde ses valeurs");
+        state.set_space(None);
+        drop_memory_for_tests(&root);
+        state.set_space(Some(space.clone()));
+        assert!(!store().entries.contains_key(&key("acme")), "oublié sur le disque aussi");
+        assert_eq!(current_value(&manifest, &scope("perso"), &declared, ""), json!([{ "cle": "P-1" }]));
+        forget_client(&state, &space, "jira-cloud", None);
+        assert!(!store().entries.contains_key(&key("perso")), "client supprimé : tous ses comptes");
     }
 }

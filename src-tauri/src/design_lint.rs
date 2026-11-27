@@ -5,9 +5,11 @@
 //! dans les Réglages a ses règles propres ; une page placée en panneau rend un `Drawer` à sa racine, sans champ de
 //! saisie dans ses lignes ni en-tête détourné (`rows`). Une page de la zone principale reçoit aussi des
 //! avertissements de mise en page (`layout`, D-404) : longue pile de blocs, colonne étroite, zone de dépôt posée en
-//! bloc, plusieurs actions principales, exemples hors d’un état vide. Chaque remarque dit quoi écrire à la place.
+//! bloc, plusieurs actions principales, exemples hors d’un état vide. Toute page affiche son interface tout de suite,
+//! sans écran de chargement à la place de toute la page (`loading`). Chaque remarque dit quoi écrire à la place.
 
 mod layout;
+mod loading;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -746,6 +748,10 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
         if let Some((offset, message)) = panel_root_problem(&parsed.program.body, &lint.socle) {
             lint.report(offset, message);
         }
+    }
+    // L’interface d’abord : jamais un écran de chargement à la place de toute la page.
+    for (offset, message) in loading::check(&parsed.program, &lint.socle) {
+        lint.report(offset, message);
     }
     if placement == Placement::Page {
         for (offset, message) in layout::check(&parsed.program, &lint.socle, source) {
@@ -1969,5 +1975,84 @@ export default function P() {
 }
 "#;
         assert!(tache(sources).iter().any(|m| m.contains("lister des éléments (`List`), converser (`ChatTranscript`)")), "{:?}", tache(sources));
+    }
+
+    #[test]
+    fn une_page_ne_remplace_jamais_toute_son_interface_par_un_chargement() {
+        let refused = [
+            r#"import { useAlfredState } from "@alfred/sdk";
+               import { ListPage, Page } from "socle-ui";
+               export default function Tickets() {
+                 const tickets = useAlfredState("jira/mes-tickets");
+                 if (tickets.loading) return <Page state="loading" />;
+                 return <ListPage title="Tickets" rows={tickets.data} columns={[]} empty={{ title: "Aucun" }} />;
+               }"#,
+            r#"import { ListPage, Skeleton } from "socle-ui";
+               export default function Tickets() {
+                 const { data } = useAlfredState("jira/mes-tickets");
+                 if (!data) { return <Skeleton />; }
+                 return <ListPage title="Tickets" rows={data} columns={[]} empty={{ title: "Aucun" }} />;
+               }"#,
+            r#"import { ListPage } from "socle-ui";
+               export default function Tickets() {
+                 const { data, loading } = useAlfredState("jira/mes-tickets");
+                 if (loading) return null;
+                 return <ListPage title="Tickets" rows={data} columns={[]} empty={{ title: "Aucun" }} />;
+               }"#,
+            r#"import { ListPage, Spinner } from "socle-ui";
+               const Tickets = () => {
+                 const tickets = useAlfredState("jira/mes-tickets");
+                 return tickets.loading ? <Spinner /> : <ListPage title="Tickets" rows={tickets.data} columns={[]} empty={{ title: "Aucun" }} />;
+               };
+               export default Tickets;"#,
+        ];
+        for source in refused {
+            let found = messages(source);
+            assert!(found.iter().any(|message| message.contains("remplace toute son interface") || message.contains("soit un chargement")), "{source}\n{found:?}");
+            assert!(found.iter().any(|message| message.contains("isLoading={tickets.refreshing}")), "dit quoi écrire : {found:?}");
+        }
+
+        // Toute la page en chargement, ou un bloc qui suit une relecture.
+        let whole = messages(
+            r#"import { Page, PageSection } from "socle-ui";
+               export default function Meteo() {
+                 const meteo = useAlfredState("meteo/ville");
+                 return <Page state={meteo.loading ? "loading" : "ready"}><PageSection title="Ciel" state={meteo.refreshing ? "loading" : "ready"} /></Page>;
+               }"#,
+        );
+        assert!(whole.iter().any(|message| message.contains("`<Page state=\"loading\">`")), "{whole:?}");
+        let unknown = messages(
+            r#"import { Page } from "socle-ui";
+               export default function Semaine() {
+                 const taches = useAsync(lister, []);
+                 return <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} />;
+               }"#,
+        );
+        assert!(unknown.iter().any(|message| message.contains("`<Page state=\"loading\">`")), "{unknown:?}");
+        assert!(whole.iter().any(|message| message.contains("suit une relecture")), "{whole:?}");
+
+        // Conforme : le gabarit toujours rendu, chaque bloc avec son attente ; un bloc peut attendre seul.
+        let accepted = messages(
+            r#"import { useAlfredState } from "@alfred/sdk";
+               import { ListPage, Page, PageSection, Skeleton } from "socle-ui";
+               function Ciel() {
+                 const ciel = useAlfredState("meteo/ciel");
+                 if (ciel.loading) return <Skeleton />;
+                 return null;
+               }
+               export default function Tickets() {
+                 const tickets = useAlfredState("jira/mes-tickets");
+                 if (tickets.error && !tickets.data) return <Page state="error" onRetry={() => void tickets.refresh()} />;
+                 return (
+                   <Page>
+                     <PageSection title="Ciel" state={tickets.loading ? "loading" : "ready"}><Ciel /></PageSection>
+                   </Page>
+                 );
+               }"#,
+        );
+        assert!(
+            !accepted.iter().any(|message| message.contains("chargement") || message.contains("relecture")),
+            "{accepted:?}"
+        );
     }
 }

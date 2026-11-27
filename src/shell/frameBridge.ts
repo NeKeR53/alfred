@@ -296,6 +296,8 @@ export const frameServices: {
     request: { name: string; key?: string; params?: Record<string, unknown>; instance?: string },
     listener: (state: unknown) => void,
   ) => StateWatch;
+  /** La page revient à l’écran : ses états périmés (âge maximal dépassé) se relisent. */
+  revisitStates?: (identity: FrameIdentity) => void;
   startAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   sendToAgent?: (identity: FrameIdentity, options: Params) => Promise<unknown>;
   oneShot?: (identity: FrameIdentity, request: Params) => Promise<unknown>;

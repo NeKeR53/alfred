@@ -2,6 +2,7 @@ import { ArrowLeft, Download, Eye, RefreshCw, Server } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Code, SearchInput, Select, type SettingsSection, type SettingTag } from "socle-ui";
 import { Row, Stack } from "../../kit";
+import { useLastKnown } from "../../shell/lastKnown";
 import { SETTINGS_SECTION } from "../../shell/navigationLayout";
 import { notify } from "../../shell/notifications";
 import { useShell } from "../../shell/store";
@@ -60,9 +61,12 @@ export function useMarketplaceSections(): SettingsSection[] {
   const modules = useShell((state) => state.snapshot?.modules);
   const refreshSpace = useShell((state) => state.refresh);
   const loadUpdates = useModuleUpdatesStore((state) => state.load);
-  const [marketplaces, setMarketplaces] = useState<Marketplace[] | null>(null);
-  const [offers, setOffers] = useState<Offer[] | null>(null);
-  const [failures, setFailures] = useState<Array<{ marketplace: Marketplace; message: string; detail?: string }>>([]);
+  const [marketplaces, setMarketplaces] = useLastKnown<Marketplace[] | null>("marketplace/sources", null);
+  const [offers, setOffers] = useLastKnown<Offer[] | null>("marketplace/modules", null);
+  const [failures, setFailures] = useLastKnown<Array<{ marketplace: Marketplace; message: string; detail?: string }>>(
+    "marketplace/echecs",
+    [],
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [screen, setScreen] = useState<Screen>({ kind: "catalog" });
   const [query, setQuery] = useState("");
@@ -93,7 +97,7 @@ export function useMarketplaceSections(): SettingsSection[] {
     );
     setOffers(results.flatMap(({ marketplace, entries }) => entries.map((module) => ({ marketplace, module }))));
     setFailures(results.flatMap(({ marketplace, message }) => (message ? [{ marketplace, message }] : [])));
-  }, []);
+  }, [setOffers, setMarketplaces, setFailures]);
 
   /** Interroge les marketplaces distants, puis relit le catalogue. */
   const refresh = useCallback(async () => {

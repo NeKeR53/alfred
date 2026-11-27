@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Refresher, refresherRow, since } from "./StatesSettings";
+import { ageOptions, duration, type Refresher, refresherRow, since } from "./StatesSettings";
 
 const base: Refresher = {
   key: "k",
@@ -40,5 +40,31 @@ describe("ligne d’un état suivi", () => {
     expect(refresherRow({ ...base, running: true }).last).toBe("En cours");
     expect(refresherRow({ ...base, every: null, lastRunAt: null }).policy).toBe("À la demande");
     expect(since(0, 3 * 60_000)).toBe("il y a 3 minutes");
+  });
+});
+
+describe("fraîcheur d’un état", () => {
+  it("dit l’âge maximal en mots simples et propose le défaut du fournisseur d’abord", () => {
+    expect([duration(30), duration(600), duration(3600), duration(86_400), duration(172_800)]).toEqual([
+      "30 s",
+      "10 min",
+      "1 h",
+      "1 jour",
+      "2 jours",
+    ]);
+    const options = ageOptions({
+      state: "jira/mes-tickets",
+      module: "Jira",
+      description: "Mes tickets",
+      defaultMaxAge: 900,
+      maxAge: 120,
+      every: null,
+    });
+    expect(options[0]).toEqual({ id: "default", label: "Défaut du fournisseur (15 min)" });
+    expect(options.map((option) => option.id)).toContain("120");
+  });
+
+  it("montre l’âge maximal appliqué d’un état suivi", () => {
+    expect(refresherRow({ ...base, maxAge: 600 }, 1_000_000).detail).toContain("Relu au-delà de 10 min");
   });
 });

@@ -2839,6 +2839,8 @@ fn delete_instance(state: &Arc<AppState>, args: &Value) -> AppResult<Value> {
     store(&space, &def)?;
     // Une future instance du même identifiant ne doit pas hériter de cette validation.
     forget_trust(state, &space, &trust_key(&def.id, &id))?;
+    // Les états lus avec ce compte partent avec lui.
+    crate::states::forget_client(state, &space, &def.id, Some(&id));
     git::commit_all(
         &space.root,
         &format!("Suppression de l’instance {} du client {}", removed.display_label(), def.label),
@@ -2929,6 +2931,8 @@ pub fn validate_by_agent(state: &Arc<AppState>, id: &str) -> AppResult<Value> {
 /// Retire un client de l’espace, avec tout ce qui s’y rattache (comptes, validation, accords, tests), sans
 /// commit ; rend son nom. Les entrées du coffre restent : le coffre est commun à tous les espaces de travail.
 fn forget(state: &AppState, space: &Space, id: &str) -> AppResult<String> {
+    // Les états lus avec ses comptes partent avec lui.
+    crate::states::forget_client(state, space, id, None);
     let label = load(space, id).ok().flatten().map(|client| client.label).unwrap_or_else(|| id.to_string());
     std::fs::remove_file(client_path(space, id))?;
     // Les demandes reliées à ce client redeviennent « à relier » plutôt que de pointer dans le vide.

@@ -204,7 +204,7 @@ La zone fixe la forme. La page ne choisit rien :
   selectedId={choisie}
   onSelect={(row) => choisir(row)}     // sélection : publier pour le panneau
   onOpen={(row) => void views.open({ id: row.id, label: row.titre })} // double-clic ou Entrée : un onglet par élément
-  isLoading={taches.loading}           // rechargement : barre fine
+  isLoading={taches.refreshing}        // relecture avec des lignes : barre fine ; sans lignes : squelettes
   hasError={Boolean(taches.error)}
   onRetry={taches.reload}
   onActionError={notifyActionError}
@@ -249,7 +249,7 @@ return (
   <Drawer
     header={tache.data ? { title: tache.data.titre, status: STATUT[tache.data.etat], actions: [...] } : undefined}
     sections={tache.data ? SECTIONS(tache.data) : undefined}
-    isLoading={tache.loading}
+    isLoading={tache.refreshing}
     hasError={Boolean(tache.error)}
     onRetry={tache.reload}
     isNotFound={Boolean(id) && tache.data === null && !tache.loading}
@@ -298,8 +298,9 @@ fields: [
 Une page placée dans les Réglages (`{ "kind": "settings" }`) est une rubrique : la fenêtre des Réglages porte déjà la navigation et le titre. La page est une `Page` sans `width`, faite de `PageSection`, chacune avec des réglages qui s’appliquent **tout de suite** :
 
 ```tsx
-<Page state={reglages.loading && !reglages.data ? "loading" : reglages.error ? "error" : "ready"} onRetry={reglages.reload}>
-  <PageSection title="Lecture" description="Comment les messages s’affichent.">
+<Page>
+  <PageSection title="Lecture" description="Comment les messages s’affichent."
+    state={reglages.error && !reglages.data ? "error" : reglages.loading ? "loading" : "ready"} onRetry={reglages.reload}>
     <Stack gap="md">
       <Toggle isSelected={valeurs.apercu} onChange={(v) => enregistrer("apercu", v)} description="Une ligne du message sous l’objet.">
         Aperçu des messages
@@ -312,6 +313,7 @@ Une page placée dans les Réglages (`{ "kind": "settings" }`) est une rubrique 
 ```
 
 - Un interrupteur, une liste ou un texte s’enregistre seul ; un texte à la sortie du champ. Pas de bouton « Enregistrer », pas de notification « Réglage enregistré ».
+- L’interface d’abord : l’attente et l’erreur vont sur la `PageSection` qui attend, jamais sur la `Page` entière (`check` refuse `<Page state="loading">`).
 - Une liste gérée (comptes, clés) : une `Table` dans la section, avec `rowActions`, et une action « Ajouter… » en `actions` de la section, qui ouvre `useOpenForm`.
 - Pas de `FormPage`, pas de `SettingsPage` (elle dessinerait une seconde navigation).
 
@@ -739,7 +741,7 @@ export default function Taches() {
         setChoisie(row?.id ?? null);
         void shell.publish(row?.id ?? null);
       }}
-      isLoading={taches.loading}
+      isLoading={taches.refreshing}
       hasError={Boolean(taches.error)}
       onRetry={taches.reload}
       onActionError={notifyActionError}
@@ -780,7 +782,7 @@ export default function Detail() {
         ] },
         { id: "description", title: "Description", content: t.description ?? undefined, empty: "Aucune description" },
       ] : undefined}
-      isLoading={tache.loading}
+      isLoading={tache.refreshing}
       hasError={Boolean(tache.error)}
       onRetry={tache.reload}
       isNotFound={Boolean(id) && !tache.loading && !tache.error && t === null}
@@ -809,8 +811,9 @@ export default function Reglages() {
       .then(reglages.reload, (erreur) => notifyActionError({ label: "Enregistrer le réglage" }, erreur));
 
   return (
-    <Page state={reglages.error ? "error" : !reglages.data ? "loading" : "ready"} onRetry={reglages.reload}>
-      <PageSection title="Rappels" description="Quand Alfred vous rappelle une échéance.">
+    <Page>
+      <PageSection title="Rappels" description="Quand Alfred vous rappelle une échéance."
+        state={reglages.error && !reglages.data ? "error" : reglages.loading ? "loading" : "ready"} onRetry={reglages.reload}>
         <Stack gap="md">
           <Select label="Rappel" width="md" options={RAPPELS} value={valeur("rappel") ?? "veille"} onChange={(id) => id && enregistrer("rappel", id)} />
           <Toggle isSelected={valeur("weekend") === "1"} onChange={(v) => enregistrer("weekend", v ? "1" : "0")}
@@ -845,19 +848,23 @@ export default function Semaine() {
   const bloquees = ouvertes.filter((t) => t.etat === "bloquee");
   const aRendre = ouvertes.filter((t) => t.echeance && t.echeance >= aujourdhui && t.echeance <= dansUneSemaine);
   const voirLaListe = () => void shell.navigate("suivi/taches");
+  // L’interface d’abord : chaque bloc montre sa propre attente ; les titres et les chiffres sont là tout de suite.
+  const chiffre = (liste: Tache[]) => (taches.data ? String(liste.length) : "…");
+  const bloc = taches.error && !taches.data ? "error" : taches.loading ? "loading" : "ready";
 
   return (
-    <Page state={taches.error ? "error" : !taches.data ? "loading" : "ready"} onRetry={taches.reload}>
+    <Page>
       <PageGrid columns={3}>
-        <Card variant="metric" label="En retard" value={String(enRetard.length)} onPress={voirLaListe} />
-        <Card variant="metric" label="Bloquées" value={String(bloquees.length)} onPress={voirLaListe} />
-        <Card variant="metric" label="À rendre sous 7 jours" value={String(aRendre.length)} onPress={voirLaListe} />
+        <Card variant="metric" label="En retard" value={chiffre(enRetard)} onPress={voirLaListe} />
+        <Card variant="metric" label="Bloquées" value={chiffre(bloquees)} onPress={voirLaListe} />
+        <Card variant="metric" label="À rendre sous 7 jours" value={chiffre(aRendre)} onPress={voirLaListe} />
       </PageGrid>
       <PageGrid>
-        <PageSection title="En retard" empty={enRetard.length ? undefined : { title: "Rien en retard" }}>
+        <PageSection title="En retard" state={bloc} onRetry={taches.reload}
+          empty={enRetard.length ? undefined : { title: "Rien en retard" }}>
           <List label="Tâches en retard" selectionMode="none" items={elements(enRetard)} />
         </PageSection>
-        <PageSection title="Bloquées" description="Elles attendent une réponse d’un autre service."
+        <PageSection title="Bloquées" description="Elles attendent une réponse d’un autre service." state={bloc} onRetry={taches.reload}
           empty={bloquees.length ? undefined : { title: "Rien de bloqué" }}>
           <List label="Tâches bloquées" selectionMode="none" items={elements(bloquees)} />
         </PageSection>

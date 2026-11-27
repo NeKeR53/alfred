@@ -23,6 +23,7 @@ import {
 } from "socle-ui";
 import { Stack, Text } from "../../kit";
 import { AlfredError, onNativeEvent } from "../../lib/native";
+import { useLastKnown } from "../../shell/lastKnown";
 import { notify } from "../../shell/notifications";
 import { AutomationForm, when } from "../automations/AutomationsSettings";
 import { openConversation } from "../automations/agentRuns";
@@ -324,7 +325,7 @@ export function runRow(
 }
 
 export function useScriptsSections(): SettingsSection[] {
-  const [data, setData] = useState<ScriptsList>();
+  const [data, setData] = useLastKnown<ScriptsList | undefined>("reglages/scripts", undefined);
   const [error, setError] = useState<string>();
   const [conversations, setConversations] = useState<Map<string, ConversationChoice>>(new Map());
   const [open, setOpen] = useState<{ detail: ScriptRunDetail; keeping: boolean }>();
@@ -339,7 +340,7 @@ export function useScriptsSections(): SettingsSection[] {
     } catch (failure) {
       setError(errorMessage(failure));
     }
-  }, []);
+  }, [setData]);
 
   useEffect(() => {
     void load();

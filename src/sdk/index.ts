@@ -2368,18 +2368,34 @@ export interface AlfredStateOptions<Value, Selected> {
 }
 
 export interface AlfredState<Selected> {
-  /** Valeur courante (la partie choisie par `select`) ; `undefined` tant que l’état est vide. */
+  /**
+   * Valeur courante (la partie choisie par `select`) ; `undefined` tant que l’état est vide. La dernière valeur
+   * connue arrive tout de suite, même après un redémarrage d’Alfred : elle est gardée sur le disque.
+   */
   data: Selected | undefined;
-  /** Aucune valeur encore : la première lecture est en cours. */
+  /**
+   * Aucune valeur encore, jamais : la toute première lecture est en cours. Faux dès qu’une valeur est connue, même
+   * ancienne. Ne remplace jamais toute la page : seul le bloc qui montre cette donnée attend.
+   */
   loading: boolean;
-  /** Une lecture de l’état est en cours (`refresh`, ouverture). */
+  /**
+   * Une lecture est en cours (`refresh`, valeur périmée relue en arrière-plan) ; `data` reste affichée. À passer à
+   * `isLoading` de `ListPage`, `Table` ou `Drawer` : avec des lignes, une barre fine en haut de la liste.
+   */
   refreshing: boolean;
   /** La dernière lecture a échoué ; la valeur précédente reste dans `data`. */
   error: Error | undefined;
+  /** Dernier changement de la valeur. */
   updatedAt: Date | undefined;
+  /** Dernière lecture réussie chez le service : l’âge de la valeur. */
+  checkedAt: Date | undefined;
   /** Dernier rafraîchissement par le fournisseur : heure, erreur, prochain passage. */
   status: { lastRunAt?: Date; lastError?: string; nextAt?: Date; failures: number } | undefined;
-  /** Demande au fournisseur de relire l’état maintenant : toutes les pages abonnées suivent. */
+  /**
+   * Demande au fournisseur de relire l’état maintenant, même frais : une seule lecture pour toutes les pages
+   * abonnées, qui suivent. La promesse se résout quand la lecture est finie : passée à `onPress` d’une `Action`
+   * « Actualiser », le bouton montre son attente.
+   */
   refresh: () => Promise<void>;
 }
 
@@ -2389,6 +2405,7 @@ interface SharedStatePush {
   loading: boolean;
   refreshing: boolean;
   updatedAt?: number;
+  checkedAt?: number;
   status?: { lastRunAt?: number | null; lastError?: string | null; nextAt?: number | null; failures?: number };
 }
 
@@ -2426,11 +2443,12 @@ let stateSequence = 0;
 
 /**
  * S’abonne à un état partagé d’Alfred : la seule source de vérité d’une donnée d’un service. La page reçoit la valeur
- * courante tout de suite, puis chaque changement, d’où qu’il vienne (une autre page, une fonction, une automatisation,
- * une autre fenêtre) ; aucune requête ne part pour cela. Une liste d’entités (`jira/mes-tickets`) arrive avec ses
- * objets, chacun rangé une seule fois : relire un ticket met à jour toutes les listes qui le montrent. Un état vide
- * est lu une fois à l’ouverture ; ensuite il change seulement quand quelqu’un le lit (`refresh`, une action, une
- * automatisation). `name` à `null` : rien n’est suivi.
+ * courante tout de suite (la dernière connue, gardée sur le disque, même après un redémarrage), puis chaque
+ * changement, d’où qu’il vienne (une autre page, une fonction, une automatisation, une autre fenêtre) ; aucune
+ * requête ne part pour cela. Une liste d’entités (`jira/mes-tickets`) arrive avec ses objets, chacun rangé une seule
+ * fois : relire un ticket met à jour toutes les listes qui le montrent. À l’ouverture et au retour sur la page, Alfred
+ * relit l’état en arrière-plan seulement s’il est vide ou plus vieux que son âge maximal (`maxAge` du fournisseur,
+ * réglable dans Réglages → États). `name` à `null` : rien n’est suivi.
  *
  * ```tsx
  * const nonLus = useAlfredState<Mail[], number>("mail/boite-de-reception", {
@@ -2520,6 +2538,7 @@ export function useAlfredState<Value = unknown, Selected = Value>(
     refreshing: current.push.refreshing,
     error,
     updatedAt: current.push.updatedAt !== undefined ? new Date(current.push.updatedAt) : undefined,
+    checkedAt: current.push.checkedAt !== undefined ? new Date(current.push.checkedAt) : undefined,
     status: current.push.status
       ? {
           ...(current.push.status.lastRunAt ? { lastRunAt: new Date(current.push.status.lastRunAt) } : {}),

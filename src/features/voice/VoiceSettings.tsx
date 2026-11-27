@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, type Setting, type SettingsSection, useOpenForm } from "socle-ui";
+import { useLastKnown } from "../../shell/lastKnown";
 import { notify } from "../../shell/notifications";
 import { LoadingRows } from "../space/SpaceSettings";
 import {
@@ -46,11 +47,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Sections de la rubrique, dans l’ordre : leurs titres s’affichent avant les réglages. */
+const VOICE_SECTIONS = [
+  { id: "voice", title: "Voix" },
+  { id: "dictation", title: "Dictée" },
+  { id: "reading", title: "Lecture à voix haute" },
+  { id: "notifications", title: "Notifications" },
+  { id: "agent", title: "Agent" },
+];
+
 /** Rubrique « Voix » des Réglages : la dictée (Whisper local) et la lecture à voix haute. */
 export function useVoiceSections(): SettingsSection[] {
-  const [config, setConfig] = useState<VoiceConfig>();
-  const [status, setStatus] = useState<VoiceStatus>();
-  const [voices, setVoices] = useState<SystemVoice[]>([]);
+  const [config, setConfig] = useLastKnown<VoiceConfig | undefined>("reglages/voix", undefined);
+  const [status, setStatus] = useLastKnown<VoiceStatus | undefined>("reglages/voix-etat", undefined);
+  const [voices, setVoices] = useLastKnown<SystemVoice[]>("reglages/voix-systeme", []);
   const [loadError, setLoadError] = useState<string>();
   const read = useVoice((state) => state.read);
   const stopReading = useVoice((state) => state.stopReading);
@@ -65,13 +75,13 @@ export function useVoiceSections(): SettingsSection[] {
     listSystemVoices()
       .then(setVoices)
       .catch(() => setVoices([]));
-  }, []);
+  }, [setVoices, setConfig, setStatus]);
 
   // Le niveau de Whisper a changé côté Alfred (choisi, ou téléchargé puis choisi) : réglages et état relus.
   const reloadAfterWhisper = useCallback(() => {
     void getVoiceSettings().then(setConfig);
     void useVoice.getState().refresh().then(setStatus);
-  }, []);
+  }, [setStatus, setConfig]);
 
   /** Un échec rejette : la ligne reprend l’ancienne valeur et le signale (D-204). */
   const save = async (next: VoiceConfig) => {
@@ -130,7 +140,12 @@ export function useVoiceSections(): SettingsSection[] {
       },
     ];
   }
-  if (!config) return [{ id: "loading", content: <LoadingRows label="Chargement des réglages de la voix" rows={4} /> }];
+  // L’interface d’abord : les titres des sections tout de suite, chacune attend ses réglages.
+  if (!config)
+    return VOICE_SECTIONS.map((section) => ({
+      ...section,
+      content: <LoadingRows label={`Chargement : ${section.title}`} rows={2} />,
+    }));
 
   const takeOverArgos = async () => {
     try {

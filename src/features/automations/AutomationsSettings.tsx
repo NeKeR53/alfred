@@ -23,6 +23,7 @@ import {
   TextInput,
 } from "socle-ui";
 import { invoke, onNativeEvent } from "../../lib/native";
+import { useLastKnown } from "../../shell/lastKnown";
 import { notify } from "../../shell/notifications";
 import { type JournalEntry, journalLines } from "../journal/JournalSettings";
 import { errorMessage } from "../vault/api";
@@ -644,7 +645,7 @@ export function validationMessage(item: AutomationItem): string {
  * Sections de la rubrique : la liste des automatisations, puis l’historique de leurs passages.
  */
 export function useAutomationsSections(): SettingsSection[] {
-  const [data, setData] = useState<AutomationsList>();
+  const [data, setData] = useLastKnown<AutomationsList | undefined>("reglages/automatisations", undefined);
   const [error, setError] = useState<string>();
   const [editing, setEditing] = useState<AutomationItem | "new">();
   const [historyOf, setHistoryOf] = useState<string>("all");
@@ -657,7 +658,7 @@ export function useAutomationsSections(): SettingsSection[] {
     } catch (failure) {
       setError(errorMessage(failure));
     }
-  }, []);
+  }, [setData]);
   const loadHistory = useCallback(async (id: string) => {
     try {
       setEntries(

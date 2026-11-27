@@ -208,7 +208,7 @@ export default function NotesPage() {
       search={{ label: "les notes" }}
       actions={[{ id: "nouvelle", label: "Nouvelle note", icon: <Plus size={16} />, primary: true, onPress: () => saisir() }]}
       rowActions={(note) => [{ id: "modifier", label: "Modifier", icon: <Pencil size={16} />, onPress: () => saisir(note) }]}
-      isLoading={notes.loading}
+      isLoading={notes.refreshing}
       hasError={Boolean(notes.error)}
       onRetry={notes.reload}
       onActionError={notifyActionError}
@@ -227,7 +227,39 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 };
 ```
 
-`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Une relecture des mêmes données (`reload()`, `announceChange()`, données changées ailleurs) se fait en arrière-plan : `loading` reste faux, la page reste affichée, sans écran de chargement. Passe `loading` à `isLoading` des gabarits ; n’affiche jamais un chargement sur `refreshing`. Une page quittée reste ouverte en arrière-plan : y revenir la montre telle qu’on l’a laissée, sans rien relire. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
+`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Une relecture des mêmes données (`reload()`, `announceChange()`, données changées ailleurs) se fait en arrière-plan : `loading` reste faux, la page reste affichée, sans écran de chargement. Une page quittée reste ouverte en arrière-plan : y revenir la montre telle qu’on l’a laissée, sans rien relire. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
+
+### L’interface d’abord (règle obligatoire)
+
+**Une page ne remplace jamais toute son interface par un chargement.** Sa barre d’outils, ses actions, ses filtres, ses onglets et ses titres s’affichent tout de suite. Seul le bloc qui attend une donnée montre son attente, et seulement s’il n’a encore **aucune** valeur. `check` refuse :
+
+- un retour anticipé pendant un chargement : `if (tickets.loading) return <Page state="loading" />`, `if (!data) return <Skeleton />`, `if (loading) return null` ;
+- un retour conditionnel sur un chargement : `return loading ? <Spinner /> : <ListPage … />` ;
+- `<Page state="loading">` (tous les blocs deviennent des squelettes, titres compris) : l’état va sur chaque `PageSection` ;
+- un `state` tiré d’une relecture (`state={x.refreshing ? "loading" : …}`).
+
+Où va chaque champ :
+
+| Champ | Sens | Où le passer |
+|---|---|---|
+| `data` | la valeur, ou la dernière connue | `rows` de `ListPage`, contenu des blocs : toujours rendu |
+| `loading` | aucune valeur encore, jamais | `state="loading"` de la `PageSection` qui montre cette donnée ; `DetailPage` d’un élément jamais vu |
+| `refreshing` | une lecture tourne, `data` reste à l’écran | `isLoading` de `ListPage`, `Table`, `List` ou `Drawer` : squelettes sans données, **barre fine de 2 px** avec données (socle-ui D-084) |
+| `error` | la dernière lecture a échoué | `hasError` (`ListPage` garde ses lignes), `state="error"` d’une `PageSection` seulement sans `data` |
+
+**Indicateur de mise à jour.** Une relecture se voit dans le bloc qui la subit, jamais en bandeau ni dans la barre du haut (D-253) : la barre fine de `ListPage`, `Table`, `List` et `Drawer` (`isLoading={x.refreshing}`), et l’attente du bouton « Actualiser » (`onPress: tickets.refresh` : la promesse court jusqu’à la fin de la lecture, socle-ui D-116). Une `PageSection`, une `Card` ou une `DetailPage` n’ont pas d’indicateur de relecture : leurs données restent affichées, sans rien de plus.
+
+```tsx
+// Refusé : toute la page attend.
+if (meteo.loading) return <Page state="loading" />;
+
+// Écrit : la page et ses titres tout de suite ; seul le bloc sans valeur attend.
+<Page actions={[{ id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: meteo.refresh }]}>
+  <PageSection title="Ciel" state={meteo.error && !meteo.data ? "error" : meteo.loading ? "loading" : "ready"} onRetry={meteo.refresh}>
+    …
+  </PageSection>
+</Page>
+```
 
 ### Les données d’un service : les états partagés
 
@@ -256,6 +288,8 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 - `client` (facultatif, sur une entité ou un état) : le besoin dont le compte entre dans la portée, quand le module en a plusieurs.
 - `params` (facultatif) : les paramètres de l’état, **chacun décrit** : `{ "id": "jql", "description": "Filtre JQL des tickets", "example": "assignee = currentUser()" }`. Chaque jeu de valeurs est un état à part ; deux abonnés avec les mêmes paramètres (dans n’importe quel ordre) partagent le même état et un seul rafraîchissement. La description et l’exemple sont ce que lit un module consommateur pour savoir quoi passer : `check` refuse un paramètre sans description.
 - `refresh` (facultatif) : la politique du **fournisseur**, voir plus bas.
+- `maxAge` (facultatif, en secondes, 10 au moins) : l’âge maximal d’une valeur, choisi selon le métier (des tickets Jira changent peu : 900 ; un job CI change vite : 60). Voir « La fraîcheur » plus bas.
+- `version` (facultatif, sur un état) : à monter quand la forme de la valeur change ; une valeur gardée d’une autre version est oubliée et relue. `persist: false` : la valeur n’est jamais gardée sur le disque (donnée sensible).
 - Le nom et la forme d’un état ou d’une entité sont **un contrat entre modules** : ne les change pas sans monter la `version`.
 
 **L’alimentation : la sortie d’une lecture suffit.** Une fonction de lecture déclare (`declare_function`) ce qu’elle alimente :
@@ -273,7 +307,9 @@ Une écriture peut aussi déclarer `entity` : elle rend l’objet modifié, qui 
 - `incremental: true` : la fonction reçoit aussi `current` (la valeur courante) et `since` (fin de la dernière lecture réussie, en ms, `null` la première fois). Elle ne demande que ce qui a changé depuis (`updated >= since` pour Jira) et rend les changements : une liste d’objets, ou `{ "changed": [...], "removed": ["ALF-1"] }`. Alfred les fusionne : un objet nouveau va en tête, un objet modifié est mis à jour partout, un identifiant retiré sort de la liste. La première lecture (`since` nul) rend toute la liste.
 - `mode` : `"subscribed"` (par défaut) tant qu’il y a un abonné ; `"always"` toujours, dès que le module est là (état sans paramètres seulement).
 
-Le rafraîchissement tourne **dans le cœur d’Alfred**, même sans page affichée, tant qu’Alfred est ouvert : **un seul par état et par jeu de paramètres**, quel que soit le nombre d’abonnés. Il s’arrête quand le dernier abonné part. Garde-fous : période minimale, quatre lectures à la fois au plus, un écart entre deux départs, un recul progressif après un échec (période × 2, × 4… jusqu’à 30 minutes). L’heure du dernier passage et son erreur arrivent aux abonnés avec la valeur (`status` de `useAlfredState`) ; Réglages → États montre ce qui tourne. Alfred fermé, rien ne tourne. Un état sans `refresh` est lu une fois au premier abonnement, puis il change seulement quand quelqu’un le lit. `check` refuse un état à rafraîchissement sans sa fonction de lecture, ou une période sous 10 s.
+**La fraîcheur, plutôt qu’une période aveugle.** Chaque valeur est gardée sur le disque de l’espace (`.alfred/etats.sqlite`), avec l’heure de son dernier changement (`updatedAt`) et de sa dernière lecture réussie (`checkedAt`). À l’abonnement, à l’ouverture d’une page et au retour sur une page, Alfred relit l’état **seulement si sa valeur est plus vieille que son âge maximal** : `maxAge` de l’état, sinon `refresh.every`, sinon 10 minutes. Une valeur de 2 minutes s’affiche telle quelle, sans requête ; une valeur d’une demi-heure s’affiche aussi tout de suite, puis se relit en arrière-plan. L’utilisateur peut changer l’âge maximal de chaque état dans Réglages → États ; la valeur du fournisseur reste le défaut. `refresh()` relit toujours, une seule fois pour tous les abonnés. Jamais gardé : une réponse scellée (référence de secret), un état `persist: false`. Oublié : une autre `version` de l’état ou de l’entité, un compte supprimé, un module retiré.
+
+Le rafraîchissement tourne **dans le cœur d’Alfred**, même sans page affichée, tant qu’Alfred est ouvert : **un seul par état et par jeu de paramètres**, quel que soit le nombre d’abonnés. Il s’arrête quand le dernier abonné part. Garde-fous : période minimale, quatre lectures à la fois au plus, un écart entre deux départs, un recul progressif après un échec (période × 2, × 4… jusqu’à 30 minutes). L’heure du dernier passage et son erreur arrivent aux abonnés avec la valeur (`status` de `useAlfredState`) ; Réglages → États montre ce qui tourne et l’âge maximal de chaque état. Alfred fermé, rien ne tourne ; au lancement suivant, la période reprend depuis la dernière lecture réussie. Un état sans `refresh` est lu à l’abonnement s’il est vide ou périmé, puis il change seulement quand quelqu’un le lit. `check` refuse un état à rafraîchissement sans sa fonction de lecture, une période ou un `maxAge` sous 10 s.
 
 **Les abonnés** : une page (`useAlfredState`), une fonction ou un script (`states.subscribe`), une automatisation déclenchée par un état. Ils ne joignent jamais le service eux-mêmes pour ces données.
 
@@ -286,6 +322,7 @@ Le rafraîchissement tourne **dans le cœur d’Alfred**, même sans page affich
 **L’abonnement.**
 
 ```tsx
+import { RefreshCw } from "lucide-react";
 import { useAlfredState } from "@alfred/sdk";
 import { ListPage } from "socle-ui";
 
@@ -298,7 +335,8 @@ export default function MesTickets() {
       rows={tickets.data}
       columns={[{ id: "cle", label: "Clé" }, { id: "titre", label: "Titre" }]}
       empty={{ title: "Aucun ticket" }}
-      isLoading={tickets.loading}
+      actions={[{ id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: tickets.refresh }]}
+      isLoading={tickets.refreshing}
       hasError={Boolean(tickets.error) && !tickets.data}
       onRetry={() => void tickets.refresh()}
     />
@@ -325,13 +363,14 @@ function useAlfredState<Value, Selected = Value>(
     select?: (value: Value) => Selected; // partie montrée : redessin seulement si elle change (comparaison structurelle)
   },
 ): {
-  data: Selected | undefined;  // valeur courante ; undefined tant que l’état est vide
-  loading: boolean;            // aucune valeur encore, première lecture en cours
-  refreshing: boolean;         // une lecture est en cours
+  data: Selected | undefined;  // valeur courante, ou la dernière connue (gardée sur le disque) ; undefined si vide
+  loading: boolean;            // aucune valeur encore, jamais : la toute première lecture est en cours
+  refreshing: boolean;         // une lecture est en cours, `data` reste affichée (→ `isLoading` de ListPage)
   error: Error | undefined;    // la dernière lecture a échoué (la valeur précédente reste)
-  updatedAt: Date | undefined;
+  updatedAt: Date | undefined; // dernier changement de la valeur
+  checkedAt: Date | undefined; // dernière lecture réussie chez le service : l’âge de la valeur
   status: { lastRunAt?: Date; lastError?: string; nextAt?: Date; failures: number } | undefined; // dernier rafraîchissement
-  refresh: () => Promise<void>; // demande au fournisseur de relire maintenant : toutes les pages abonnées suivent
+  refresh: () => Promise<void>; // relit maintenant, une fois pour toutes les pages abonnées ; résolue à la fin de la lecture
 };
 states.get(name, { params?, key?, instance? }): Promise<{ value, empty, updatedAt, refresh }>; // une fois
 states.subscribe(name, { params?, key?, instance?, seconds? }): Promise<{ id, key }>; // fonction, script : pour un temps
@@ -341,8 +380,8 @@ states.publish(name, value, { params?, key?, instance? }): Promise<{ changed: nu
 
 Ce qu’Alfred fait :
 
-- La page reçoit la valeur courante tout de suite, puis chaque changement, d’où qu’il vienne : une autre page, une action, une automatisation, une autre fenêtre. Aucune requête ne part pour cela.
-- Le fournisseur tient l’état à jour (sa politique), une seule fois pour tous les abonnés ; un état sans politique est lu une fois au premier abonnement.
+- La page reçoit la valeur courante tout de suite, même après un redémarrage d’Alfred (la dernière connue, gardée sur le disque), puis chaque changement, d’où qu’il vienne : une autre page, une action, une automatisation, une autre fenêtre. Aucune requête ne part pour cela ; une valeur périmée se relit en arrière-plan.
+- Le fournisseur tient l’état à jour (sa politique), une seule fois pour tous les abonnés ; un état sans politique est lu à l’abonnement s’il est vide ou plus vieux que son âge maximal.
 - **Sans lecture, un état ne change pas.** Sans politique de rafraîchissement, il change quand quelqu’un le lit (`refresh`, une action, une automatisation, un webhook du service). Les fenêtres ne relisent jamais elles-mêmes.
 - Comptes séparés, données d’exemple séparées. Un module voit les états de son module et de ses dépendances (`requires`) seulement ; seul le module déclarant les publie.
 - Une fonction (TypeScript, Python, bash, PowerShell) s’abonne par le bus d’événements : `events.subscribes` avec `"event": "jira/etat.mes-tickets"` (ou `"jira/entite.ticket"`) ; elle reçoit `{ state, params, instance, examples }` et lit la valeur avec `states.get`. Pour que le fournisseur rafraîchisse l’état pendant ce temps (sans page ouverte), elle s’y abonne : `states.subscribe("jira/tickets-du-filtre", { params: { jql }, seconds: 3600 })` (Python : `alfred.states.subscribe(...)`). Une automatisation peut aussi partir quand un état change : déclencheur `{ "kind": "state", "state": "jira/tickets-du-filtre", "params": { "jql": "…" } }` ; active, elle compte comme abonnée.

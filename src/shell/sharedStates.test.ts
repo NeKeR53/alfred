@@ -214,4 +214,72 @@ describe("états partagés", () => {
     // Les abonnements des tests d’avant se retirent aussi, plus tard : seul compte celui de cette page.
     expect(commands("states.unsubscribe").some(([, args]) => (args as { id: string }).id === mine)).toBe(true);
   });
+
+  it("la dernière valeur connue (gardée sur le disque) s’affiche tout de suite, sans attendre l’abonnement", async () => {
+    // Après un redémarrage : le cœur a la valeur du lancement précédent ; l’abonnement tarde.
+    stored.set("etat mail/boite-de-reception", [{ id: "m9", sujet: "D’hier", lu: true }]);
+    const base = native.invoke.getMockImplementation();
+    native.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command === "frame.states.subscribe") return new Promise(() => {});
+      return base?.(command, args);
+    });
+    const a = page();
+    await handleFrameRequest(boite, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, a.push);
+    await flush();
+    expect(a.last()).toMatchObject({ data: [{ id: "m9", sujet: "D’hier", lu: true }], loading: false });
+    expect(serverHits, "valeur connue : aucune lecture").toBe(0);
+  });
+
+  it("une relecture met à jour tous les abonnés, et « Actualiser » attend la fin de la lecture", async () => {
+    const a = page();
+    const b = page();
+    await handleFrameRequest(boite, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, a.push);
+    await handleFrameRequest(tableau, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, b.push);
+    await flush();
+    const before = serverHits;
+    let runs = 1;
+    let finish: () => void = () => {};
+    const base = native.invoke.getMockImplementation();
+    native.invoke.mockImplementation(async (command: string, args: Record<string, unknown>) => {
+      if (command === "frame.states.refresh") {
+        // Le cœur lit plus tard (boucle du fournisseur) : la lecture finit quand on le décide.
+        finish = () => {
+          runs += 1;
+          provide(keyOf(args));
+        };
+        return { key: keyOf(args), runs, reading: true };
+      }
+      if (command === "frame.states.get") {
+        const read = (await base?.(command, args)) as { refresh?: Record<string, unknown> };
+        return { ...read, refresh: { ...read.refresh, running: false, runs } };
+      }
+      return base?.(command, args);
+    });
+    service.boite.push({ id: "m2", sujet: "Facture", lu: false });
+    let done = false;
+    const asked = handleFrameRequest(boite, "states.refresh", { watch: "w1" }).then(() => {
+      done = true;
+    });
+    await flush();
+    expect(done, "la lecture n’est pas finie : le bouton attend").toBe(false);
+    expect(a.last()?.refreshing).toBe(true);
+    expect(a.last()?.data, "les données restent affichées").toHaveLength(1);
+    finish();
+    await asked;
+    await flush();
+    expect(done).toBe(true);
+    expect(serverHits - before, "une seule lecture pour les deux pages").toBe(1);
+    expect(a.last()).toMatchObject({ refreshing: false });
+    expect(a.last()?.data).toHaveLength(2);
+    expect(b.last()?.data, "l’autre page suit sans rien demander").toHaveLength(2);
+  });
+
+  it("le retour sur une page demande au cœur de relire ses seuls états périmés", async () => {
+    await handleFrameRequest(boite, "states.watch", { watch: "w1", name: "mail/boite-de-reception" }, () => {});
+    await handleFrameRequest(tableau, "states.watch", { watch: "w1", name: "jira/mes-tickets" }, () => {});
+    await flush();
+    await stateHub.revisit(boite);
+    const asked = commands("states.revisit").at(-1)?.[1] as { ids: string[] } | undefined;
+    expect(asked?.ids, "seuls les abonnements de la page revenue").toHaveLength(1);
+  });
 });

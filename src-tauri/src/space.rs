@@ -193,6 +193,23 @@ pub struct StateDecl {
     /// Absente : l’état change seulement quand quelqu’un le lit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<RefreshDecl>,
+    /// Âge maximal de la valeur, en secondes, choisi par le fournisseur selon le métier (des tickets changent peu, un
+    /// job CI change vite). À l’abonnement, à l’ouverture et au retour sur une page, Alfred relit l’état seulement si
+    /// sa valeur est plus vieille. Omis : `refresh.every`, sinon 10 minutes. L’utilisateur peut le changer dans
+    /// Réglages → États.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age: Option<u64>,
+    /// Version du contrat de l’état : à monter quand sa forme change. Une valeur gardée sur le disque d’une autre
+    /// version est oubliée (et relue).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub version: u32,
+    /// `false` : la valeur n’est jamais gardée sur le disque (donnée sensible) ; elle vit le temps du lancement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persist: Option<bool>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl StateDecl {

@@ -1,8 +1,11 @@
 /**
  * Réglages → États : ce qui tourne dans le cœur. Chaque état suivi (un état et son jeu de paramètres, pour un compte),
  * ses abonnés (pages, fonctions, automatisations), sa politique de rafraîchissement et son dernier passage
- * (`states.overview`, `src-tauri/src/state_refresh.rs`). Lecture seule : un état s’arrête quand son dernier abonné
- * part.
+ * (`states.overview`, `src-tauri/src/state_refresh.rs`). Un état s’arrête quand son dernier abonné part.
+ *
+ * Fraîcheur : l’âge maximal de chaque état déclaré (`states.freshness`). Une valeur plus jeune s’affiche sans être
+ * relue ; plus vieille, elle se relit à l’ouverture et au retour sur une page. La valeur du fournisseur est le défaut ;
+ * l’utilisateur en choisit une autre (`states.setMaxAge`).
  */
 import { useCallback, useEffect, useState } from "react";
 import { Alert, EmptyState, type SettingsSection, Table, type TableColumn } from "socle-ui";
@@ -26,6 +29,41 @@ export interface Refresher {
   lastRunAt: number | null;
   lastError: string | null;
   failures: number;
+  /** Âge maximal appliqué, en secondes. */
+  maxAge?: number;
+  /** Dernière lecture réussie (ms). */
+  checkedAt?: number | null;
+}
+
+/** Un état déclaré, son âge maximal chez le fournisseur et celui choisi par l’utilisateur. */
+export interface Freshness {
+  state: string;
+  module: string;
+  description: string;
+  defaultMaxAge: number;
+  maxAge: number | null;
+  every: number | null;
+}
+
+/** Âges proposés, en secondes. */
+const AGES = [30, 60, 300, 900, 1800, 3600, 4 * 3600, 86_400];
+
+/** « 30 s », « 5 min », « 1 h », « 1 jour ». */
+export function duration(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h`;
+  const days = Math.round(seconds / 86_400);
+  return `${days} jour${days > 1 ? "s" : ""}`;
+}
+
+/** Choix de l’âge maximal d’un état : le défaut du fournisseur, puis les âges proposés. */
+export function ageOptions(freshness: Freshness) {
+  const ages = [...new Set([...AGES, ...(freshness.maxAge ? [freshness.maxAge] : [])])].sort((a, b) => a - b);
+  return [
+    { id: "default", label: `Défaut du fournisseur (${duration(freshness.defaultMaxAge)})` },
+    ...ages.map((age) => ({ id: String(age), label: duration(age) })),
+  ];
 }
 
 const COLUMNS: TableColumn[] = [
@@ -60,8 +98,13 @@ export function refresherRow(refresher: Refresher, now = Date.now()) {
   const policy = refresher.every
     ? `Toutes les ${refresher.every} s${refresher.incremental ? ", incrémental" : ""}${refresher.mode === "always" ? ", toujours" : ""}`
     : "À la demande";
-  const last = refresher.running ? "En cours" : refresher.lastRunAt ? since(refresher.lastRunAt, now) : "Pas encore";
-  const detail = [params(refresher.params), refresher.lastError ? `Erreur : ${refresher.lastError}` : ""]
+  const read = refresher.lastRunAt ?? refresher.checkedAt ?? null;
+  const last = refresher.running ? "En cours" : read ? since(read, now) : "Pas encore";
+  const detail = [
+    params(refresher.params),
+    refresher.maxAge ? `Relu au-delà de ${duration(refresher.maxAge)}` : "",
+    refresher.lastError ? `Erreur : ${refresher.lastError}` : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   return {
@@ -80,13 +123,23 @@ export function useStatesSections(): SettingsSection[] {
   const [refreshers, setRefreshers] = useState<Refresher[]>();
   const [error, setError] = useState<string>();
 
+  const [freshness, setFreshness] = useState<Freshness[]>();
   const load = useCallback(async () => {
     try {
-      setRefreshers((await invoke<{ refreshers: Refresher[] }>("states.overview")).refreshers);
+      const [overview, ages] = await Promise.all([
+        invoke<{ refreshers: Refresher[] }>("states.overview"),
+        invoke<{ states: Freshness[] }>("states.freshness"),
+      ]);
+      setRefreshers(overview.refreshers);
+      setFreshness(ages.states);
       setError(undefined);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
+  }, []);
+  const choose = useCallback(async (state: string, id: string | null) => {
+    const seconds = !id || id === "default" ? null : Number(id);
+    setFreshness((await invoke<{ states: Freshness[] }>("states.setMaxAge", { name: state, seconds })).states);
   }, []);
 
   useEffect(() => {
@@ -135,6 +188,22 @@ export function useStatesSections(): SettingsSection[] {
           )}
         </Stack>
       ),
+    },
+    {
+      id: "states-freshness",
+      title: "Fraîcheur",
+      description:
+        "Une valeur plus jeune que son âge maximal s’affiche sans être relue. Plus vieille, elle s’affiche aussi tout de suite, puis se relit en arrière-plan.",
+      emptyMessage: freshness ? "Aucun module ne déclare d’état." : "Lecture des états…",
+      settings: (freshness ?? []).map((row) => ({
+        id: row.state,
+        type: "select" as const,
+        label: row.description || row.state,
+        description: `${row.module} · ${row.state}`,
+        value: row.maxAge ? String(row.maxAge) : "default",
+        options: ageOptions(row),
+        onChange: (id: string | null) => choose(row.state, id),
+      })),
     },
   ];
 }

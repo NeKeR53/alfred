@@ -165,6 +165,7 @@ export const stateHub = createStateHub<FrameIdentity>({
   unsubscribe: (id) => invoke("states.unsubscribe", { id }),
   renew: (ids) => invoke("states.renew", { ids }),
   refresh: (identity, request) => handleFrameRequest(identity, "states.reload", { ...request }),
+  revisit: (ids) => invoke("states.revisit", { ids }),
 });
 
 // Les abonnements des pages ouvertes sont renouvelés : une coquille fermée laisse expirer les siens.
@@ -350,6 +351,9 @@ async function executeFunction(
     active -= 1;
   }
 }
+
+// La page revient à l’écran (pages gardées montées) : ses états périmés se relisent, les frais ne bougent pas.
+frameServices.revisitStates = (identity) => void stateHub.revisit(identity);
 
 frameServices.watchState = (identity, request, listener) => {
   const id = stateHub.watch(identity, request, listener);

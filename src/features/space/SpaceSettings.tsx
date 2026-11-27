@@ -606,8 +606,16 @@ export function useSpaceSections(): SettingsSection[] {
     useGrantsSection(snapshot ?? null),
     useHistorySection(snapshot ?? null),
   ];
+  // L’interface d’abord : les titres des sections tout de suite, chacune attend l’espace de travail.
   if (snapshot === undefined) {
-    return [{ id: "loading", content: <LoadingRows label="Chargement de l’espace de travail…" rows={4} /> }];
+    return sections
+      .filter((section) => section.title)
+      .map((section) => ({
+        id: section.id,
+        title: section.title,
+        description: section.description,
+        content: <LoadingRows label={`Chargement : ${section.title}`} rows={2} />,
+      }));
   }
   if (snapshot === null) {
     return [

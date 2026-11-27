@@ -1710,6 +1710,8 @@ fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<
     checkpoint(&space, "le retrait d’un module")?;
     remove_tree(&space.module_dir(module_id))?;
     crate::permissions::forget_module(state, module_id)?;
+    // Ses états gardés (mémoire et disque) partent avec lui.
+    crate::states::forget_module(state, &space, module_id);
 
     // La navigation et les liaisons de clients ne doivent plus désigner ce qui vient de disparaître.
     let prefix = format!("{module_id}/");
