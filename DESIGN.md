@@ -327,6 +327,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 |---|---|---|
 | Une collection entière | `ListPage` (section 5) | Pas une `Table` seule dans une `Page`. |
 | Des blocs côte à côte (chiffres clés, listes courtes de même rang) | `PageGrid` | `columns` : 2 (défaut), 3 ou 4. Les colonnes passent l’une sous l’autre quand la place manque. Jamais `Row` pour des blocs. |
+| Des éléments suivis un par un, côte à côte (jobs, déploiements, serveurs, comptes) | `PageSection` `framed` dans une `PageGrid` | Bloc encadré compact (D-423) : `title`, `description`, `actions`, et `footer` collé en bas (dernière exécution, `ProgressBar`). Jamais des `Stack` de `Text` alignés à la main. |
 | Une conversation : une question, sa réponse | `ChatPage`, avec `ChatTranscript`, `ChatMessage` et `ChatComposer` | Section 10. Les exemples dans `empty` du relevé. |
 | Un tableau dans un bloc | `Table` | `density="compact"`, `groupBy`, `rowActions`. |
 | Une liste qui se lit élément par élément | `List` ★ `label` | `items: [{ id, title, subtitle, meta, status, unread }]`. |

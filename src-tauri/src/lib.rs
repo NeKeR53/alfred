@@ -45,6 +45,7 @@ mod menu;
 mod menu_sections;
 mod menu_zones;
 mod oauth;
+mod page_recipes;
 mod page_review;
 mod page_windows;
 mod pages;

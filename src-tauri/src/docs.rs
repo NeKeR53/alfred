@@ -139,6 +139,38 @@ mod tests {
     }
 
     #[test]
+    fn les_guides_demandent_une_recette_du_relief_et_une_auto_revue() {
+        // Les pages livrées sortaient plates : l’agent ne partait presque jamais d’une recette et jugeait ses
+        // captures sur la seule mise en page. Le guide toujours chargé, le guide d’une page et le guide de placement
+        // portent désormais la recette déclarée, les composants riches, l’UI d’abord, l’auto-revue et la proposition.
+        for expected in ["**Une page réussie**", "`// Recette : Dashboard`", "UI d’abord", "`selfReview`", "une seule question"] {
+            assert!(GUIDE.contains(expected), "AGENTS.md n’a pas « {expected} »");
+        }
+        let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
+        for expected in [
+            "**Pars de la recette la plus proche.**",
+            "`// Recette : Dashboard`",
+            "**UI d’abord.**",
+            "## Des pages qui ont du relief",
+            "`PageSection framed`",
+            "`Card variant=\"metric\"`",
+            "7 bis. **Auto-revue visuelle, obligatoire avant de rendre la main.**",
+            "`examples: true`",
+            "`compareWith`",
+        ] {
+            assert!(page.contains(expected), "page.md n’a pas « {expected} »");
+        }
+        for expected in ["**Demande vague**", "**Un défaut raisonnable.**", "Jamais plus de deux."] {
+            assert!(PLACEMENT.contains(expected), "PLACEMENT.md n’a pas « {expected} »");
+        }
+        // Les composants cités existent dans la version installée.
+        for name in ["Card", "PageGrid", "PageSection", "Badge", "Avatar", "ProgressBar", "FormattedValue", "LogViewer", "PropertyRow"] {
+            assert!(crate::socle_ui::EXPORTS.contains(&name), "socle-ui {} n’exporte pas {name}", crate::socle_ui::VERSION);
+        }
+        assert!(crate::socle_ui::DOCS.iter().any(|(path, text)| *path == "specs/Page.md" && text.contains("framed")));
+    }
+
+    #[test]
     fn les_guides_renvoient_au_guide_de_placement() {
         assert!(GUIDE.contains("docs/alfred/PLACEMENT.md"));
         assert!(DESIGN.contains("PLACEMENT.md"));
@@ -165,7 +197,7 @@ mod tests {
         let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
         for expected in [
             "**Répartis d’abord la demande.** Une zone de l’écran porte une responsabilité, et une seule",
-            "7 ter. **Juge l’écran avant de rendre compte.**",
+            "7 ter. **Juge l’écran critère par critère.**",
             "`Page` avec `PageGrid`",
         ] {
             assert!(page.contains(expected), "page.md n’a pas « {expected} »");

@@ -78,7 +78,7 @@ L’espace de travail est l’application de l’utilisateur ; il peut en avoir 
 
 Avant d’agir, lis le guide de ta tâche, une seule fois, dans `docs/alfred/guides/` :
 
-- `page.md` : créer une page, un onglet, un panneau, une entrée ou une section du menu, des notifications, la recherche d’une page. Avant de placer une page, lis aussi `docs/alfred/PLACEMENT.md`.
+- `page.md` : page, onglet, panneau, menu, notifications, recherche. Avant de placer une page, lis aussi `docs/alfred/PLACEMENT.md`.
 - `service.md` : relier un service web (connecteur, client, secret, plusieurs comptes, accès, quotas, dossiers du poste).
 - `fonction.md` : déclarer une fonction (TypeScript, script, Python, programme du poste), ses tests et ses données d’exemple ; travail long, webhook, automatisation, planification, réaction à un autre module.
 - `donnees.md` : tables, fichiers, documents, recherche, historique, partage en équipe, librairies npm, dépendances, module installé.
@@ -86,7 +86,9 @@ Avant d’agir, lis le guide de ta tâche, une seule fois, dans `docs/alfred/gui
 
 Pour seulement lire des données de l’espace, aucun guide : `alfred api`, puis `alfred run`.
 
-**Préférences de design.** Quand l’utilisateur corrige un rendu (« trop fouillis », « tout sur un écran »), écris la règle dans `docs/preferences-design.md` (format dans `page.md`) et relis ce fichier avant chaque page ; `place_page` et `check` le rendent (`designPreferences`).
+**Une page réussie** (`page.md`) : demande vague, une proposition et une seule question ; `// Recette : Dashboard` ; composants riches ; UI d’abord ; auto-revue (`selfReview`).
+
+**Préférences de design.** Quand l’utilisateur corrige un rendu, écris la règle dans `docs/preferences-design.md` (format dans `page.md`) et relis ce fichier avant chaque page (`designPreferences`).
 
 ## 3. Règles non négociables
 

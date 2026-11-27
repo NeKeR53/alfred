@@ -117,6 +117,10 @@ describe("conversation d’agent · un tour", () => {
       title: "Ajoute une page Factures",
     });
     expect(live.options.instructions).toContain("lis /espace/AGENTS.md");
+    // La qualité d’une page est rappelée dès le prompt système : recette, auto-revue, une seule proposition.
+    expect(live.options.instructions).toContain("recette de socle-ui");
+    expect(live.options.instructions).toContain("auto-revue sur sa capture");
+    expect(live.options.instructions).toContain("une seule question");
     expect(live.session.send).toHaveBeenCalledWith("Ajoute une page Factures", [], lastTurn(id).id);
     expect(conversation(id)).toMatchObject({ title: "Ajoute une page Factures", started: true });
     expect(lastTurn(id)).toMatchObject({ status: "running", items: [] });
