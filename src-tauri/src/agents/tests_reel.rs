@@ -215,6 +215,24 @@ async fn background_tasks(provider: &str) {
     run.close().await;
 }
 
+/// Le catalogue des modèles se lit sur un serveur qui vient de démarrer : depuis OpenCode 2.4, ses plugins se
+/// chargent en arrière-plan et la première lecture peut être vide.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "lance le vrai OpenCode installé sur le poste"]
+async fn opencode_modeles() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new(data.path()).unwrap();
+    let cwd = dir.path().to_string_lossy().to_string();
+    let models = session::handle(&state, "agents.models", &json!({ "provider": "opencode", "cwd": cwd }))
+        .await
+        .unwrap()
+        .unwrap_or_else(|error| panic!("catalogue refusé : {error}"));
+    let models = models.as_array().unwrap();
+    assert!(!models.is_empty(), "aucun modèle OpenCode");
+    assert!(models.iter().all(|model| model["id"].as_str().is_some_and(|id| id.contains('/'))));
+}
+
 macro_rules! reel {
     ($name:ident, $provider:literal, $scenario:ident) => {
         #[tokio::test(flavor = "multi_thread")]

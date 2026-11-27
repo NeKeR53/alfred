@@ -353,7 +353,7 @@ async fn open_session(server: &Server, launch: &Launch) -> AppResult<String> {
                 .split_once('/')
                 .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
                 .ok_or_else(|| AppError::new("Le modèle OpenCode doit être de la forme fournisseur/modèle."))?;
-            let models = models_on(server, &options.cwd).await?;
+            let models = models_on(server, &options.cwd, Some((provider, id))).await?;
             let found = models
                 .iter()
                 .find(|candidate| candidate["providerID"] == provider && candidate["id"] == id)
@@ -503,17 +503,64 @@ async fn resync(session: Arc<OpenCode>) {
     }
 }
 
-async fn models_on(server: &Server, cwd: &str) -> AppResult<Vec<Value>> {
-    let response = server.api.model_list(Some(cwd)).await.map_err(api_error)?.into_inner();
-    // Les modèles portent les réglages du fournisseur (clés d’API comprises) : seuls l’identifiant, le nom et les
-    // variantes en sortent.
-    Ok(json_of(&response)["data"].as_array().cloned().unwrap_or_default())
+/// Attente des fournisseurs chargés par les plugins d’OpenCode, juste après le démarrage du serveur.
+const PLUGINS_WAIT: Duration = Duration::from_secs(10);
+const PLUGINS_POLL: Duration = Duration::from_millis(500);
+
+/// `/api/model` lu en JSON brut : la forme d’un modèle évolue à chaque version d’OpenCode (`type`, `compatibility`,
+/// `cost` en liste…), et le type généré depuis l’OpenAPI vendu refusait toute la réponse ; la liste restait vide.
+/// Seuls l’identifiant, le fournisseur, le nom, l’état et les variantes sont lus.
+async fn read_models(server: &Server, cwd: &str) -> AppResult<Vec<Value>> {
+    use generated::ClientInfo as _;
+    let api = &server.api;
+    let response = api
+        .client()
+        .get(format!("{}/api/model", api.baseurl()))
+        .header("api-version", generated::Client::api_version())
+        .header("accept", "application/json")
+        .query(&[("location[directory]", cwd)])
+        .send()
+        .await
+        .map_err(|_| unavailable())?;
+    match response.status().as_u16() {
+        200 => {}
+        400 | 422 => return Err(AppError::new("OpenCode a refusé la demande d’Alfred.")),
+        _ => return Err(unavailable()),
+    }
+    // Les modèles portent les réglages du fournisseur (clés d’API comprises) : ils ne sortent pas de ce module.
+    let body: Value = response.json().await.map_err(|_| unavailable())?;
+    Ok(body["data"].as_array().cloned().unwrap_or_default())
+}
+
+/// Modèles d’un serveur qui vient de démarrer. Depuis OpenCode 2.4, les plugins se chargent en arrière-plan : juste
+/// après le démarrage, la liste est vide ou partielle. On la relit jusqu’à trouver `wanted` (fournisseur, modèle), ou,
+/// sans modèle cherché, jusqu’à ce qu’elle ne change plus d’une lecture à l’autre ; au bout de `PLUGINS_WAIT`, on garde
+/// la dernière lecture.
+async fn models_on(server: &Server, cwd: &str, wanted: Option<(&str, &str)>) -> AppResult<Vec<Value>> {
+    let deadline = tokio::time::Instant::now() + PLUGINS_WAIT;
+    let mut models = read_models(server, cwd).await?;
+    loop {
+        let found = |models: &[Value]| {
+            wanted.is_some_and(|(provider, id)| {
+                models.iter().any(|candidate| candidate["providerID"] == provider && candidate["id"] == id)
+            })
+        };
+        if found(&models) || tokio::time::Instant::now() >= deadline {
+            return Ok(models);
+        }
+        tokio::time::sleep(PLUGINS_POLL).await;
+        let next = read_models(server, cwd).await?;
+        if wanted.is_none() && !next.is_empty() && next.len() == models.len() {
+            return Ok(next);
+        }
+        models = next;
+    }
 }
 
 /// Catalogue des modèles, lu sur un serveur de service sans outils.
 pub async fn models(program: &Path, cwd: &str) -> AppResult<Vec<Model>> {
     let server = Server::start(program, cwd, Vec::new()).await?;
-    let models = models_on(&server, cwd).await;
+    let models = models_on(&server, cwd, None).await;
     server.stop();
     Ok(models?
         .iter()
