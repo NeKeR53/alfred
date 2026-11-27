@@ -3,7 +3,8 @@
 //! Un marketplace est un dépôt git ordinaire contenant un dossier par module. Il est cloné hors de l’espace, dans
 //! les données d’Alfred, et ce clone n’est jamais modifié à la main : il suit la branche par défaut du distant.
 //! Installer un module copie son dossier dans l’espace en notant d’où il vient ; il reste en lecture seule tant
-//! qu’il n’est pas détaché. Rien n’est jamais fusionné en silence : une mise à jour remplace le dossier entier,
+//! qu’il n’est pas détaché ou que l’utilisateur n’a pas accepté de le modifier sur place (il reste alors lié à son
+//! marketplace, marqué « modifié sur place »). Rien n’est jamais fusionné en silence : une mise à jour remplace le dossier entier,
 //! sur accord, dans un commit de l’espace que l’on peut annuler.
 
 use std::collections::BTreeSet;
@@ -25,7 +26,7 @@ const CHANGELOG: &str = "CHANGELOG.md";
 /// Jamais copiés d’un dossier à l’autre : dépôt imbriqué et fichiers que le système d’exploitation sème.
 const SKIPPED: [&str; 3] = [".git", ".DS_Store", "Thumbs.db"];
 
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 16] = [
     "marketplace.list",
     "marketplace.add",
     "marketplace.remove",
@@ -37,6 +38,7 @@ const COMMANDS: [&str; 15] = [
     "marketplace.updateAll",
     "marketplace.pin",
     "marketplace.detach",
+    "marketplace.allowEdits",
     "marketplace.uninstall",
     "marketplace.publish",
     "marketplace.suggestVersion",
@@ -80,13 +82,15 @@ fn run(state: &Arc<AppState>, command: &str, args: &Value) -> AppResult<Value> {
         }
         "marketplace.update" => {
             let space = state.space()?;
-            let updated = update_one(state, &space, &arg::<String>(args, "module")?)?;
+            let replace = opt_arg::<bool>(args, "replaceChanges")?.unwrap_or(false);
+            let updated = update_one(state, &space, &arg::<String>(args, "module")?, replace)?;
             state.emit("space:changed", Value::Null);
             Ok(updated)
         }
         "marketplace.updateAll" => update_all(state),
         "marketplace.pin" => pin(state, &arg::<String>(args, "module")?, arg(args, "pinned")?),
         "marketplace.detach" => detach(state, &arg::<String>(args, "module")?),
+        "marketplace.allowEdits" => allow_edits(state, &arg::<String>(args, "module")?),
         "marketplace.uninstall" => uninstall(state, &arg::<String>(args, "module")?, arg(args, "deleteData")?),
         "marketplace.publish" => publish(
             state,
@@ -1230,12 +1234,14 @@ fn dependency_plan(
                         .as_ref()
                         .is_some_and(|origin| !origin.detached && same_url(&origin.marketplace, &marketplace.url));
                     let pinned = local.origin.as_ref().is_some_and(|origin| origin.pinned);
+                    let edited = local.origin.as_ref().is_some_and(|origin| origin.edited);
                     if requirement.accepts(&local.version) {
                         // Déjà compatible : mise à niveau seulement si elle reste dans la même majeure, sans casser
                         // un autre module de l’espace de travail ; sinon la dépendance reste telle quelle.
                         let refresh = available.as_ref().is_some_and(|available| {
                             from_here
                                 && !pinned
+                                && !edited
                                 && is_newer(&available.version, &local.version)
                                 && same_major(&available.version, &local.version)
                                 && requirement.accepts(&available.version)
@@ -1248,6 +1254,13 @@ fn dependency_plan(
                         if !from_here {
                             return Err(AppError::new(format!(
                                 "« {who} » demande le module {}, mais celui de l’espace de travail est en v{} et ne vient pas de ce marketplace : le mettre à jour d’abord.",
+                                requirement.describe(),
+                                local.version
+                            )));
+                        }
+                        if edited {
+                            return Err(AppError::new(format!(
+                                "« {who} » demande le module {}, modifié sur place en v{} : le mettre à jour d’abord, depuis sa fiche, pour choisir le sort de ses changements.",
                                 requirement.describe(),
                                 local.version
                             )));
@@ -1489,6 +1502,7 @@ fn updates(state: &AppState) -> AppResult<Value> {
             "dependencies": [],
             "blocked": null,
             "locallyModified": locally_modified(&space, &module_id, &origin),
+            "edited": origin.edited,
         });
         match source_of(state, &marketplaces, &module_id, &origin) {
             Source::Unplugged => entry["sourceMissing"] = json!(true),
@@ -1523,9 +1537,16 @@ fn updates(state: &AppState) -> AppResult<Value> {
 
 /// Remplace un module installé par la version que propose son marketplace, dans un commit de l’espace. Les
 /// données du module vivent dans `.alfred/`, hors de son dossier : seul le choix de le figer est à conserver.
-fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Value> {
+/// Un module modifié sur place (avec accord, ou retouché à la main) ne perd ses changements que si `replace` le dit :
+/// l’utilisateur a choisi « Remplacer mes changements ».
+fn update_one(state: &AppState, space: &Space, module_id: &str, replace: bool) -> AppResult<Value> {
     let (manifest, origin) = installed_module(space, module_id)?;
     let name = display_name(&manifest).to_string();
+    if !replace && (origin.edited || locally_modified(space, module_id, &origin)) {
+        return Err(AppError::new(format!(
+            "Le module « {name} » est modifié sur place : la mise à jour remplacerait ses changements. Choisir dans sa fiche de remplacer ses changements ou de garder sa version."
+        )));
+    }
     let (marketplace, dir, available) = match source_of(state, &load(state)?, module_id, &origin) {
         Source::Present { marketplace, dir, manifest } => (marketplace, dir, manifest),
         Source::Withdrawn(marketplace) => {
@@ -1556,6 +1577,7 @@ fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Val
         commit: last_commit(&clone, module_id),
         detached: false,
         pinned: origin.pinned,
+        edited: false,
     };
     checkpoint(space, "la mise à jour d’un module")?;
     apply_dependencies(space, &clone, &marketplace, &steps)?;
@@ -1574,14 +1596,19 @@ fn update_one(state: &AppState, space: &Space, module_id: &str) -> AppResult<Val
 fn update_all(state: &AppState) -> AppResult<Value> {
     let space = state.space()?;
     let pending = updates(state)?;
-    let (mut updated, mut failed) = (Vec::new(), Vec::new());
+    let (mut updated, mut failed, mut kept) = (Vec::new(), Vec::new(), Vec::new());
     for entry in pending.as_array().into_iter().flatten() {
         // Figée, ou bloquée par un module qui demande l’ancienne version majeure : la mise à jour reste signalée.
         let held = entry["pinned"].as_bool().unwrap_or(false) || !entry["blocked"].is_null();
         let (Some(module), false, false) = (entry["module"].as_str(), entry["available"].is_null(), held) else {
             continue;
         };
-        match update_one(state, &space, module) {
+        // Modifié sur place : jamais remplacé en lot ; l’utilisateur choisit depuis sa fiche.
+        if entry["edited"].as_bool().unwrap_or(false) || entry["locallyModified"].as_bool().unwrap_or(false) {
+            kept.push(json!({ "module": module, "name": entry["name"], "available": entry["available"] }));
+            continue;
+        }
+        match update_one(state, &space, module, false) {
             Ok(result) => updated.push(result),
             Err(error) => failed.push(json!({ "module": module, "name": entry["name"], "message": error.message })),
         }
@@ -1589,7 +1616,7 @@ fn update_all(state: &AppState) -> AppResult<Value> {
     if !updated.is_empty() {
         state.emit("space:changed", Value::Null);
     }
-    Ok(json!({ "updated": updated, "failed": failed }))
+    Ok(json!({ "updated": updated, "failed": failed, "kept": kept }))
 }
 
 /// Réécrit l’origine d’un module dans son manifeste, sans toucher au reste.
@@ -1626,6 +1653,7 @@ fn detach(state: &AppState, module_id: &str) -> AppResult<Value> {
     // L’origine reste inscrite : on sait d’où vient le module, il ne reçoit simplement plus rien.
     origin.detached = true;
     origin.pinned = false;
+    origin.edited = false;
     checkpoint(&space, "le détachement d’un module")?;
     write_origin(&space, module_id, &origin)?;
     let message = format!("Détachement du module {}", display_name(&manifest));
@@ -1633,6 +1661,33 @@ fn detach(state: &AppState, module_id: &str) -> AppResult<Value> {
     journal(state, &space, module_id, &message);
     state.emit("space:changed", Value::Null);
     Ok(json!({ "module": module_id }))
+}
+
+/// Nom du marketplace branché d’adresse `url`, sinon l’adresse elle-même.
+pub(crate) fn marketplace_name(state: &AppState, url: &str) -> String {
+    load(state)
+        .ok()
+        .and_then(|marketplaces| marketplaces.into_iter().find(|marketplace| same_url(&marketplace.url, url)))
+        .map(|marketplace| format!("« {} »", marketplace.name))
+        .unwrap_or_else(|| format!("« {url} »"))
+}
+
+/// L’utilisateur accepte de modifier sur place un module importé (depuis sa fiche, ou en répondant à l’agent). Le
+/// module reste lié à son marketplace ; la prochaine mise à jour lui demandera le sort de ses changements.
+pub(crate) fn allow_edits(state: &AppState, module_id: &str) -> AppResult<Value> {
+    let space = state.space()?;
+    let (manifest, mut origin) = installed_module(&space, module_id)?;
+    if origin.edited {
+        return Ok(json!({ "module": module_id, "edited": true }));
+    }
+    origin.edited = true;
+    checkpoint(&space, "la modification d’un module")?;
+    write_origin(&space, module_id, &origin)?;
+    let message = format!("Modification sur place du module {} autorisée", display_name(&manifest));
+    git::commit_all(&space.root, &message)?;
+    journal(state, &space, module_id, &message);
+    state.emit("space:changed", Value::Null);
+    Ok(json!({ "module": module_id, "edited": true }))
 }
 
 fn uninstall(state: &AppState, module_id: &str, delete_data: bool) -> AppResult<Value> {
@@ -2007,7 +2062,7 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     let name = display_name(&manifest).to_string();
     if manifest.read_only() {
         return Err(AppError::new(format!(
-            "Le module « {name} » est importé d’un marketplace : seul un module local ou détaché se publie. Le détacher d’abord."
+            "Le module « {name} » est importé d’un marketplace et en lecture seule : autoriser d’abord sa modification sur place (« Modifier sur place… » dans sa fiche), puis publier une version supérieure."
         )));
     }
     let wanted = parse_version(version)
@@ -2094,15 +2149,27 @@ fn publish(state: &AppState, module_id: &str, marketplace_id: &str, version: &st
     if let Some(requires) = &pinned_requires {
         local.insert("requires".to_string(), requires.clone());
     }
-    let mut publications: Vec<space::Publication> =
-        local.get("published").and_then(|value| serde_json::from_value(value.clone()).ok()).unwrap_or_default();
-    publications.retain(|publication| !same_url(&publication.marketplace, &marketplace.url));
-    publications.push(space::Publication {
-        marketplace: marketplace.url.clone(),
-        version: version.clone(),
-        commit: commit.clone(),
-    });
-    local.insert("published".to_string(), serde_json::to_value(&publications)?);
+    match manifest.origin.clone().filter(|origin| !origin.detached && same_url(&origin.marketplace, &marketplace.url)) {
+        // Module importé, modifié sur place puis republié sur son marketplace : il en suit de nouveau la version
+        // publiée, sans changement en attente, et redevient en lecture seule.
+        Some(mut origin) => {
+            origin.version = version.clone();
+            origin.commit = commit.clone();
+            origin.edited = false;
+            local.insert("origin".to_string(), serde_json::to_value(&origin)?);
+        }
+        None => {
+            let mut publications: Vec<space::Publication> =
+                local.get("published").and_then(|value| serde_json::from_value(value.clone()).ok()).unwrap_or_default();
+            publications.retain(|publication| !same_url(&publication.marketplace, &marketplace.url));
+            publications.push(space::Publication {
+                marketplace: marketplace.url.clone(),
+                version: version.clone(),
+                commit: commit.clone(),
+            });
+            local.insert("published".to_string(), serde_json::to_value(&publications)?);
+        }
+    }
     space::write_json(&source.join(MODULE_FILE), &Value::Object(local))?;
     let message = format!("Publication du module {name} v{version} sur {}", marketplace.name);
     git::commit_all(&space.root, &message)?;
@@ -2336,7 +2403,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(refused.message.contains("détacher"), "{}", refused.message);
+        assert!(refused.message.contains("Modifier sur place"), "{}", refused.message);
         let catalog = call(&reader, "marketplace.modules", json!({ "id": "marketplace" })).await.unwrap();
         assert_eq!(catalog[0]["installed"], "1.0.0");
 
@@ -2393,8 +2460,14 @@ mod tests {
         assert_eq!(all["updated"], json!([]));
         assert_eq!(reader_space.module("suivi").unwrap().origin.unwrap().version, "1.0.0");
 
+        // Retouché sur place : la mise à jour ne remplace ses changements que si l’utilisateur l’a choisi.
+        let kept = call(&reader, "marketplace.update", json!({ "module": "suivi" })).await.unwrap_err();
+        assert!(kept.message.contains("modifié sur place"), "{}", kept.message);
+        assert_ne!(fs::read_to_string(reader_space.page_file("suivi", "tableau")).unwrap(), PAGE);
+
         // Appliquée sur accord : contenu remplacé, origine à jour, choix de figer conservé, un commit annulable.
-        let updated = call(&reader, "marketplace.update", json!({ "module": "suivi" })).await.unwrap();
+        let updated =
+            call(&reader, "marketplace.update", json!({ "module": "suivi", "replaceChanges": true })).await.unwrap();
         assert_eq!((updated["from"].as_str(), updated["to"].as_str()), (Some("1.0.0"), Some("1.1.0")));
         let installed = reader_space.module("suivi").unwrap();
         let origin = installed.origin.clone().unwrap();
@@ -2435,6 +2508,76 @@ mod tests {
         let event = std::iter::from_fn(|| events.try_recv().ok()).find(|event| event.name == "module:uninstalled").unwrap();
         assert_eq!(event.payload, json!({ "module": "suivi", "deleteData": true }));
         assert!(!git::has_changes(&reader_space.root).unwrap());
+    }
+
+    /// Un module importé se modifie sur place après accord : il reste lié à son marketplace, la mise à jour demande
+    /// le sort de ses changements, et sa republication sur le marketplace d’origine le remet en phase.
+    #[tokio::test]
+    async fn edits_an_imported_module_after_consent() {
+        let root = tempfile::tempdir().unwrap();
+        let remote = bare_remote(root.path());
+        let (author, author_space) = desk(root.path(), "auteur");
+        author_module(&author_space);
+        call(&author, "marketplace.add", json!({ "url": remote, "name": "Équipe" })).await.unwrap();
+        let publish = |state: Arc<AppState>, marketplace: &'static str, version: &'static str| async move {
+            call(&state, "marketplace.publish", json!({ "module": "suivi", "marketplace": marketplace, "version": version, "notes": "" }))
+                .await
+        };
+        publish(author.clone(), "equipe", "1.0.0").await.unwrap();
+
+        let (reader, reader_space) = desk(root.path(), "lecteur");
+        call(&reader, "marketplace.add", json!({ "url": remote, "name": "Équipe" })).await.unwrap();
+        call(&reader, "marketplace.install", json!({ "marketplace": "equipe", "module": "suivi" })).await.unwrap();
+        assert!(reader_space.module("suivi").unwrap().read_only());
+        assert!(reader_space.delete_page("suivi/tableau").is_err(), "lecture seule avant l’accord");
+
+        // Accord : modifiable, toujours lié, marqué modifié sur place.
+        call(&reader, "marketplace.allowEdits", json!({ "module": "suivi" })).await.unwrap();
+        let edited = reader_space.module("suivi").unwrap();
+        let origin = edited.origin.clone().unwrap();
+        assert!(!edited.read_only() && edited.imported());
+        assert!(origin.edited && !origin.detached && origin.version == "1.0.0");
+        assert_eq!(last_message(&reader_space), "Modification sur place du module Suivi autorisée");
+        let changed = "export default function Vue() { return null; }\n";
+        fs::write(reader_space.page_file("suivi", "tableau"), changed).unwrap();
+        git::commit_all(&reader_space.root, "Retouche").unwrap();
+        let status = call(&reader, "marketplace.updates", json!({})).await.unwrap();
+        assert_eq!((status[0]["edited"].clone(), status[0]["locallyModified"].clone()), (json!(true), json!(true)));
+
+        // Nouvelle version : ni la mise à jour simple ni « Tout mettre à jour » ne remplacent ses changements.
+        publish(author.clone(), "equipe", "1.1.0").await.unwrap();
+        call(&reader, "marketplace.updates", json!({ "refresh": true })).await.unwrap();
+        let refused = call(&reader, "marketplace.update", json!({ "module": "suivi" })).await.unwrap_err();
+        assert!(refused.message.contains("remplacer ses changements"), "{}", refused.message);
+        let all = call(&reader, "marketplace.updateAll", json!({})).await.unwrap();
+        assert_eq!(all["updated"], json!([]));
+        assert_eq!(all["kept"][0]["module"], "suivi");
+        assert_eq!(fs::read_to_string(reader_space.page_file("suivi", "tableau")).unwrap(), changed, "version gardée");
+
+        // « Remplacer mes changements » : la v1.1.0 arrive, le module redevient en lecture seule.
+        call(&reader, "marketplace.update", json!({ "module": "suivi", "replaceChanges": true })).await.unwrap();
+        let updated = reader_space.module("suivi").unwrap();
+        assert!(updated.read_only() && !updated.origin.as_ref().unwrap().edited);
+        assert_eq!(fs::read_to_string(reader_space.page_file("suivi", "tableau")).unwrap(), PAGE);
+
+        // Modifié de nouveau, puis republié en version supérieure sur son marketplace : de nouveau en phase.
+        call(&reader, "marketplace.allowEdits", json!({ "module": "suivi" })).await.unwrap();
+        fs::write(reader_space.page_file("suivi", "tableau"), PAGE.replace("Bonjour", "Salut")).unwrap();
+        let too_low = publish(reader.clone(), "equipe", "1.1.0").await.unwrap_err();
+        assert!(too_low.message.contains("strictement supérieur"), "{}", too_low.message);
+        let suggested =
+            call(&reader, "marketplace.suggestVersion", json!({ "module": "suivi", "marketplace": "equipe" })).await.unwrap();
+        assert_eq!(suggested["version"], "1.1.1");
+        publish(reader.clone(), "equipe", "1.1.1").await.unwrap();
+        let republished = reader_space.module("suivi").unwrap();
+        let origin = republished.origin.clone().unwrap();
+        assert!(republished.read_only() && !origin.edited);
+        assert_eq!((origin.version.as_str(), republished.version.as_str()), ("1.1.1", "1.1.1"));
+        assert!(republished.published.is_empty(), "un module importé suit son origine, pas une publication à lui");
+        let status = call(&reader, "marketplace.updates", json!({})).await.unwrap();
+        assert_eq!((status[0]["available"].clone(), status[0]["locallyModified"].clone()), (Value::Null, json!(false)));
+        let shared = fs::read_to_string(clone_dir(&author, "equipe").join("suivi").join(MODULE_FILE)).unwrap_or_default();
+        assert!(!shared.contains("edited"), "l’origine ne se publie pas");
     }
 
     #[tokio::test]

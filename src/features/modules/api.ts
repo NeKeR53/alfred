@@ -63,6 +63,8 @@ export interface ModuleUpdate {
   /** Ce qui empêche la mise à jour (dépendance introuvable, figée…), ou `null`. */
   blocked: string | null;
   locallyModified: boolean;
+  /** L’utilisateur a accepté de le modifier sur place. */
+  edited: boolean;
 }
 
 export interface CatalogModule {
@@ -126,6 +128,8 @@ export interface PublishProblem {
 export interface UpdateAllResult {
   updated: Array<{ module: string; name: string; from: string; to: string }>;
   failed: Array<{ module: string; name: string; message: string }>;
+  /** Modifiés sur place : laissés de côté, à mettre à jour un par un depuis leur fiche. */
+  kept?: Array<{ module: string; name: string; available: string }>;
 }
 
 export const marketplaceApi = {
@@ -137,10 +141,12 @@ export const marketplaceApi = {
   publications: () => invoke<ModulePublication[]>("marketplace.publications"),
   install: (marketplace: string, module: string) => invoke("marketplace.install", { marketplace, module }),
   updates: (refresh: boolean) => invoke<ModuleUpdate[]>("marketplace.updates", { refresh }),
-  update: (module: string) => invoke<{ from: string; to: string }>("marketplace.update", { module }),
+  update: (module: string, replaceChanges = false) =>
+    invoke<{ from: string; to: string }>("marketplace.update", { module, replaceChanges }),
   updateAll: () => invoke<UpdateAllResult>("marketplace.updateAll"),
   pin: (module: string, pinned: boolean) => invoke("marketplace.pin", { module, pinned }),
   detach: (module: string) => invoke("marketplace.detach", { module }),
+  allowEdits: (module: string) => invoke("marketplace.allowEdits", { module }),
   uninstall: (module: string, deleteData: boolean) => invoke("marketplace.uninstall", { module, deleteData }),
   publish: (module: string, marketplace: string, version: string, notes: string) =>
     invoke<{ version: string; commit: string }>("marketplace.publish", { module, marketplace, version, notes }),

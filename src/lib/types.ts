@@ -104,6 +104,8 @@ export interface ModuleOrigin {
   commit: string;
   detached?: boolean;
   pinned?: boolean;
+  /** Modifié sur place avec l’accord de l’utilisateur : modifiable, toujours lié à son marketplace. */
+  edited?: boolean;
 }
 
 export interface ClientNeed {

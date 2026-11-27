@@ -84,7 +84,7 @@ function originLabel(
   nameOf: (url: string) => string,
 ) {
   if (module.origin && !module.origin.detached)
-    return `Importé de ${update?.marketplaceName ?? nameOf(module.origin.marketplace)}`;
+    return `Importé de ${update?.marketplaceName ?? nameOf(module.origin.marketplace)}${module.origin.edited ? ", modifié sur place" : ""}`;
   const base = module.origin?.detached
     ? `Détaché de ${nameOf(module.origin.marketplace)} (v${module.origin.version})`
     : "Développé ici";
@@ -199,7 +199,15 @@ export function useModulesSections(): SettingsSection[] {
       for (const failure of result.failed) {
         notify({ title: `Mise à jour de ${failure.name} impossible`, description: failure.message, tone: "error" });
       }
-      if (result.updated.length === 0 && result.failed.length === 0) notify({ title: "Tout est déjà à jour" });
+      const kept = result.kept ?? [];
+      if (kept.length > 0) {
+        notify({
+          title: `${plural(kept.length, "module")} modifié${kept.length > 1 ? "s" : ""} sur place, non mis à jour`,
+          description: `${kept.map((entry) => entry.name).join(", ")} : ouvrir sa fiche pour remplacer ses changements ou garder sa version.`,
+        });
+      }
+      if (result.updated.length === 0 && result.failed.length === 0 && kept.length === 0)
+        notify({ title: "Tout est déjà à jour" });
     }, "Mise à jour impossible");
 
   const togglePin = (module: ModuleSummary, pinned: boolean) =>
@@ -229,6 +237,26 @@ export function useModulesSections(): SettingsSection[] {
       await afterSpaceChange();
       notify({ title: `${module.name} détaché`, description: "Il est maintenant modifiable.", tone: "success" });
     }, "Détachement impossible");
+  };
+
+  const allowEdits = async (module: ModuleSummary) => {
+    const source = updateOf.get(module.id)?.marketplaceName ?? "son marketplace";
+    const accepted = await confirm({
+      title: `Modifier ${module.name} sur place ?`,
+      message: `Vous et l’agent pourrez modifier ce module ici. Il reste lié à ${source} et sera marqué « modifié sur place ». À chaque nouvelle version, Alfred vous demandera de remplacer vos changements ou de garder votre version : rien n’est écrasé sans votre accord. « Tout mettre à jour » le laissera de côté.`,
+      confirmLabel: "Modifier sur place",
+      tone: "default",
+    });
+    if (!accepted) return;
+    await run(async () => {
+      await marketplaceApi.allowEdits(module.id);
+      await afterSpaceChange();
+      notify({
+        title: `${module.name} modifiable`,
+        description: "Il reste lié à son marketplace.",
+        tone: "success",
+      });
+    }, "Modification impossible");
   };
 
   const openedUpdate = opened?.kind === "update" ? updateOf.get(opened.module) : undefined;
@@ -342,7 +370,6 @@ export function useModulesSections(): SettingsSection[] {
   /** Résumé en mots simples : d’où vient le module, ce qu’il contient. */
   const moduleSummary = (module: ModuleSummary) => {
     const update = updateOf.get(module.id);
-    const installed = module.origin !== null && !module.origin.detached;
     const serviceCount = needs.filter((need) => need.module === module.id).length;
     return [
       originLabel(module, update, publishedOf(module), marketplaceName),
@@ -350,7 +377,7 @@ export function useModulesSections(): SettingsSection[] {
       plural(module.pages, "page"),
       module.functions > 0 ? plural(module.functions, "fonction") : null,
       serviceCount > 0 ? plural(serviceCount, "service") : null,
-      installed ? "lecture seule" : null,
+      module.readOnly ? "lecture seule" : null,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -371,7 +398,7 @@ export function useModulesSections(): SettingsSection[] {
         ? { label: "Modifié depuis la publication", tone: "neutral" }
         : null,
       update?.pinned ? { label: "Figé", tone: "neutral" } : null,
-      update?.locallyModified ? { label: "Modifié sur place", tone: "warning" } : null,
+      update?.locallyModified || update?.edited ? { label: "Modifié sur place", tone: "warning" } : null,
       update?.sourceMissing ? { label: "Sans marketplace", tone: "danger" } : null,
       update?.withdrawn ? { label: "Retiré de son marketplace", tone: "danger" } : null,
     ];
@@ -425,6 +452,9 @@ export function useModulesSections(): SettingsSection[] {
               label: module.origin?.pinned ? "Libérer" : "Figer sur cette version",
               onPress: () => togglePin(module, !module.origin?.pinned),
             },
+            ...(module.origin?.edited
+              ? [{ id: "publish", label: "Publier…", onPress: () => setOpened({ kind: "publish", module }) }]
+              : [{ id: "edit", label: "Modifier sur place…", onPress: () => allowEdits(module) }]),
             { id: "detach", label: "Détacher…", onPress: () => detach(module) },
           ]
         : [
@@ -454,8 +484,8 @@ export function useModulesSections(): SettingsSection[] {
         <UpdateDialog
           update={openedUpdate}
           onClose={() => setOpened(null)}
-          onConfirm={async () => {
-            const result = await marketplaceApi.update(openedUpdate.module);
+          onConfirm={async (replaceChanges) => {
+            const result = await marketplaceApi.update(openedUpdate.module, replaceChanges);
             setOpened(null);
             await afterSpaceChange();
             notify({

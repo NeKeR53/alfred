@@ -361,10 +361,7 @@ fn declared(space: &Space, schedule: &str) -> AppResult<(String, ScheduleDecl)> 
 fn writable(space: &Space, module: &str) -> AppResult<ModuleManifest> {
     let manifest = space.module(module)?;
     if manifest.read_only() {
-        return Err(AppError::new(format!(
-            "Le module « {} » est importé d’un marketplace : le détacher pour modifier ses planifications.",
-            manifest.name
-        )));
+        return Err(AppError::new(crate::space::imported_refusal(&manifest)));
     }
     Ok(manifest)
 }

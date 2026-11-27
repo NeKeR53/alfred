@@ -74,7 +74,7 @@ fn module_status(modules: &[ModuleManifest], module: &ModuleManifest, overview: 
         "name": if module.name.is_empty() { &module.id } else { &module.name },
         "description": module.description,
         "welcome": module.setup.as_ref().map(|setup| setup.welcome.clone()).unwrap_or_default(),
-        "installed": module.read_only(),
+        "installed": module.imported(),
         "ready": ready,
         "steps": steps,
     })

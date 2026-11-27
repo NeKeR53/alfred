@@ -209,10 +209,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
             }
             let mut manifest = space.module(&module)?;
             if manifest.read_only() {
-                return Err(AppError::new(format!(
-                    "Le module « {} » est importé d’un marketplace : le détacher pour lui ajouter une fonction.",
-                    manifest.name
-                )));
+                return Err(AppError::new(crate::space::imported_refusal(&manifest)));
             }
             let declaration = FunctionDecl {
                 id: id.clone(),

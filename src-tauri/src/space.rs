@@ -392,6 +392,11 @@ pub struct Origin {
     /// Figé : les mises à jour sont signalées mais jamais proposées dans « Tout mettre à jour ».
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
+    /// Modifié sur place, avec l’accord de l’utilisateur : le module reste lié à son marketplace et modifiable. Une
+    /// mise à jour demande alors de remplacer ses changements (ou de garder sa version) ; elle remet ce drapeau à
+    /// faux, comme une publication de ses changements sur le marketplace d’origine.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub edited: bool,
 }
 
 /// Dernière publication d’un module développé ici sur un marketplace.
@@ -407,6 +412,11 @@ pub struct Publication {
 
 impl ModuleManifest {
     pub fn read_only(&self) -> bool {
+        self.origin.as_ref().is_some_and(|origin| !origin.detached && !origin.edited)
+    }
+
+    /// Importé d’un marketplace et toujours lié à lui (modifié sur place ou non).
+    pub fn imported(&self) -> bool {
         self.origin.as_ref().is_some_and(|origin| !origin.detached)
     }
 
@@ -414,6 +424,15 @@ impl ModuleManifest {
     pub fn requires_module(&self, module: &str) -> bool {
         self.requires.iter().any(|requirement| requirement.module == module)
     }
+}
+
+/// Refus d’écrire dans un module importé encore en lecture seule, et la façon d’obtenir l’accord.
+pub fn imported_refusal(manifest: &ModuleManifest) -> String {
+    let name = if manifest.name.is_empty() { &manifest.id } else { &manifest.name };
+    format!(
+        "Le module « {name} » est importé d’un marketplace et en lecture seule. Pour le modifier, demander d’abord l’accord de l’utilisateur avec `alfred edit_module --module {}` (lui le fait depuis Réglages → Modules → « Modifier sur place… »).",
+        manifest.id
+    )
 }
 
 /// Dépendance d’un module : il appelle les fonctions de `module` et se sert de ses clients sans demander d’accord,
@@ -1088,10 +1107,7 @@ impl Space {
     fn writable_module(&self, id: &str) -> AppResult<ModuleManifest> {
         let manifest = self.module(id)?;
         if manifest.read_only() {
-            return Err(AppError::new(format!(
-                "Le module « {} » est importé d’un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
-                manifest.name
-            )));
+            return Err(AppError::new(imported_refusal(&manifest)));
         }
         Ok(manifest)
     }

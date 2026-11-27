@@ -54,11 +54,11 @@ async fn publier_installer_mettre_a_jour_detacher_desinstaller() {
     // Lecture seule : ni suppression de page, ni fonction ajoutée, ni publication.
     let refused = reader.refused("space.deletePage", json!({ "reference": "recettes/carnet" })).await;
     assert!(refused.contains("marketplace") || refused.contains("lecture seule"), "{refused}");
-    assert!(reader.refused("functions.declare", json!({ "module": "recettes", "id": "autre" })).await.contains("détacher"));
+    assert!(reader.refused("functions.declare", json!({ "module": "recettes", "id": "autre" })).await.contains("edit_module"));
     let republish = reader
         .refused("marketplace.publish", json!({ "module": "recettes", "marketplace": marketplace, "version": "9.0.0" }))
         .await;
-    assert!(republish.contains("détacher"), "{republish}");
+    assert!(republish.contains("Modifier sur place"), "{republish}");
     // Un onglet ajouté à la section installée va dans le module d’ajouts, qui lit les tables sans y écrire.
     let addition = reader
         .invoke("space.placePage", json!({ "title": "Favoris", "target": { "kind": "tab", "section": "recettes/principal" } }))

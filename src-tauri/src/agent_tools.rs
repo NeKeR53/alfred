@@ -118,6 +118,47 @@ async fn authorize_agent(state: &Shared, args: &Value) -> AppResult<Value> {
     Ok(json!({ "cwd": crate::folders::plain(&cwd).to_string_lossy(), "autonomy": autonomy }))
 }
 
+/// `edit_module` : l’agent veut écrire dans un module importé. L’utilisateur répond par une carte ; sur son accord,
+/// le module devient modifiable sur place, toujours lié à son marketplace. La carte est posée même en « Autonomie
+/// totale » : c’est le sort des mises à jour du module qui change, et seul l’utilisateur en décide.
+async fn edit_module(state: &Shared, space: &crate::space::Space, conversation: &str, args: &Value) -> AppResult<Value> {
+    let module: String = arg(args, "module")?;
+    let reason: String = opt_arg(args, "reason")?.unwrap_or_default();
+    let manifest = space.module(&module)?;
+    let name = if manifest.name.is_empty() { manifest.id.clone() } else { manifest.name.clone() };
+    if !manifest.read_only() {
+        return Ok(json!({ "module": manifest.id, "editable": true, "next": "Le module est déjà modifiable : écrire directement." }));
+    }
+    let source = crate::marketplace::marketplace_name(state, manifest.origin.as_ref().map(|origin| origin.marketplace.as_str()).unwrap_or(""));
+    let title = format!("Modifier le module « {name} » importé de {source} ?");
+    let mut detail = String::new();
+    if !reason.trim().is_empty() {
+        detail.push_str(&format!("L’agent veut : {}\n\n", reason.trim()));
+    }
+    detail.push_str(&format!(
+        "Le module devient modifiable ici et reste lié à {source}. Il est marqué « modifié sur place ». À sa prochaine mise à jour, Alfred vous demandera de remplacer vos changements ou de garder votre version : rien n’est écrasé sans votre accord. « Tout mettre à jour » le laisse de côté."
+    ));
+    match crate::consents::ask(state, conversation, &title, &detail).await.as_deref() {
+        Some("once") => {
+            crate::consents::record(state, conversation, "edit_module", &format!("Modification sur place de {module} : accord de l’utilisateur"));
+            crate::marketplace::handle(state, "marketplace.allowEdits", &json!({ "module": manifest.id }))
+                .await
+                .unwrap_or_else(|| Err(AppError::new("Commande du marketplace introuvable.")))?;
+            Ok(json!({
+                "module": manifest.id,
+                "editable": true,
+                "next": "Accord donné : le module est modifiable. Écrire les changements, puis appeler `check`.",
+            }))
+        }
+        Some(_) => Err(AppError::new(format!(
+            "L’utilisateur a refusé de modifier le module « {name} » : n’y écris rien. Proposer plutôt une page dans un module à toi."
+        ))),
+        None => Err(AppError::new(format!(
+            "Pas de réponse à la demande de modification du module « {name} » : rien n’a changé, n’y écris rien. Le dire à l’utilisateur."
+        ))),
+    }
+}
+
 /// Entrée d’une fonction appelée par l’agent : les entrées imposées par le demandeur l’emportent sur les siennes.
 pub(crate) fn with_fixed_input(scope: Option<&AgentScope>, reference: &str, input: Value) -> Value {
     let Some(fixed) = scope.and_then(|scope| scope.inputs.get(reference)).and_then(Value::as_object) else {
@@ -579,6 +620,15 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             "Ouvre chez l’utilisateur le panneau de configuration (onboarding) d’un module : présentation, nom de ses entrées dans le menu, puis chaque service à connecter, en disant s’il accepte plusieurs comptes. À appeler à la fin, quand il ne reste que ce que seul l’utilisateur peut faire : un compte, un mot de passe ou une clé que tu n’as pas, une connexion OAuth. Ne lui demande pas ces valeurs dans la conversation : dis-lui en une phrase que le panneau est ouvert et ce qu’il y trouvera.",
             json!({ "module": { "type": "string", "description": "Identifiant du module à configurer." } }),
             &["module"],
+        ),
+        tool(
+            "edit_module",
+            "Demande à l’utilisateur, par une carte dans la conversation, l’accord de modifier sur place un module importé d’un marketplace (`readOnly` dans `space_overview`). À appeler avant toute écriture dans ce module, une fois. Sur « Autoriser », le module devient modifiable : il reste lié à son marketplace, marqué « modifié sur place », et sa prochaine mise à jour demandera à l’utilisateur de remplacer ses changements ou de garder sa version. Sur refus ou sans réponse, n’écris rien dans ce module : propose plutôt une page dans un module à toi.",
+            json!({
+                "module": { "type": "string", "description": "Identifiant du module importé." },
+                "reason": { "type": "string", "description": "Ce que tu veux y changer, en une phrase pour l’utilisateur." },
+            }),
+            &["module", "reason"],
         ),
         tool(
             "set_libraries",
@@ -1259,15 +1309,13 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "next": "Dire à l’utilisateur, en une phrase, que le panneau de configuration est ouvert et ce qu’il doit y faire (connecter tel compte, nommer ses pages). Ne pas lui redemander ces valeurs dans la conversation.",
             }))
         }
+        "edit_module" => edit_module(state, &space, conversation, args).await,
         "set_libraries" => {
             let module: String = arg(args, "module")?;
             let wanted: Vec<crate::libraries::Wanted> = arg(args, "libraries")?;
             let manifest = space.module(&module)?;
             if manifest.read_only() {
-                return Err(AppError::new(format!(
-                    "Le module « {} » est importé d’un marketplace et ne se modifie pas sur place. Le détacher pour l’adapter.",
-                    manifest.name
-                )));
+                return Err(AppError::new(crate::space::imported_refusal(&manifest)));
             }
             let report =
                 crate::libraries::install(&crate::clients::http()?, &space.module_dir(&manifest.id), &wanted).await?;
@@ -1628,6 +1676,47 @@ mod tests {
     /// Appelle une commande comme le ferait l’agent ; `Err` porte le texte d’erreur renvoyé.
     async fn call(state: &Shared, name: &str, arguments: Value) -> Result<Value, String> {
         run_tool(state, CONVERSATION, name, &arguments).await.map_err(|error| error.message)
+    }
+
+    /// Un module importé ne s’écrit qu’après l’accord de l’utilisateur, donné sur une carte de la conversation :
+    /// refusé, il reste en lecture seule ; accordé, il devient modifiable sur place, toujours lié à son marketplace.
+    #[tokio::test]
+    async fn an_imported_module_is_edited_only_after_consent() {
+        let (state, _dir) = crate::clients::testing::test_state();
+        let space = state.space().unwrap();
+        let page = space
+            .place_page("Tableau", None, "", &PlaceTarget::Menu { label: "Suivi".into(), icon: None, color: None }, None)
+            .unwrap();
+        let mut installed = space.module(&page.module).unwrap();
+        installed.origin = Some(crate::space::Origin { marketplace: "git@exemple:mp.git".into(), version: "1.0.0".into(), ..Default::default() });
+        space.write_module(&installed).unwrap();
+        crate::git::commit_all(&space.root, "Import").unwrap();
+        let module = installed.id.clone();
+        let refused = call(&state, "declare_function", json!({ "module": module, "id": "compter", "description": "Compte" })).await;
+        assert!(refused.unwrap_err().contains("edit_module"), "le refus dit comment demander l’accord");
+
+        crate::code_mode::TEST_ANSWERS.lock().unwrap().push(("refus-edition", "deny"));
+        let (failed, said) =
+            call_in(&state, "refus-edition", "edit_module", json!({ "module": module, "reason": "Ajouter une colonne" })).await;
+        assert!(failed && said.contains("refusé"), "{said}");
+        assert!(space.module(&module).unwrap().read_only());
+
+        let (failed, said) = call_in(&state, "sans-reponse", "edit_module", json!({ "module": module, "reason": "" })).await;
+        assert!(failed && said.contains("Pas de réponse"), "{said}");
+        assert!(space.module(&module).unwrap().read_only());
+
+        crate::code_mode::TEST_ANSWERS.lock().unwrap().push(("accord-edition", "once"));
+        let (failed, said) =
+            call_in(&state, "accord-edition", "edit_module", json!({ "module": module, "reason": "Ajouter une colonne" })).await;
+        assert!(!failed, "{said}");
+        let edited = space.module(&module).unwrap();
+        assert!(!edited.read_only() && edited.origin.as_ref().is_some_and(|origin| origin.edited && !origin.detached));
+        let declared = call(&state, "declare_function", json!({ "module": module, "id": "compter", "description": "Compte" })).await;
+        assert!(declared.is_ok(), "{declared:?}");
+        crate::code_mode::TEST_ANSWERS
+            .lock()
+            .unwrap()
+            .retain(|(conversation, _)| !matches!(*conversation, "refus-edition" | "accord-edition"));
     }
 
     /// Une page demandée est une nouvelle entrée du menu de gauche, même quand une section du même sujet existe ;

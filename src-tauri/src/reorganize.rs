@@ -89,7 +89,7 @@ fn refuse(action: &str, problems: &[String]) -> AppError {
 
 fn writable(space: &Space, id: &str) -> AppResult<ModuleManifest> {
     let module = space.module(id)?;
-    if module.read_only() {
+    if module.imported() {
         return Err(AppError::new(format!(
             "Le module « {} » est importé d’un marketplace : il est en lecture seule et ne se fusionne ni ne se scinde. Le détacher d’abord pour en faire un module local.",
             module.name

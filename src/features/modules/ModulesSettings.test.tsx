@@ -103,6 +103,7 @@ function desk() {
         dependencies: [],
         blocked: null,
         locallyModified: true,
+        edited: false,
       },
     ] as ModuleUpdate[],
     catalog: [
@@ -166,6 +167,7 @@ function desk() {
           dependencies: [],
           blocked: null,
           locallyModified: false,
+          edited: false,
         }));
         return { from: "1.0.0", to: "1.1.0" };
       }
@@ -174,6 +176,14 @@ function desk() {
         state.modules = state.modules.map((candidate) =>
           candidate.id === args.module && candidate.origin
             ? { ...candidate, origin: { ...candidate.origin, pinned: args.pinned as boolean } }
+            : candidate,
+        );
+        return null;
+      case "marketplace.allowEdits":
+        state.updates = state.updates.map((update) => ({ ...update, edited: true }));
+        state.modules = state.modules.map((candidate) =>
+          candidate.id === args.module && candidate.origin
+            ? { ...candidate, readOnly: false, origin: { ...candidate.origin, edited: true } }
             : candidate,
         );
         return null;
@@ -323,12 +333,18 @@ describe("useModulesSections", () => {
     expect(within(dialog).getByText("Détails")).toBeInTheDocument();
     expect(within(dialog).getByText("Cette version demande de nouveaux accès")).toBeInTheDocument();
     expect(within(dialog).getByText("Client : CRM de l’équipe")).toBeInTheDocument();
-    expect(within(dialog).getByText(/modifié sur place depuis son import/)).toBeInTheDocument();
-    expect(invoke).not.toHaveBeenCalledWith("marketplace.update", expect.anything());
-
-    await user.click(within(dialog).getByRole("button", { name: "Mettre à jour" }));
+    // Modifié sur place : ses changements ne partent que sur « Remplacer mes changements ».
+    expect(within(dialog).getByText("Ce module est modifié sur place")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Garder ma version" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(invoke).toHaveBeenCalledWith("marketplace.update", { module: "suivi" });
+    expect(invoke).not.toHaveBeenCalledWith("marketplace.update", expect.anything());
+    expect(screen.getByText("Mise à jour v1.1.0")).toBeInTheDocument();
+
+    await openRowMenu(user, "Suivi", "Mettre à jour Suivi");
+    const again = await screen.findByRole("dialog", { name: "Mettre à jour Suivi" });
+    await user.click(within(again).getByRole("button", { name: "Remplacer mes changements" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(invoke).toHaveBeenCalledWith("marketplace.update", { module: "suivi", replaceChanges: true });
     await waitFor(() => expect(screen.queryByText(/Mise à jour v/)).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Tout mettre à jour/ })).not.toBeInTheDocument();
     expect(lastNotification()).toBe("Suivi mis à jour");
@@ -364,6 +380,34 @@ describe("useModulesSections", () => {
       expect(invoke).toHaveBeenCalledWith("marketplace.uninstall", { module: "notes", deleteData: true }),
     );
     await waitFor(() => expect(within(moduleList()).queryByText("Notes")).not.toBeInTheDocument());
+  });
+
+  it("rend un module importé modifiable sur place, après confirmation, en le gardant lié", async () => {
+    const user = userEvent.setup();
+    desk();
+    renderModules();
+    await screen.findByText("Mise à jour v1.1.0");
+
+    // Refus : rien ne change.
+    await openRowMenu(user, "Suivi", /Modifier sur place/);
+    const refused = await screen.findByRole("alertdialog");
+    expect(within(refused).getByText(/rien n’est écrasé sans votre accord/)).toBeInTheDocument();
+    expect(within(refused).getByText(/reste lié à Équipe/)).toBeInTheDocument();
+    await user.click(within(refused).getByRole("button", { name: "Annuler" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(invoke).not.toHaveBeenCalledWith("marketplace.allowEdits", expect.anything());
+
+    // Accord : modifiable, toujours importé d’Équipe, et publiable en version supérieure.
+    await openRowMenu(user, "Suivi", /Modifier sur place/);
+    const accepted = await screen.findByRole("alertdialog");
+    await user.click(within(accepted).getByRole("button", { name: "Modifier sur place" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("marketplace.allowEdits", { module: "suivi" }));
+    expect(lastNotification()).toBe("Suivi modifiable");
+    expect(within(rowOf(moduleList(), "Suivi")).getByText(/^Équipe(?: ·|$)/)).toBeInTheDocument();
+    const actions = screen.getByRole("group", { name: "Actions sur Suivi" });
+    await user.click(within(actions).getByRole("button", { name: "Plus d'actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Publier…" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Modifier sur place/ })).not.toBeInTheDocument();
   });
 
   it("publie un module local et liste les problèmes quand la vérification échoue", async () => {

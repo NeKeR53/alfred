@@ -86,7 +86,8 @@ pub async fn ask_command(state: &AppState, conversation: &str, command: &str, ar
 /// Délai d’une carte d’accord.
 const WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 
-async fn ask(state: &AppState, conversation: &str, title: &str, detail: &str) -> Option<String> {
+/// Carte « Autoriser / Refuser » dans la conversation ; rend l’option choisie (`once`, `deny`), ou rien sans réponse.
+pub(crate) async fn ask(state: &AppState, conversation: &str, title: &str, detail: &str) -> Option<String> {
     #[cfg(test)]
     {
         let _ = (state, title, detail);

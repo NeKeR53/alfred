@@ -79,9 +79,11 @@ export function UpdateDialog({
 }: {
   update: ModuleUpdate;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  /** `replaceChanges` : l’utilisateur a choisi de remplacer les changements faits sur place. */
+  onConfirm: (replaceChanges: boolean) => Promise<void>;
 }) {
-  const { busy, error, apply } = useApply(onConfirm);
+  const modified = update.locallyModified || update.edited;
+  const { busy, error, apply } = useApply(() => onConfirm(modified));
   const { changes } = update;
   const unchanged =
     changes.pagesAdded.length +
@@ -99,10 +101,15 @@ export function UpdateDialog({
       footer={
         <>
           <Button onPress={onClose} isDisabled={busy}>
-            Annuler
+            {modified ? "Garder ma version" : "Annuler"}
           </Button>
-          <Button variant="primary" isPending={busy} isDisabled={Boolean(update.blocked)} onPress={() => void apply()}>
-            Mettre à jour
+          <Button
+            variant={modified ? "danger" : "primary"}
+            isPending={busy}
+            isDisabled={Boolean(update.blocked)}
+            onPress={() => void apply()}
+          >
+            {modified ? "Remplacer mes changements" : "Mettre à jour"}
           </Button>
         </>
       }
@@ -122,10 +129,11 @@ export function UpdateDialog({
           </Alert>
         ) : null}
         <DependencySteps steps={update.dependencies ?? []} />
-        {update.locallyModified ? (
-          <Alert tone="warning">
-            Ce module a été modifié sur place depuis son import. La mise à jour écrase ces modifications ; le détacher
-            d’abord pour les garder.
+        {modified ? (
+          <Alert tone="warning" title="Ce module est modifié sur place">
+            La nouvelle version remplace vos changements. Pour les garder, choisissez « Garder ma version » : le module
+            reste tel quel et la mise à jour reste proposée. Vous pouvez aussi publier vos changements en version
+            supérieure, ou détacher le module.
           </Alert>
         ) : null}
         {changes.newAccesses.length > 0 ? (
@@ -244,7 +252,7 @@ export function InstallDialog({
     >
       <Stack gap="md">
         <Text>
-          {`Depuis le marketplace ${marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et recevra les mises à jour de ce marketplace ; pour l’adapter, il faudra le détacher.`}
+          {`Depuis le marketplace ${marketplace.name}, dans cet espace de travail. Le module arrive en lecture seule et recevra les mises à jour de ce marketplace ; pour l’adapter, choisir « Modifier sur place… » dans sa fiche.`}
         </Text>
         {error ? (
           <Alert announce tone="danger">
@@ -285,7 +293,7 @@ export function InstallDialog({
 }
 
 /**
- * Publication d’un module développé dans l’espace de travail (ou détaché) vers un marketplace : marketplace cible,
+ * Publication d’un module développé dans l’espace de travail (détaché, ou importé et modifié sur place) vers un marketplace : marketplace cible,
  * version, notes ; liste les problèmes si refusée.
  */
 export function PublishDialog({
@@ -302,7 +310,15 @@ export function PublishDialog({
   onClose: () => void;
   onPublished: (version: string, marketplace: Marketplace) => void;
 }) {
-  const [target, setTarget] = useState(marketplaces[0]?.id ?? "");
+  // Un module importé modifié sur place se republie d’abord sur son marketplace d’origine.
+  const sameUrl = (left: string, right: string) =>
+    left.replace(/(\.git)?\/?$/, "") === right.replace(/(\.git)?\/?$/, "");
+  const origin = module.origin && !module.origin.detached ? module.origin.marketplace : null;
+  const [target, setTarget] = useState(
+    (origin ? marketplaces.find((candidate) => sameUrl(candidate.url, origin))?.id : undefined) ??
+      marketplaces[0]?.id ??
+      "",
+  );
   const [version, setVersion] = useState("");
   const [published, setPublished] = useState<string | null | undefined>(undefined);
   const [notes, setNotes] = useState("");
