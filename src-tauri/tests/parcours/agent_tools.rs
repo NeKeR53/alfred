@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 
 use crate::common::*;
 
+/// Page qui a un panneau de droite : elle publie l’élément choisi (`shell.publish`), le panneau ne vit qu’avec lui.
+const PAGE_WITH_SELECTION: &str = "import { shell } from \"@alfred/sdk\";\nimport { Page, PageSection } from \"socle-ui\";\n\nexport default function Vue() {\n  shell.publish(null);\n  return <Page><PageSection title=\"Vue\" /></Page>;\n}\n";
+
 /// Client de la CLI, tel que le binaire `alfred` l’envoie : `argv` en POST sur le pont, jeton dans `Authorization`.
 struct Agent<'a> {
     desk: &'a Desk,
@@ -113,7 +116,8 @@ async fn un_agent_construit_un_module_jusqu_au_check_vert() {
     assert!(check["pages"][0]["errors"][0]["message"].as_str().unwrap().contains("Import interdit"), "{check}");
     assert_eq!(check["functions"][0]["function"], json!("courses/ajouter"));
     std::fs::write(declared["file"].as_str().unwrap(), "export default async function ajouter(input: { nom: string }) {\n  return input;\n}\n").unwrap();
-    std::fs::write(placed["file"].as_str().unwrap(), PAGE).unwrap();
+    // La page a un panneau : elle publie l’article choisi, sans quoi `check` refuse le panneau.
+    std::fs::write(placed["file"].as_str().unwrap(), PAGE_WITH_SELECTION).unwrap();
 
     // Client, webhook et planification déclarés par l’agent ; l’une d’elles est mal écrite.
     let client = agent
