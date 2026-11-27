@@ -38,6 +38,7 @@ import {
   turnDelivery,
   turnSequences,
 } from "../Transcript";
+import { AgentQuestionCard } from "./AgentQuestionCard";
 import { agentQuestion, withoutAgentQuestion } from "./agentQuestions";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -104,6 +105,21 @@ describe("question de l’agent", () => {
       }),
     ).toBeUndefined();
     expect(agentQuestion(conversation([{ ...last, status: "error" }]), idle)).toBeUndefined();
+  });
+
+  it("lit la raison d’un choix, montrée sous lui dans la carte", () => {
+    const content = question(
+      '{"question":"À quoi sert la page ?","options":[{"label":"Suivre les builds (recommandé)","why":"Vous parlez d’échecs à surveiller."},"Lancer des builds",{"label":" "}]}',
+    );
+    const last = turn("t1", { items: [{ kind: "message", id: "m", content }] });
+    const asked = agentQuestion(conversation([last]), idle);
+    expect(asked).toEqual({
+      question: "À quoi sert la page ?",
+      options: ["Suivre les builds (recommandé)", "Lancer des builds"],
+      reasons: { "Suivre les builds (recommandé)": "Vous parlez d’échecs à surveiller." },
+    });
+    render(<AgentQuestionCard question={asked} onAnswer={() => undefined} onRespond={() => undefined} />);
+    expect(screen.getByText("Vous parlez d’échecs à surveiller.")).toBeTruthy();
   });
 
   it("lit aussi le bloc de OneApp et laisse un bloc invalide dans le texte", () => {

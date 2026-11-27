@@ -46,7 +46,11 @@ export function AgentQuestionCard({
       ) : (
         <ChoicePrompt
           question={text}
-          options={(question?.options ?? []).map((option) => ({ id: option, label: option }))}
+          options={(question?.options ?? []).map((option) => ({
+            id: option,
+            label: option,
+            description: question?.reasons?.[option],
+          }))}
           isDisabled={disabled}
           onChoose={(answer) => onAnswer("id" in answer ? answer.id : answer.text)}
         />

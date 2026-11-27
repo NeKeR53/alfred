@@ -157,10 +157,20 @@ mod tests {
             "7 bis. **Auto-revue visuelle, obligatoire avant de rendre la main.**",
             "`examples: true`",
             "`compareWith`",
+            "**Zones strictes, refusées par `check`**",
+            "**Le panneau de droite n’existe que s’il y a une sélection.**",
         ] {
             assert!(page.contains(expected), "page.md n’a pas « {expected} »");
         }
-        for expected in ["**Demande vague**", "**Un défaut raisonnable.**", "Jamais plus de deux."] {
+        for expected in [
+            "## 10. Le parcours de création d’une page",
+            "**questions, proposition, puis construction**",
+            "| La fraîcheur |",
+            "**Un défaut raisonnable.**",
+            "jamais plus de deux",
+            "\"why\":",
+            "Par défaut, il n’existe pas",
+        ] {
             assert!(PLACEMENT.contains(expected), "PLACEMENT.md n’a pas « {expected} »");
         }
         // Les composants cités existent dans la version installée.

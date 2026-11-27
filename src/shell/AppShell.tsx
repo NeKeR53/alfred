@@ -11,7 +11,7 @@
  * - Panneau de droite : le panneau déclaré par la page, ou la conversation d’agent qu’elle a lancée.
  */
 import { AppWindow, Bot, MoreHorizontal, Plus } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   type Action,
   ActionBar,
@@ -32,6 +32,7 @@ import type { CreatedSection, ResolvedPage, ResolvedSection } from "../lib/types
 import { accountName } from "./accountName";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
+import { onSelectionChange, selectionOf } from "./frameBridge";
 import { NamedIcon, SectionIcon } from "./icons";
 import { emptyKept, type KeptState, keepPage } from "./keptPages";
 import type { ZoneRow } from "./MenuZone";
@@ -96,12 +97,24 @@ function SpacePage({
       />
     );
   }
+  // Le panneau n’existe qu’avec un élément choisi dans une page qui marche : il ne montre jamais la configuration d’un
+  // compte, qui se fait dans la page.
+  if (kind === "panel") return <PageFrame page={page} kind={kind} host={host} view={view} shown={shown} />;
   // Tant qu’un service dont la page a besoin n’est pas prêt, la page d’attente remplace le cadre, qui n’est pas chargé.
   return (
-    <SetupGate module={page.module} uses={page.uses} compact={kind === "panel"}>
+    <SetupGate module={page.module} uses={page.uses}>
       <PageFrame page={page} kind={kind} host={host} view={view} shown={shown} />
     </SetupGate>
   );
+}
+
+/** Vrai quand la page a publié un élément choisi (`shell.publish`) : son panneau a de quoi s’afficher. */
+export function useHasSelection(page: string | undefined): boolean {
+  const subscribe = useCallback(
+    (changed: () => void) => onSelectionChange((published) => published === page && changed()),
+    [page],
+  );
+  return useSyncExternalStore(subscribe, () => (page ? selectionOf(page) != null : false));
 }
 
 /** Compteur lu par un lecteur d’écran : « 3 nouveautés ». */
@@ -247,7 +260,11 @@ export function useSectionFrame({
       (snapshot ? findPage(snapshot, openedView.page)?.page : undefined))
     : visible.find((candidate) => candidate.reference === activeId);
   const frameView = openedView ? { ...openedView, section: sectionId } : null;
-  const panel = page?.panel && !page.panel.hidden ? page.panel : null;
+  // Le panneau de droite n’existe que si la page en déclare un ET qu’un élément est choisi (publié par la page) ou
+  // ouvert dans un onglet. Sinon, ni colonne ni bouton : pas de « Sélectionnez… » dans un panneau vide.
+  const selected = useHasSelection(page?.reference);
+  const panel =
+    page?.panel && !page.panel.hidden && !page.panel.missing && (selected || openedView) ? page.panel : null;
   // La page attend un compte (le sien, ou à défaut celui de sa section) : ce qu’il faut faire, à sa place.
   const waiting = page?.waiting ?? (sectionWaiting && page?.perInstance !== null ? sectionWaiting : null);
   // Un agent lancé par la page prend la place de son panneau tant que sa conversation est ouverte.

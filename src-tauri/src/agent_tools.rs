@@ -238,6 +238,22 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 }
 
 /// Page de l’espace par sa référence : onglet, panneau de droite ou page des Réglages.
+/// Vrai si un fichier `.ts` ou `.tsx` du module publie une sélection pour le panneau (`shell.publish(`).
+fn module_publishes(dir: &std::path::Path) -> bool {
+    fn walk(dir: &std::path::Path, depth: usize) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else { return false };
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                return depth < 4 && path.file_name().is_some_and(|name| name != "node_modules") && walk(&path, depth + 1);
+            }
+            path.extension().is_some_and(|ext| ext == "ts" || ext == "tsx")
+                && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("shell.publish(") || text.contains("publish("))
+        })
+    }
+    walk(dir, 0)
+}
+
 pub(crate) fn find_page<'a>(snapshot: &'a Snapshot, reference: &str) -> Option<&'a crate::space::ResolvedPage> {
     snapshot
         .sections
@@ -1358,8 +1374,17 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     // Une page qui compile est relue contre DESIGN.md : chaque remarque est à corriger.
                     let file = space.page_file(&page.module, &page.id);
                     let found = crate::design_lint::lint_file(&file, placement);
-                    let (warnings, design): (Vec<_>, Vec<_>) =
+                    let (warnings, mut design): (Vec<_>, Vec<_>) =
                         found.into_iter().partition(|found| crate::design_lint::is_warning(&found.message));
+                    // Le panneau de droite n’existe qu’avec un élément choisi : une page qui en a un doit publier sa
+                    // sélection (`shell.publish`), sinon Alfred ne l’affiche jamais.
+                    if page.panel.is_some() && !module_publishes(&space.module_dir(&page.module)) {
+                        design.push(crate::transpile::Diagnostic {
+                            message: "Panneau de droite sans sélection : refusé. Alfred n’affiche le panneau que quand la page publie l’élément choisi (`shell.publish(élément)` à la sélection, `shell.publish(null)` quand plus rien n’est choisi ; SDK.md, section 8). Sans élément à montrer, retirer le panneau (`delete_page`) : il n’existe que si l’utilisateur le demande ou que la page a une sélection (PLACEMENT.md, section 2).".to_string(),
+                            line: Some(1),
+                            column: Some(1),
+                        });
+                    }
                     if !design.is_empty() {
                         pages.push(json!({ "page": page.reference, "design": design }));
                     }
@@ -2096,6 +2121,21 @@ mod tests {
             .unwrap();
         let checked = call(&state, "check", json!({})).await.unwrap();
         assert!(!checked["designWarnings"].to_string().contains("recette"), "{checked:#}");
+        // Un panneau de droite n’existe qu’avec une sélection : la page qui en a un doit la publier.
+        let panel = call(
+            &state,
+            "place_page",
+            json!({ "title": "Encaissement", "placement": { "kind": "panel", "page": placed["page"] } }),
+        )
+        .await
+        .unwrap();
+        std::fs::write(panel["file"].as_str().unwrap(), "import { Drawer } from \"socle-ui\";\nexport default function P() {\n  return <Drawer header={{ title: \"Encaissement\" }} sections={[]} />;\n}\n").unwrap();
+        let checked = call(&state, "check", json!({})).await.unwrap();
+        assert!(checked["pages"].to_string().contains("Panneau de droite sans sélection : refusé"), "{checked:#}");
+        std::fs::write(placed["file"].as_str().unwrap(), "// Recette : Dashboard\nimport { shell } from \"@alfred/sdk\";\nexport default function Page() {\n  shell.publish(null);\n  return null;\n}\n").unwrap();
+        let checked = call(&state, "check", json!({})).await.unwrap();
+        assert!(!checked["pages"].to_string().contains("Panneau de droite sans sélection"), "{checked:#}");
+        call(&state, "delete_page", json!({ "page": panel["page"] })).await.unwrap();
 
         // Client : celui de l’agent naît « à valider », relié à l’entrée du coffre qu’il a choisie.
         let banque = json!({

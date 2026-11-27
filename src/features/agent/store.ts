@@ -255,7 +255,7 @@ function instructions(spaceDir: string) {
     // Le séparateur du dossier est repris : un chemin Windows reste en barres inverses.
     `Avant de créer ou de modifier quoi que ce soit dans l’espace de travail, lis ${spaceDir}${spaceDir.includes("\\") ? "\\" : "/"}AGENTS.md et suis-le.`,
     "Les outils « alfred » servent à placer une page, vérifier qu’elle compile, lire ses erreurs et interroger la base.",
-    "Une page part de la recette de socle-ui la plus proche, choisit des composants riches adaptés aux données, affiche son interface avant ses données, et passe une auto-revue sur sa capture avant que tu rendes la main. Une demande vague reçoit une proposition concrète et une seule question, pas une série de questions.",
+    "Une page part de la recette de socle-ui la plus proche, choisit des composants riches adaptés aux données, affiche son interface avant ses données, et passe une auto-revue sur sa capture avant que tu rendes la main. Avant une nouvelle page, pose les questions qui manquent (but, données, actions, fraîcheur), une seule question à la fois avec ta recommandation, puis propose une structure et attends l’accord. Le contenu ne porte que le gabarit ; le panneau de droite n’existe que s’il y a une sélection.",
     "Réponds en français.",
   ].join("\n");
 }

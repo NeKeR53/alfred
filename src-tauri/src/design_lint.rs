@@ -184,6 +184,8 @@ struct Lint<'s> {
     socle: BTreeMap<String, String>,
     /// La page est placée dans les Réglages (`placement: { kind: "settings" }`).
     settings: bool,
+    /// Où la page est placée (zone principale, Réglages, panneau de droite).
+    placement: Placement,
     /// Éléments JSX qui entourent celui qu’on relit (nom Socle quand il vient de socle-ui).
     stack: Vec<String>,
     /// Profondeur des attributs où un `Button` est à sa place (pied de `Modal`, action d’`EmptyState`…).
@@ -225,6 +227,27 @@ fn attribute<'b, 'a>(opening: &'b JSXOpeningElement<'a>, wanted: &str) -> Option
         }
         _ => None,
     })
+}
+
+/// Texte écrit dans un élément JSX (ses enfants texte et ses chaînes), pour juger son libellé.
+fn element_text(source: &str, element: &JSXElement) -> String {
+    let mut text = String::new();
+    for child in &element.children {
+        match child {
+            JSXChild::Text(found) => text.push_str(found.value.as_str()),
+            JSXChild::ExpressionContainer(container) => {
+                let span = container.span;
+                text.push_str(source.get(span.start as usize..span.end as usize).unwrap_or_default().trim_matches(['{', '}', '"', '\'', '`', ' ']));
+            }
+            _ => {}
+        }
+    }
+    if let Some(label) = attribute(&element.opening_element, "label") {
+        if let Some(JSXAttributeValue::StringLiteral(value)) = &label.value {
+            text.push_str(value.value.as_str());
+        }
+    }
+    text
 }
 
 fn is_color(text: &str) -> bool {
@@ -376,14 +399,59 @@ impl Lint<'_> {
         {
             self.report(
                 start,
-                "Avertissement : `<Button>` posé dans la page. Un bouton n’a sa place qu’au pied d’une `Modal`, dans l’action d’un `EmptyState`, au pied d’une section de `Drawer` ou dans un `Popover`. Ailleurs, décrire une `Action` (`{ id, label, icon, onPress, primary }`) et la passer au gabarit de sa zone : `actions` de `ListPage`, `DetailPage`, `Page` ou `PageSection`, `rowActions`, `header.actions` du `Drawer` (PLACEMENT.md, section 6 ; DESIGN.md, règle 2).".to_string(),
+                "`<Button>` posé dans le contenu de la page : refusé. Un bouton n’a sa place qu’au pied d’une `Modal`, dans l’action d’un `EmptyState`, au pied d’une section de `Drawer` ou dans un `Popover`. Ailleurs, décrire une `Action` (`{ id, label, icon, onPress, primary }`) et la passer au gabarit de sa zone : `actions` de `ListPage`, `DetailPage`, `Page` ou `PageSection`, `rowActions`, `header.actions` du `Drawer` (PLACEMENT.md, section 6 ; DESIGN.md, règle 2).".to_string(),
             );
         }
         if name == "Tabs" && from_socle {
             self.report(
                 start,
-                "Avertissement : `<Tabs>` dans une page. Les onglets sont ceux de la barre du haut, dessinés par Alfred (spec Tabs, « Exclus » : pas d’onglets dans le contenu). Une vue de la section est un onglet fixe (`place_page` avec `{ \"kind\": \"tab\" }`), un élément ouvert un onglet fermable (`views.open`) ; un mode d’affichage ou une période, un `SegmentedControl` dans la `toolbar` de `Page` (PLACEMENT.md, section 5).".to_string(),
+                "`<Tabs>` dans le contenu de la page : refusé. Les onglets sont ceux de la barre du haut, dessinés par Alfred (spec Tabs, « Exclus » : pas d’onglets dans le contenu). Une vue de la section est un onglet fixe (`place_page` avec `{ \"kind\": \"tab\" }`), un élément ouvert un onglet fermable (`views.open`) ; un mode d’affichage ou une période, un `SegmentedControl` dans la `toolbar` de `Page` (PLACEMENT.md, section 5).".to_string(),
             );
+        }
+
+        // Zones strictes (PLACEMENT.md, section 2 ; layout-rules de socle-ui) : le contenu porte le gabarit, et rien
+        // d’autre. Le retour, le changement de page et les vues sont dans la barre du haut, l’élément choisi au panneau.
+        if from_socle
+            && matches!(name.as_str(), "Button" | "IconButton" | "Link")
+            && self.button_allowed == 0
+            && !self.stack.iter().any(|around| matches!(around.as_str(), "Popover" | "Modal" | "Dialog" | "DropdownMenu"))
+        {
+            let press = attribute(opening, "onPress")
+                .and_then(|found| self.source.get(found.span.start as usize..found.span.end as usize))
+                .unwrap_or_default();
+            let label = element_text(self.source, element);
+            let navigates = ["navigate(", "views.close(", "views.open(", "history.back", "openWindow("]
+                .iter()
+                .any(|call| press.contains(call));
+            let back = ["Retour", "Précédent", "Revenir", "←"].iter().any(|word| label.trim_start().starts_with(word));
+            if navigates || back {
+                self.report(
+                    start,
+                    format!(
+                        "Navigation dans le contenu : refusée (`<{name}>` qui {}). Le retour et le changement de page sont dans la barre du haut : `back` de `DetailPage`, les onglets de vues (`views.open`, onglets fixes), les entrées du menu. Un élément s’ouvre par `onOpen` du gabarit, une autre page par une action de l’en-tête ou de la barre du haut (PLACEMENT.md, section 5).",
+                        if back { "ramène en arrière" } else { "change de page ou de vue" }
+                    ),
+                );
+            }
+        }
+        if from_socle && self.placement == Placement::Page {
+            let inside = |names: &[&str]| self.stack.iter().any(|around| names.contains(&around.as_str()));
+            let in_overlay = inside(&["Drawer", "Modal", "Dialog", "Popover"]);
+            let in_block = inside(&["PageGrid", "PageSection", "Page"]);
+            if name == "PropertyRow" && !in_overlay {
+                self.report(
+                    start,
+                    "`<PropertyRow>` dans le contenu de la page : refusé. Les propriétés de l’élément choisi vont au panneau de droite (`Drawer`, `place_page` avec `{ \"kind\": \"panel\" }`), que la page nourrit par `shell.publish` (PLACEMENT.md, section 2 ; DESIGN.md, section 6).".to_string(),
+                );
+            }
+            if matches!(name.as_str(), "DetailPage" | "ListPage") && in_block {
+                self.report(
+                    start,
+                    format!(
+                        "`<{name}>` posée dans un bloc : refusé. Une liste et la fiche d’un élément ne vont pas côte à côte dans le contenu : la liste prend toute la page (`ListPage`), la fiche de l’élément choisi va au panneau de droite, l’élément ouvert en entier dans un onglet (`views.open` puis `DetailPage`) (recette `ListDetail`, PLACEMENT.md, section 2)."
+                    ),
+                );
+            }
         }
 
         if from_socle && matches!(name.as_str(), "Button" | "IconButton" | "Link") && attribute(opening, "onClick").is_some() {
@@ -432,6 +500,23 @@ impl Lint<'_> {
         }
     }
 
+    /// Un panneau de droite n’existe qu’avec un élément choisi : il n’attend rien et ne configure rien.
+    fn check_panel_wait(&mut self, offset: u32, text: &str) {
+        if self.placement != Placement::Panel {
+            return;
+        }
+        let lower = text.to_lowercase();
+        if ["sélectionnez", "selectionnez", "aucun élément sélectionné", "configurer un compte", "cliquez sur"]
+            .iter()
+            .any(|wait| lower.contains(wait))
+        {
+            self.report(
+                offset,
+                format!("Texte d’attente dans le panneau de droite : refusé (« {} »). Le panneau n’existe que quand un élément est choisi : Alfred ne l’affiche pas sans sélection. La configuration d’un compte se fait dans la page (PLACEMENT.md, section 2).", text.trim()),
+            );
+        }
+    }
+
     fn check_text(&mut self, offset: u32, text: &str) {
         if is_color(text) {
             self.report(
@@ -468,11 +553,13 @@ impl<'a> Visit<'a> for Lint<'_> {
 
     fn visit_string_literal(&mut self, literal: &StringLiteral<'a>) {
         self.check_text(literal.span.start, literal.value.as_str());
+        self.check_panel_wait(literal.span.start, literal.value.as_str());
     }
 
     fn visit_template_literal(&mut self, literal: &TemplateLiteral<'a>) {
         for quasi in &literal.quasis {
             self.check_text(quasi.span.start, quasi.value.raw.as_str());
+            self.check_panel_wait(quasi.span.start, quasi.value.raw.as_str());
         }
         walk::walk_template_literal(self, literal);
     }
@@ -531,6 +618,7 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
         uses_library,
         socle: BTreeMap::new(),
         settings,
+        placement,
         stack: Vec::new(),
         button_allowed: 0,
         rendered: BTreeSet::new(),
@@ -1425,9 +1513,75 @@ export default function P() {
 const pied = <Button onPress={go}>Hors JSX</Button>;
 "#;
         let found = messages(page);
-        let buttons: Vec<_> = found.iter().filter(|m| m.contains("`<Button>` posé dans la page")).collect();
+        let buttons: Vec<_> = found.iter().filter(|m| m.contains("`<Button>` posé dans le contenu de la page : refusé")).collect();
         assert_eq!(buttons.len(), 2, "{found:?}");
-        assert!(buttons[0].starts_with("7: Avertissement") && buttons[1].starts_with("10: Avertissement"), "{found:?}");
+        // Refusé : une erreur de `design`, plus un avertissement.
+        assert!(buttons[0].starts_with("7: `<Button>`") && buttons[1].starts_with("10: `<Button>`"), "{found:?}");
+        assert!(buttons.iter().all(|m| !is_warning(m.split_once(": ").unwrap().1)), "{found:?}");
+    }
+
+    #[test]
+    fn les_zones_sont_imposees_au_contenu() {
+        let page = r#"
+import { shell, views } from "@alfred/sdk";
+import { DetailPage, EmptyState, IconButton, Link, ListPage, Page, PageGrid, PageSection, PropertyRow, Button } from "socle-ui";
+export default function P() {
+  return (
+    <Page>
+      <Link onPress={() => shell.navigate("ventes/factures")}>Voir les factures</Link>
+      <IconButton icon={x} label="Retour à la liste" onPress={() => setOuvert(null)} />
+      <EmptyState title="Rien" action={<Button onPress={() => shell.navigate("reglages")}>Ajouter un compte</Button>} />
+      <PageGrid>
+        <ListPage title="Factures" rows={[]} columns={[]} />
+        <PageSection title="Fiche"><PropertyRow label="Montant" value="12 €" /></PageSection>
+        <DetailPage title="F-1" />
+      </PageGrid>
+      <Link href="https://jira.example">Ouvrir dans Jira</Link>
+    </Page>
+  );
+}
+"#;
+        let found = messages(page);
+        let at = |line: u32, text: &str| found.iter().any(|m| m.starts_with(&format!("{line}: ")) && m.contains(text));
+        assert!(at(7, "Navigation dans le contenu : refusée") && at(7, "change de page"), "{found:?}");
+        assert!(at(8, "Navigation dans le contenu : refusée") && at(8, "ramène en arrière"), "{found:?}");
+        assert!(at(11, "`<ListPage>` posée dans un bloc : refusé"), "{found:?}");
+        assert!(at(12, "`<PropertyRow>` dans le contenu de la page : refusé"), "{found:?}");
+        assert!(at(13, "`<DetailPage>` posée dans un bloc : refusé"), "{found:?}");
+        // L’action d’un état vide peut mener ailleurs ; un lien externe n’est pas une navigation dans Alfred.
+        assert!(!at(9, "Navigation") && !at(15, "Navigation"), "{found:?}");
+        assert!(found.iter().all(|m| !is_warning(m.split_once(": ").unwrap().1) || !m.contains("refusé")), "{found:?}");
+        // Le retour d’une `DetailPage` (`back`) et les propriétés dans un panneau restent permis.
+        let fiche = r#"
+import { DetailPage, Drawer, PropertyRow } from "socle-ui";
+export default function P() {
+  return <DetailPage title="F-1" back={{ label: "Factures", onPress: () => views.close() }} />;
+}
+"#;
+        assert!(messages(fiche).is_empty(), "{:?}", messages(fiche));
+        let panneau = r#"
+import { Drawer, PropertyRow } from "socle-ui";
+export default function P() {
+  return <Drawer header={{ title: "F-1" }} sections={[{ id: "a", title: "A", content: <PropertyRow label="Montant" value="12 €" /> }]} />;
+}
+"#;
+        let found = lint(panneau, Placement::Panel);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn un_panneau_n_attend_rien() {
+        let panneau = r#"
+import { Drawer } from "socle-ui";
+export default function P() {
+  if (!choisi) return <Drawer header={{ title: "Détail" }} empty={{ title: "Sélectionnez une facture" }} />;
+  return <Drawer header={{ title: `Facture ${choisi.id}` }} sections={[]} />;
+}
+"#;
+        let found: Vec<_> = lint(panneau, Placement::Panel).into_iter().map(|f| f.message).collect();
+        assert!(found.iter().any(|m| m.starts_with("Texte d’attente dans le panneau de droite : refusé") && m.contains("Sélectionnez une facture")), "{found:?}");
+        // Le même texte dans une page de la zone principale (un état vide) n’est pas relevé.
+        assert!(lint(panneau, Placement::Page).iter().all(|f| !f.message.contains("Texte d’attente")));
     }
 
     #[test]
@@ -1441,7 +1595,7 @@ export default function P() {
 }
 "#;
         let found = messages(page);
-        assert!(found.iter().any(|m| m.starts_with("6: Avertissement : `<Tabs>` dans une page") && m.contains("views.open")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("6: `<Tabs>` dans le contenu de la page : refusé") && m.contains("views.open")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("2: Avertissement : `useTopBarActions` dans une page qui rend une `ListPage`")), "{found:?}");
         let composee = r#"
 import { useTopBarActions } from "@alfred/sdk";

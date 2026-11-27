@@ -65,7 +65,8 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   const navigation = await findNavigation();
   await user.click(await within(navigation).findByRole("row", { name: "Suivi" }));
   const page = frameOf(await screen.findByTitle("Tâches"));
-  expect(await screen.findByTitle("Détail")).toBeInTheDocument();
+  // Par design, le panneau de droite n’existe pas tant que la page n’a rien choisi.
+  expect(screen.queryByTitle("Détail")).not.toBeInTheDocument();
 
   // Contexte : ce que la page sait d’elle-même, donné par la coquille.
   const context = await page.request("shell.context");
@@ -151,20 +152,11 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   await user.click(within(question).getByRole("button", { name: "Refuser" }));
   expect((await refused).error?.message).toMatch(/^Accès refusé/);
 
-  // Retour à la section : la page publie sa sélection, son panneau la reçoit ; elle lui écrit aussi.
+  // Retour à la section : la page publie sa sélection, son panneau apparaît et la reçoit ; elle lui écrit aussi.
   await user.click(within(navigation).getByRole("row", { name: "Suivi" }));
   const shown = frameOf(await screen.findByTitle("Tâches"));
-  const side = frameOf(await screen.findByTitle("Détail"));
   await shown.request("shell.publish", { selection: { tache: 42 } });
-  await waitFor(() =>
-    expect(side.received()).toContainEqual(
-      expect.objectContaining({
-        kind: "event",
-        name: "context",
-        payload: expect.objectContaining({ selection: { tache: 42 } }),
-      }),
-    ),
-  );
+  const side = frameOf(await screen.findByTitle("Détail"));
   expect((await side.request("shell.context")).result).toMatchObject({
     kind: "panel",
     reference: "suivi/detail",

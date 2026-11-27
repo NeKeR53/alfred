@@ -8,6 +8,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
+import { handleFrameRequest } from "../src/shell/frameBridge";
 import { FakeBackend, frameKeyOf } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
 import { getNavigation } from "./support/shell";
@@ -70,6 +71,11 @@ it("de l’accueil à un espace de travail construit : navigation, Réglages, pa
       .map((tab) => tab.textContent),
   ).toEqual(["Tâches", "Échéances"]);
   expect(await screen.findByTitle("Tâches")).toHaveAttribute("sandbox", "allow-scripts allow-forms");
+  // Rien de choisi : ni panneau de droite, ni son bouton. Une sélection publiée par la page le fait apparaître.
+  expect(screen.queryByTitle("Détail")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /panneau de détail/i })).not.toBeInTheDocument();
+  const taches = { kind: "page", module: "suivi", reference: "suivi/taches" } as const;
+  await act(() => handleFrameRequest(taches, "shell.publish", { selection: { tache: 1 } }));
   expect(await screen.findByTitle("Détail")).toBeInTheDocument();
   const page = screen.getByTitle("Tâches") as HTMLIFrameElement;
   expect(page.src).toContain("module=suivi");

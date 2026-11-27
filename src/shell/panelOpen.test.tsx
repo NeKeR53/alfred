@@ -41,7 +41,7 @@ function page(id: string, title: string): ResolvedPage {
   };
 }
 
-const detailPanel = page("detail", "Détail du ticket");
+const detailPanel = { ...page("detail", "Détail du ticket"), missing: false };
 const pages = [{ ...page("tickets", "Tickets"), panel: detailPanel }, page("tableau", "Tableau")];
 const ticketPage = { ...page("ticket", "Ticket"), hidden: true };
 const SECTION = "jira/travail";
@@ -108,11 +108,28 @@ function Harness() {
 }
 
 /** Une page ouvre ou ferme son panneau (`shell.setPanelVisible`, par exemple au clic sur un élément) : l’AppShell suit. */
-it("une page ouvre et ferme son panneau de détail", async () => {
+it("une page ouvre et ferme son panneau de détail, une fois un élément choisi", async () => {
   render(<Harness />);
   const detail = () => screen.queryByRole("complementary", { name: "Détail" });
+  await act(() => handleFrameRequest(tickets, "shell.publish", { selection: { key: "T-1" } }));
   await act(() => handleFrameRequest(tickets, "shell.setPanelVisible", { visible: false }));
   await waitFor(() => expect(detail()).toBeNull());
   await act(() => handleFrameRequest(tickets, "shell.setPanelVisible", { visible: true }));
   await waitFor(() => expect(detail()).not.toBeNull());
+  await act(() => handleFrameRequest(tickets, "shell.publish", { selection: null }));
+});
+
+/** Par design, le panneau n’existe pas : sans élément choisi, ni colonne ni bouton, même si la page l’ouvre. */
+it("sans élément choisi, la page n’a ni panneau ni bouton de panneau", async () => {
+  render(<Harness />);
+  const detail = () => screen.queryByRole("complementary", { name: "Détail" });
+  await act(() => handleFrameRequest(tickets, "shell.setPanelVisible", { visible: true }));
+  expect(detail()).toBeNull();
+  expect(screen.queryByRole("button", { name: /panneau|détail/i })).toBeNull();
+  await act(() => handleFrameRequest(tickets, "shell.publish", { selection: { key: "T-2" } }));
+  await waitFor(() => expect(detail()).not.toBeNull());
+  // La sélection retirée, le panneau disparaît avec son bouton.
+  await act(() => handleFrameRequest(tickets, "shell.publish", { selection: null }));
+  await waitFor(() => expect(detail()).toBeNull());
+  expect(screen.queryByText(/Configurer un compte|Sélectionnez/)).toBeNull();
 });

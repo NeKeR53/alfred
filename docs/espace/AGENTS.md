@@ -86,7 +86,7 @@ Avant d’agir, lis le guide de ta tâche, une seule fois, dans `docs/alfred/gui
 
 Pour seulement lire des données de l’espace, aucun guide : `alfred api`, puis `alfred run`.
 
-**Une page réussie** (`page.md`) : demande vague, une proposition et une seule question ; `// Recette : Dashboard` ; composants riches ; UI d’abord ; auto-revue (`selfReview`).
+**Une page réussie** (`page.md`) : une seule question à la fois, puis une proposition ; `// Recette : Dashboard` ; zones strictes ; UI d’abord ; auto-revue (`selfReview`).
 
 **Préférences de design.** Quand l’utilisateur corrige un rendu, écris la règle dans `docs/preferences-design.md` (format dans `page.md`) et relis ce fichier avant chaque page (`designPreferences`).
 

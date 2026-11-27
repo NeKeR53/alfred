@@ -4,9 +4,15 @@ import type { Conversation, ConversationRuntime, Turn } from "../model";
  * Question bloquante de l’agent, reprise de `agentQuestions` de OneApp : l’agent termine sa réponse par un bloc de
  * code ```alfred-question contenant {"question":"…","options":["…"]}. Le bloc est retiré du texte affiché et la
  * question est posée à part, au-dessus de la saisie. Les blocs ```oneapp-question sont lus de la même façon.
+ * Un choix peut porter sa raison (`{"label":"…","why":"…"}`) : c’est ainsi que l’agent guide la création d’une page, une question à la fois, avec son choix recommandé et pourquoi.
  */
 
-export type AgentQuestion = { question: string; options: string[] };
+export type AgentQuestion = {
+  question: string;
+  options: string[];
+  /** Raison de chaque choix qui en donne une, par libellé. */
+  reasons?: Record<string, string>;
+};
 
 const questionBlock = /\n?```(?:alfred|oneapp)-question[ \t]*\n([\s\S]*?)\n```[ \t]*$/;
 
@@ -14,13 +20,23 @@ function parseQuestion(raw: string): AgentQuestion | undefined {
   try {
     const value = JSON.parse(raw) as { question?: unknown; options?: unknown };
     if (typeof value.question !== "string" || !value.question.trim()) return undefined;
+    const reasons: Record<string, string> = {};
     const options = Array.isArray(value.options)
       ? value.options
-          .filter((option): option is string => typeof option === "string" && Boolean(option.trim()))
-          .map((option) => option.trim().slice(0, 200))
+          .map((option) => {
+            if (typeof option === "string") return option.trim().slice(0, 200);
+            if (!option || typeof option !== "object") return "";
+            const { label, why } = option as { label?: unknown; why?: unknown };
+            const text = typeof label === "string" ? label.trim().slice(0, 200) : "";
+            if (text && typeof why === "string" && why.trim()) reasons[text] = why.trim().slice(0, 300);
+            return text;
+          })
+          .filter(Boolean)
           .slice(0, 4)
       : [];
-    return { question: value.question.trim().slice(0, 1000), options };
+    const question: AgentQuestion = { question: value.question.trim().slice(0, 1000), options };
+    if (Object.keys(reasons).length) question.reasons = reasons;
+    return question;
   } catch {
     return undefined;
   }

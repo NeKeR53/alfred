@@ -145,7 +145,7 @@ Une page ne met jamais une liste et un détail côte à côte : la liste dans le
 - `Page` composée : ce qui demande une action d’abord (en retard, à traiter), puis la synthèse, puis le reste (D-217) ; les blocs courts de même rang côte à côte dans une `PageGrid`, les informations clés sur un écran (D-403, D-404).
 - `FormPage` et `useOpenForm` : les champs obligatoires d’abord, regroupés par sens (`Fieldset`, sections) ; la largeur du champ annonce la longueur attendue (D-133).
 
-**Le panneau de droite.** C’est la vue détail de ce que l’utilisateur a sélectionné dans le contenu. Une page a un panneau au plus. Il rend un `Drawer` seul, à sa racine : l’en-tête de l’élément sélectionné, puis ses propriétés en sections (DESIGN.md, section 6). Une source citée y montre son passage, puis son document (`DocumentViewer` dans le `content` d’une section). Une propriété se modifie par l’action de sa ligne : un menu de choix, un interrupteur (`Toggle`, D-137) ou une fenêtre (`useOpenForm`). Le panneau ne contient jamais une liste d’éléments, un formulaire ni le contenu principal (layout-rules, `detail`).
+**Le panneau de droite.** C’est la vue détail de ce que l’utilisateur a sélectionné dans le contenu. Par défaut, il n’existe pas : Alfred ne le montre, avec son bouton, que quand la page a publié un élément choisi (`shell.publish`). Ne le crée que pour une page qui a une sélection, ou à la demande de l’utilisateur. Jamais de « Sélectionnez… » ni de configuration de compte dedans (`check` les refuse). Une page a un panneau au plus. Il rend un `Drawer` seul, à sa racine : l’en-tête de l’élément sélectionné, puis ses propriétés en sections (DESIGN.md, section 6). Une source citée y montre son passage, puis son document (`DocumentViewer` dans le `content` d’une section). Une propriété se modifie par l’action de sa ligne : un menu de choix, un interrupteur (`Toggle`, D-137) ou une fenêtre (`useOpenForm`). Le panneau ne contient jamais une liste d’éléments, un formulaire ni le contenu principal (layout-rules, `detail`).
 
 ## 6. Les actions
 
@@ -226,31 +226,45 @@ J’hésite sur la place des avoirs.
 ````
 
 - La question nomme les deux places, en mots de l’utilisateur (« un onglet de Factures »), jamais en noms de composants.
-- De deux à quatre options, la première est ta recommandation, marquée « (recommandé) ». L’utilisateur peut aussi répondre autre chose.
+- De deux à quatre options, la première est ta recommandation, marquée « (recommandé) ». Une option peut dire pourquoi elle convient : `{"label":"Un onglet de Factures (recommandé)","why":"Les avoirs se lisent avec les factures."}` ; la carte montre cette raison sous l’option. L’utilisateur peut aussi répondre autre chose.
 - Une seule question par réponse, celle du bloc : pas d’autre question dans le texte. Une autre idée (une notification, une page de plus) attend la réponse, et se propose ensuite.
 - Puis termine ton tour. Ne construis rien de ce qui dépend de la réponse.
 - Dans une conversation lancée par une page ou dans une tâche déléguée, personne ne répond : prends ta recommandation, et écris la question et ton choix dans ta réponse (ou dans `questions` du contrat de retour).
 
 **Ce que tu ne fais jamais.** Inventer une zone, un composant, une option d’un composant, ou une imitation en HTML de ce que Socle n’a pas. Si l’utilisateur confirme un besoin que Socle n’a pas, dis-lui que les composants d’Alfred ne le prévoient pas encore, construis la solution la plus proche que Socle permet, et dis laquelle.
 
-## 10. Proposer avant de construire
+## 10. Le parcours de création d’une page
 
-Pour un nouveau module, une nouvelle entrée du menu, ou un changement de structure (nouvel onglet fixe, panneau, section du menu), propose d’abord la disposition, puis construis après l’accord. L’utilisateur voit la page avant que tu écrives les données, les fonctions et les connecteurs : il corrige tôt, et tu ne refais rien.
+Une nouvelle page, un nouveau module, une nouvelle entrée du menu ou un changement de structure (onglet fixe, panneau, section du menu) suivent toujours ce parcours : **questions, proposition, puis construction**. L’utilisateur choisit avant que tu écrives les données, les fonctions et les connecteurs : il corrige tôt, et tu ne refais rien. Après son accord, tu restes autonome : secrets, clients, accès et placement, sans rien lui laisser à faire (AGENTS.md).
 
-1. **Le plan, en quelques phrases.** Dis où va chaque chose, avec les mots de l’utilisateur : « Une entrée Factures dans le menu, avec deux onglets : la liste des factures et les relances. Une facture choisie montre ses montants et son état à droite ; un double-clic l’ouvre dans un onglet. “Nouvelle facture” en haut de la liste. » Pas de tableau ni de nom de composant : ta réponse est lue à voix haute.
-2. **La maquette.** Place les pages (`place_page`) et écris-les à partir de la recette la plus proche (`// Recette : …` en première ligne), avec les vrais gabarits de Socle et des données d’exemple réalistes écrites dans le fichier (une constante `EXEMPLE` : assez de lignes pour remplir l’écran, des états variés), sans migration, sans fonction, sans client. Passe l’auto-revue (`docs/alfred/guides/page.md`, étapes 7 bis et 7 ter) avant de la montrer. `check`, puis `page_screenshot` de chaque page : l’utilisateur voit la capture dans la conversation, et la page dans son menu.
-3. **La question.** Termine par un bloc `alfred-question` : `{"question":"Je construis les factures ainsi ?","options":["Oui, construis (recommandé)","Changer la disposition","Changer les informations montrées"]}`. Termine ton tour.
-4. **Après l’accord**, remplace les données d’exemple par les vraies (migration, fonctions, connecteur) et livre une page entièrement fonctionnelle (`docs/alfred/guides/page.md`, « Créer une page »). Après une correction, reprends la maquette et redemande. Si l’utilisateur renonce, retire les pages (`delete_page`).
+**1. Les questions.** Avant toute ligne de code, éclaircis ces quatre points, dans cet ordre :
 
-**Demande vague** (« fais-moi une page pour suivre mes builds », « un truc pour mes factures ») : ne pose pas de série de questions. Guide l’utilisateur par une proposition concrète :
+| Point | Ce que tu cherches | Exemple de question |
+|---|---|---|
+| Le but | Suivre, traiter une file, chercher, saisir, comparer | « À quoi doit servir la page ? » |
+| Les données et le compte | Quels éléments, d’où, quel compte du service | « Quels builds dois-je montrer ? » |
+| Les actions | Ce que l’utilisateur fait depuis la page | « Que voulez-vous faire depuis la page ? » |
+| La fraîcheur | À quel rythme les données doivent se relire | « À quel rythme dois-je relire les builds ? » |
 
-- **Une structure, ou deux variantes.** Déduis de la demande et des données ce que la page montre, et propose-le en deux ou trois phrases : la recette, les blocs et leur contenu, les actions. Quand deux formes se valent vraiment, propose-en deux, chacune en une phrase : « A : un tableau de bord, quatre chiffres clés, puis les builds en échec et la file d’attente côte à côte. B : la liste des builds, filtrable, avec le détail à droite. » Jamais plus de deux.
-- **La maquette de ta recommandation** (étape 2), avec des données d’exemple réalistes, et sa capture.
-- **Une seule question**, en carte de choix : `{"question":"Je construis le tableau de bord ainsi ?","options":["Oui, construis (recommandé)","Plutôt la liste avec le détail à droite","Changer les informations montrées"]}`.
-- **Un défaut raisonnable.** Ta recommandation est le défaut. Si l’utilisateur répond sans trancher (« vas-y », « comme tu veux », une autre demande), construis-la. Ne repose pas la même question.
-- Une demande précise (« une liste de mes factures avec leur montant et leur état ») se construit sans proposer : la page doit marcher sans rien demander à l’utilisateur (AGENTS.md).
+- **Saute ce qui est déjà dit.** Une demande précise (« la liste de mes factures impayées, avec relance en un clic ») répond déjà aux quatre : passe à la proposition. Ne pose une question que si sa réponse change la page.
+- **Une question par réponse**, en carte de choix (section 9) : deux à quatre options, la première est ta recommandation, marquée « (recommandé) », et chaque option dit en une ligne pourquoi elle convient (`why`). Puis termine ton tour.
+- **Quatre questions au plus** pour une page. Ce que tu peux lire toi-même (comptes existants, tables, données d’un service) ne se demande pas : lis-le (`space_overview`, `alfred api`, `alfred run`).
 
-Ne propose pas pour une correction, une petite addition dont la place est évidente (une colonne, une action, un champ), ou quand l’utilisateur a dit de construire directement. Dans une conversation lancée par une page ou dans une tâche déléguée, construis directement.
+```alfred-question
+{"question":"À quoi doit servir la page des builds ?","options":[{"label":"Surveiller les échecs (recommandé)","why":"Vous parlez de builds cassés : un coup d’œil, les échecs en haut."},{"label":"Lancer et relancer des builds","why":"Une liste avec les actions sur chaque job."},{"label":"Comparer les durées","why":"Un tableau de bord avec l’évolution."}]}
+```
+
+**2. La proposition.** Quand les points sont clairs, propose une structure concrète, ou deux variantes quand deux formes se valent vraiment (jamais plus de deux) :
+
+- **Le plan, en quelques phrases**, avec les mots de l’utilisateur : la recette de départ, ce que montre chaque zone (barre du haut, contenu, panneau s’il y a une sélection), les actions et leur place. « Une entrée Builds dans le menu. En haut, quatre chiffres : en échec, en cours, en file, réussis aujourd’hui. Dessous, les jobs suivis côte à côte, chacun avec son état, sa dernière exécution et “Relancer”. Un job choisi montre ses derniers builds à droite. » Pas de tableau ni de nom de composant : ta réponse est lue à voix haute.
+- **La maquette de ta recommandation.** Place les pages (`place_page`) et écris-les à partir de la recette (`// Recette : …` en première ligne), avec les vrais gabarits de Socle et des données d’exemple réalistes écrites dans le fichier (une constante `EXEMPLE` : assez de lignes pour remplir l’écran, des états variés), sans migration, sans fonction, sans client. Passe l’auto-revue (`docs/alfred/guides/page.md`, étapes 7 bis et 7 ter), puis `page_screenshot` : l’utilisateur voit la capture dans la conversation, et la page dans son menu.
+- **La validation**, en carte de choix : `{"question":"Je construis la page des builds ainsi ?","options":[{"label":"Oui, construis (recommandé)","why":"Les échecs se voient d’un coup d’œil."},{"label":"Plutôt la variante B","why":"La liste des builds, filtrable, détail à droite."},{"label":"Changer les informations montrées"}]}`. Termine ton tour.
+
+**3. La construction**, après l’accord : remplace les données d’exemple par les vraies (migration, fonctions, connecteur) et livre une page entièrement fonctionnelle (`docs/alfred/guides/page.md`, « Créer une page »). Après une correction, reprends la maquette et redemande. Si l’utilisateur renonce, retire les pages (`delete_page`).
+
+**Un défaut raisonnable.** Ta recommandation est toujours le défaut. Si l’utilisateur répond sans trancher (« vas-y », « comme tu veux », « je ne sais pas »), prends-la et passe à l’étape suivante. Ne repose jamais la même question.
+
+Pas de parcours pour une correction, une petite addition dont la place est évidente (une colonne, une action, un champ), ou quand l’utilisateur a dit de construire directement. Dans une conversation lancée par une page ou dans une tâche déléguée, personne ne répond : prends tes recommandations, construis, et écris-les dans ta réponse.
 
 ## 11. Exemples complets
 
@@ -285,7 +299,7 @@ return (
     selectedId={choisi}
     onSelect={(row) => { setChoisi(row?.id ?? null); void shell.publish(row?.key ?? null); }}
     onOpen={(t) => void views.open({ id: t.key, label: `${t.key} ${t.summary}`, params: { key: t.key } })}
-    isLoading={tickets.loading} hasError={Boolean(tickets.error) && !tickets.data} onRetry={tickets.refresh}
+    isLoading={tickets.refreshing} hasError={Boolean(tickets.error) && !tickets.data} onRetry={tickets.refresh}
     onActionError={notifyActionError}
   />
 );
