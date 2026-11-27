@@ -20,7 +20,8 @@ async fn construire_reorganiser_supprimer_puis_annuler() {
     let menu = json!({ "kind": "menu", "label": "Suivi", "icon": "list-checks", "color": "blue" });
     let taches = desk.invoke("space.placePage", json!({ "title": "Tâches", "icon": "list-checks", "target": menu })).await;
     assert_eq!((taches["module"].as_str(), taches["reference"].as_str()), (Some("suivi"), Some("suivi/taches")));
-    assert!(taches["file"].as_str().unwrap().ends_with("modules/suivi/pages/taches.tsx"));
+    // Chemin natif (des `\\` sous Windows) : on compare ses composants, pas son texte.
+    assert!(std::path::Path::new(taches["file"].as_str().unwrap()).ends_with("modules/suivi/pages/taches.tsx"));
     let tab = json!({ "kind": "tab", "section": "suivi/principal" });
     let echeances = desk.invoke("space.placePage", json!({ "title": "Échéances", "target": tab })).await;
     assert_eq!(echeances["reference"], json!("suivi/echeances"));
