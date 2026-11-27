@@ -14,7 +14,7 @@ concurrency:
 env:
   # socle-ui est installé en local par yalc (`.yalc/` n'est pas dans le dépôt). La CI le reconstruit depuis
   # NeKeR53/app-design, à ce commit. À mettre à jour à chaque nouvelle installation yalc de socle-ui.
-  SOCLE_UI_REF: 864a48dced4e8c1abf676370d7c7561179e104dd # socle-ui 1.26.0
+  SOCLE_UI_REF: d0dca0bf3d2aa09ca501dfc17e2c6b9adf940d2c # socle-ui 1.27.0
 
 jobs:
   socle-ui:

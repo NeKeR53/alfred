@@ -22,7 +22,7 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 6. **Aucun doublon de la coquille.** Le nom de la page, les onglets, la cloche, le bouton du panneau et la navigation sont dessinés par Alfred. Une page ne rend ni `AppShell`, ni `Sidebar`, ni `NotificationCenter`, ni `SettingsPage`.
 7. **Le sens passe par le type et le texte.** Un état est une valeur `status` avec son libellé et son ton (`StatusTone`), jamais une couleur.
 8. **Français.** Les textes affichés sont en français, avec la typographie française (section 13).
-9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique, une carte, un calendrier, un éditeur riche) passe par une librairie npm (section 8). Pour tout autre manque, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).
+9. **Un manque se compose.** Si aucun gabarit ne convient tel quel, composer des composants de socle-ui dans une `Page`. Ce que socle-ui ne fait pas du tout (un graphique autre que barres, lignes ou petite courbe, une carte, un calendrier, un éditeur riche) passe par une librairie npm (section 8). Pour tout autre manque, demander à l’utilisateur avant de construire (PLACEMENT.md, section 9).
 10. **Les noms actuels.** Écrire le nom actuel de chaque composant (catalogue, section 8). Un ancien nom (`Switch`, `TextField`, `Dialog`…) marche encore, mais `check` avertit avec le nouveau nom. Un nom qui n’existe pas dans socle-ui est une erreur de `check`.
 11. **Vue d’ensemble d’abord.** Une zone de l’écran, une responsabilité. Répartir avant de composer (section 2) : un usage par onglet, les actions dans la barre du haut ou l’en-tête, l’élément sélectionné au panneau, l’élément ouvert en onglet. Le contenu prend toute la largeur et tient ses informations clés sur un écran. Les blocs courts et de même rang se rangent côte à côte (`PageGrid`) : jamais une longue pile de `PageSection` (sauf une page des Réglages, qui se lit de haut en bas, section 7). Une colonne étroite centrée sert seulement à lire un texte (`width="text"`, `DetailPage`) ou à converser (`ChatPage`). Règle de Socle : layout-rules, « Vue d’ensemble d’abord » (D-404).
 
@@ -127,7 +127,7 @@ Une recette est écrite pour la coquille de socle-ui (`AppShell`). Dans Alfred, 
 | Le compteur d’une entrée de la sidebar (`count`) | `badge.set(total)` |
 | Des fichiers déposés sur la page (`onDropFiles`) | `useFileDrop({ accept, onFiles })` de `@alfred/sdk`, et `isDraggingFiles` sur le gabarit : Alfred capte le dépôt, copie les fichiers dans ceux du module et les remet à `onFiles`. Jamais `onDropFiles` : le cadre ne voit pas le dépôt |
 | `AppShell`, `Sidebar` | Dessinés par Alfred : une page ne les rend jamais (règle 6) |
-| Le graphique d’un tableau de bord | Une librairie npm et les tokens (section 8) |
+| Le graphique d’un tableau de bord | `Chart` (barres, lignes) ; la tendance d’un chiffre clé : `Card variant="metric"` avec `trend` |
 
 Une page qui ne ressemble à aucune recette suit « Répartir avant de composer ».
 
@@ -365,7 +365,7 @@ Composer ces composants dans une `Page`, une `PageSection`, une `PageGrid`, une 
 
 <!-- socle-ui:catalogue:début : généré par scripts/gen-design-components.mjs depuis node_modules/socle-ui/ai/AI.md ; ne pas modifier à la main -->
 
-### Catalogue de socle-ui 1.26.0
+### Catalogue de socle-ui 1.27.0
 
 Tous les composants, motifs et gabarits de la version installée, avec leur rôle. Avant d’employer l’un d’eux, lire sa spec : ses options, ce qu’il exclut, son contenu.
 
@@ -380,6 +380,7 @@ Tous les composants, motifs et gabarits de la version installée, avec leur rôl
 | `Badge` | Composant | Montrer l'état d'un élément : « Terminé », « En retard », « À venir ». `Badge` montre un point et un libellé ; `BadgeDot` montre le point seul, nommé, quand le libellé ne tient pas. | `docs/alfred/socle/specs/Badge.md` |
 | `Button` | Composant | Bouton avec un libellé, et une icône facultative. Il déclenche une action : envoyer un formulaire, confirmer, annuler, réessayer, exporter. | `docs/alfred/socle/specs/Button.md` |
 | `Card` | Composant | `Card` regroupe un contenu court qui forme un tout : un résumé, un chiffre clé, un élément d'une grille. Elle peut être entièrement cliquable quand elle a une seule action principale. | `docs/alfred/socle/specs/Card.md` |
+| `Chart` | Composant | `Chart` dessine un graphique simple aux tokens du socle : des barres pour comparer des quantités, des lignes pour suivre une évolution. `Sparkline` dessine la petite courbe d'un chiffre clé, sans axe (dans `Card variant="metric"`, option `trend`). | `docs/alfred/socle/specs/Chart.md` |
 | `ChatComposer` | Composant | Zone de saisie d'un chat avec un agent : écrire un message, citer des ressources (`@fichier`, `/commande`), joindre des fichiers, mettre un message en file pendant une réponse, arrêter l'agent. | `docs/alfred/socle/specs/ChatComposer.md` |
 | `ChatTranscript` | Composant | Zone défilante d'une conversation avec un agent : colonne centrée de 760 px qui reçoit les messages (`ChatMessage`) et le travail de l'agent (`ActivityGroup`, `WorkStatus`, `WorkSummary`). Elle suit la réponse en cours tant que l'utilisateur est en bas (D-375). | `docs/alfred/socle/specs/ChatTranscript.md` |
 | `Checkbox` | Composant | `Checkbox` : une valeur oui/non qui fait partie d'un formulaire qu'on envoie, ou une acceptation (« J'ai lu les conditions »). `CheckboxGroup` : plusieurs choix indépendants dans une liste courte, sous un libellé commun. | `docs/alfred/socle/specs/Checkbox.md` |
@@ -470,7 +471,7 @@ const { canal } = useAsync(() => functions.call("docker/console", { conteneur })
 
 **Document.** `const fichier = await files.read(id)` rend `{ info, data }` (base64) ; décoder en octets et passer `data={octets} name={fichier.info.name} loadPdf={loadPdf}`.
 
-**Librairies npm.** Seulement pour ce que socle-ui ne fait pas : graphique, carte, calendrier, éditeur de texte riche. `check` refuse une librairie que socle-ui couvre (xterm, diff, éditeur ou rendu Markdown, pdf.js, grille, arbre, toasts, React Aria, Radix…) et nomme le composant à prendre. Une librairie reçoit un conteneur (`<div ref={ref} />`, seul HTML admis) et les tokens de socle-ui pour ses couleurs, lus avec `getComputedStyle(document.documentElement).getPropertyValue("--accent")` : `--fg`, `--fg-2`, `--fg-3`, `--surface`, `--surface-side`, `--line`, `--accent`, `--success`, `--warning`, `--danger`. Elle se redessine quand `usePageContext()?.theme` change.
+**Librairies npm.** Seulement pour ce que socle-ui ne fait pas : graphique autre que barres, lignes et petite courbe (`Chart`, `Sparkline`), carte, calendrier, éditeur de texte riche. `check` refuse une librairie que socle-ui couvre (xterm, diff, éditeur ou rendu Markdown, pdf.js, grille, arbre, toasts, React Aria, Radix…) et nomme le composant à prendre. Une librairie reçoit un conteneur (`<div ref={ref} />`, seul HTML admis) et les tokens de socle-ui pour ses couleurs, lus avec `getComputedStyle(document.documentElement).getPropertyValue("--accent")` : `--fg`, `--fg-2`, `--fg-3`, `--surface`, `--surface-side`, `--line`, `--accent`, `--success`, `--warning`, `--danger`. Elle se redessine quand `usePageContext()?.theme` change.
 
 ## 9. Saisies et modales
 
