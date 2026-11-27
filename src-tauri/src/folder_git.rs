@@ -892,13 +892,14 @@ mod tests {
         let mine = dir.join("produit").join("api");
         let theirs = dir.join("collegue");
         std::fs::create_dir_all(mine.parent().unwrap()).unwrap();
-        sh(dir, &["clone", "-q", remote.to_str().unwrap(), theirs.to_str().unwrap()]);
+        // Fins de ligne fixes : le parcours ne dépend pas du `core.autocrlf` du poste (vrai sur les machines Windows).
+        sh(dir, &["clone", "-q", "--config", "core.autocrlf=false", remote.to_str().unwrap(), theirs.to_str().unwrap()]);
         std::fs::create_dir_all(theirs.join(".oneapp")).unwrap();
         std::fs::write(theirs.join(".oneapp/produit.json"), "{\"nom\":\"Alpha\"}\n").unwrap();
         sh(&theirs, &["add", "-A"]);
         sh(&theirs, &["commit", "-q", "-m", "premier"]);
         sh(&theirs, &["push", "-q", "origin", "main"]);
-        sh(dir, &["clone", "-q", remote.to_str().unwrap(), mine.to_str().unwrap()]);
+        sh(dir, &["clone", "-q", "--config", "core.autocrlf=false", remote.to_str().unwrap(), mine.to_str().unwrap()]);
         (remote, mine, theirs)
     }
 
