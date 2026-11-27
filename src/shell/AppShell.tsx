@@ -33,6 +33,7 @@ import { accountName } from "./accountName";
 import { badgeText, sectionCount, startBadges, useBadges } from "./badges";
 import { EXAMPLE_HINT, setExampleMode, useExampleMode } from "./examples";
 import { NamedIcon, SectionIcon } from "./icons";
+import { emptyKept, type KeptState, keepPage } from "./keptPages";
 import type { ZoneRow } from "./MenuZone";
 import {
   entryTarget,
@@ -76,12 +77,15 @@ function SpacePage({
   kind,
   host,
   view,
+  shown = true,
 }: {
   page: ResolvedPage;
   kind: "page" | "panel";
   host?: string;
   /** Onglet ouvert sur un élément que montre la page (`usePageContext().view`). */
   view?: (OpenedView & { section: string }) | null;
+  /** Faux : page gardée montée, masquée (`keptPages.ts`). */
+  shown?: boolean;
 }) {
   if (page.missing) {
     return (
@@ -95,7 +99,7 @@ function SpacePage({
   // Tant qu’un service dont la page a besoin n’est pas prêt, la page d’attente remplace le cadre, qui n’est pas chargé.
   return (
     <SetupGate module={page.module} uses={page.uses} compact={kind === "panel"}>
-      <PageFrame page={page} kind={kind} host={host} view={view} />
+      <PageFrame page={page} kind={kind} host={host} view={view} shown={shown} />
     </SetupGate>
   );
 }
@@ -256,6 +260,15 @@ export function useSectionFrame({
   const described = useTopBarActionStore((state) => (page ? state.actions[page.reference] : undefined));
   const main = useRef<HTMLDivElement>(null);
   const live = Boolean(page && !builtInTab && !waiting);
+  // Les pages visitées restent montées, masquées : y revenir les retrouve telles quelles (`keptPages.ts`).
+  const keptRef = useRef<KeptState>(emptyKept());
+  const shownKey = live && page ? (activeId ?? page.reference) : null;
+  const kept = keepPage(
+    keptRef.current,
+    live && page && shownKey ? { key: shownKey, page, view: frameView } : null,
+    snapshot,
+  );
+  keptRef.current = kept;
 
   const actions: Action[] = live && page ? [...frameActions(page.reference, described)] : [];
   // Renommer, déplacer… visent la page de l’onglet fixe, pas un onglet ouvert sur un élément.
@@ -282,9 +295,7 @@ export function useSectionFrame({
         </Button>
       }
     />
-  ) : page ? (
-    <SpacePage key={activeId ?? page.reference} page={page} kind="page" view={frameView} />
-  ) : (
+  ) : page ? null : (
     <EmptyState title="Section vide" description="Demandez-moi d’y créer une page." />
   );
 
@@ -352,7 +363,12 @@ export function useSectionFrame({
             <ExampleNotice module={page.module} />
           </div>
         ) : null}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
+        {kept.pages.map((entry) => (
+          <div key={entry.key} hidden={entry.key !== shownKey} className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <SpacePage page={entry.page} kind="page" view={entry.view} shown={entry.key === shownKey} />
+          </div>
+        ))}
+        {body ? <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div> : null}
       </div>
     ),
   };
@@ -789,7 +805,11 @@ export function AppShell({
         detailExpandable
         history={false}
       >
-        {onAgent ? agentPage : shownSection ? frame.main : null}
+        {onAgent ? agentPage : null}
+        {/* Toujours monté : les pages gardées d’une section survivent à un passage par l’Agent. */}
+        <div hidden={onAgent || !shownSection} className="contents">
+          {frame.main}
+        </div>
       </SocleShell>
       {settingsOpen ? (
         <SettingsModal

@@ -22,12 +22,17 @@ type Posted = {
   payload?: unknown;
 };
 
+/**
+ * Numéro des requêtes, commun à tous les cadres : une page gardée montée garde son document, et `frameOf` la reprend
+ * avec le même espion (ses réponses déjà reçues comprises).
+ */
+let sequence = 0;
+
 /** Un cadre vu de la coquille : ce qu’il envoie, ce qu’il reçoit. */
 function frameOf(element: HTMLElement) {
   const target = (element as HTMLIFrameElement).contentWindow;
   if (!target) throw new Error("cadre sans fenêtre");
   const posted = vi.spyOn(target, "postMessage");
-  let sequence = 0;
   const received = () => posted.mock.calls.map(([message]) => message as Posted);
   const send = (message: Record<string, unknown>, source: Window = target) =>
     act(() => {
@@ -36,7 +41,7 @@ function frameOf(element: HTMLElement) {
   return {
     received,
     event: (name: string, payload: unknown = null) => send({ kind: "event", name, payload }),
-    /** Une requête dont le cadre n’attend pas la réponse (il est démonté par ce qu’elle déclenche). */
+    /** Une requête dont le cadre n’attend pas la réponse (ce qu’elle déclenche peut le démonter ou le masquer). */
     fire: (method: string, params: Record<string, unknown> = {}) =>
       send({ kind: "request", id: `r${++sequence}`, method, params }),
     /** Une requête du SDK ; résout avec la réponse que la coquille poste au cadre. */
@@ -205,7 +210,7 @@ it("le pont des cadres : identité fixée par la coquille, données, accords, fo
   expect(await screen.findByRole("dialog", { name: "Palette de commandes" })).toBeVisible();
   await user.keyboard("{Escape}");
   expect((await shown.request("inconnu")).error?.message).toBe("Appel inconnu : inconnu");
-  // La page qui en ouvre une autre est démontée par la navigation : sa réponse n’a plus de destinataire.
+  // La page qui en ouvre une autre est masquée par la navigation (gardée montée) ; sa réponse n’est pas attendue.
   await shown.fire("shell.navigate", { reference: "notes/carnet" });
   await waitFor(() => expect(screen.getByRole("heading", { name: "Notes" })).toBeVisible());
   expect(backend.unknown, "commandes absentes du faux backend").toEqual([]);

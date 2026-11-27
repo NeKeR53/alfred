@@ -30,6 +30,7 @@ interface Target {
   ready: boolean;
   readyAt: number;
   hidden: boolean;
+  parked: () => boolean;
   /** Le cadre montre des données d’exemple. */
   examples: boolean;
   /** Jeton du cadre invisible chargé pour une capture : deux captures de la même page ne se confondent pas. */
@@ -74,6 +75,8 @@ export function registerSnapshotTarget(
   frame: () => HTMLIFrameElement | null = () => null,
   examples = false,
   token?: string,
+  /** Cadre gardé monté mais masqué : il n’est pas à l’écran, une capture en charge un autre. */
+  parked: () => boolean = () => false,
 ) {
   const target: Target = {
     reference,
@@ -82,6 +85,7 @@ export function registerSnapshotTarget(
     ready: false,
     readyAt: 0,
     hidden,
+    parked,
     examples,
     ...(token ? { token } : {}),
     inflight: 0,
@@ -246,7 +250,10 @@ async function askFrame(
   // En données d’exemple, la page affichée ne sert que si elle les montre déjà ; sinon un cadre invisible les charge.
   const visible = options.viewport
     ? undefined
-    : [...targets].find((target) => target.reference === reference && !target.hidden && (!examples || target.examples));
+    : [...targets].find(
+        (target) =>
+          target.reference === reference && !target.hidden && !target.parked() && (!examples || target.examples),
+      );
   let token: string | undefined;
   let target = visible;
   try {
@@ -318,7 +325,7 @@ function frameImage(answer: Record<string, unknown>) {
 
 /** Cadre affiché dans l’élément `<iframe>` donné, s’il est inscrit. */
 function targetOf(frame: HTMLIFrameElement): Target | undefined {
-  return [...targets].find((target) => !target.hidden && target.frame() === frame);
+  return [...targets].find((target) => !target.hidden && !target.parked() && target.frame() === frame);
 }
 
 /** Image de la partie visible d’un cadre affiché, désigné par son `<iframe>` (capture de toute la fenêtre). */

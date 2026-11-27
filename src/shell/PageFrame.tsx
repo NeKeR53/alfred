@@ -34,6 +34,7 @@ export function PageFrame({
   token,
   examples: forced = false,
   view = null,
+  shown = true,
 }: {
   page: ResolvedPage;
   kind: "page" | "panel";
@@ -46,6 +47,8 @@ export function PageFrame({
   token?: string;
   /** Montrer les données d’exemple même si le module n’est pas réglé ainsi (capture demandée par l’agent). */
   examples?: boolean;
+  /** Faux : page gardée montée mais masquée ; elle n’est pas « affichée » pour une capture de l’agent. */
+  shown?: boolean;
 }) {
   const info = useShell((state) => state.info);
   const revision = useShell((state) => state.revision);
@@ -54,6 +57,8 @@ export function PageFrame({
   const theme = useShell((state) => state.theme);
   const accent = useShell((state) => state.snapshot?.accent ?? null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
   const examples = useExampleMode(page.module) || forced;
   // Les comptes changent d’identité (pas de valeur) à chaque snapshot : le cadre suit leur valeur, en chaîne.
   const accountsKey = JSON.stringify(page.accounts ?? {});
@@ -134,6 +139,7 @@ export function PageFrame({
       () => frame.current,
       identity.examples === true,
       token,
+      () => !shownRef.current,
     );
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || !isFrameMessage(event.data)) return;
