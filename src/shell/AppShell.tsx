@@ -364,7 +364,12 @@ export function useSectionFrame({
           </div>
         ) : null}
         {kept.pages.map((entry) => (
-          <div key={entry.key} hidden={entry.key !== shownKey} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          // L’espace dans la clé : une page de même nom dans un autre espace est un autre cadre.
+          <div
+            key={`${kept.space}\u0000${entry.key}`}
+            hidden={entry.key !== shownKey}
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+          >
             <SpacePage page={entry.page} kind="page" view={entry.view} shown={entry.key === shownKey} />
           </div>
         ))}

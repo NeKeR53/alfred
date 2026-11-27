@@ -1,34 +1,104 @@
 /** État de configuration des modules, relu à chaque changement des services, du coffre ou de l’espace. */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { onNativeEvent } from "../../lib/native";
 import type { Uses } from "../../lib/types";
+import { useShell } from "../../shell/store";
 import { getSetup, type ModuleSetup, type SetupStep } from "./api";
 
 /**
- * `listen: false` : l’écran relit lui-même l’état quand ses services changent (`load`), sans s’abonner aux
- * événements une seconde fois.
+ * État lu, commun à tous les écrans (pages, leur page d’attente, Réglages) : une seule lecture à la fois, et une
+ * seule par changement, quel que soit le nombre de pages ouvertes. Rangé par espace : celui d’un autre espace ne
+ * s’affiche jamais.
  */
-export function useModuleSetup({ listen = true }: { listen?: boolean } = {}) {
-  const [modules, setModules] = useState<ModuleSetup[]>();
-  const load = useCallback(async () => {
-    try {
-      setModules(await getSetup());
-    } catch {
-      // Pas d’espace ouvert ou backend indisponible : rien à signaler, les écrans gardent leur état (aucun module
-      // connu à la première lecture, pour que les pages s’affichent quand même).
-      setModules((current) => current ?? []);
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-    if (!listen) return;
+let shared: { space: string | null; modules: ModuleSetup[] } | undefined;
+const subscribers = new Set<() => void>();
+let inflight: Promise<void> | null = null;
+/** Une lecture demandée pendant une autre : elle repart une fois, à la fin de celle en cours. */
+let again = false;
+let listeners = 0;
+let stopEvents: (() => void) | null = null;
+
+const currentSpace = () => useShell.getState().snapshot?.path ?? null;
+
+function publish() {
+  for (const notify of subscribers) notify();
+}
+
+function loadShared(): Promise<void> {
+  if (inflight) {
+    again = true;
+    return inflight;
+  }
+  const space = currentSpace();
+  inflight = getSetup()
+    .then(
+      (modules) => {
+        shared = { space, modules };
+      },
+      () => {
+        // Pas d’espace ouvert ou backend indisponible : rien à signaler, les écrans gardent leur état (aucun module
+        // connu à la première lecture, pour que les pages s’affichent quand même).
+        if (!shared || shared.space !== space) shared = { space, modules: [] };
+      },
+    )
+    .finally(() => {
+      inflight = null;
+      publish();
+      if (again) {
+        again = false;
+        void loadShared();
+      }
+    });
+  return inflight;
+}
+
+/** Les événements qui changent la configuration, écoutés une seule fois tant qu’un écran les suit. */
+function follow(): () => void {
+  listeners += 1;
+  if (listeners === 1) {
     const stops = ["clients:changed", "vault:changed", "space:changed"].map((event) =>
-      onNativeEvent(event, () => void load()),
+      onNativeEvent(event, () => void loadShared()),
     );
-    return () => {
+    stopEvents = () => {
       for (const stop of stops) stop();
     };
-  }, [listen, load]);
+  }
+  return () => {
+    listeners -= 1;
+    if (listeners === 0) {
+      stopEvents?.();
+      stopEvents = null;
+    }
+  };
+}
+
+function subscribe(notify: () => void) {
+  subscribers.add(notify);
+  return () => {
+    subscribers.delete(notify);
+  };
+}
+
+/** Pour les tests : oublie l’état lu. */
+export function resetModuleSetup() {
+  shared = undefined;
+  inflight = null;
+  again = false;
+}
+
+/**
+ * `listen: false` : l’écran relit lui-même l’état quand ses services changent (`load`), sans s’abonner aux
+ * événements. L’état déjà lu s’affiche tout de suite ; une relecture part en arrière-plan à l’ouverture de l’écran.
+ */
+export function useModuleSetup({ listen = true }: { listen?: boolean } = {}) {
+  const space = useShell((state) => state.snapshot?.path ?? null);
+  const read = useSyncExternalStore(subscribe, () => shared);
+  const modules = read && read.space === space ? read.modules : undefined;
+  const load = useCallback(() => loadShared(), []);
+  useEffect(() => {
+    void loadShared();
+    return listen ? follow() : undefined;
+  }, [listen]);
   const of = useCallback((module: string) => modules?.find((item) => item.module === module), [modules]);
   return { modules, load, of };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReadyServicesReload } from "../features/setup/useModuleSetup";
 import { frameBase, onNativeEvent } from "../lib/native";
 import type { ResolvedPage } from "../lib/types";
@@ -20,7 +20,27 @@ import { registerEntryActions } from "./menuZones";
 import { registerSnapshotTarget } from "./pageSnapshot";
 import { useShell } from "./store";
 import { onTopBarAction } from "./topBarActions";
-import { onTopBarQuery } from "./topBarSearchStore";
+import { onTopBarQuery, topBarQueryOf } from "./topBarSearchStore";
+
+let frameSequence = 0;
+/** Cadres de page montés, par page : une page peut en avoir deux (sa liste, et un onglet ouvert sur un élément). */
+const mountedPages = new Map<string, number>();
+
+/**
+ * Ce qu’une page montre dans la coquille (barre du haut, sélection) : seul le cadre affiché le montre. Celui d’un cadre
+ * masqué est retenu, et rejoué quand il réapparaît ; un autre cadre de la même page ne l’écrase donc jamais.
+ */
+const PRESENTED: Record<string, string> = {
+  "shell.actions.set": "actions",
+  "shell.search.declare": "search",
+  "shell.search.remove": "search",
+  "shell.publish": "selection",
+};
+/** Gestes d’une page qui n’ont de sens qu’affichée : un cadre masqué les fait sans effet. */
+const SHOWN_ONLY = new Set(["shell.search.set", "shell.setPanelVisible", "menu.takeActions"]);
+
+const isChangeMessage = (message: unknown) =>
+  typeof message === "object" && message !== null && (message as { alfred?: unknown }).alfred === "changed";
 
 /**
  * Affiche une page ou un panneau de l’espace dans un cadre isolé : origine opaque, aucun réseau, et pour seul
@@ -51,7 +71,11 @@ export function PageFrame({
   shown?: boolean;
 }) {
   const info = useShell((state) => state.info);
-  const revision = useShell((state) => state.revision);
+  // Le code du module a changé (l’agent l’a réécrit) : ses pages se rechargent, et seulement elles. Le menu réordonné,
+  // une section créée, un autre module écrit ne rechargent aucune page. Sans empreinte (ancien backend), la révision.
+  const revision = useShell(
+    (state) => state.snapshot?.modules.find((module) => module.id === page.module)?.code ?? String(state.revision),
+  );
   // Un service de la page devient prêt (compte ajouté, connecté, testé) : la page se recharge d’elle-même.
   const ready = useReadyServicesReload(page.module, page.uses, !capture);
   const theme = useShell((state) => state.theme);
@@ -63,38 +87,57 @@ export function PageFrame({
   // Les comptes changent d’identité (pas de valeur) à chaque snapshot : le cadre suit leur valeur, en chaîne.
   const accountsKey = JSON.stringify(page.accounts ?? {});
   const viewJson = view ? JSON.stringify(view) : "";
-  const identity = useMemo<FrameIdentity>(
-    () => ({
-      kind,
-      module: page.module,
-      reference: page.reference,
-      host,
-      instance: page.instance ?? undefined,
-      ...(accountsKey !== "{}" ? { accounts: JSON.parse(accountsKey) as Record<string, string> } : {}),
-      ...(examples ? { examples: true } : {}),
-      ...(capture ? { capture: true } : {}),
-      ...(viewJson ? { view: JSON.parse(viewJson) as FrameIdentity["view"] } : {}),
-    }),
-    [kind, page.module, page.reference, host, page.instance, accountsKey, examples, capture, viewJson],
-  );
-
-  // Fichiers déposés depuis le système sur la page (`useFileDrop`) : la coquille sait où est son cadre, et quelle
-  // identité il a ; elle peut changer (onglet renommé) sans que son document change.
-  const identityRef = useRef(identity);
-  identityRef.current = identity;
+  // Identité du cadre : un seul objet tout au long de sa vie, mis à jour sur place. Un onglet renommé, un compte
+  // changé ne la remplacent pas : ses états suivis, ses flux et ses objets Python restent à lui.
+  const frameId = useRef("");
+  if (!frameId.current) frameId.current = String(++frameSequence);
+  const identityKey = JSON.stringify([
+    kind,
+    page.module,
+    page.reference,
+    host,
+    page.instance,
+    accountsKey,
+    examples,
+    capture,
+    viewJson,
+  ]);
+  const identityRef = useRef<FrameIdentity | null>(null);
+  const next: FrameIdentity = {
+    kind,
+    module: page.module,
+    reference: page.reference,
+    host,
+    instance: page.instance ?? undefined,
+    frame: frameId.current,
+    ...(accountsKey !== "{}" ? { accounts: JSON.parse(accountsKey) as Record<string, string> } : {}),
+    ...(examples ? { examples: true } : {}),
+    ...(capture ? { capture: true } : {}),
+    ...(viewJson ? { view: JSON.parse(viewJson) as FrameIdentity["view"] } : {}),
+  };
+  if (!identityRef.current) identityRef.current = next;
+  else {
+    const current = identityRef.current as unknown as Record<string, unknown>;
+    for (const field of Object.keys(current)) if (!(field in next)) delete current[field];
+    Object.assign(current, next);
+  }
+  const identity = identityRef.current;
+  const post = useCallback((message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*"), []);
+  /** Ce que la page a montré dans la coquille, rejoué quand elle réapparaît (`PRESENTED`). */
+  const presented = useRef(new Map<string, { method: string; params: Record<string, unknown> }>());
   const fileDrop = useRef<DropFrameHandle | null>(null);
   useEffect(() => {
     if (capture) return;
     const registered = registerDropFrame(
       () => frame.current,
-      () => identityRef.current,
+      () => identity,
     );
     fileDrop.current = registered;
     return () => {
       registered.dispose();
       if (fileDrop.current === registered) fileDrop.current = null;
     };
-  }, [capture]);
+  }, [capture, identity]);
 
   // Le thème de départ évite un éclair clair/sombre ; les changements suivants passent par un message.
   const initialTheme = useRef({ theme, accent });
@@ -130,8 +173,46 @@ export function PageFrame({
     return `${frameBase(info.pageBase)}/host/page?${query}`;
   }, [info, moduleKey, page.module, page.id, kind, revision, ready, examples, capture]);
 
+  // Ressources du document du cadre (états suivis, barre du haut, flux, objets Python) : libérées quand ce document
+  // part (nouvelle adresse, cadre démonté), jamais quand seule son identité change.
   useEffect(() => {
-    const post = (message: FrameMessage) => frame.current?.contentWindow?.postMessage(message, "*");
+    if (capture || !source) return;
+    const reference = identity.reference;
+    if (kind === "page") mountedPages.set(reference, (mountedPages.get(reference) ?? 0) + 1);
+    return () => {
+      const others = kind === "page" ? (mountedPages.get(reference) ?? 1) - 1 : 0;
+      if (kind === "page") {
+        if (others > 0) mountedPages.set(reference, others);
+        else mountedPages.delete(reference);
+      }
+      presented.current.clear();
+      // Un cadre masqué ne retire pas ce que montre un autre cadre de la même page, affiché.
+      releaseFrame(identity, shownRef.current || others === 0);
+    };
+  }, [source, capture, kind, identity]);
+
+  // Le cadre réapparaît : il remontre ce qu’il montrait, et lit ce qui a changé pendant qu’il était masqué.
+  const wasShown = useRef(shown);
+  useEffect(() => {
+    const appeared = shown && !wasShown.current;
+    wasShown.current = shown;
+    if (!appeared || capture || kind !== "page") return;
+    for (const { method, params } of presented.current.values())
+      void handleFrameRequest(identity, method, params, () => undefined).catch(() => undefined);
+    if (presented.current.get("search")?.method === "shell.search.declare")
+      post({
+        alfred: ALFRED_MESSAGE,
+        kind: "event",
+        name: "search",
+        payload: { query: topBarQueryOf(identity.reference) },
+      });
+    post({ alfred: ALFRED_MESSAGE, kind: "event", name: "context", payload: frameContext(identity) });
+    // Une action d’une entrée du menu arrivée pendant qu’il était masqué : la page la lit maintenant.
+    post({ alfred: ALFRED_MESSAGE, kind: "event", name: "menuEntryAction", payload: null });
+  }, [shown, capture, kind, identity, post]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `identityKey` réinscrit le cadre quand son identité change.
+  useEffect(() => {
     const snapshot = registerSnapshotTarget(
       identity.reference,
       post,
@@ -166,6 +247,21 @@ export function PageFrame({
       }
       if (message.kind !== "request") return;
       const params = (message.params ?? {}) as Record<string, unknown>;
+      if (kind === "page" && !capture) {
+        const slot = PRESENTED[message.method];
+        if (slot) presented.current.set(slot, { method: message.method, params });
+        // Masqué : ce qu’il montrerait est retenu (rejoué à son retour), ses gestes d’affichage sont sans effet.
+        if (!shownRef.current && (slot || SHOWN_ONLY.has(message.method))) {
+          const result =
+            message.method === "shell.search.declare"
+              ? { query: topBarQueryOf(identity.reference) }
+              : message.method === "menu.takeActions"
+                ? []
+                : null;
+          post({ alfred: ALFRED_MESSAGE, kind: "response", id: message.id, result });
+          return;
+        }
+      }
       const started = Date.now();
       // L’examen d’une page attend la fin de ses requêtes : la page affiche alors ses données.
       snapshot.busy(1);
@@ -220,8 +316,11 @@ export function PageFrame({
     // Action d’une entrée de la zone du menu de la page : la page la lit (`useMenuEntryAction`).
     const stopEntryActions =
       kind === "page" && !capture
-        ? registerEntryActions(identity.reference, () =>
-            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "menuEntryAction", payload: null }),
+        ? registerEntryActions(
+            identity.reference,
+            () =>
+              shownRef.current &&
+              post({ alfred: ALFRED_MESSAGE, kind: "event", name: "menuEntryAction", payload: null }),
           )
         : () => undefined;
     // Des données du module ont changé hors de la page (partage en équipe) : la page relit ce qu’elle affiche.
@@ -243,22 +342,29 @@ export function PageFrame({
     // Frappe dans la recherche de la barre du haut : la page la reçoit (`useTopBarSearch`).
     const stopSearch =
       kind === "page" && !capture
-        ? onTopBarQuery(identity.reference, (query) =>
-            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "search", payload: { query } }),
+        ? onTopBarQuery(
+            identity.reference,
+            (query) =>
+              shownRef.current && post({ alfred: ALFRED_MESSAGE, kind: "event", name: "search", payload: { query } }),
           )
         : () => undefined;
     // Action choisie dans la barre du haut : la page l’exécute (`useTopBarActions`).
     const stopActions =
       kind === "page" && !capture
-        ? onTopBarAction(identity.reference, (id) =>
-            post({ alfred: ALFRED_MESSAGE, kind: "event", name: "topBarAction", payload: { id } }),
+        ? onTopBarAction(
+            identity.reference,
+            (id) =>
+              shownRef.current &&
+              post({ alfred: ALFRED_MESSAGE, kind: "event", name: "topBarAction", payload: { id } }),
           )
         : () => undefined;
     const stopPeer = capture
       ? () => undefined
-      : registerPeer(identity, (message) =>
-          post({ alfred: ALFRED_MESSAGE, kind: "event", name: "peer", payload: message }),
-        );
+      : registerPeer(identity, (message) => {
+          // Masqué, il ne reçoit que l’annonce d’une écriture (ses données se relisent en arrière-plan).
+          if (!shownRef.current && !isChangeMessage(message)) return;
+          post({ alfred: ALFRED_MESSAGE, kind: "event", name: "peer", payload: message });
+        });
     return () => {
       snapshot.dispose();
       window.removeEventListener("message", onMessage);
@@ -270,9 +376,8 @@ export function PageFrame({
       stopSelection();
       stopTheme();
       stopEntryActions();
-      if (!capture) releaseFrame(identity);
     };
-  }, [identity, capture, kind, token]);
+  }, [identity, identityKey, capture, kind, token, post]);
 
   if (!source) return null;
   return (

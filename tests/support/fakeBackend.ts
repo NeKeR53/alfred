@@ -36,6 +36,8 @@ export interface FakeModule {
   sections: Array<{ id: string; label: string; icon?: string; color?: string }>;
   pages: FakePage[];
   functions: Array<{ id: string; description: string; tool?: boolean }>;
+  /** Empreinte du code (`ModuleSummary.code`) : la changer recharge les pages du module. */
+  code?: string;
 }
 
 interface SpaceState {
@@ -277,6 +279,7 @@ export class FakeBackend {
         clients: [],
         webhooks: [],
         schedules: [],
+        code: module.code ?? "1",
       })),
       functions,
       bindings: {},

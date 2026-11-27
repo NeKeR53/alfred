@@ -53,7 +53,16 @@ export interface FrameIdentity {
    * porte : `usePageContext().view`.
    */
   view?: OpenedView & { section: string };
+  /**
+   * Numéro du cadre, fixé par la coquille : deux cadres de la même page (sa liste, un onglet ouvert sur un élément)
+   * gardent chacun leurs flux et leurs objets Python.
+   */
+  frame?: string;
 }
+
+/** Détenteur des flux et des objets Python d’un cadre : lui seul, copie de page et numéro de cadre compris. */
+const holderOf = (identity: FrameIdentity) =>
+  `${identity.kind}:${identity.reference}${identity.frame ? `#${identity.frame}` : ""}`;
 
 /** Référence déclarée de la page (son modèle), sans le suffixe de sa copie (`module/page@recette`). */
 export function declaredReference(identity: FrameIdentity): string {
@@ -335,11 +344,12 @@ const MAX_WATCHES = 200;
 export type FramePush = (name: string, payload: unknown) => void;
 
 /** Un cadre qui disparaît (changement d’onglet, fermeture) ne laisse pas le micro ouvert derrière lui. */
-export function releaseFrame(identity: FrameIdentity) {
+export function releaseFrame(identity: FrameIdentity, presentation = true) {
   // Ses abonnements aux états partagés se ferment avec lui.
   for (const watch of watches.get(identity)?.values() ?? []) watch.unsubscribe();
   watches.delete(identity);
-  if (identity.kind === "page" && !identity.capture) {
+  // `presentation` faux : un autre cadre de la même page, affiché, garde la barre du haut.
+  if (identity.kind === "page" && !identity.capture && presentation) {
     removeTopBarSearch(identity.reference);
     setTopBarActions(identity.reference, []);
   }
@@ -688,11 +698,11 @@ export async function handleFrameRequest(
     case "channels.read":
       return invoke("frame.channels.read", {
         ...pick(params, ["channel", "after", "wait"]),
-        holder: `${identity.kind}:${identity.reference}`,
+        holder: holderOf(identity),
         subject,
       });
     case "channels.release":
-      return invoke("frame.channels.release", { holder: `${identity.kind}:${identity.reference}`, subject });
+      return invoke("frame.channels.release", { holder: holderOf(identity), subject });
     case "channels.write":
       return invoke("frame.channels.write", { ...pick(params, ["channel", "text", "data"]), subject });
     case "channels.close":
@@ -701,7 +711,7 @@ export async function handleFrameRequest(
     case "python.create":
       return invoke("frame.python.create", {
         ...pick(params, ["class", "args", "timeout"]),
-        holder: `${identity.kind}:${identity.reference}`,
+        holder: holderOf(identity),
         subject,
       });
     case "python.call":
@@ -718,7 +728,7 @@ export async function handleFrameRequest(
     case "python.status":
       return invoke("frame.python.status", { subject });
     case "python.release":
-      return invoke("frame.python.release", { holder: `${identity.kind}:${identity.reference}`, subject });
+      return invoke("frame.python.release", { holder: holderOf(identity), subject });
     case "files.save":
       return invoke("frame.files.save", { ...pick(params, ["name", "data", "text", "mime"]), subject });
     case "files.list":

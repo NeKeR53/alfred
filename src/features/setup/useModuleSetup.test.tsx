@@ -5,7 +5,7 @@ vi.mock("../../lib/native");
 
 import { invoke, onNativeEvent } from "../../lib/native";
 import type { SetupStep } from "./api";
-import { useReadyServicesReload } from "./useModuleSetup";
+import { useModuleSetup, useReadyServicesReload } from "./useModuleSetup";
 
 let states: Record<string, SetupStep["state"]>;
 const listeners = new Map<string, Set<() => void>>();
@@ -70,4 +70,27 @@ it("recharge la page quand un service dont elle dépend devient prêt, pas pour 
   states.gmail = "ready";
   act(changed);
   await waitFor(() => expect(result.current).toBe(2));
+});
+
+it("plusieurs pages ouvertes : une seule lecture de la configuration par changement", async () => {
+  vi.mocked(invoke).mockClear();
+  const reads = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === "modules.setup").length;
+  // Six pages gardées, chacune avec sa page d’attente et son rechargement : douze écrans qui suivent l’état.
+  for (let page = 0; page < 6; page++) {
+    renderHook(() => useModuleSetup());
+    renderHook(() => useReadyServicesReload("boite", { clients: ["gmail"] }));
+  }
+  const first = renderHook(() => useModuleSetup());
+  await waitFor(() => expect(first.result.current.modules).toBeDefined());
+  const opened = reads();
+  expect(opened).toBeLessThanOrEqual(2);
+
+  states.gmail = "ready";
+  act(changed);
+  await waitFor(() => expect(reads()).toBe(opened + 1));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(reads()).toBe(opened + 1);
+  // Un écran ouvert ensuite montre tout de suite l’état déjà lu.
+  const late = renderHook(() => useModuleSetup());
+  expect(late.result.current.modules).toHaveLength(1);
 });

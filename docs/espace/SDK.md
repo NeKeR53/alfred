@@ -220,13 +220,14 @@ export default function NotesPage() {
 ```ts
 function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>): {
   data: Data | undefined;
-  error: Error | undefined;
-  loading: boolean;
+  error: Error | undefined;   // dernier chargement en échec ; `data` garde les données précédentes
+  loading: boolean;           // rien à montrer : premier chargement, ou `deps` changées
+  refreshing: boolean;        // chargement en cours, relecture en arrière-plan comprise
   reload: () => void;
 };
 ```
 
-`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
+`load` s’exécute au montage, à chaque changement de `deps` et à chaque `reload()`. `data` reste `undefined` jusqu’au premier succès, puis garde sa valeur pendant un rechargement. Une relecture des mêmes données (`reload()`, `announceChange()`, données changées ailleurs) se fait en arrière-plan : `loading` reste faux, la page reste affichée, sans écran de chargement. Passe `loading` à `isLoading` des gabarits ; n’affiche jamais un chargement sur `refreshing`. Une page quittée reste ouverte en arrière-plan : y revenir la montre telle qu’on l’a laissée, sans rien relire. Trois états à couvrir : erreur, premier chargement, données (liste vide comprise). Après une écriture, appelle `reload()`. `useAsync` se relance aussi seul quand l’autre cadre de la page appelle `announceChange()`, et quand les données du module changent ailleurs. Exemples complets : DESIGN.md, section 14.
 
 ### Les données d’un service : les états partagés
 
@@ -953,7 +954,7 @@ interface PageContext {
 
 Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, charge l’objet avec `useAsync` et le décrit dans un `Drawer`. Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections du `Drawer` mémorisent leur repli par leur `id`.
 
-`usePageState(clé, initial)` retient une petite valeur JSON (vue, onglet, élément ouvert) quand on quitte la page, et la rend au retour, tant qu’Alfred est ouvert.
+Quitter une page ne la ferme pas : Alfred garde ouvertes les dernières pages affichées, la liste d’une page et l’onglet d’un de ses éléments compris. Y revenir la montre telle qu’on l’a laissée (état React, défilement, données chargées), sans rien écrire dans la page. `usePageState(clé, initial)` retient en plus une petite valeur JSON (vue, onglet, élément ouvert) pour une page qu’Alfred a dû fermer (au-delà des dernières pages, ou rechargée parce que son code a changé), et la rend au retour, tant qu’Alfred est ouvert.
 
 Un lien vers le web s’ouvre par `shell.openExternal(url)` (une `Action`, ou une valeur de type `url` ou `email`, qui le fait seule). La première ouverture vers un hôte demande l’accord de l’utilisateur (mémorisé pour la page) ; l’adresse fait au plus 2 048 caractères et ne contient pas d’identifiants. Ouvre un lien sur un clic, jamais au chargement.
 

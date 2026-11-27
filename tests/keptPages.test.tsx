@@ -3,11 +3,12 @@
  * Son cadre n’est ni démonté ni rechargé ; il est seulement masqué.
  */
 import "./support/dom";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
 import { App } from "../src/App";
 import type { ResolvedPage, Snapshot } from "../src/lib/types";
+import { ALFRED_MESSAGE } from "../src/sdk/protocol";
 import { emptyKept, type KeptPage, keepPage } from "../src/shell/keptPages";
 import { FakeBackend } from "./support/fakeBackend";
 import { builtModules } from "./support/fixtures";
@@ -84,7 +85,53 @@ it("pages gardées : limite par récence, ordre de rendu stable, page retirée o
   // Un autre espace : plus rien de l’ancien.
   const other = spaceWith(["s/a"], "/Users/lea/Bureau");
   expect(keepPage(state, visit(other, "s/a"), other, 3).pages).toHaveLength(1);
-  // Un seul cadre par page : un autre onglet de la même page remplace le cadre gardé.
+  // La liste d’une page et l’onglet ouvert sur un de ses éléments : deux cadres gardés.
   const view = { ...visit(snapshot, "s/a"), key: "view:s/a\u0000PROJ-1" };
-  expect(keepPage(state, view, snapshot, 3).pages.map((entry) => entry.key)).toEqual(["s/c", "s/d", view.key]);
+  expect(keepPage(state, view, snapshot, 4).pages.map((entry) => entry.key)).toEqual(["s/a", "s/c", "s/d", view.key]);
+});
+
+/** Une requête envoyée par le document d’un cadre, comme le ferait le SDK. */
+let requestSequence = 0;
+function requestFrom(frame: HTMLIFrameElement, method: string, params: Record<string, unknown>) {
+  const source = frame.contentWindow as Window;
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source,
+        data: { alfred: ALFRED_MESSAGE, kind: "request", id: `k${++requestSequence}`, method, params },
+      }),
+    );
+  });
+}
+
+it("la liste d’une page et l’onglet d’un de ses éléments : deux cadres gardés, la barre du haut suit celui affiché", async () => {
+  new FakeBackend().install().withSpace("/Users/lea/Maison", "Maison", builtModules());
+  const user = userEvent.setup();
+  render(<App />);
+  const navigation = await findNavigation();
+  await user.click(await within(navigation).findByRole("row", { name: "Suivi" }));
+  const liste = (await screen.findByTitle("Tâches")) as HTMLIFrameElement;
+  requestFrom(liste, "shell.actions.set", { actions: [{ id: "nouvelle", label: "Nouvelle tâche", primary: true }] });
+  expect(await screen.findByRole("button", { name: "Nouvelle tâche" })).toBeVisible();
+
+  // La liste ouvre un élément dans un onglet : la même page, dans un second cadre.
+  requestFrom(liste, "views.open", { id: "T-42", label: "T-42 Facture" });
+  await waitFor(() => expect(screen.getAllByTitle("Tâches")).toHaveLength(2));
+  const element = screen.getAllByTitle("Tâches").find((frame) => frame !== liste) as HTMLIFrameElement;
+  expect(liste).not.toBeVisible();
+  expect(element).toBeVisible();
+  requestFrom(element, "shell.actions.set", { actions: [{ id: "fermer", label: "Clore la tâche", primary: true }] });
+  expect(await screen.findByRole("button", { name: "Clore la tâche" })).toBeVisible();
+  // La liste, masquée, se relit et redécrit ses actions : la barre du haut reste celle de l’élément.
+  requestFrom(liste, "shell.actions.set", {
+    actions: [{ id: "nouvelle", label: "Nouvelle tâche (3)", primary: true }],
+  });
+  expect(screen.queryByRole("button", { name: /Nouvelle tâche/ })).not.toBeInTheDocument();
+
+  // Retour à la liste : son cadre, intact, et ses dernières actions.
+  await user.click(screen.getByRole("tab", { name: "Tâches" }));
+  await waitFor(() => expect(liste).toBeVisible());
+  expect(await screen.findByRole("button", { name: "Nouvelle tâche (3)" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Clore la tâche" })).not.toBeInTheDocument();
+  expect(element).toBeInTheDocument();
 });

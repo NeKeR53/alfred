@@ -53,6 +53,9 @@ vi.mock("@testing-library/react", async (importOriginal) => {
 afterEach(async () => {
   cleanup();
   localStorage.clear();
+  // L’état de configuration lu est commun à l’app : un test ne voit pas celui du précédent.
+  const { resetModuleSetup } = await import("../src/features/setup/useModuleSetup");
+  resetModuleSetup();
   // La file de notifications est commune à l’app : un test ne voit pas les toasts du précédent.
   const { notifications } = await import("../src/shell/socle");
   notifications.clear();

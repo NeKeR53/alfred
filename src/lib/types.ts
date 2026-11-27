@@ -157,6 +157,8 @@ export interface ModuleSummary {
   setup?: { welcome?: string } | null;
   /** Tables partagées entre les membres d’une équipe par un dépôt git (`sync.tables` du manifeste). */
   sync?: string[];
+  /** Empreinte du code du module : ses pages se rechargent quand elle change, et seulement alors. */
+  code?: string;
 }
 
 export interface ResolvedFunction {

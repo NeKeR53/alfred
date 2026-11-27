@@ -873,6 +873,9 @@ pub struct ModuleSummary {
     pub setup: Option<SetupDecl>,
     /// Tables partagées en équipe (`sync.tables`).
     pub sync: Vec<String>,
+    /// Empreinte du code du module (chemins, tailles, dates de ses fichiers) : ses pages ne se rechargent que
+    /// quand elle change, pas quand le menu ou un autre module change.
+    pub code: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -971,6 +974,36 @@ pub fn slug(text: &str) -> String {
     } else {
         slug
     }
+}
+
+/// Empreinte du code d’un module : chemin, taille et date de chaque fichier, dossiers cachés exceptés. Un fichier
+/// écrit, ajouté ou retiré la change ; les données (base, fichiers déposés) sont rangées ailleurs et n’y entrent pas.
+pub fn code_fingerprint(dir: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    fn walk(dir: &Path, base: &Path, hasher: &mut std::collections::hash_map::DefaultHasher) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            path.strip_prefix(base).unwrap_or(&path).hash(hasher);
+            if meta.is_dir() {
+                walk(&path, base, hasher);
+                continue;
+            }
+            meta.len().hash(hasher);
+            if let Ok(modified) = meta.modified() {
+                modified.hash(hasher);
+            }
+        }
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    walk(dir, dir, &mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -1857,6 +1890,7 @@ impl Space {
                     schedules: module.schedules.clone(),
                     setup: module.setup.clone(),
                     sync: module.sync.tables.clone(),
+                    code: code_fingerprint(&self.module_dir(&module.id)),
                 })
                 .collect(),
             functions,
@@ -2002,6 +2036,25 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_code_fingerprint_changes_only_with_the_module_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let module = dir.path().join("suivi");
+        fs::create_dir_all(module.join("pages")).unwrap();
+        fs::write(module.join("pages/taches.tsx"), "export default function Page() { return null; }").unwrap();
+        let first = code_fingerprint(&module);
+        assert_eq!(first, code_fingerprint(&module), "rien n’a changé");
+        // Un dossier caché (git) n’est pas du code de page.
+        fs::create_dir_all(module.join(".git")).unwrap();
+        fs::write(module.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+        assert_eq!(first, code_fingerprint(&module));
+        fs::write(module.join("pages/liste.tsx"), "export default function Liste() { return null; }").unwrap();
+        let added = code_fingerprint(&module);
+        assert_ne!(first, added, "un fichier ajouté");
+        fs::write(module.join("pages/liste.tsx"), "export default function Liste() { return <p />; }").unwrap();
+        assert_ne!(added, code_fingerprint(&module), "un fichier réécrit");
+    }
 
     #[test]
     fn windows_device_names_are_not_valid_ids() {

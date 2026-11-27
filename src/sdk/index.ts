@@ -2280,29 +2280,61 @@ export function usePageContext(): PageContext | undefined {
 
 export interface AsyncState<Data> {
   data: Data | undefined;
+  /** Le dernier chargement a échoué ; les données précédentes restent dans `data`. */
   error: Error | undefined;
+  /**
+   * Chargement sans données à montrer : premier chargement, ou `deps` changées (une autre ligne, une autre recherche).
+   * Jamais pendant une relecture des mêmes données (`reload`, données changées ailleurs) : la page reste affichée.
+   */
   loading: boolean;
-  /** Relance le chargement. */
+  /** Un chargement est en cours, relecture comprise ; les données affichées restent à l’écran. */
+  refreshing: boolean;
+  /** Relance le chargement, en arrière-plan : `data` reste affichée jusqu’au résultat. */
   reload: () => void;
+}
+
+/** Mêmes dépendances, une à une (`Object.is`, comme `useEffect`). */
+function sameDeps(a: ReadonlyArray<unknown> | null, b: ReadonlyArray<unknown>): boolean {
+  return a !== null && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
 }
 
 /**
  * Charge une donnée asynchrone et expose son état. `deps` relance le chargement comme pour `useEffect`.
  * Exemple : `useAsync(() => db.query("SELECT * FROM suivi_taches"), [])`.
+ *
+ * Une relecture (`reload`, `announceChange` de l’autre cadre, données changées ailleurs) se fait en arrière-plan :
+ * `data` reste affichée, `loading` reste faux, seul `refreshing` passe à vrai. Pas d’écran de chargement, pas de saut.
  */
 export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>): AsyncState<Data> {
-  const [state, setState] = useState<{ data?: Data; error?: Error; loading: boolean }>({ loading: true });
+  const [state, setState] = useState<{ data?: Data; error?: Error; loading: boolean; refreshing: boolean }>({
+    loading: true,
+    refreshing: true,
+  });
   const [tick, setTick] = useState(0);
   const loader = useRef(load);
   loader.current = load;
+  const lastDeps = useRef<ReadonlyArray<unknown> | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: les dépendances sont celles de l’appelant.
   useEffect(() => {
     let active = true;
-    setState((current) => ({ ...current, loading: true, error: undefined }));
+    // Mêmes dépendances : une relecture, en arrière-plan. Autres dépendances : les données montrées ne valent plus.
+    const refresh = sameDeps(lastDeps.current, deps);
+    lastDeps.current = deps;
+    setState((current) =>
+      refresh && current.data !== undefined
+        ? { ...current, refreshing: true }
+        : { ...current, loading: true, refreshing: true, error: undefined },
+    );
     loader.current().then(
-      (data) => active && setState({ data, loading: false }),
+      (data) => active && setState({ data, loading: false, refreshing: false }),
       (error: unknown) =>
-        active && setState({ error: error instanceof Error ? error : new Error(String(error)), loading: false }),
+        active &&
+        setState((current) => ({
+          ...current,
+          error: error instanceof Error ? error : new Error(String(error)),
+          loading: false,
+          refreshing: false,
+        })),
     );
     return () => {
       active = false;
@@ -2313,7 +2345,7 @@ export function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<un
   useEffect(() => onShellEvent("dataChanged", reload), [reload]);
   // L’autre cadre de la page a écrit (`announceChange`) : la liste ou le détail se relit.
   useEffect(() => onShellEvent("peer", (message) => isChangeMessage(message) && reload()), [reload]);
-  return { data: state.data, error: state.error, loading: state.loading, reload };
+  return { data: state.data, error: state.error, loading: state.loading, refreshing: state.refreshing, reload };
 }
 
 // --- États partagés --------------------------------------------------------------------------------------------

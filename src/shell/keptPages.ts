@@ -9,8 +9,8 @@ import { type OpenedView, useOpenViews, viewKey } from "./openViews";
  *
  * Règles :
  * - `KEPT_PAGES` pages au plus, celle affichée comprise : au-delà, la moins récemment affichée est démontée ;
- * - un seul cadre par page (`reference`) : la coquille range par page la barre du haut, les flux et les objets
- *   Python d’un cadre. Un autre onglet de la même page remplace donc le cadre gardé ;
+ * - la liste d’une page et l’onglet ouvert sur un de ses éléments sont deux cadres gardés : seul le cadre affiché
+ *   montre sa barre du haut et sa sélection (`PageFrame`), chacun garde ses flux et ses objets Python ;
  * - l’ordre de rendu ne change jamais : déplacer un `<iframe>` dans le DOM le recharge. Seule la récence décide
  *   de qui part ;
  * - une page qui a quitté l’espace, masquée, ou un onglet fermé : son cadre est démonté ; changer d’espace les
@@ -65,8 +65,6 @@ export function keepPage(
       pages.push(current);
       continue;
     }
-    // Un seul cadre par page : l’onglet affiché l’emporte.
-    if (current && entry.page.reference === current.page.reference) continue;
     const kept = refreshed(entry, snapshot);
     if (kept) pages.push(kept);
   }
