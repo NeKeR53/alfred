@@ -1,7 +1,7 @@
 # Alfred
 
 ## Design system
-- Package : socle-ui 1.24.0 (installé avec yalc, en local ; version : voir package.json)
+- Package : socle-ui 1.25.0 (installé avec yalc, en local ; version : voir package.json)
 - Guide pour l'IA, à la version installée : node_modules/socle-ui/ai/AI.md
   (specs dans node_modules/socle-ui/ai/specs/, règles dans node_modules/socle-ui/ai/docs/,
   recettes de pages dans node_modules/socle-ui/ai/recipes/)
