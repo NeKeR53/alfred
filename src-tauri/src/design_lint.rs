@@ -10,6 +10,7 @@
 
 mod layout;
 mod loading;
+mod mount;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -594,6 +595,12 @@ pub fn lint_file(path: &Path, placement: Placement) -> Vec<Diagnostic> {
     lint_with(&source, placement, path, &rows::Sources::new(&read))
 }
 
+/// Sources des fichiers du module que la page importe (`../lib/…`), de proche en proche.
+pub fn imported_sources(path: &Path) -> Vec<String> {
+    let read = |file: &Path| std::fs::read_to_string(file).ok();
+    mount::imported_sources(path, &read)
+}
+
 /// La page est un texte à lire ou une conversation : l’examen de sa capture ne juge ni sa hauteur ni sa largeur.
 pub fn is_reading_file(path: &Path) -> bool {
     let Ok(source) = std::fs::read_to_string(path) else { return false };
@@ -751,6 +758,10 @@ fn lint_with(source: &str, placement: Placement, path: &Path, sources: &rows::So
     }
     // L’interface d’abord : jamais un écran de chargement à la place de toute la page.
     for (offset, message) in loading::check(&parsed.program, &lint.socle) {
+        lint.report(offset, message);
+    }
+    // Aucune fonction au montage, ni dans la page, ni dans ce qu’elle importe du module (`lib/`).
+    for (offset, message) in mount::check(&parsed.program, path, sources.read) {
         lint.report(offset, message);
     }
     if placement == Placement::Page {
@@ -2054,5 +2065,52 @@ export default function P() {
             !accepted.iter().any(|message| message.contains("chargement") || message.contains("relecture")),
             "{accepted:?}"
         );
+    }
+
+    #[test]
+    fn une_page_n_appelle_aucune_fonction_au_montage_meme_par_son_lib() {
+        let lib = r#"import { functions } from "@alfred/sdk";
+export async function releverSupport() {
+  return functions.call("relever-support", {});
+}
+export const ouvrir = (cle: string) => functions.call("ouvrir-ticket", { cle });
+"#;
+        let page = r#"import { useEffect } from "react";
+import { functions, useAlfredState } from "@alfred/sdk";
+import { Drawer } from "socle-ui";
+import { releverSupport, ouvrir } from "../lib/support";
+export default function Support() {
+  const charger = async () => { await functions.call("marquer-vu", {}); };
+  useEffect(() => { void releverSupport(); }, []);
+  useEffect(() => { charger(); }, []);
+  useEffect(() => { (async () => { await functions.call("compter", {}); })(); }, []);
+  // Conforme : un geste de l’utilisateur, défini dans l’effet mais pas lancé par lui.
+  useEffect(() => { const surClic = () => ouvrir("A-1"); window.addEventListener("x", surClic); }, []);
+  return <Drawer header={{ title: "Support" }} sections={[]} />;
+}
+"#;
+        let found = module_messages(&[("modules/atlassian/lib/support.ts", lib), ("modules/atlassian/pages/support.tsx", page)], "modules/atlassian/pages/support.tsx");
+        let mount: Vec<&String> = found.iter().filter(|message| message.contains("au montage")).collect();
+        assert_eq!(mount.len(), 3, "{found:?}");
+        assert!(mount[0].contains("« relever-support »"), "suivi jusque dans lib/ : {mount:?}");
+        assert!(mount[1].contains("« marquer-vu »"), "{mount:?}");
+        assert!(mount[2].contains("« compter »"), "{mount:?}");
+        assert!(!found.iter().any(|message| message.contains("ouvrir-ticket")), "{found:?}");
+    }
+
+    #[test]
+    fn les_fichiers_importes_par_une_page_sont_relus_de_proche_en_proche() {
+        let files: std::collections::HashMap<std::path::PathBuf, String> = [
+            ("m/pages/p.tsx", "import { a } from \"../lib/a\";\nimport { useAsync } from \"@alfred/sdk\";"),
+            ("m/lib/a.ts", "import { b } from \"./b\";\nexport const a = 1;"),
+            ("m/lib/b.ts", "export const b = () => functions.call(\"lire\", {});"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (std::path::PathBuf::from(path), source.to_string()))
+        .collect();
+        let read = |path: &Path| files.get(path).cloned();
+        let found = mount::imported_sources(Path::new("m/pages/p.tsx"), &read);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().any(|source| source.contains("functions.call(\"lire\"")));
     }
 }

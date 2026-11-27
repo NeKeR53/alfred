@@ -343,6 +343,7 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "state": { "type": "string", "description": "Lecture : identifiant de l’état du module (`states` du module.json) que sa sortie alimente, une liste ou une valeur. Toute lecture d’un service alimente un état ou une entité. Omis, gardé à la redéclaration." },
                 "entity": { "type": "string", "description": "Type d’entité du module (`entities`) que la sortie met à jour : un objet, ou une liste d’objets (lecture d’un seul ticket, écriture qui rend le ticket modifié). Omis, gardé." },
                 "param": { "type": "string", "description": "Champ de l’entrée qui porte la sous-clé de l’état (`job` pour l’état d’un CI) ou l’identifiant de l’entité lue seule. Omis, gardé." },
+                "touches": { "type": "array", "items": { "type": "string" }, "description": "Écriture : les états du module qu’elle change (`[\"mes-tickets\"]`) ; eux seuls se relisent après elle. `[]` : aucun état. Requis pour une écriture d’un module à états, sauf si elle rend l’objet modifié (`entity`). Omis, gardé." },
                 "tests": {
                     "type": "array",
                     "description": "Cas de test, écrits avec la fonction (au moins un) : une entrée d’exemple réaliste et ce que la sortie doit montrer. Omis, les tests déjà déclarés sont gardés.",
@@ -1390,7 +1391,13 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     }
                     // État partagé obligatoire : une page s’abonne à un état, elle n’appelle pas une lecture.
                     let source = std::fs::read_to_string(&file).unwrap_or_default();
-                    let reads = crate::function_results::page_read_problems(&source, &page.module, &snapshot.functions);
+                    // La page et ce qu’elle importe du module (`lib/`) : une lecture cachée dans un fichier voisin compte.
+                    let mut read_by_page = source.clone();
+                    for imported in crate::design_lint::imported_sources(&file) {
+                        read_by_page.push('\n');
+                        read_by_page.push_str(&imported);
+                    }
+                    let reads = crate::function_results::page_read_problems(&read_by_page, &page.module, &snapshot.functions);
                     if !reads.is_empty() {
                         pages.push(json!({ "page": page.reference, "sharedReads": reads }));
                     }

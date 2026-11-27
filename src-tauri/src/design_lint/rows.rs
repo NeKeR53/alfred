@@ -298,11 +298,11 @@ impl Facts {
 
 /// Fichiers du module : lus à la demande, une fois chacun.
 pub struct Sources<'r> {
-    read: &'r dyn Fn(&Path) -> Option<String>,
+    pub(super) read: &'r dyn Fn(&Path) -> Option<String>,
     cache: RefCell<HashMap<PathBuf, Option<Rc<Facts>>>>,
 }
 
-fn normalize(path: &Path) -> PathBuf {
+pub(super) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {

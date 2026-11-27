@@ -57,7 +57,7 @@ pub async fn call_in(state: &Arc<AppState>, reference: &str, input: Value, calle
             })
         });
         if write == Some(true) {
-            crate::state_refresh::module_written(state, module);
+            crate::state_refresh::module_written(state, module, Some(function));
         }
     }
     result
@@ -228,6 +228,7 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                 state: opt_arg::<String>(args, "state")?.filter(|value| !value.is_empty()),
                 entity: opt_arg::<String>(args, "entity")?.filter(|value| !value.is_empty()),
                 param: opt_arg::<String>(args, "param")?.filter(|value| !value.is_empty()),
+                touches: opt_arg::<Vec<String>>(args, "touches")?,
                 tests: opt_arg::<Vec<crate::space::FunctionTest>>(args, "tests")
                     .map_err(|error| AppError::new(format!("Tests illisibles : {}", error.message)))?
                     .unwrap_or_default(),
@@ -247,6 +248,9 @@ pub async fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Optio
                     }
                     if args.get("examples").is_none() {
                         declaration.examples = std::mem::take(&mut existing.examples);
+                    }
+                    if args.get("touches").is_none() {
+                        declaration.touches = existing.touches.take();
                     }
                     for (field, kept, declared) in [
                         ("state", &mut existing.state, &mut declaration.state),

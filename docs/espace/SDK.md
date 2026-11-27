@@ -236,7 +236,10 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 - un retour anticipé pendant un chargement : `if (tickets.loading) return <Page state="loading" />`, `if (!data) return <Skeleton />`, `if (loading) return null` ;
 - un retour conditionnel sur un chargement : `return loading ? <Spinner /> : <ListPage … />` ;
 - `<Page state="loading">` (tous les blocs deviennent des squelettes, titres compris) : l’état va sur chaque `PageSection` ;
-- un `state` tiré d’une relecture (`state={x.refreshing ? "loading" : …}`).
+- un `state` tiré d’une relecture (`state={x.refreshing ? "loading" : …}`) ;
+- une fonction lancée au montage : `useEffect(() => { functions.call("relever-support") }, [])`, même par une fonction de `lib/`. Une donnée à montrer est un état ; une écriture est un geste (`onPress` d’une `Action`) ; une tâche qui tourne seule est une planification ou une automatisation.
+
+Ces règles suivent les fichiers que la page importe du module (`../lib/…`), comme le refus d’une lecture par `functions.call`.
 
 Où va chaque champ :
 
@@ -298,7 +301,7 @@ if (meteo.loading) return <Page state="loading" />;
 - `entity: "ticket"` et `param: "cle"` : la lecture d’un seul objet (son identifiant dans l’entrée `cle`) met à jour l’entité, donc **chaque liste qui le montre**, quel que soit son module ;
 - pour un état à paramètres, la fonction reçoit ces paramètres dans son entrée (`{ jql }`) : c’est eux qui choisissent l’état alimenté.
 
-Une écriture peut aussi déclarer `entity` : elle rend l’objet modifié, qui met à jour l’entité. Sinon, une écriture fait relire les états affichés de son module. Un script, une fonction ou une page du module déclarant peut aussi publier : `states.publish("ci", { etat: "vert" }, { key: job })` (Python : `alfred.states.publish(...)`).
+Une écriture dit ce qu’elle change : `entity` si elle rend l’objet modifié (l’entité se met à jour, rien d’autre ne se relit), ou `touches: ["mes-tickets"]` (seuls ces états se relisent ; `touches: []` : aucun). Sans l’un ni l’autre, elle ferait relire tous les états suivis du module à chaque appel : `check` le refuse dans un module qui déclare des états. Un script, une fonction ou une page du module déclarant peut aussi publier : `states.publish("ci", { etat: "vert" }, { key: job })` (Python : `alfred.states.publish(...)`).
 
 **Le fournisseur.** Le module qui déclare un état en est le fournisseur : c’est lui qui le tient à jour, avec le moins de requêtes. Il le dit par sa politique, `refresh` sur l’état :
 
@@ -474,7 +477,7 @@ Appelée par un webhook, une fonction reçoit `{ method, query, headers, body }`
 
 ## 6. Clients : `client(id)`
 
-`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, s’abonnent aux états que ces fonctions alimentent (`useAlfredState`, section 3). Deux `GET` ou `HEAD` identiques en cours n’en font qu’un, quelles que soient les fonctions qui les demandent. Chaque écriture fait relire les états affichés du module. Déclare toujours `effect` : `check` refuse une fonction de connecteur sans lui.
+`client()` s’écrit **uniquement dans les fonctions** du module connecteur du service (voir § 5) : une requête venue d’une page ou d’un panneau est refusée. Les pages, et les autres modules, s’abonnent aux états que ces fonctions alimentent (`useAlfredState`, section 3). Deux `GET` ou `HEAD` identiques en cours n’en font qu’un, quelles que soient les fonctions qui les demandent. Une écriture fait relire les états qu’elle déclare changer (`touches`, section 3). Déclare toujours `effect` : `check` refuse une fonction de connecteur sans lui.
 
 ```ts
 client(id: string, options?: { instance?: string }): {

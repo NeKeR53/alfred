@@ -144,8 +144,8 @@ pub fn function_problem(space: &crate::space::Space, function: &crate::space::Re
     if function.effect.is_none() {
         return Some(
             "La fonction joint un service sans déclarer `effect` : déclare `effect: \"read\"` pour une lecture (elle \
-             alimente alors un état nommé, `state` ou `entity`), `\"write\"` pour une écriture (elle fait relire les \
-             états affichés du module). Redéclare-la avec `declare_function`."
+             alimente alors un état nommé, `state` ou `entity`), `\"write\"` pour une écriture (avec `touches`, les états qu’elle \
+             change, ou `entity`). Redéclare-la avec `declare_function`."
                 .to_string(),
         );
     }
@@ -229,6 +229,20 @@ pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
         if let Some(entity) = &state.entity {
             if !manifest.entities.iter().any(|declared| &declared.id == entity) {
                 problems.push(json!({ "module": module, "state": state.id, "problem": format!("L’état liste des « {entity} », type absent de `entities`.") }));
+            }
+        }
+    }
+    // Une écriture dit ce qu’elle change : sans cela, chaque appel ferait relire tous les états du module.
+    if !manifest.states.is_empty() {
+        for function in manifest.functions.iter().filter(|function| function.effect != Some(crate::space::Effect::Read)) {
+            match &function.touches {
+                None if function.entity.is_none() => problems.push(json!({ "module": module, "function": function.id, "problem": format!("L’écriture « {} » ne dit pas ce qu’elle change : sans `touches` ni `entity`, chaque appel fait relire tous les états du module. Déclare `touches: [\"<état>\"]` (les états qu’elle change, eux seuls se relisent), `touches: []` (aucun), ou `entity` si elle rend l’objet modifié.", function.id) })),
+                Some(touched) => {
+                    for id in touched.iter().filter(|id| !manifest.states.iter().any(|state| &state.id == *id)) {
+                        problems.push(json!({ "module": module, "function": function.id, "problem": format!("`touches` cite « {id} », état absent de `states` du module.") }));
+                    }
+                }
+                None => {}
             }
         }
     }

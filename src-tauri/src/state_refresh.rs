@@ -476,24 +476,32 @@ fn runs_of(key: &str) -> u64 {
     registry().statuses.get(key).map(|status| status.runs).unwrap_or(0)
 }
 
-/// Une écriture du module : ses états suivis se relisent (une lecture par cible).
-pub fn module_written(state: &AppState, module: &str) {
+/// Une écriture du module : les états qu’elle déclare changer (`touches`) se relisent, une lecture par cible ; sans
+/// déclaration, tous les états suivis du module. Une écriture qui rend son objet (`entity`) ne fait rien relire : sa
+/// sortie met l’entité à jour.
+pub fn module_written(state: &AppState, module: &str, function: Option<&str>) {
+    let touches: Option<Vec<String>> = function.and_then(|function| {
+        let space = state.try_space()?;
+        let manifest = space.module(module).ok()?;
+        manifest.functions.iter().find(|declared| declared.id == function).and_then(|declared| declared.touches.clone())
+    });
+    let root = state.try_space().map(|space| space.root.to_string_lossy().to_string()).unwrap_or_default();
     let mut registry = registry();
     let keys: Vec<String> = registry
         .subscriptions
         .values()
-        .filter(|subscription| subscription.target.manifest.id == module)
+        .filter(|subscription| subscription.target.manifest.id == module && subscription.target.scope.space == root)
+        .filter(|subscription| touches.as_ref().is_none_or(|touched| touched.contains(&subscription.target.declared.id)))
         .map(|subscription| subscription.target.key.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     for key in keys {
-        if let Some(status) = registry.statuses.get_mut(&key) {
+        if let Some(status) = registry.statuses.get_mut(&key).filter(|status| !status.running) {
             status.next = Instant::now();
             status.forced = true;
         }
     }
-    let _ = state;
 }
 
 /// Ce qui tourne, pour les Réglages : chaque cible suivie, ses abonnés et son dernier rafraîchissement.
@@ -635,7 +643,8 @@ pub fn handle(state: &Arc<AppState>, command: &str, args: &Value) -> Option<AppR
         })(),
         "states.written" => (|| {
             let module: String = arg(args, "module")?;
-            module_written(state, &module);
+            let function: Option<String> = opt_arg(args, "function")?;
+            module_written(state, &module, function.as_deref());
             Ok(Value::Null)
         })(),
         "states.overview" => overview(state),
@@ -1041,5 +1050,41 @@ mod tests {
         assert_eq!(passages(&space), "2");
         let merged = value(&state, &page("sprint", "tableau"));
         assert_eq!(merged["value"], json!([{ "cle": "ALF-3", "etat": "nouveau" }, { "cle": "ALF-2", "etat": "fermé" }]), "fusion incrémentale");
+    }
+
+    /// Une écriture fait relire les seuls états qu’elle déclare changer (`touches`) ; sans déclaration, tout le module.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_rereads_only_the_states_it_touches() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, space) = setup(dir.path());
+        mes_tickets(&space, Some(3600));
+        let mut jira = space.module("jira").unwrap();
+        jira.functions.iter_mut().find(|function| function.id == "noter").unwrap().touches = Some(vec!["mes-tickets".into()]);
+        space.write_module(&jira).unwrap();
+        subscribe_mine(&state);
+        assert_eq!(passage(&state).await, 1);
+        handle(&state, "frame.states.subscribe", &json!({ "subject": page("sprint", "tableau"), "name": "jira/tickets-du-filtre", "params": { "jql": "assignee = moi" } })).unwrap().unwrap();
+        assert_eq!(passage(&state).await, 1);
+
+        module_written(&state, "jira", Some("noter"));
+        assert_eq!(passage(&state).await, 1, "seul l’état touché se relit");
+        assert_eq!(lectures(&space), "2");
+        assert_eq!(passages(&space), "1");
+
+        let problems = crate::function_results::state_problems(&space, "jira");
+        assert!(!problems.iter().any(|problem| problem["function"] == json!("noter")), "{problems:?}");
+
+        // Sans `touches` : tout le module se relit, et `check` demande de dire ce que l’écriture change.
+        let mut jira = space.module("jira").unwrap();
+        jira.functions.iter_mut().find(|function| function.id == "noter").unwrap().touches = None;
+        space.write_module(&jira).unwrap();
+        module_written(&state, "jira", Some("noter"));
+        let handles = tick(&state);
+        assert_eq!(handles.len(), 2, "sans `touches` : tout le module");
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        let problems = crate::function_results::state_problems(&space, "jira");
+        assert!(problems.iter().any(|problem| problem["function"] == json!("noter") && problem["problem"].as_str().unwrap().contains("`touches`")), "{problems:?}");
     }
 }

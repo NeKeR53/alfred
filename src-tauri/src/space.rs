@@ -616,6 +616,10 @@ pub struct FunctionDecl {
     /// l’entité lue seule : Alfred s’en sert pour ranger la sortie et pour relancer la lecture.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param: Option<String>,
+    /// Écriture : les états du module qu’elle change (`["mes-tickets"]`) ; eux seuls se relisent après elle. `[]` :
+    /// elle ne change aucun état. Omis (et sans `entity`) : tous les états suivis du module se relisent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touches: Option<Vec<String>>,
     /// Cas de test : une entrée d’exemple et ce que la sortie doit montrer.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<FunctionTest>,

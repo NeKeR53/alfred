@@ -222,8 +222,8 @@ function track<T>(module: string, run: () => Promise<T>): Promise<T> {
 /**
  * Appelle `module/fonction` avec `input`. Une lecture identique déjà en cours est rejointe. La sortie d’une fonction
  * TypeScript qui déclare un état ou une entité l’alimente (`states.feed`) ; le cœur alimente lui-même pour un script
- * et pour une fonction qu’il a demandée (`fed`). Une écriture fait ensuite relire les états affichés de son module,
- * sauf si elle rend elle-même l’objet modifié (`entity`).
+ * et pour une fonction qu’il a demandée (`fed`). Une écriture fait ensuite relire les états qu’elle déclare changer
+ * (`touches`), tous ceux de son module sans déclaration, et aucun si elle rend elle-même l’objet modifié (`entity`).
  */
 export async function callFunction(
   reference: string,
@@ -264,7 +264,7 @@ export async function callFunction(
   } finally {
     // Réussie ou non, l’écriture a pu changer le service : le fournisseur relit ses états suivis.
     if (declared && !declared.missing && !declared.entity && typescript)
-      void invoke("states.written", { module }).catch(() => undefined);
+      void invoke("states.written", { module, function: reference.split("/")[1] ?? "" }).catch(() => undefined);
   }
 }
 
