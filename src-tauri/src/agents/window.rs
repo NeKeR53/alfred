@@ -30,6 +30,12 @@ pub async fn alfred_open_agents_window(app: AppHandle) -> Result<(), AppError> {
         if let Some(color) = main.background_color {
             builder = builder.background_color(color);
         }
+        // Sous Windows, pas de barre native : l’AppShell de Socle dessine réduire, agrandir et fermer
+        // (`tauri.windows.conf.json`, D-422 de socle-ui), comme dans la fenêtre principale.
+        #[cfg(target_os = "windows")]
+        {
+            builder = builder.decorations(main.decorations);
+        }
         // Sous macOS, la barre de titre est intégrée à la barre du haut de l’AppShell, comme dans la fenêtre principale.
         #[cfg(target_os = "macos")]
         {

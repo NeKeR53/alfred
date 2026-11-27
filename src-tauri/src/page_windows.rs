@@ -136,6 +136,12 @@ fn open(
         if let Some(color) = main.background_color {
             builder = builder.background_color(color);
         }
+        // Sous Windows, pas de barre native : l’AppShell de Socle dessine réduire, agrandir et fermer
+        // (`tauri.windows.conf.json`, D-422 de socle-ui), comme dans la fenêtre principale.
+        #[cfg(target_os = "windows")]
+        {
+            builder = builder.decorations(main.decorations);
+        }
         // Sous macOS, la barre de titre est intégrée à la barre du haut de l’AppShell, comme dans la fenêtre principale.
         #[cfg(target_os = "macos")]
         {
@@ -153,6 +159,22 @@ fn open(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `tauri.windows.conf.json` remplace toute la liste des fenêtres (fusion JSON de Tauri) : la fenêtre principale
+    /// y reste celle de `tauri.conf.json`, sans les réglages propres à macOS, et sans barre native.
+    #[test]
+    fn the_windows_main_window_is_the_main_window_without_native_decorations() {
+        let base: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows: Value = serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
+        let mut expected = base["app"]["windows"].clone();
+        let main = expected[0].as_object_mut().unwrap();
+        for key in ["titleBarStyle", "hiddenTitle", "trafficLightPosition"] {
+            main.remove(key);
+        }
+        main.insert("decorations".into(), Value::Bool(false));
+        assert_eq!(windows["app"]["windows"], expected);
+        assert_eq!(windows["app"].as_object().unwrap().len(), 1, "seule la liste des fenêtres change sous Windows");
+    }
 
     #[test]
     fn a_page_window_has_one_label_per_page_and_refuses_anything_else() {

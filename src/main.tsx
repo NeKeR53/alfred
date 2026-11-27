@@ -6,19 +6,21 @@ import "./styles.css";
 import { App } from "./App";
 import { accentColor } from "./runtime/accent";
 import { bindDevtoolsShortcut } from "./shell/devtools";
-import { notifications, soclePlatform, socleStorageKey, useWindowFullscreen } from "./shell/socle";
+import { notifications, soclePlatform, socleStorageKey, useWindowControls, useWindowFullscreen } from "./shell/socle";
 import { useShell } from "./shell/store";
 
 /** Racine : `SocleProvider` reçoit l’accent de l’espace ouvert, comme le cadre de chaque page. */
 function Root() {
   const accent = useShell((state) => accentColor(state.snapshot?.accent));
   const fullscreen = useWindowFullscreen();
+  const windowControls = useWindowControls();
   return (
     <SocleProvider
       accent={accent}
       density="desktop"
       platform={soclePlatform()}
       isFullscreen={fullscreen}
+      {...(windowControls ? { windowControls } : {})}
       storageKey={socleStorageKey}
       notifications={notifications}
     >
