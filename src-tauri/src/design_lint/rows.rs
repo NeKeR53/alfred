@@ -478,7 +478,7 @@ impl Rows<'_, '_> {
                     if key == "subtitle" && is_help_sentence(value) {
                         self.found.push((
                             offset,
-                            format!("Avertissement : le sous-titre de l’en-tête du `Drawer` est une phrase d’aide (« {} »). Le sous-titre est une ligne de contexte (« Nantes · client depuis 2019 ») ; une aide va dans `emptyMessage` ou nulle part (DESIGN.md, section 6 ; spec Drawer, `DetailHeader`).", text.trim()),
+                            format!("Avertissement : le sous-titre de l’en-tête du `Drawer` est une phrase d’aide (« {} »). Le sous-titre est une ligne de contexte (« Nantes · client depuis 2019 »)  ; une phrase d’aide n’a pas sa place dans le panneau (DESIGN.md, section 6 ; spec Drawer, `DetailHeader`).", text.trim()),
                         ));
                     }
                 }

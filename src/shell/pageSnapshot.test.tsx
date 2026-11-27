@@ -10,8 +10,20 @@ window.matchMedia ??= ((query: string) => ({ matches: false, media: query })) as
  * Cadre simulé : il s’inscrit comme le vrai PageFrame, se déclare prêt et répond à `describe` avec la description
  * d’un document de test, comme le fait l’hôte d’une page, et à `review` avec des mesures démesurées.
  */
+/** Éléments choisis reçus par les cadres simulés (`selection` d’une capture de panneau). */
+const received: unknown[] = [];
+
 vi.mock("./PageFrame", () => ({
-  PageFrame({ page, token }: { page: { reference: string }; token?: string }) {
+  PageFrame({
+    page,
+    token,
+    selection,
+  }: {
+    page: { reference: string };
+    token?: string;
+    selection?: { value: unknown };
+  }) {
+    if (selection) received.push(selection.value);
     useEffect(() => {
       let dispose: () => void = () => undefined;
       // Import différé : pageSnapshot importe ce module simulé, l’inverse au chargement bloquerait.
@@ -109,6 +121,22 @@ describe("capture d’une page pour l’agent", () => {
     await vi.waitFor(() => expect(view.queryByTestId("cadre-suivi/detail")).toBeNull());
 
     await expect(capturePage("suivi/absente")).rejects.toThrow("n’existe pas");
+
+    // Un panneau se capture rempli : l’agent donne l’élément choisi, le cadre invisible le reçoit.
+    const chosen = capturePage("suivi/detail", undefined, { selection: { value: "T-12" } });
+    await vi.waitFor(() => expect(view.getByTestId("cadre-suivi/detail")).toBeTruthy());
+    await chosen;
+    expect(received).toContain("T-12");
+    const { frameContext } = await import("./frameBridge");
+    const context = frameContext({
+      kind: "panel",
+      module: "suivi",
+      reference: "suivi/detail",
+      host: "suivi/taches",
+      capture: true,
+      selection: { value: "T-12" },
+    });
+    expect(context.selection).toBe("T-12");
   });
 
   it("examine une page dans deux cadres invisibles à la taille d’une fenêtre, et borne ce que rend le cadre", async () => {

@@ -164,7 +164,9 @@ Une erreur non rattrapée (`AlfredError` comprise) termine le script avec un cod
 
 ## 3. Charger des données : `useAsync`, `useAlfredState` et les gabarits
 
-Une page charge avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `Drawer`, `Page`), qui affiche chargement, erreur et absence :
+Ordre de priorité de chaque choix (`AGENTS.md`) : (1) l’interface s’affiche tout de suite ; (2) la donnée affichée est juste, ou son âge est visible ; (3) le moins d’appels au service possible. Une donnée d’un service vient donc d’un état partagé (`useAlfredState`) ; `useAsync` sert à la base du module, aux fichiers et à la recherche.
+
+Une page lit sa base avec `useAsync` et passe le résultat au gabarit de `socle-ui` (`ListPage`, `Drawer`, `Page`), qui affiche chargement, erreur et absence :
 
 ```tsx
 import { Pencil, Plus } from "lucide-react";
@@ -235,9 +237,10 @@ function useAsync<Data>(load: () => Promise<Data>, deps: ReadonlyArray<unknown>)
 
 - un retour anticipé pendant un chargement : `if (tickets.loading) return <Page state="loading" />`, `if (!data) return <Skeleton />`, `if (loading) return null` ;
 - un retour conditionnel sur un chargement : `return loading ? <Spinner /> : <ListPage … />` ;
+- une erreur cachée dès qu’une donnée est là : `hasError={Boolean(x.error) && !x.data}` (la donnée gardée n’est plus juste : son bloc doit le dire) ;
 - `<Page state="loading">` (tous les blocs deviennent des squelettes, titres compris) : l’état va sur chaque `PageSection` ;
 - un `state` tiré d’une relecture (`state={x.refreshing ? "loading" : …}`) ;
-- une fonction lancée au montage : `useEffect(() => { functions.call("relever-support") }, [])`, même par une fonction de `lib/`. Une donnée à montrer est un état ; une écriture est un geste (`onPress` d’une `Action`) ; une tâche qui tourne seule est une planification ou une automatisation.
+- une fonction lancée au montage : `useEffect(() => { functions.call("relever-support") }, [])` ou `useAsync(() => functions.call(…), [])`, même par une fonction de `lib/`. Une donnée à montrer est un état ; une écriture est un geste (`onPress` d’une `Action`) ; une tâche qui tourne seule est une planification ou une automatisation.
 
 Ces règles suivent les fichiers que la page importe du module (`../lib/…`), comme le refus d’une lecture par `functions.call`.
 
@@ -246,11 +249,12 @@ Où va chaque champ :
 | Champ | Sens | Où le passer |
 |---|---|---|
 | `data` | la valeur, ou la dernière connue | `rows` de `ListPage`, contenu des blocs : toujours rendu |
-| `loading` | aucune valeur encore, jamais | `state="loading"` de la `PageSection` qui montre cette donnée ; `DetailPage` d’un élément jamais vu |
-| `refreshing` | une lecture tourne, `data` reste à l’écran | `isLoading` de `ListPage`, `Table`, `List` ou `Drawer` : squelettes sans données, **barre fine de 2 px** avec données (socle-ui D-084) |
-| `error` | la dernière lecture a échoué | `hasError` (`ListPage` garde ses lignes), `state="error"` d’une `PageSection` seulement sans `data` |
+| `loading` | aucune valeur encore, jamais | `state="loading"` de la `PageSection` qui montre cette donnée ; `isLoading` d’une `Card variant="metric"` (valeur pas encore lue) ; `DetailPage` d’un élément jamais vu |
+| `refreshing` | une lecture tourne, `data` reste à l’écran | `isLoading` de `ListPage`, `Table`, `List` ou `Drawer` : squelettes sans données, **barre fine de 2 px** avec données (socle-ui D-084) ; `isRefreshing` de `PageSection`, `Card variant="metric"`, `Page` ou `DetailPage` (D-426) |
+| `error` | la dernière lecture a échoué | `hasError={Boolean(x.error)}` : `ListPage` garde ses lignes et dit « Résultats non mis à jour » (jamais `&& !x.data`, que `check` refuse) ; `state="error"` d’une `PageSection` seulement sans `data`, sinon l’âge en `footer` |
+| `checkedAt` | dernière lecture réussie (`useAlfredState`) | l’âge des données : `footer` de la `Page` (« mis à jour il y a 30 s », recette `TrackingBoard`), ou de la `PageSection` gardée après un échec, avec `<FormattedValue type="relative" value={x.checkedAt} />` |
 
-**Indicateur de mise à jour.** Une relecture se voit dans le bloc qui la subit, jamais en bandeau ni dans la barre du haut (D-253) : la barre fine de `ListPage`, `Table`, `List` et `Drawer` (`isLoading={x.refreshing}`), et l’attente du bouton « Actualiser » (`onPress: tickets.refresh` : la promesse court jusqu’à la fin de la lecture, socle-ui D-116). Une `PageSection`, une `Card` ou une `DetailPage` n’ont pas d’indicateur de relecture : leurs données restent affichées, sans rien de plus.
+**Indicateur de mise à jour.** Une relecture se voit dans le bloc qui la subit, jamais en bandeau ni dans la barre du haut (D-253) : la barre fine de `ListPage`, `Table`, `List` et `Drawer` (`isLoading={x.refreshing}`), et l’attente du bouton « Actualiser » (`onPress: tickets.refresh` : la promesse court jusqu’à la fin de la lecture, socle-ui D-116). `PageSection`, `Card variant="metric"`, `Page` et `DetailPage` ont la même barre : `isRefreshing={x.refreshing}` (socle-ui 1.27.0, D-426).
 
 ```tsx
 // Refusé : toute la page attend.
@@ -258,7 +262,8 @@ if (meteo.loading) return <Page state="loading" />;
 
 // Écrit : la page et ses titres tout de suite ; seul le bloc sans valeur attend.
 <Page actions={[{ id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: meteo.refresh }]}>
-  <PageSection title="Ciel" state={meteo.error && !meteo.data ? "error" : meteo.loading ? "loading" : "ready"} onRetry={meteo.refresh}>
+  <PageSection title="Ciel" state={meteo.error && !meteo.data ? "error" : meteo.loading ? "loading" : "ready"} onRetry={meteo.refresh}
+    footer={meteo.error && meteo.data ? <Text size="meta" tone="warning">Non relu depuis <FormattedValue type="relative" value={meteo.checkedAt} /></Text> : undefined}>
     …
   </PageSection>
 </Page>
@@ -277,11 +282,11 @@ if (meteo.loading) return <Page state="loading" />;
   ],
   "states": [
     { "id": "mes-tickets", "entity": "ticket", "items": "issues", "description": "Les tickets qui me sont attribués.",
-      "refresh": { "function": "rafraichir-mes-tickets", "every": 30, "incremental": true } },
+      "maxAge": 900, "refresh": { "function": "rafraichir-mes-tickets", "every": 300, "incremental": true } },
     { "id": "tickets-du-filtre", "entity": "ticket", "description": "Les tickets d’un filtre JQL.",
       "params": [{ "id": "jql", "description": "Filtre JQL des tickets", "example": "assignee = currentUser() AND resolution = Unresolved" }],
-      "refresh": { "function": "rafraichir-filtre", "every": 60, "incremental": true } },
-    { "id": "ci", "params": [{ "id": "job", "description": "Nom du job Jenkins", "example": "alfred-main" }], "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
+      "maxAge": 900, "refresh": { "function": "rafraichir-filtre", "every": 300, "incremental": true } },
+    { "id": "ci", "maxAge": 60, "params": [{ "id": "job", "description": "Nom du job Jenkins", "example": "alfred-main" }], "description": "État d’un job Jenkins, par job.", "schema": { "type": "object" } }
   ]
 }
 ```
@@ -291,7 +296,7 @@ if (meteo.loading) return <Page state="loading" />;
 - `client` (facultatif, sur une entité ou un état) : le besoin dont le compte entre dans la portée, quand le module en a plusieurs.
 - `params` (facultatif) : les paramètres de l’état, **chacun décrit** : `{ "id": "jql", "description": "Filtre JQL des tickets", "example": "assignee = currentUser()" }`. Chaque jeu de valeurs est un état à part ; deux abonnés avec les mêmes paramètres (dans n’importe quel ordre) partagent le même état et un seul rafraîchissement. La description et l’exemple sont ce que lit un module consommateur pour savoir quoi passer : `check` refuse un paramètre sans description.
 - `refresh` (facultatif) : la politique du **fournisseur**, voir plus bas.
-- `maxAge` (facultatif, en secondes, 10 au moins) : l’âge maximal d’une valeur, choisi selon le métier (des tickets Jira changent peu : 900 ; un job CI change vite : 60). Voir « La fraîcheur » plus bas.
+- `maxAge` (obligatoire, en secondes, 10 au moins ; `check` refuse un état sans lui) : l’âge maximal d’une valeur, choisi selon le métier (des tickets Jira changent peu : 900 ; un job CI change vite : 60). Voir « La fraîcheur » plus bas.
 - `version` (facultatif, sur un état) : à monter quand la forme de la valeur change ; une valeur gardée d’une autre version est oubliée et relue. `persist: false` : la valeur n’est jamais gardée sur le disque (donnée sensible).
 - Le nom et la forme d’un état ou d’une entité sont **un contrat entre modules** : ne les change pas sans monter la `version`.
 
@@ -340,7 +345,7 @@ export default function MesTickets() {
       empty={{ title: "Aucun ticket" }}
       actions={[{ id: "actualiser", label: "Actualiser", icon: <RefreshCw size={16} />, onPress: tickets.refresh }]}
       isLoading={tickets.refreshing}
-      hasError={Boolean(tickets.error) && !tickets.data}
+      hasError={Boolean(tickets.error)}
       onRetry={() => void tickets.refresh()}
     />
   );
@@ -994,7 +999,7 @@ interface PageContext {
 }
 ```
 
-Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, charge l’objet avec `useAsync` et le décrit dans un `Drawer`. Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections du `Drawer` mémorisent leur repli par leur `id`.
+Page et panneau : la page publie la ligne choisie dans `onSelect` de `ListPage` (`shell.publish(row?.id ?? null)`) ; le panneau la lit avec `useSelection()`, s’abonne à l’objet (`useAlfredState` pour un service, `useAsync` pour la base) et le décrit dans un `Drawer`. Quand l’élément choisi n’est plus dans les lignes (supprimé, données remplacées), la page vide sa sélection et publie `null` : le panneau disparaît, jamais « Élément introuvable ». Après une écriture, chaque côté appelle `announceChange()` : les `useAsync` de l’autre cadre se relancent (DESIGN.md, sections 5 et 6). `shell.setPanelVisible(true)` ouvre le panneau ; `shell.send(message)` et `usePeerMessage(handler)` portent un autre message. La largeur du panneau est réglée par l’utilisateur ; les sections du `Drawer` mémorisent leur repli par leur `id`.
 
 Quitter une page ne la ferme pas : Alfred garde ouvertes les dernières pages affichées, la liste d’une page et l’onglet d’un de ses éléments compris. Y revenir la montre telle qu’on l’a laissée (état React, défilement, données chargées), sans rien écrire dans la page. `usePageState(clé, initial)` retient en plus une petite valeur JSON (vue, onglet, élément ouvert) pour une page qu’Alfred a dû fermer (au-delà des dernières pages, ou rechargée parce que son code a changé), et la rend au retour, tant qu’Alfred est ouvert.
 
@@ -1318,7 +1323,7 @@ export default function Documents() {
         onPress: async () => ajouter(await files.pick({ accept: ["pdf"], multiple: true })) }]}
       isDraggingFiles={depot.isDraggingFiles}
       dropLabel="Déposez les PDF pour les ajouter"
-      isLoading={documents.loading || depot.isImporting}
+      isLoading={documents.refreshing || depot.isImporting}
       onActionError={notifyActionError}
     />
   );

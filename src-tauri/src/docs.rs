@@ -14,12 +14,13 @@ const PLACEMENT: &str = include_str!("../../docs/espace/PLACEMENT.md");
 const GUIDE: &str = include_str!("../../docs/espace/AGENTS.md");
 const SDK: &str = include_str!("../../docs/espace/SDK.md");
 /// Parties du guide lues à la demande : `AGENTS.md`, chargé d’office par chaque harnais, reste court et y renvoie.
-const GUIDES: [(&str, &str); 5] = [
+const GUIDES: [(&str, &str); 6] = [
     ("page.md", include_str!("../../docs/espace/guides/page.md")),
     ("service.md", include_str!("../../docs/espace/guides/service.md")),
     ("fonction.md", include_str!("../../docs/espace/guides/fonction.md")),
     ("donnees.md", include_str!("../../docs/espace/guides/donnees.md")),
     ("module-json.md", include_str!("../../docs/espace/guides/module-json.md")),
+    ("conversations.md", include_str!("../../docs/espace/guides/conversations.md")),
 ];
 
 fn write_if_changed(path: &Path, content: impl AsRef<[u8]>) -> AppResult<()> {
@@ -178,6 +179,30 @@ mod tests {
             assert!(crate::socle_ui::EXPORTS.contains(&name), "socle-ui {} n’exporte pas {name}", crate::socle_ui::VERSION);
         }
         assert!(crate::socle_ui::DOCS.iter().any(|(path, text)| *path == "specs/Page.md" && text.contains("framed")));
+    }
+
+    #[test]
+    fn chaque_guide_pose_l_ordre_de_priorite_en_tete() {
+        // Voulu par l’utilisateur, appliqué à chaque décision : l’interface, puis une donnée juste (ou son âge),
+        // puis le moins d’appels au service. AGENTS.md le pose avant tout le reste ; chaque guide le rappelle en tête.
+        let order = ["(1) l’interface s’affiche tout de suite", "(2) la donnée affichée est juste, ou son âge est visible", "(3) le moins d’appels au service possible"];
+        let rules = GUIDE.find("## L’ordre de priorité").expect("AGENTS.md sans ordre de priorité");
+        assert!(rules < GUIDE.find("## Ta façon de parler").unwrap(), "l’ordre de priorité vient en tête d’AGENTS.md");
+        for expected in ["1. **L’interface s’affiche tout de suite.**", "2. **La donnée affichée est juste, ou son âge est visible.**", "3. **Le moins d’appels au service possible.**"] {
+            assert!(GUIDE.contains(expected), "AGENTS.md n’a pas « {expected} »");
+        }
+        let page = GUIDES.iter().find(|(name, _)| *name == "page.md").map(|(_, text)| *text).unwrap();
+        for (name, text) in [("page.md", page), ("PLACEMENT.md", PLACEMENT), ("SDK.md", SDK), ("DESIGN.md", DESIGN)] {
+            let head = &text[..text.find("(3) le moins d’appels").unwrap_or_else(|| panic!("{name} sans l’ordre de priorité"))];
+            assert!(order[..2].iter().all(|step| head.contains(step)), "{name} : ordre incomplet");
+        }
+        // Ce qui contredisait l’ordre a disparu des exemples.
+        for (name, text) in [("PLACEMENT.md", PLACEMENT), ("SDK.md", SDK), ("DESIGN.md", DESIGN), ("page.md", page)] {
+            assert!(!text.contains("emptyMessage=\"Sélectionnez"), "{name} : texte d’attente dans un panneau");
+            assert!(!text.contains("<Page state={…}"), "{name} : page entière en chargement");
+            assert!(!text.contains("useAsync(() => functions.call(\""), "{name} : fonction appelée au montage");
+            assert!(!text.contains("hasError={Boolean(tickets.error) && !tickets.data}"), "{name} : échec caché avec des données");
+        }
     }
 
     #[test]

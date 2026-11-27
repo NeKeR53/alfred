@@ -567,6 +567,18 @@ impl<'a> Visit<'a> for Lint<'_> {
         walk::walk_template_literal(self, literal);
     }
 
+    /// Une valeur typée se formate par son `type` (colonne, champ, `FormattedValue`), pas par la page.
+    fn visit_static_member_expression(&mut self, member: &oxc::ast::ast::StaticMemberExpression<'a>) {
+        let name = member.property.name.as_str();
+        if ["toLocaleDateString", "toLocaleTimeString", "toLocaleString", "DateTimeFormat", "NumberFormat", "RelativeTimeFormat"].contains(&name) {
+            self.report(
+                member.span.start,
+                format!("Avertissement : la page formate une valeur elle-même (`{name}`). Une date, une durée, un montant ou un nombre passe brut avec son `type` : colonne de `ListPage` ou de `Table`, champ de `Drawer`, `meta` typée, ou `<FormattedValue type=\"relative\" value={{…}} />` (DESIGN.md, section 11)."),
+            );
+        }
+        walk::walk_static_member_expression(self, member);
+    }
+
     fn visit_jsx_child(&mut self, child: &JSXChild<'a>) {
         if let JSXChild::Text(text) = child {
             self.check_text(text.span.start, text.value.as_str());
@@ -2096,6 +2108,54 @@ export default function Support() {
         assert!(mount[1].contains("« marquer-vu »"), "{mount:?}");
         assert!(mount[2].contains("« compter »"), "{mount:?}");
         assert!(!found.iter().any(|message| message.contains("ouvrir-ticket")), "{found:?}");
+    }
+
+    #[test]
+    fn une_page_ne_cache_pas_une_lecture_en_echec_ni_n_appelle_une_fonction_par_use_async() {
+        // Ordre de priorité, point 2 : une donnée gardée après un échec se signale dans son bloc.
+        let hidden = messages(
+            r#"import { useAlfredState } from "@alfred/sdk";
+               import { ListPage } from "socle-ui";
+               export default function Tickets() {
+                 const tickets = useAlfredState("jira/mes-tickets");
+                 return <ListPage title="Tickets" rows={tickets.data} columns={[]} empty={{ title: "Aucun" }}
+                   isLoading={tickets.refreshing} hasError={Boolean(tickets.error) && !tickets.data} />;
+               }"#,
+        );
+        assert!(hidden.iter().any(|message| message.contains("`hasError` de `ListPage` cache l’échec")), "{hidden:?}");
+        let shown = messages(
+            r#"import { useAlfredState } from "@alfred/sdk";
+               import { ListPage } from "socle-ui";
+               export default function Tickets() {
+                 const tickets = useAlfredState("jira/mes-tickets");
+                 return <ListPage title="Tickets" rows={tickets.data} columns={[]} empty={{ title: "Aucun" }}
+                   isLoading={tickets.refreshing} hasError={Boolean(tickets.error)} onRetry={tickets.refresh} />;
+               }"#,
+        );
+        assert!(!shown.iter().any(|message| message.contains("hasError") || message.contains("isLoading")), "{shown:?}");
+        // Une relecture se voit : `isLoading` suit `refreshing`, pas `loading` ; une date passe par son type.
+        let stale = messages(
+            r#"import { useAsync } from "@alfred/sdk";
+               import { ListPage } from "socle-ui";
+               export default function Tickets() {
+                 const tickets = useAsync(lister, []);
+                 const quand = (iso: string) => new Date(iso).toLocaleDateString("fr-FR");
+                 return <ListPage title="Tickets" rows={tickets.data} columns={[]} empty={{ title: "Aucun" }}
+                   isLoading={tickets.loading && Boolean(tickets.data)} hasError={Boolean(tickets.error)} />;
+               }"#,
+        );
+        assert!(stale.iter().any(|message| message.contains("`isLoading` de `ListPage` suit `loading`")), "{stale:?}");
+        assert!(stale.iter().any(|message| message.contains("Avertissement : la page formate une valeur elle-même (`toLocaleDateString`)")), "{stale:?}");
+        // Ordre de priorité, points 1 et 3 : le chargeur d’un `useAsync` tourne à l’ouverture, comme un effet.
+        let page = r#"import { functions, useAsync } from "@alfred/sdk";
+import { Drawer } from "socle-ui";
+export default function Console() {
+  const canal = useAsync(() => functions.call("docker/console", { conteneur: "web" }), []);
+  return <Drawer header={{ title: "Console" }} sections={[]} />;
+}
+"#;
+        let found = module_messages(&[("modules/docker/pages/console.tsx", page)], "modules/docker/pages/console.tsx");
+        assert!(found.iter().any(|message| message.contains("« docker/console » au montage")), "{found:?}");
     }
 
     #[test]

@@ -56,6 +56,7 @@ export function PageFrame({
   examples: forced = false,
   view = null,
   shown = true,
+  selection,
 }: {
   page: ResolvedPage;
   kind: "page" | "panel";
@@ -70,6 +71,8 @@ export function PageFrame({
   examples?: boolean;
   /** Faux : page gardée montée mais masquée ; elle n’est pas « affichée » pour une capture de l’agent. */
   shown?: boolean;
+  /** Panneau capturé par l’agent : l’élément choisi qu’il montre (à la place de la sélection de la page). */
+  selection?: { value: unknown };
 }) {
   const info = useShell((state) => state.info);
   // Le code du module a changé (l’agent l’a réécrit) : ses pages se rechargent, et seulement elles. Le menu réordonné,
@@ -88,6 +91,7 @@ export function PageFrame({
   // Les comptes changent d’identité (pas de valeur) à chaque snapshot : le cadre suit leur valeur, en chaîne.
   const accountsKey = JSON.stringify(page.accounts ?? {});
   const viewJson = view ? JSON.stringify(view) : "";
+  const selectionJson = capture && selection ? JSON.stringify(selection) : "";
   // Identité du cadre : un seul objet tout au long de sa vie, mis à jour sur place. Un onglet renommé, un compte
   // changé ne la remplacent pas : ses états suivis, ses flux et ses objets Python restent à lui.
   const frameId = useRef("");
@@ -102,6 +106,7 @@ export function PageFrame({
     examples,
     capture,
     viewJson,
+    selectionJson,
   ]);
   const identityRef = useRef<FrameIdentity | null>(null);
   const next: FrameIdentity = {
@@ -115,6 +120,7 @@ export function PageFrame({
     ...(examples ? { examples: true } : {}),
     ...(capture ? { capture: true } : {}),
     ...(viewJson ? { view: JSON.parse(viewJson) as FrameIdentity["view"] } : {}),
+    ...(selectionJson ? { selection: JSON.parse(selectionJson) as FrameIdentity["selection"] } : {}),
   };
   if (!identityRef.current) identityRef.current = next;
   else {

@@ -4,6 +4,8 @@ Lis ce guide **avant** `place_page`, à chaque demande qui ajoute ou déplace qu
 
 Ce guide applique les règles de placement de socle-ui, le design system d’Alfred : `docs/alfred/socle/docs/layout-rules.md`, et les décisions citées ici (D-xxx), dans `docs/alfred/socle/docs/decisions.md`. Il ne les contredit jamais. En cas de doute, la règle de Socle gagne.
 
+Chaque placement suit l’ordre de priorité d’`AGENTS.md` : (1) l’interface s’affiche tout de suite ; (2) la donnée affichée est juste, ou son âge est visible ; (3) le moins d’appels au service possible.
+
 Quatre principes :
 
 1. **Tu ne crées aucune place.** Chaque élément va dans une zone qui existe déjà : le menu, la barre du haut, le gabarit de la page, le panneau de droite, une fenêtre, les Réglages. Une zone accepte certaines choses et en refuse d’autres (tableau de la section 2).
@@ -166,7 +168,7 @@ Une action est une **`Action`** (`id`, `label`, `icon`, `onPress`, `primary`, `d
 
 - Une seule action `primary` par zone, un seul bouton plein par écran (D-220).
 - Une action destructrice est `danger` : dans « … », en dernier, toujours confirmée (D-115).
-- `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover`. `check` avertit d’un `Button` ailleurs.
+- `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover`. `check` refuse un `Button` ailleurs.
 - Aller vers une autre page n’est pas une action de bouton : c’est le menu, un onglet ou un `Link` (spec Button).
 
 ## 7. Les fenêtres et les messages
@@ -260,7 +262,7 @@ Une nouvelle page, un nouveau module, une nouvelle entrée du menu ou un changem
 - **La maquette de ta recommandation.** Place les pages (`place_page`) et écris-les à partir de la recette (`// Recette : …` en première ligne), avec les vrais gabarits de Socle et des données d’exemple réalistes écrites dans le fichier (une constante `EXEMPLE` : assez de lignes pour remplir l’écran, des états variés), sans migration, sans fonction, sans client. Passe l’auto-revue (`docs/alfred/guides/page.md`, étapes 7 bis et 7 ter), puis `page_screenshot` : l’utilisateur voit la capture dans la conversation, et la page dans son menu.
 - **La validation**, en carte de choix : `{"question":"Je construis la page des builds ainsi ?","options":[{"label":"Oui, construis (recommandé)","why":"Les échecs se voient d’un coup d’œil."},{"label":"Plutôt la variante B","why":"La liste des builds, filtrable, détail à droite."},{"label":"Changer les informations montrées"}]}`. Termine ton tour.
 
-**3. La construction**, après l’accord : remplace les données d’exemple par les vraies (migration, fonctions, connecteur) et livre une page entièrement fonctionnelle (`docs/alfred/guides/page.md`, « Créer une page »). Après une correction, reprends la maquette et redemande. Si l’utilisateur renonce, retire les pages (`delete_page`).
+**3. La construction**, après l’accord : remplace les données d’exemple par les vraies (migration, fonctions, connecteur) et livre une page entièrement fonctionnelle (`docs/alfred/guides/page.md`, « Créer une page »). Les données d’un service nommé (Jira, Jenkins, GitHub…) passent toujours par son connecteur et ses états partagés, même sans compte : ses fonctions portent leurs données d’exemple (`fonction.md`, « Données d’exemple »), et la page s’affiche dans ce mode jusqu’à la connexion du compte (`show_examples` quand l’utilisateur a demandé des données d’exemple). Jamais une table du module qui imite le service : tout serait à refaire le jour où le compte arrive. Les vraies données reprennent les identifiants de la maquette : une sélection gardée par l’utilisateur reste valable. Après une correction, reprends la maquette et redemande. Si l’utilisateur renonce, retire les pages (`delete_page`).
 
 **Un défaut raisonnable.** Ta recommandation est toujours le défaut. Si l’utilisateur répond sans trancher (« vas-y », « comme tu veux », « je ne sais pas »), prends-la et passe à l’étape suivante. Ne repose jamais la même question.
 
@@ -277,7 +279,7 @@ Demande : « Je veux suivre mes tickets Jira. »
 - **Panneau de droite** de « Mes tickets » : un `Drawer` sur le ticket sélectionné. En-tête : « ALF-12 · Export en échec », état, actions « Ouvrir dans Jira » et « Commenter ». Sections « Suivi » (état et priorité, modifiables par le menu de leur ligne ; responsable, modifiable par une fenêtre) et « Dates ».
 - **Onglet ouvert** sur un ticket : double-clic → `views.open({ id: ticket.key, label: \`${ticket.key} ${ticket.summary}\`, params: { key: ticket.key } })`. La même page rend une `DetailPage` : description en `Markdown`, commentaires dans une section, action `primary` « Commenter », action `danger` « Supprimer » qui ferme l’onglet (`views.close()`).
 - **Actions** : « Nouveau ticket » (`primary`, en-tête de la liste) ouvre `useOpenForm` (projet, type, résumé, priorité) ; « Actualiser » (icône `RefreshCw`) en en-tête, car les tickets changent hors d’Alfred ; « Ouvrir dans Jira » en action de ligne.
-- **États** (règle obligatoire, SDK.md section 3) : le module `jira` est **fournisseur**. Il déclare l’entité `ticket` (`key: "cle"`) et l’état `mes-tickets` (liste de tickets), avec sa politique : `refresh: { "function": "rafraichir-mes-tickets", "every": 30, "incremental": true }` (la fonction ne demande à Jira que les tickets modifiés depuis `since`). `lire-ticket` alimente l’entité (`param: "cle"`). La liste s’abonne à `mes-tickets`, le panneau et l’onglet à `jira/ticket` avec la clé : jamais `functions.call` pour afficher une donnée. Un tableau de bord d’un autre module s’abonne aux mêmes états par `requires`, sans écrire sa propre lecture ; un filtre choisi par l’utilisateur est un état à paramètres (`tickets-du-filtre`, `params: ["jql"]`). Relire un ticket met à jour la liste, le panneau, l’onglet et le tableau de bord ; « Commenter » (une écriture) fait relire les états suivis.
+- **États** (règle obligatoire, SDK.md section 3) : le module `jira` est **fournisseur**. Il déclare l’entité `ticket` (`key: "cle"`) et l’état `mes-tickets` (liste de tickets), avec sa politique : `maxAge: 900` et `refresh: { "function": "rafraichir-mes-tickets", "every": 300, "incremental": true }` (la fonction ne demande à Jira que les tickets modifiés depuis `since`). `lire-ticket` alimente l’entité (`param: "cle"`). La liste s’abonne à `mes-tickets`, le panneau et l’onglet à `jira/ticket` avec la clé : jamais `functions.call` pour afficher une donnée. Un tableau de bord d’un autre module s’abonne aux mêmes états par `requires`, sans écrire sa propre lecture ; un filtre choisi par l’utilisateur est un état à paramètres (`tickets-du-filtre`, `params: ["jql"]`). Relire un ticket met à jour la liste, le panneau, l’onglet et le tableau de bord. « Commenter » (une écriture) déclare `entity: "ticket"` (elle rend le ticket modifié) : seul ce ticket change, rien d’autre ne se relit. Avec `maxAge: 900`, la liste gardée s’affiche tout de suite, et ne se relit chez Jira que si elle a plus d’un quart d’heure.
 - **Messages** : une fonction planifiée relève les tickets assignés ; un nouveau ticket → `shell.notify` (au centre de notifications) et `badge.set` sur l’entrée.
 - **Réglages** : « Projet par défaut » dans une page des Réglages du module.
 
@@ -299,7 +301,7 @@ return (
     selectedId={choisi}
     onSelect={(row) => { setChoisi(row?.id ?? null); void shell.publish(row?.key ?? null); }}
     onOpen={(t) => void views.open({ id: t.key, label: `${t.key} ${t.summary}`, params: { key: t.key } })}
-    isLoading={tickets.refreshing} hasError={Boolean(tickets.error) && !tickets.data} onRetry={tickets.refresh}
+    isLoading={tickets.refreshing} hasError={Boolean(tickets.error)} onRetry={tickets.refresh}
     onActionError={notifyActionError}
   />
 );
@@ -327,7 +329,9 @@ Demande : « Ajoute une synthèse de mes factures. »
 - **Actions** : « Exporter » dans `actions` de `Page` (zone `toolbar`).
 
 ```tsx
-<Page state={…} onRetry={…}
+// L’interface d’abord : la page, ses chiffres et ses titres tout de suite ; chaque bloc montre sa propre attente.
+const bloc = factures.error && !factures.data ? "error" : factures.loading ? "loading" : "ready";
+<Page
   toolbar={<SegmentedControl label="Période" options={PERIODES} value={periode} onChange={setPeriode} />}
   actions={[{ id: "exporter", label: "Exporter en CSV", icon: <Download size={16} />, onPress: exporter }]}>
   <PageGrid columns={3}>
@@ -336,10 +340,10 @@ Demande : « Ajoute une synthèse de mes factures. »
     <Card variant="metric" label="Encaissé ce mois" value={formatMontant(encaisse)} onPress={() => void shell.navigate("factures/liste")} />
   </PageGrid>
   <PageGrid>
-    <PageSection title="Factures en retard" empty={retard.length ? undefined : { title: "Aucune facture en retard" }}>
+    <PageSection title="Factures en retard" state={bloc} onRetry={factures.reload} empty={retard.length ? undefined : { title: "Aucune facture en retard" }}>
       <Table … />
     </PageSection>
-    <PageSection title="Encaissements">
+    <PageSection title="Encaissements" state={bloc} onRetry={factures.reload}>
       <div ref={graphique} />
     </PageSection>
   </PageGrid>

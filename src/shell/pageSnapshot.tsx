@@ -130,6 +130,8 @@ interface HiddenPage {
   examples?: boolean;
   /** Taille du cadre (`capture` par défaut). */
   viewport?: Viewport;
+  /** Panneau : l’élément choisi qu’il montre pendant la capture. */
+  selection?: { value: unknown };
 }
 
 function setHidden(next: HiddenPage[]) {
@@ -243,17 +245,20 @@ async function askFrame(
   extra: Record<string, unknown>,
   timeout: number,
   examples = false,
-  options: { viewport?: Viewport; quiet?: boolean } = {},
+  options: { viewport?: Viewport; quiet?: boolean; selection?: { value: unknown } } = {},
 ): Promise<{ located: NonNullable<ReturnType<typeof findPage>>; displayed: boolean; answer: Record<string, unknown> }> {
   const located = findPage(useShell.getState().snapshot, reference);
   if (!located) throw new Error(`La page « ${reference} » n’existe pas dans l’espace de travail.`);
   // En données d’exemple, la page affichée ne sert que si elle les montre déjà ; sinon un cadre invisible les charge.
-  const visible = options.viewport
-    ? undefined
-    : [...targets].find(
-        (target) =>
-          target.reference === reference && !target.hidden && !target.parked() && (!examples || target.examples),
-      );
+  // Un élément choisi pour un panneau se montre toujours dans un cadre invisible : l’écran de l’utilisateur ne bouge pas.
+  const selection = located.kind === "panel" ? options.selection : undefined;
+  const visible =
+    options.viewport || selection
+      ? undefined
+      : [...targets].find(
+          (target) =>
+            target.reference === reference && !target.hidden && !target.parked() && (!examples || target.examples),
+        );
   let token: string | undefined;
   let target = visible;
   try {
@@ -267,6 +272,7 @@ async function askFrame(
           ...located,
           ...(examples ? { examples: true } : {}),
           ...(options.viewport ? { viewport: options.viewport } : {}),
+          ...(selection ? { selection } : {}),
         },
       ]);
       target = await waitTarget(reference, timeout, examples, token);
@@ -282,9 +288,11 @@ async function askFrame(
 export async function capturePage(
   reference: string,
   timeout = 12_000,
-  options: { examples?: boolean } = {},
+  options: { examples?: boolean; selection?: { value: unknown } } = {},
 ): Promise<PageSnapshot> {
-  const { located, displayed, answer } = await askFrame(reference, "describe", {}, timeout, options.examples === true);
+  const { located, displayed, answer } = await askFrame(reference, "describe", {}, timeout, options.examples === true, {
+    selection: options.selection,
+  });
   return {
     page: reference,
     title: located.page.title,
@@ -353,7 +361,7 @@ export async function inspectFrameElement(
 /** Image de la page `reference`, dessinée par son cadre ; la charge hors de la vue si elle n’est pas affichée. */
 export async function screenshotPage(
   reference: string,
-  options: { fullPage?: boolean; examples?: boolean } = {},
+  options: { fullPage?: boolean; examples?: boolean; selection?: { value: unknown } } = {},
   timeout = 15_000,
 ): Promise<PageScreenshotResult> {
   const { located, displayed, answer } = await askFrame(
@@ -362,6 +370,7 @@ export async function screenshotPage(
     { fullPage: options.fullPage === true },
     timeout,
     options.examples === true,
+    { selection: options.selection },
   );
   const image = frameImage(answer);
   return {
@@ -530,6 +539,7 @@ export function SnapshotFrames() {
             capture
             token={item.token}
             examples={item.examples === true}
+            selection={item.selection}
           />
         </div>
       ))}

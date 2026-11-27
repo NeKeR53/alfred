@@ -25,6 +25,11 @@ function resolve(requestId: string, result: unknown) {
   return invoke("ui.resolve", { requestId, result }).catch(() => undefined);
 }
 
+/** Élément choisi pour la capture d’un panneau : présent seulement si l’agent l’a donné (même `null`). */
+function chosen(request: { selection?: unknown }): { value: unknown } | undefined {
+  return "selection" in request && request.selection !== undefined ? { value: request.selection } : undefined;
+}
+
 function reject(requestId: string, error: unknown) {
   return invoke("ui.resolve", { requestId, error: error instanceof Error ? error.message : String(error) }).catch(
     () => undefined,
@@ -81,20 +86,30 @@ function bind() {
     void resolve(request.requestId, readFrameLogs(request));
   });
   onNativeEvent("agent:pageSnapshot", async (payload) => {
-    const request = payload as { requestId: string; page: string; examples?: boolean };
+    const request = payload as { requestId: string; page: string; examples?: boolean; selection?: unknown };
     // Une seule interface capture la page, même si plusieurs fenêtres sont ouvertes.
     const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
     if (!claimed) return;
-    capturePage(request.page, undefined, { examples: request.examples === true }).then(
+    capturePage(request.page, undefined, { examples: request.examples === true, selection: chosen(request) }).then(
       (snapshot) => resolve(request.requestId, snapshot),
       (error) => reject(request.requestId, error),
     );
   });
   onNativeEvent("agent:pageScreenshot", async (payload) => {
-    const request = payload as { requestId: string; page: string; fullPage?: boolean; examples?: boolean };
+    const request = payload as {
+      requestId: string;
+      page: string;
+      fullPage?: boolean;
+      examples?: boolean;
+      selection?: unknown;
+    };
     const claimed = await invoke<boolean>("ui.claim", { requestId: request.requestId }).catch(() => false);
     if (!claimed) return;
-    screenshotPage(request.page, { fullPage: request.fullPage === true, examples: request.examples === true }).then(
+    screenshotPage(request.page, {
+      fullPage: request.fullPage === true,
+      examples: request.examples === true,
+      selection: chosen(request),
+    }).then(
       (image) => resolve(request.requestId, image),
       (error) => reject(request.requestId, error),
     );

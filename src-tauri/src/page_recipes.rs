@@ -94,15 +94,15 @@ fn names() -> String {
 }
 
 /// Avertissement de `check` pour une page de la zone principale : recette absente ou inconnue.
-pub fn warning(source: &str) -> Option<String> {
+pub fn problem(source: &str) -> Option<String> {
     match declared(source) {
         Some(Declared::Recipe(_)) | Some(Declared::None) => None,
         Some(Declared::Unknown(name)) => Some(format!(
-            "Avertissement : recette inconnue « {name} ». Recettes de socle-ui : {}. Ou `// Recette : aucune (raison)` quand aucune ne convient (docs/alfred/guides/page.md, étape 3).",
+            "Recette inconnue « {name} » : refusé. Recettes de socle-ui : {}. Ou `// Recette : aucune (raison)` quand aucune ne convient (docs/alfred/guides/page.md, étape 3).",
             names()
         )),
         None => Some(format!(
-            "Avertissement : la page ne dit pas de quelle recette elle part. Choisis la plus proche, lis sa fiche et regarde sa capture dans docs/alfred/socle/recipes/, reprends ses zones et ses composants, puis écris-la en première ligne : `// Recette : Dashboard`. Recettes : {}. `// Recette : aucune (raison)` seulement quand aucune ne convient (docs/alfred/guides/page.md, étape 3).",
+            "Page sans recette : refusé. La page dit en première ligne de quelle recette de socle-ui elle part. Choisis la plus proche, lis sa fiche et regarde sa capture dans docs/alfred/socle/recipes/, reprends ses zones et ses composants, puis écris-la en première ligne : `// Recette : Dashboard`. Recettes : {}. `// Recette : aucune (raison)` seulement quand aucune ne convient (docs/alfred/guides/page.md, étape 3).",
             names()
         )),
     }
@@ -133,7 +133,7 @@ pub const CRITERIA: [&str; 8] = [
     "Écran rempli : pas de grand vide. Des blocs courts de même rang vont côte à côte (`PageGrid`, `PageSection framed`) ; une collection prend toute la page (`ListPage`).",
     "Données mises en forme : un état est un `Badge` ou une colonne `status` avec son ton, une date, un montant ou une durée suivent leur type (`FormattedValue`, `type` de colonne), une personne a son `Avatar`, un avancement sa `ProgressBar`, un identifiant son `Code`. Pas de `Text` brut pour une valeur typée.",
     "Hiérarchie : chaque bloc a un titre et une description courte ; un seul bouton plein à l’écran ; les actions sont dans l’en-tête, la barre du haut ou la section qu’elles concernent.",
-    "UI d’abord : l’interface et les données déjà gardées s’affichent tout de suite ; seul le bloc qui attend montre son attente (`PageSection state=\"loading\"`), jamais tout l’écran.",
+    "UI d’abord : l’interface et les données déjà gardées s’affichent tout de suite ; seul le bloc qui attend montre son attente (`PageSection state=\"loading\"`), jamais tout l’écran. Une donnée qui n’a pas pu être relue le dit dans son bloc (`hasError` de `ListPage`, son âge en pied de section).",
     "États soignés : un bloc vide dit pourquoi et propose l’action qui le remplit ; une erreur reste dans son bloc avec « Réessayer ».",
     "Clair et sombre lisibles ; `designWarnings` et `review` de `check` corrigés.",
 ];
@@ -189,13 +189,14 @@ mod tests {
     }
 
     #[test]
-    fn avertit_sans_recette_ou_avec_une_inconnue() {
-        assert!(warning("// Recette : ListDetail\n").is_none());
-        assert!(warning("// Recette : aucune (conversation)\n").is_none());
-        let missing = warning("export default function P() {}").unwrap();
-        assert!(missing.starts_with("Avertissement"), "{missing}");
+    fn refuse_une_page_sans_recette_ou_avec_une_inconnue() {
+        assert!(problem("// Recette : ListDetail\n").is_none());
+        assert!(problem("// Recette : aucune (conversation)\n").is_none());
+        let missing = problem("export default function P() {}").unwrap();
+        assert!(missing.starts_with("Page sans recette : refusé"), "{missing}");
+        assert!(!crate::design_lint::is_warning(&missing), "{missing}");
         assert!(missing.contains("`Dashboard`") && missing.contains("// Recette :"), "{missing}");
-        let unknown = warning("// Recette : Kanban\n").unwrap();
+        let unknown = problem("// Recette : Kanban\n").unwrap();
         assert!(unknown.contains("« Kanban »"), "{unknown}");
     }
 

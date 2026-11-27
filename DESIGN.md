@@ -14,8 +14,10 @@ Le transpileur ne vérifie pas les types : une option inventée est ignorée en 
 
 ## 1. Règles non négociables
 
+Chaque page suit l’ordre de priorité d’`AGENTS.md` : (1) l’interface s’affiche tout de suite ; (2) la donnée affichée est juste, ou son âge est visible ; (3) le moins d’appels au service possible. Les règles ci-dessous l’appliquent.
+
 1. **Une recette, puis un gabarit.** Avant d’écrire, partir de la recette la plus proche (section 2, « Partir d’une recette »). Une collection est une `ListPage`, un panneau de droite est un `Drawer` déclaratif, une saisie courte est `useOpenForm`, une saisie longue est une `FormPage`, un élément ouvert en entier est une `DetailPage`, un échange de questions et de réponses est une `ChatPage`. `Page`, avec `PageSection` et `PageGrid`, seulement quand aucun gabarit ne convient : tableau de bord, éditeur, graphique (sections 2 et 10).
-2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover` ; `check` avertit ailleurs.
+2. **Des actions, pas des boutons.** Une action de page, de section, d’objet ou de ligne est une `Action` (section 4) passée au gabarit. Le gabarit choisit bouton à texte, icône ou entrée du menu « … ». `Button` ne sert qu’au pied d’une `Modal`, à l’action d’un `EmptyState`, au pied d’une section de `Drawer` et dans un `Popover` ; `check` le refuse ailleurs.
 3. **Imports.** Une page importe `react`, `lucide-react`, `socle-ui`, `socle-ui/markdown`, `socle-ui/markdown-editor`, `@alfred/sdk`, `@alfred/kit`, ses librairies npm et les fichiers de son module par chemin relatif (`./…`). Jamais un chemin interne de socle-ui (`socle-ui/dist/…`), ni une librairie que socle-ui enveloppe déjà (React Aria, Radix…). `@alfred/ui` n’existe plus (correspondance en section 15).
 4. **Racine.** Le fichier exporte son composant par défaut (`export default function …`). Il rend un gabarit à la racine, dans tous ses états : le gabarit gère chargement, vide et erreur.
 5. **Aucun style propre.** Ni `style`, ni `className`, ni `<style>`, ni balise HTML (`<div>`, `<span>`, `<button>`…), ni couleur en dur (`#3366ff`, `rgb(…)`). Une page règle les options des composants (`variant`, `size`, `tone`, `width`, `density`). L’écart entre deux composants vient de `Stack` et `Row` de `@alfred/kit`.
@@ -70,7 +72,7 @@ Choisir le gabarit d’après ce que la page montre :
 
 Une page qui liste ET montre le détail est une `ListPage` qui publie sa sélection, plus un `Drawer` déclaré comme son panneau : jamais une liste et un détail côte à côte dans la même page.
 
-Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus » ; `check` avertit), ni des boutons accolés.
+Des vues d’une même page (« À faire », « Terminées », « Planning ») sont des pages distinctes de la section : ses onglets fixes. Un élément ouvert (un ticket, une facture) est un onglet fermable (`views.open`). Jamais des `Tabs` dans le contenu d’une page (spec Tabs, « Exclus » ; `check` le refuse), ni des boutons accolés.
 
 ### Répartir avant de composer
 
@@ -112,6 +114,7 @@ Avant d’écrire une page, partez de la recette la plus proche : lisez sa fiche
 | donne une vue d’ensemble chiffrée, sur un écran | `Dashboard` (tableau de bord) |
 | traite des éléments un par un jusqu’à vider la file | `TriageQueue` (file de tri) |
 | montre une collection et la fiche de l’élément choisi | `ListDetail` (liste et fiche) |
+| surveille quelques éléments qui tournent seuls (jobs, déploiements, sauvegardes) : état, dernière exécution, actions | `TrackingBoard` (tableau de suivi) |
 | montre des éléments qu’on reconnaît à leur image | `Catalog` (catalogue) |
 
 Une recette est écrite pour la coquille de socle-ui (`AppShell`). Dans Alfred, chaque zone a son équivalent :
@@ -240,7 +243,7 @@ La zone fixe la forme. La page ne choisit rien :
 
 **Un panneau de droite ne contient qu’un `Drawer`.** Une page placée en panneau (`{ "kind": "panel" }`) rend un `Drawer` de socle-ui à sa racine, jamais une `Page`, une `ListPage`, un fragment ou du HTML ; l’outil `check` refuse une autre racine. Les panneaux d’Alfred lui-même suivent la même règle. `DetailPanel` est l’ancien nom de `Drawer` (socle-ui 1.0.0) : il marche encore, ne plus l’écrire.
 
-Le panneau lit la sélection publiée par sa page, charge l’objet et le décrit. Il ne charge rien lui-même.
+Le panneau lit la sélection publiée par sa page, s’abonne à l’objet choisi et le décrit : `useAlfredState("jira/ticket", { key })` pour l’objet d’un service, `useAsync` pour une ligne de la base du module. Sans élément choisi, Alfred ne l’affiche pas : il n’a ni texte d’attente ni `emptyMessage` (`check` refuse « Sélectionnez… »).
 
 ```tsx
 const id = useSelection<string>();                         // de @alfred/sdk
@@ -253,7 +256,6 @@ return (
     hasError={Boolean(tache.error)}
     onRetry={tache.reload}
     isNotFound={Boolean(id) && tache.data === null && !tache.loading}
-    emptyMessage="Sélectionnez une tâche pour voir son détail."
     onActionError={notifyActionError}
     onActionDone={() => { tache.reload(); void announceChange(); }}
   />
@@ -462,10 +464,12 @@ Anciens noms : ils marchent encore, mais `check` avertit et ils disparaîtront e
 
 `Button` et `IconButton` prennent `onPress`, jamais `onClick`.
 
-**Terminal.** xterm.js vient de `loadTerminal` ; le canal vient d’une fonction du connecteur (`client(id).socket`) :
+**Terminal.** xterm.js vient de `loadTerminal` ; le canal vient d’une fonction du connecteur (`client(id).socket`). Ouvrir un canal est un geste : une `Action` « Ouvrir la console », jamais au montage (`check` refuse un `functions.call` dans un `useEffect` ou un `useAsync`) :
 
 ```tsx
-const { canal } = useAsync(() => functions.call("docker/console", { conteneur }), [conteneur]).data ?? {};
+const [canal, setCanal] = useState<string | null>(null);
+const ouvrir = async () => setCanal((await functions.call<{ canal: string }>("docker/console", { conteneur })).canal);
+// actions={[{ id: "console", label: "Ouvrir la console", icon: <SquareTerminal size={16} />, onPress: ouvrir }]}
 <Terminal label={`Console de ${conteneur}`} engine={loadTerminal} {...useTerminalConnection(canal)} fill />
 ```
 
@@ -518,8 +522,8 @@ La promesse rend les valeurs, ou `null` si l’utilisateur ferme. `onSubmit` peu
 
 **`Page`, `PageSection` et `PageGrid`** : un tableau de bord, une synthèse, un éditeur.
 
-- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full`, le défaut ; `text`, une colonne de 760 px, seulement pour un texte à lire : une note, une procédure), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `loading`, `error`), `onRetry`, `isDraggingFiles` et `dropLabel` (dépôt de fichiers sur toute la page, avec `useFileDrop` : SDK.md, section 9).
-- `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state`, `onRetry`, `empty: { title, description, action }`.
+- `Page` : `toolbar` (contenu libre sur une ligne : `SearchInput`, `SegmentedControl` ou `Select` de période), `actions` (zone `toolbar`), `footer`, `width` (`full`, le défaut ; `text`, une colonne de 760 px, seulement pour un texte à lire : une note, une procédure), `fill` (le contenu prend la hauteur, pour un `LogViewer` ou un `Terminal` en `fill`), `state` (`ready`, `error` ; jamais `loading`, que `check` refuse : l’attente va sur chaque `PageSection`), `onRetry`, `isDraggingFiles` et `dropLabel` (dépôt de fichiers sur toute la page, avec `useFileDrop` : SDK.md, section 9).
+- `PageSection` : `title` (obligatoire), `description`, `actions` (zone `section`), `state` (`loading` seulement sans aucune valeur), `onRetry`, `empty: { title, description, action }`, `framed` (bloc encadré, pour des éléments suivis côte à côte), `footer` (pied collé en bas : dernière exécution, durée, ou l’âge d’une donnée qui n’a pas pu être relue).
 - `PageGrid` : `columns` (`2` par défaut, `3` ou `4`). Elle range ses enfants (`PageSection`, `Card`) côte à côte, en colonnes égales, à 24 px ; les blocs d’une ligne ont la même hauteur. Une colonne garde 240 px au moins : panneau ouvert ou fenêtre étroite, la grille prend moins de colonnes, puis une seule. Elle va dans le contenu de la `Page`, ou dans une `PageSection` pour une rangée de `Card` ; jamais dans une `DetailPage`, un `Drawer` ou une autre `PageGrid`.
 - Les informations clés tiennent sur un écran : ce qui demande une action (en retard, à traiter) en haut, côte à côte ; le détail ensuite. Pas de longue pile de `PageSection`.
 - Pas de titre de page : il est dans la barre du haut. Pas de cartes décoratives ni de chiffres sans action. Pas de bloc de texte seul (« À savoir ») : une précision va dans la `description` du bloc qu’elle concerne.
@@ -560,7 +564,7 @@ if (view) return (
     status={STATUT[facture.etat]}
     meta={[facture.client, formatDate(facture.date)]}
     actions={[...]}
-    state={…}
+    state={facture.loading ? "loading" : "ready"}
     onActionError={notifyActionError}
   >
     <DetailPage.Section title="Lignes"><Table … /></DetailPage.Section>
@@ -599,15 +603,15 @@ export const ETATS: StatusMap = {
 
 ## 12. États et notifications
 
-Les gabarits rendent chaque état. Une `Page` composée les rend par `state` et par section. `useAsync(charger, deps)` de `@alfred/sdk` rend `{ data, error, loading, reload }`.
+Les gabarits rendent chaque état. Une `Page` composée les rend par section. `useAsync(charger, deps)` de `@alfred/sdk` rend `{ data, error, loading, refreshing, reload }` ; `useAlfredState` rend aussi `checkedAt`, l’heure de la dernière lecture réussie (SDK.md, section 3).
 
 | Situation | Rendu |
 |---|---|
-| Premier chargement | `rows={undefined}`, `state="loading"`, `isLoading` sans données : squelettes |
-| Rechargement | Les données restent ; barre fine |
+| Premier chargement (aucune valeur gardée) | `rows={x.data}` encore `undefined` : squelettes de la `ListPage` ; `state={x.loading ? "loading" : "ready"}` sur la seule `PageSection` qui attend. Jamais toute la `Page` (`check` le refuse) |
+| Relecture | Les données restent ; barre fine : `isLoading={x.refreshing}` d’une `ListPage`, `Table`, `List` ou `Drawer` ; `isRefreshing={x.refreshing}` d’une `PageSection`, `Card variant="metric"`, `Page` ou `DetailPage` |
 | Collection vide | `empty` de `ListPage` : titre qui nomme l’absence, phrase qui dit à quoi sert la page, action `primary` |
 | Aucun résultat | Posé par `ListPage`, avec « Effacer la recherche » |
-| Échec de chargement | `hasError` et `onRetry` (ou `state="error"`) |
+| Échec de chargement | `hasError={Boolean(x.error)}` et `onRetry` : avec des lignes, `ListPage` les garde et dit « Résultats non mis à jour ». `state="error"` d’une `PageSection` seulement sans valeur ; avec une valeur gardée, son âge en `footer` (`<FormattedValue type="relative" value={x.checkedAt} />`) |
 | Prérequis absent dans un bloc | `empty` de `PageSection`, avec l’action qui le résout |
 | Précision locale, état durable de la page | `Alert` de `socle-ui`, en tête du bloc ou du contenu (D-085, D-253) |
 | Résultat d’une action qui ne se voit pas | `shell.notify({ title, tone: "success" })` |
@@ -787,7 +791,6 @@ export default function Detail() {
       hasError={Boolean(tache.error)}
       onRetry={tache.reload}
       isNotFound={Boolean(id) && !tache.loading && !tache.error && t === null}
-      emptyMessage="Sélectionnez une tâche pour voir son détail."
       onActionError={notifyActionError}
       onActionDone={() => { tache.reload(); void announceChange(); }}
     />
@@ -849,16 +852,16 @@ export default function Semaine() {
   const bloquees = ouvertes.filter((t) => t.etat === "bloquee");
   const aRendre = ouvertes.filter((t) => t.echeance && t.echeance >= aujourdhui && t.echeance <= dansUneSemaine);
   const voirLaListe = () => void shell.navigate("suivi/taches");
-  // L’interface d’abord : chaque bloc montre sa propre attente ; les titres et les chiffres sont là tout de suite.
-  const chiffre = (liste: Tache[]) => (taches.data ? String(liste.length) : "…");
+  // L’interface d’abord : chaque bloc montre sa propre attente ; les titres et les libellés sont là tout de suite.
+  const attente = { isLoading: taches.loading, isRefreshing: taches.refreshing };
   const bloc = taches.error && !taches.data ? "error" : taches.loading ? "loading" : "ready";
 
   return (
     <Page>
       <PageGrid columns={3}>
-        <Card variant="metric" label="En retard" value={chiffre(enRetard)} onPress={voirLaListe} />
-        <Card variant="metric" label="Bloquées" value={chiffre(bloquees)} onPress={voirLaListe} />
-        <Card variant="metric" label="À rendre sous 7 jours" value={chiffre(aRendre)} onPress={voirLaListe} />
+        <Card variant="metric" label="En retard" value={String(enRetard.length)} {...attente} onPress={voirLaListe} />
+        <Card variant="metric" label="Bloquées" value={String(bloquees.length)} {...attente} onPress={voirLaListe} />
+        <Card variant="metric" label="À rendre sous 7 jours" value={String(aRendre.length)} {...attente} onPress={voirLaListe} />
       </PageGrid>
       <PageGrid>
         <PageSection title="En retard" state={bloc} onRetry={taches.reload}
@@ -922,7 +925,8 @@ Une page écrite avant socle-ui ne compile plus : `@alfred/ui` est refusée. La 
 - [ ] `onActionError={notifyActionError}` sur chaque gabarit qui porte des actions.
 - [ ] Une page qui reçoit des fichiers : ajout par l’en-tête (`files.pick`) ou dépôt sur la page (`useFileDrop`, `isDraggingFiles` sur le gabarit) ; aucun bloc de dépôt.
 - [ ] Les colonnes et les champs ont le bon `type` ; les états ont un `StatusMap` partagé.
-- [ ] Le panneau lit `useSelection()` ; la page publie sa sélection ; une écriture appelle `announceChange()`.
+- [ ] Le panneau lit `useSelection()` ; la page publie sa sélection ; le panneau n’existe pas sans sélection. Une écriture dans la base appelle `announceChange()` ; une écriture chez un service déclare `touches` ou `entity`.
+- [ ] Une donnée d’un service vient d’un état (`useAlfredState`) avec un `maxAge` métier ; aucune fonction appelée à l’ouverture ; une lecture en échec se voit dans son bloc.
 - [ ] Aucun `style`, `className`, balise HTML ni couleur en dur.
 - [ ] Textes : `empty.title` nomme l’absence, libellés à l’infinitif, typographie française.
 - [ ] `page_snapshot` et `page_screenshot` montrent la page attendue, en clair et en sombre, panneau ouvert et fermé. L’écran se comprend d’un coup d’œil : ni pile de blocs, ni colonne étroite, ni grand vide (guide `page.md`, étape 7 ter).

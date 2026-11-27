@@ -217,6 +217,11 @@ pub fn state_problems(space: &crate::space::Space, module: &str) -> Vec<Value> {
             }
             None => {}
         }
+        // Ordre de priorité, point 2 : l’âge maximal d’une donnée se choisit selon le métier, jamais par défaut.
+        // Un module importé (lecture seule) garde le sien : il se corrige dans son marketplace.
+        if state.max_age.is_none() && !manifest.read_only() {
+            problems.push(json!({ "module": module, "state": state.id, "problem": "Donne à l’état son âge maximal, `maxAge` (en secondes, d’après le métier : 900 pour des tickets, 60 pour un job CI qui tourne). La valeur gardée s’affiche tout de suite et ne se relit chez le service que si elle est plus vieille (AGENTS.md, ordre de priorité ; SDK.md, section 3, « La fraîcheur »)." }));
+        }
         if state.max_age.is_some_and(|seconds| seconds < 10) {
             problems.push(json!({ "module": module, "state": state.id, "problem": "`maxAge` vaut 10 secondes au moins : choisis l’âge le plus long que le métier permet (des tickets : 10 à 30 minutes ; un job CI : 30 s à 2 minutes)." }));
         }

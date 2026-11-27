@@ -254,6 +254,14 @@ fn module_publishes(dir: &std::path::Path) -> bool {
     walk(dir, 0)
 }
 
+/// Ajoute à une demande de capture l’élément choisi qu’un panneau doit montrer (`selection`), s’il est donné.
+fn with_selection(mut request: Value, args: &Value) -> Value {
+    if let (Some(selection), Some(object)) = (args.get("selection"), request.as_object_mut()) {
+        object.insert("selection".to_string(), selection.clone());
+    }
+    request
+}
+
 pub(crate) fn find_page<'a>(snapshot: &'a Snapshot, reference: &str) -> Option<&'a crate::space::ResolvedPage> {
     snapshot
         .sections
@@ -639,6 +647,15 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             &["module"],
         ),
         tool(
+            "show_examples",
+            "Passe un module en mode « données d’exemple » chez l’utilisateur, ou l’en sort : ses fonctions de connecteur rendent leurs `examples`, aucun service n’est joint, et ses pages s’affichent sans compte, avec la pastille « Exemple » (qui le quitte). Seulement quand l’utilisateur a demandé lui-même des données d’exemple (« pas de vrai compte pour l’instant »), à la livraison : il voit sa page remplie sans rien faire. Jamais pour cacher une erreur de connexion.",
+            json!({
+                "module": { "type": "string", "description": "Identifiant du module." },
+                "on": { "type": "boolean", "description": "Vrai (par défaut) : montrer les exemples ; faux : revenir au service." },
+            }),
+            &["module"],
+        ),
+        tool(
             "edit_module",
             "Demande à l’utilisateur, par une carte dans la conversation, l’accord de modifier sur place un module importé d’un marketplace (`readOnly` dans `space_overview`). À appeler avant toute écriture dans ce module, une fois. Sur « Autoriser », le module devient modifiable : il reste lié à son marketplace, marqué « modifié sur place », et sa prochaine mise à jour demandera à l’utilisateur de remplacer ses changements ou de garder sa version. Sur refus ou sans réponse, n’écris rien dans ce module : propose plutôt une page dans un module à toi.",
             json!({
@@ -679,6 +696,7 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
             json!({
                 "page": { "type": "string", "description": "« module/page » (onglet, panneau ou page des Réglages)." },
                 "examples": { "type": "boolean", "description": "Charger la page en mode « données d’exemple » le temps de la capture : ses fonctions de connecteur rendent leurs `examples`, aucun service n’est joint, et la page s’affiche même sans compte configuré. Suivi d’office quand l’utilisateur a réglé le module en mode exemple." },
+                "selection": { "description": "Pour un panneau de droite : l’élément choisi qu’il montre pendant la capture, tel que sa page le publie (`shell.publish`), par exemple « ALF-12 ». Le panneau est chargé hors de la vue avec lui : vérifie ainsi la fiche remplie." },
             }),
             &["page"],
         ),
@@ -689,6 +707,7 @@ pub(crate) fn tools(state: &AppState, conversation: &str) -> Vec<Value> {
                 "page": { "type": "string", "description": "« module/page » (onglet, panneau ou page des Réglages)." },
                 "fullPage": { "type": "boolean", "description": "Toute la hauteur du document (6000 px au plus) au lieu de la partie visible." },
                 "examples": { "type": "boolean", "description": "Charger la page en mode « données d’exemple » le temps de la capture : ses fonctions de connecteur rendent leurs `examples`, aucun service n’est joint, et la page s’affiche même sans compte configuré. Suivi d’office quand l’utilisateur a réglé le module en mode exemple." },
+                "selection": { "description": "Pour un panneau de droite : l’élément choisi qu’il montre pendant la capture, tel que sa page le publie (`shell.publish`), par exemple « ALF-12 ». Le panneau est chargé hors de la vue avec lui : vérifie ainsi la fiche remplie." },
             }),
             &["page"],
         ),
@@ -1327,6 +1346,21 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                 "next": "Dire à l’utilisateur, en une phrase, que le panneau de configuration est ouvert et ce qu’il doit y faire (connecter tel compte, nommer ses pages). Ne pas lui redemander ces valeurs dans la conversation.",
             }))
         }
+        "show_examples" => {
+            let module: String = arg(args, "module")?;
+            let on = opt_arg::<bool>(args, "on")?.unwrap_or(true);
+            let manifest = space.module(&module)?;
+            crate::examples::set(state, &manifest.id, on)?;
+            Ok(json!({
+                "module": manifest.id,
+                "examples": on,
+                "next": if on {
+                    "Dire à l’utilisateur que la page montre des données d’exemple, et comment passer à ses vraies données (connecter son compte)."
+                } else {
+                    "Le module joint de nouveau son service."
+                },
+            }))
+        }
         "edit_module" => edit_module(state, &space, conversation, args).await,
         "set_libraries" => {
             let module: String = arg(args, "module")?;
@@ -1379,6 +1413,13 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                         found.into_iter().partition(|found| crate::design_lint::is_warning(&found.message));
                     // Le panneau de droite n’existe qu’avec un élément choisi : une page qui en a un doit publier sa
                     // sélection (`shell.publish`), sinon Alfred ne l’affiche jamais.
+                    // Une page de la zone principale dit de quelle recette de socle-ui elle part (page_recipes.rs).
+                    let source = std::fs::read_to_string(&file).unwrap_or_default();
+                    if placement == crate::design_lint::Placement::Page {
+                        if let Some(message) = crate::page_recipes::problem(&source) {
+                            design.push(crate::transpile::Diagnostic { message, line: Some(1), column: Some(1) });
+                        }
+                    }
                     if page.panel.is_some() && !module_publishes(&space.module_dir(&page.module)) {
                         design.push(crate::transpile::Diagnostic {
                             message: "Panneau de droite sans sélection : refusé. Alfred n’affiche le panneau que quand la page publie l’élément choisi (`shell.publish(élément)` à la sélection, `shell.publish(null)` quand plus rien n’est choisi ; SDK.md, section 8). Sans élément à montrer, retirer le panneau (`delete_page`) : il n’existe que si l’utilisateur le demande ou que la page a une sélection (PLACEMENT.md, section 2).".to_string(),
@@ -1390,7 +1431,6 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                         pages.push(json!({ "page": page.reference, "design": design }));
                     }
                     // État partagé obligatoire : une page s’abonne à un état, elle n’appelle pas une lecture.
-                    let source = std::fs::read_to_string(&file).unwrap_or_default();
                     // La page et ce qu’elle importe du module (`lib/`) : une lecture cachée dans un fichier voisin compte.
                     let mut read_by_page = source.clone();
                     for imported in crate::design_lint::imported_sources(&file) {
@@ -1401,14 +1441,8 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
                     if !reads.is_empty() {
                         pages.push(json!({ "page": page.reference, "sharedReads": reads }));
                     }
-                    let mut warnings: Vec<Value> =
+                    let warnings: Vec<Value> =
                         warnings.into_iter().filter_map(|found| serde_json::to_value(found).ok()).collect();
-                    // Une page de la zone principale dit de quelle recette de socle-ui elle part (page_recipes.rs).
-                    if placement == crate::design_lint::Placement::Page {
-                        if let Some(message) = crate::page_recipes::warning(&source) {
-                            warnings.push(json!({ "line": 1, "column": 1, "message": message }));
-                        }
-                    }
                     if !warnings.is_empty() {
                         design_warnings.push(json!({ "page": page.reference, "warnings": warnings }));
                     }
@@ -1534,7 +1568,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let mut captured = state
                 .ask_ui(
                     "agent:pageSnapshot",
-                    json!({ "page": reference, "examples": opt_arg::<bool>(args, "examples")?.unwrap_or(false) }),
+                    with_selection(json!({ "page": reference, "examples": opt_arg::<bool>(args, "examples")?.unwrap_or(false) }), args),
                     Duration::from_secs(20),
                 )
                 .await
@@ -1562,7 +1596,7 @@ pub(crate) async fn call_tool(state: &Shared, conversation: &str, name: &str, ar
             let captured = state
                 .ask_ui(
                     "agent:pageScreenshot",
-                    json!({ "page": reference, "fullPage": full_page, "examples": examples }),
+                    with_selection(json!({ "page": reference, "fullPage": full_page, "examples": examples }), args),
                     Duration::from_secs(25),
                 )
                 .await
@@ -1904,6 +1938,13 @@ mod tests {
         };
         assert_eq!(event.payload, json!({ "module": module }));
         assert!(call(&state, "open_onboarding", json!({ "module": "inconnu" })).await.is_err());
+
+        // Des données d’exemple demandées par l’utilisateur : l’agent passe lui-même le module dans ce mode.
+        let shown = call(&state, "show_examples", json!({ "module": module })).await.unwrap();
+        assert_eq!(shown["examples"], json!(true));
+        assert!(crate::examples::modules(&state).contains(&module));
+        call(&state, "show_examples", json!({ "module": module, "on": false })).await.unwrap();
+        assert!(!crate::examples::modules(&state).contains(&module));
     }
 
     async fn invoke(state: &Shared, command: &str, args: Value) -> Value {
@@ -2121,13 +2162,14 @@ mod tests {
         )
         .unwrap();
         let checked = call(&state, "check", json!({})).await.unwrap();
-        assert_eq!(checked["ok"], json!(true));
-        // Sans recette déclarée, un avertissement (qui n’empêche pas `ok`) ; avec, plus rien.
-        assert!(checked["designWarnings"].to_string().contains("de quelle recette elle part"), "{checked:#}");
+        // Sans recette déclarée, la page est refusée (erreur `design`) ; avec, plus rien.
+        assert_eq!(checked["ok"], json!(false));
+        assert!(checked["pages"].to_string().contains("Page sans recette : refusé"), "{checked:#}");
         std::fs::write(placed["file"].as_str().unwrap(), "// Recette : Dashboard\nexport default function Page() {\n  return null;\n}\n")
             .unwrap();
         let checked = call(&state, "check", json!({})).await.unwrap();
-        assert!(!checked["designWarnings"].to_string().contains("recette"), "{checked:#}");
+        assert_eq!(checked["ok"], json!(true), "{checked:#}");
+        assert!(!checked.to_string().contains("recette"), "{checked:#}");
         // Un panneau de droite n’existe qu’avec une sélection : la page qui en a un doit la publier.
         let panel = call(
             &state,
@@ -2646,7 +2688,7 @@ mod tests {
         let placed = call(&state, "place_page", json!({ "title": "Documents" })).await.unwrap();
         assert_eq!(placed["designPreferences"], Value::Null, "pas encore de préférences");
         let file = placed["file"].as_str().unwrap().to_string();
-        let page = "import { Page, PageSection } from \"socle-ui\";\nexport default function P() {\n  return <Page><PageSection title=\"Documents indexés\" /></Page>;\n}\n";
+        let page = "// Recette : Dashboard\nimport { Page, PageSection } from \"socle-ui\";\nexport default function P() {\n  return <Page><PageSection title=\"Documents indexés\" /></Page>;\n}\n";
         std::fs::write(&file, page).unwrap();
         let reference = placed["page"].as_str().unwrap().to_string();
 

@@ -49,6 +49,11 @@ export interface FrameIdentity {
   /** Cadre invisible chargé pour une capture de l’agent : il lit la recherche de la page sans prendre la barre. */
   capture?: boolean;
   /**
+   * Panneau capturé par l’agent avec un élément choisi (`selection` de `page_screenshot`) : il le reçoit à la place
+   * de la sélection publiée par la page affichée.
+   */
+  selection?: { value: unknown };
+  /**
    * Onglet ouvert sur un élément (`views.open`) que montre la page (ou la page d’un panneau), avec la section qui le
    * porte : `usePageContext().view`.
    */
@@ -210,7 +215,7 @@ export function frameContext(identity: FrameIdentity) {
     surface: snapshot?.settingsPages.some((page) => page.reference === identity.reference) ? "settings" : "section",
     theme,
     accent: snapshot?.accent ?? null,
-    selection: identity.host ? selectionOf(identity.host) : null,
+    selection: identity.selection ? identity.selection.value : identity.host ? selectionOf(identity.host) : null,
     entry: entryOf(identity),
     params: paramsOf(identity),
     view:

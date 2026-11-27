@@ -1,5 +1,5 @@
 //! Aucune fonction au montage : une page n’appelle jamais `functions.call` dans un `useEffect` (ou
-//! `useLayoutEffect`), sans geste de l’utilisateur. Une lecture à l’ouverture est un état (`useAlfredState`), que le
+//! `useLayoutEffect`), ni dans le chargeur d’un `useAsync`, sans geste de l’utilisateur. Une lecture à l’ouverture est un état (`useAlfredState`), que le
 //! cœur ne relit que s’il est périmé ; une écriture à l’ouverture ferait relire les états du module à chaque
 //! ouverture de la page (la latence que la page voulait éviter). Une écriture est un geste : `onPress` d’une `Action`.
 //! Une tâche qui doit tourner seule est une planification ou une automatisation.
@@ -21,7 +21,8 @@ use oxc::span::SourceType;
 use oxc::syntax::scope::ScopeFlags;
 
 const MAX_DEPTH: usize = 4;
-const EFFECTS: [&str; 2] = ["useEffect", "useLayoutEffect"];
+/// Ce qui s’exécute à l’ouverture de la page, sans geste : un effet, ou le chargeur d’un `useAsync`.
+const EFFECTS: [&str; 3] = ["useEffect", "useLayoutEffect", "useAsync"];
 
 /// Ce qu’un corps de fonction appelle, sans entrer dans les fonctions qu’il déclare (un gestionnaire `onPress`
 /// défini dedans n’est pas un appel au montage) : les fonctions d’Alfred (`functions.call("…")`) et les fonctions
@@ -285,7 +286,7 @@ pub fn check(program: &Program, path: &Path, read: &dyn Fn(&Path) -> Option<Stri
         out.push((
             *offset,
             format!(
-                "La page appelle {names} au montage (`useEffect`, sans geste de l’utilisateur) : refusé. Chaque ouverture lancerait la fonction et ferait relire les états du module. Une donnée à montrer est un état : `useAlfredState(\"module/etat\")`, relu par le cœur seulement s’il est périmé. Une écriture est un geste : `onPress` d’une `Action`. Une tâche qui tourne seule est une planification ou une automatisation (SDK.md, section 3, « L’interface d’abord »)."
+                "La page appelle {names} au montage (`useEffect` ou `useAsync`, sans geste de l’utilisateur) : refusé. Chaque ouverture lancerait la fonction et ferait relire les états du module. Une donnée à montrer est un état : `useAlfredState(\"module/etat\")`, relu par le cœur seulement s’il est périmé. Une écriture est un geste : `onPress` d’une `Action`. Une tâche qui tourne seule est une planification ou une automatisation (SDK.md, section 3, « L’interface d’abord »)."
             ),
         ));
     }

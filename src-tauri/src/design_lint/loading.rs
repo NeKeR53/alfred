@@ -12,14 +12,18 @@
 //! - un état de chargement tiré d’une relecture (`state={x.refreshing ? "loading" : …}`) : une relecture garde les
 //!   données à l’écran.
 //!
+//! - une erreur cachée quand une donnée reste à l’écran (`hasError={Boolean(x.error) && !x.data}`) : la donnée gardée
+//!   n’est plus juste, son bloc doit le dire (`ListPage` garde ses lignes et affiche « Résultats non mis à jour »).
+//!
 //! Un composant de bloc (pas la page) peut attendre sa donnée : c’est sa place.
 
 use std::collections::BTreeMap;
 
 use oxc::ast::ast::{
     Expression, IdentifierReference, JSXAttributeValue, JSXElement, JSXExpression, Program, Statement,
-    StaticMemberExpression, StringLiteral,
+    StaticMemberExpression, StringLiteral, UnaryExpression,
 };
+use oxc::syntax::operator::UnaryOperator;
 use oxc::ast_visit::{walk, Visit};
 use oxc::span::GetSpan;
 
@@ -158,6 +162,25 @@ impl Scan<'_> {
     }
 }
 
+/// Une expression qui vaut faux dès qu’une donnée est là (`!x.data`, `!rows`) : une erreur ainsi cachée laisse une
+/// donnée périmée à l’écran sans le dire.
+#[derive(Default)]
+struct HidesWithData(bool);
+
+impl<'a> Visit<'a> for HidesWithData {
+    fn visit_unary_expression(&mut self, it: &UnaryExpression<'a>) {
+        if it.operator == UnaryOperator::LogicalNot {
+            let name = match it.argument.without_parentheses() {
+                Expression::StaticMemberExpression(member) => Some(member.property.name.as_str()),
+                Expression::Identifier(identifier) => Some(identifier.name.as_str()),
+                _ => None,
+            };
+            self.0 |= name.is_some_and(|name| ["data", "rows", "donnees"].contains(&name));
+        }
+        walk::walk_unary_expression(self, it);
+    }
+}
+
 /// États tirés d’un chargement sur toute la page, ou d’une relecture sur un bloc.
 struct States<'s> {
     socle: &'s BTreeMap<String, String>,
@@ -169,6 +192,34 @@ impl<'a> Visit<'a> for States<'_> {
         let opening = &element.opening_element;
         if let Some((local, _)) = element_name(&opening.name) {
             let name = self.socle.get(&local).map(String::as_str).unwrap_or_default();
+            if let Some(error) = attribute(opening, "hasError") {
+                let mut hides = HidesWithData::default();
+                if let Some(JSXAttributeValue::ExpressionContainer(container)) = &error.value {
+                    if let Some(expression) = container.expression.as_expression() {
+                        hides.visit_expression(expression);
+                    }
+                }
+                if hides.0 {
+                    self.found.push((
+                        opening.span.start,
+                        format!("`hasError` de `{local}` cache l’échec dès qu’une donnée est là (`!x.data`) : l’utilisateur verrait une donnée périmée sans le savoir. Écris `hasError={{Boolean(x.error)}}` : `ListPage` garde ses lignes et affiche « Résultats non mis à jour » (AGENTS.md, ordre de priorité, point 2)."),
+                    ));
+                }
+            }
+            // `isLoading` d’une collection : squelettes sans données, barre fine pendant une relecture. (Celui de
+            // `Card variant="metric"` dit « valeur pas encore lue » : il suit bien `loading`.)
+            let collection = ["ListPage", "Table", "List", "Drawer"].contains(&name);
+            if let Some(waiting) = attribute(opening, "isLoading").filter(|_| collection) {
+                if let Some(JSXAttributeValue::ExpressionContainer(container)) = &waiting.value {
+                    let flags = container.expression.as_expression().map(Flags::of).unwrap_or_default();
+                    if flags.loading && !flags.refreshing {
+                        self.found.push((
+                            opening.span.start,
+                            format!("`isLoading` de `{local}` suit `loading` : la relecture d’une donnée déjà affichée ne se verrait pas. Écris `isLoading={{x.refreshing}}` : squelettes sans données, barre fine de 2 px pendant une relecture (SDK.md, section 3, « L’interface d’abord »)."),
+                        ));
+                    }
+                }
+            }
             if let Some(state) = attribute(opening, "state") {
                 let flags = match &state.value {
                     Some(JSXAttributeValue::ExpressionContainer(container)) => match &container.expression {

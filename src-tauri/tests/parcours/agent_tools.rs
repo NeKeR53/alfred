@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::common::*;
 
 /// Page qui a un panneau de droite : elle publie l’élément choisi (`shell.publish`), le panneau ne vit qu’avec lui.
-const PAGE_WITH_SELECTION: &str = "import { shell } from \"@alfred/sdk\";\nimport { Page, PageSection } from \"socle-ui\";\n\nexport default function Vue() {\n  shell.publish(null);\n  return <Page><PageSection title=\"Vue\" /></Page>;\n}\n";
+const PAGE_WITH_SELECTION: &str = "// Recette : ListDetail\nimport { shell } from \"@alfred/sdk\";\nimport { Page, PageSection } from \"socle-ui\";\n\nexport default function Vue() {\n  shell.publish(null);\n  return <Page><PageSection title=\"Vue\" /></Page>;\n}\n";
 
 /// Client de la CLI, tel que le binaire `alfred` l’envoie : `argv` en POST sur le pont, jeton dans `Authorization`.
 struct Agent<'a> {
